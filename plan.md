@@ -60,7 +60,8 @@
   - (나) 이동만 계산 제어기(위치 추정으로 목표까지 속도 계산), 조작은 π0.5.
 
 ### 4.0 검은 화면 — 최우선
-- 이 PC 공식 평가기가 정책 입력에 검은 화면을 섞어 보낸다(재생만 해도 카메라 2대 약 17%, π0.5 와 GPU 공유 시 전부). 지금까지 radio 점수는 무효. 원인 조사 중 — RGB 후처리 출력만 빔(깊이는 정상). 후보: DLSS 프레임 생성, Blackwell + Isaac Sim 버전(사용자 가설).
+- 이 PC 공식 평가기가 정책 입력에 검은 화면을 섞어 보낸다(재생만 해도 카메라 2대 약 17%, π0.5 와 GPU 공유 시 전부). 지금까지 radio 점수는 무효. 원인: **Isaac Sim 5.1 버그로 보인다** — 공식 이슈 isaac-sim/IsaacSim#367 "Black tiled camera image with RTX renderer in real-time mode"(여러 카메라 + 실시간 RTX 에서 검정), NVIDIA 답 "can confirm the issue in 5.1, it is however fixed in 6.0". 보고 환경이 RTX 3090 이라 **채점 환경에서도 생길 수 있다.** DLSS-G 는 원인 아님(원래 꺼져 있음).
+- 대응: 정책 쪽에서 검은 프레임이면 그 카메라의 직전 정상 프레임으로 대체(과거 관측만 사용 → 규칙 안), 채점 환경 영향은 공지·Discord 확인.
 
 ### 4.2 위치 오차
 - 사람 시연 이동거리 중앙 26 m, 최대 86 m. 적분 위치 vs 정답 위치를 한 판 재서 크면 depth 기반 보정.
