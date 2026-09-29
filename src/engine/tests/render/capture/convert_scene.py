@@ -231,6 +231,9 @@ def main():
     light_rows = [light_row(L, n_mesh_anchor + i, tex) for i, L in enumerate(lights)]
     n_anchor = n_mesh_anchor + len(lights)
 
+    # 세분(subdivisionScheme != none) 메시: USD 규약상 적힌 법선을 안 쓴다(RTX 도 무시 -> bilinear 는 면마다 평평한 음영).
+    # r1pro 로봇 몸 36 개가 bilinear. 그 기하는 법선 깃발을 끈다(면 법선으로 음영).
+    subdiv_geom = {m["geom"] for m in meshes if m.get("subdiv", "none") not in ("none", None)}
     # 쓰기
     tv_all, tn_all, tu_all, ts_all, gtab = [], [], [], [], []
     off = 0
@@ -242,7 +245,7 @@ def main():
         tn_all.append(normals[n_off[g]:n_off[g + 1]].reshape(nt, 9).astype(np.float32) if has_n[g] else np.zeros((nt, 9), np.float32))
         tu_all.append(uv[u_off[g]:u_off[g + 1]].reshape(nt, 6).astype(np.float32) if has_uv[g] else np.zeros((nt, 6), np.float32))
         ts_all.append(slot)
-        gtab.append((off, nt, (1 if has_n[g] else 0) | (2 if has_uv[g] else 0)))
+        gtab.append((off, nt, (1 if has_n[g] and g not in subdiv_geom else 0) | (2 if has_uv[g] else 0)))
         off += nt
     n_tri = off
     texels = np.concatenate(tex.chunks) if tex.chunks else np.zeros(0, np.uint32)
