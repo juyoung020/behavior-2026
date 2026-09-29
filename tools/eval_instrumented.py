@@ -207,15 +207,15 @@ def _gpu_used_mib():
 class GpuMonitor(threading.Thread):
     def __init__(self, period=2.0):
         super().__init__(daemon=True)
-        self.period, self.samples, self._stop = period, [], threading.Event()
+        self.period, self.samples, self._halt = period, [], threading.Event()
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             self.samples.append((time.time(), _gpu_used_mib()))
-            self._stop.wait(self.period)
+            self._halt.wait(self.period)
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
 
 
 # ----------------------------------------------------------------------------------------------------------------------

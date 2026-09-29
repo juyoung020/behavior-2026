@@ -2,6 +2,9 @@
 
 제출 마감: 10/16 AoE (한국시간 10/17 토 20:59). 대회 요약·규칙은 [docs/](docs/README.md). 구현 계획·결정 기록은 [plan.md](plan.md).
 
+저장소: GitHub 비공개 `juyoung020/behavior-2026`. 외부 저장소(BEHAVIOR-1K, refs/)는 서브모듈이라 `git submodule update --init` 으로 받고,
+데이터·에셋·키·영상은 올리지 않는다(받는 법은 `tools/setup/`). WSL 쪽(`~/meridian_ws`, `~/openpi`, `~/checkpoints`)은 이 저장소에 없다.
+
 ## Windows (`C:\behavior-2026`)
 
 ```

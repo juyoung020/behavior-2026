@@ -2,11 +2,12 @@
 #   -Task 과제 (기본 turning_on_radio)       -Instances '0,1' 처럼 여러 개 -> --num-envs 자동 (기본 -Instance 0 하나)
 #   -MaxSteps 0 = 공식 기본 제한시간(사람 평균 x 1.5). 제출용 결과는 반드시 0(기본)으로.
 #   -Wrapper Default(RGB 224, π0.5 기본) | RGBD(공식 RGB-D 720/480)
-#   -Gui 시뮬레이터 창.  -Port 정책 서버 포트(재생 서버는 8010).  -Tag 결과 폴더 이름 뒤에 붙일 말
+#   -Gui 시뮬레이터 창.  -Port 정책 서버 포트(재생 서버는 8010).  -Tag 결과 폴더 이름 뒤에 붙일 말, -OutDir 결과 폴더 직접 지정
 #   -Timing / -Trace : tools\eval_instrumented.py 로 감싸 구간별 시간(timing.json) / 스텝별 기록(trace.npz)을 결과 폴더에.
+#   -Deep            : 컨트롤러 콜백·물체 상태 캐시 안쪽까지 잘게 (-Timing 과 같이)
 #                      평가기 코드는 안 바꾼다. (예전 -Profile(cProfile) 은 Kit 이 프로파일 훅을 가져가 쓸모가 없어 없앴다)
 param([string]$Task = 'turning_on_radio', [int]$Instance = 0, [string]$Instances = '', [int]$MaxSteps = 0,
-      [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'Default', [int]$Port = 8000, [string]$Tag = '',
+      [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'Default', [int]$Port = 8000, [string]$Tag = '', [string]$OutDir = '',
       [switch]$Gui, [switch]$Timing, [switch]$Trace, [switch]$Deep)
 $headless = if ($Gui) { '--no-headless' } else { '--headless' }
 $stepArgs = if ($MaxSteps -gt 0) { @('--max-steps', $MaxSteps) } else { @() }
@@ -24,7 +25,8 @@ $env:KMP_DUPLICATE_LIB_OK = 'TRUE'
 conda activate behavior
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
 $name = "eval_${Task}_$stamp" + $(if ($Tag) { "_$Tag" } else { '' })
-$out = "C:\behavior-2026\outputs\$name"
+if ($OutDir) { $name = Split-Path $OutDir -Leaf }
+$out = if ($OutDir) { $OutDir } else { "C:\behavior-2026\outputs\$name" }
 $log = "C:\behavior-2026\logs\$name.log"
 Set-Location C:\behavior-2026\BEHAVIOR-1K\OmniGibson
 $runner = @('-m', 'omnigibson.eval.eval')
