@@ -44,6 +44,27 @@ contact_test(test_aabb_mgr test_aabb_mgr.cpp PHYSX)
 target_include_directories(test_aabb_mgr PRIVATE ${PX_SCENE_INC} ${PHYSX_ROOT}/source/lowlevelaabb/src)
 target_compile_definitions(test_aabb_mgr PRIVATE PX_PUBLIC_RELEASE=1 PX_NVTX=0)
 contact_test(test_bounds test_bounds.cpp PHYSX)
+# 쌍 관리층: Sc 층이 섬 관리자·거르기·좁은 단계 목록에 하는 호출을 --wrap 으로 떠서 우리 층과 비교
+contact_test(test_sc_pairs test_sc_pairs.cpp PHYSX)
+target_include_directories(test_sc_pairs PRIVATE ${PX_SCENE_INC} ${PHYSX_ROOT}/source/lowleveldynamics/shared ${PHYSX_ROOT}/source/lowleveldynamics/src ${PHYSX_ROOT}/source/lowlevelaabb/src)
+target_compile_definitions(test_sc_pairs PRIVATE PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_link_options(test_sc_pairs PRIVATE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager26preallocateContactManagersEjPj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16removeConnectionEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCMEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj
+  -Wl,--wrap=_ZNK5physx2Sc10NPhaseCore17runOverlapFiltersEjPNS_2Bp11AABBOverlapEPNS0_10FilterInfoERjS7_
+  -Wl,--wrap=_ZN5physx2Sc10NPhaseCore23onTriggerOverlapCreatedEPKNS_2Bp11AABBOverlapEj
+  -Wl,--wrap=_ZN5physx2Sc10NPhaseCore16onOverlapRemovedEPNS0_10ElementSimES3_jPvRNS_31PxsContactManagerOutputIteratorE
+  -Wl,--wrap=_ZN5physx10PxsContext22fillManagerTouchEventsEPNS_27PxvContactManagerTouchEventERjS2_S3_S2_S3_
+  -Wl,--wrap=_ZN5physx2Sc16ShapeInteraction10onActivateEPNS_17PxsContactManagerE
+  -Wl,--wrap=_ZN5physx2Sc16ShapeInteraction12onDeactivateEv)
 if(CONTACT_ASAN)  # 메모리 오류 찾기용 따로 빌드: -DCONTACT_ASAN=ON
   target_compile_options(test_aabb_mgr PRIVATE -fsanitize=address -g -fno-omit-frame-pointer)
   target_link_options(test_aabb_mgr PRIVATE -fsanitize=address)

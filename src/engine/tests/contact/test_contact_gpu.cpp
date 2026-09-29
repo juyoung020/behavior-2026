@@ -236,6 +236,16 @@ int main(int argc, char** argv) {
       pose[k].tf1 = ep::PxTransform32(cxt::toE(tf1[k]));
     }
     CK(cudaMemcpy(dPose, pose.data(), sizeof(ec::PairPose) * N, cudaMemcpyHostToDevice));
+    if (getenv("CX_FIND")) {  // 진단: 쌍 하나씩 띄워서 GPU 오류를 내는 첫 쌍을 찾는다 (판 0)
+      for (int p = 0; p < pairs; ++p) {
+        cxt::gpuShapePairs(1, 1, dPairs + p, 1, dPose + p, dSlots + p, dOut + p, contactDist, meshMargin, tolLen, 1);
+        const cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) {
+          printf("  [진단] 프레임 %d 쌍 %d (종류 %d-%d): %s\n", f, p, sa[p].e.type, sb[p].e.type, cudaGetErrorString(e));
+          return 2;
+        }
+      }
+    }
     gpuMs += cxt::gpuShapePairs(envs, 64, dPairs, pairs, dPose, dSlots, dOut, contactDist, meshMargin, tolLen, 1);
     CK(cudaGetLastError());
     CK(cudaMemcpy(outG.data(), dOut, sizeof(ec::PairResult) * N, cudaMemcpyDeviceToHost));
