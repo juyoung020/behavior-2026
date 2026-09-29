@@ -75,3 +75,69 @@ def loader(cfg, *, shuffle: bool = True, num_batches: int | None = None):
     from openpi.training import data_loader as DL
 
     return DL.create_b1k_data_loader(cfg, shuffle=shuffle, num_batches=num_batches)
+
+
+def to_jax_dtype(a):
+    """원래 배치가 JAX 로 갈 때의 형 변환 (x64 꺼짐: float64→float32, int64→int32). 검증 기준을 JAX 입력과 같은 형으로."""
+    import numpy as np
+
+    a = np.asarray(a)
+    if a.dtype == np.float64:
+        return a.astype(np.float32)
+    if a.dtype == np.int64:
+        return a.astype(np.int32)
+    return a
+
+
+class NonImageRef:
+    """원래 파이프라인의 이미지 외 값 + 영상 프레임 번호 (검증 기준, 영상 디코딩·크기 조정만 뺌).
+
+    lerobot get_item(dataset_reader.py:292-323) 과 원래 openpi 변환 그대로. 이미지 자리에는 작은 자리표시를 넣는다 —
+    이미지 외 값은 이미지에 기대지 않는다(2026-09-29 288 샘플에서 ds[i] 와 비트 동일 확인, docs/학습환경_가속.md 3.6).
+    프레임 번호는 lerobot 식 round((에피소드 시작 시각 + 프레임 시각) × average_fps) (video_utils.py:305).
+    """
+
+    def __init__(self, cfg=None):
+        import numpy as np
+        import openpi.training.config as C
+        import openpi.transforms as T
+        from torchcodec.decoders import VideoDecoder
+
+        cfg = cfg or train_config()
+        ds, dc = dataset(cfg)
+        self.lds = lerobot_of(ds)
+        self.tfs = [t for t in transform_list(dc) if not isinstance(t, T.ResizeImages)]
+        robot = C.ROBOT_REGISTRY[cfg.data.robot_config_name]
+        self.cams = [robot.observations[f"image_{i}"].dataset_key for i in range(3)]
+        self._fps = {}
+        self._vd = VideoDecoder
+        self._ph = np.zeros((3, 1, 1), np.float32)
+
+    def fps(self, path: str) -> float:
+        if path not in self._fps:  # lerobot 과 같은 방식(approximate)의 average_fps
+            self._fps[path] = self._vd(path, seek_mode="approximate").metadata.average_fps
+        return self._fps[path]
+
+    def __call__(self, idx: int):
+        import numpy as np
+
+        reader, meta = self.lds.reader, self.lds.meta
+        item = reader.hf_dataset[idx]
+        ep_idx = item["episode_index"].item()
+        q, pad = reader._get_query_indices(item["index"].item(), ep_idx)
+        item = {**item, **pad, **reader._query_hf_dataset(q)}
+        cur = item["timestamp"].item()
+        ep = meta.episodes[ep_idx]
+        frames = []
+        for key in self.cams:
+            path = str(self.lds.root / meta.get_video_file_path(ep_idx, key))
+            frames.append((path, round((ep[f"videos/{key}/from_timestamp"] + cur) * self.fps(path))))
+            item[key] = self._ph
+        item["task"] = meta.tasks.iloc[item["task_index"].item()].name
+        x = item
+        for tf in self.tfs:
+            x = tf(x)
+        x.pop("image")
+        out = {k: to_jax_dtype(v) for k, v in x.items() if k != "image_mask"}
+        out["image_mask"] = np.asarray([bool(v) for v in x["image_mask"].values()])
+        return out, frames

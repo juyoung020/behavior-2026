@@ -25,6 +25,7 @@ void launch_resize(const uint8_t* rgb, int H, int W, TapsDev th, TapsDev tw, flo
 void* dev_alloc(size_t bytes);
 void dev_free(void* p);
 void dev_sync(void* stream);
+void set_device(int device);
 void h2d(void* dst, const void* src, size_t bytes);
 const char* last_error();
 

@@ -6,6 +6,7 @@
 //   3. cuvid 파서 → NVDEC 에 넣고 EOS 로 비운다. B 프레임이 없어(ftprep 가 확인) 마지막으로 표시된 그림이 목표다
 //   4. 목표 그림만 매핑 → 색 변환 표 커널 → (mode 0) 크기 조정 커널 → 결과를 출력 텐서 칸에 바로 쓴다
 // 스레드마다 자기 CUDA 스트림·NVDEC 디코더(해상도별)를 가져 여러 요청이 동시에 NVDEC 에 들어간다.
+// 요청은 작업 큐로 들어오고(submit), 배치 하나의 마지막 작업이 끝나면 Latch 로 알린다.
 // 이 파일은 ffnvcodec(dynlink) 헤더만 쓰고 CUDA 툴킷 헤더는 쓰지 않는다 (타입 이름이 겹친다).
 #include "engine.h"
 
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <fstream>
 #include <mutex>
@@ -110,8 +112,6 @@ VideoFile load_index(const std::string& video, const std::string& idx) {
     return v;
 }
 
-struct Worker;
-
 struct Dec {  // 해상도 하나의 NVDEC 디코더 + 요청마다 새로 만드는 파서
     CUvideoparser parser = nullptr;
     CUvideodecoder dec = nullptr;
@@ -187,8 +187,15 @@ struct Worker {
     float* tmp = nullptr;
     std::vector<uint8_t> pkt, annexb;
     // 통계
-    long long frames = 0, parsers = 0, requests = 0;
+    std::atomic<long long> frames{0}, parsers{0}, requests{0};
     double wait_s = 0;
+};
+
+struct Job {
+    int64_t file, frame;
+    uint8_t* out;
+    int mode;
+    Latch* latch;
 };
 
 }  // namespace
@@ -198,30 +205,23 @@ struct Engine::Impl {
     std::vector<int> sizes;
     std::vector<TapsDev> trow, tcol;  // 해상도별 행·열 방향
     std::vector<void*> allocs;
-    const uint8_t* lut = nullptr;
+    const uint8_t* lut = nullptr;  // GPU
     CUcontext ctx = nullptr;
     int device = 0;
     std::vector<Worker> workers;
 
-    // 작업 나눠 주기
+    // 작업 큐: 스레드들이 배치 경계와 상관없이 계속 가져간다 (배치 끝에서 노는 스레드가 없게)
     std::mutex m;
-    std::condition_variable cv_job, cv_done;
-    long long gen = 0;
+    std::condition_variable cv_job;
+    std::deque<Job> q;
     bool stop = false;
-    int active = 0;
-    std::atomic<int> next{0};
-    const int64_t* req = nullptr;
-    int n = 0;
-    uint8_t* out = nullptr;
-    int mode = 0;
-    std::exception_ptr err;
 
-    void process(Worker& w, int i);
+    void process(Worker& w, const Job& j);
     void loop(int wi);
 };
 
-void Engine::Impl::process(Worker& w, int i) {
-    int64_t fi = req[2 * i], t = req[2 * i + 1];
+void Engine::Impl::process(Worker& w, const Job& j) {
+    const int64_t fi = j.file, t = j.frame;
     if (fi < 0 || fi >= (int64_t)files.size()) throw std::runtime_error("파일 번호 범위 밖: " + std::to_string(fi));
     VideoFile& v = files[fi];
     if (t < 0 || t >= (int64_t)v.s.size()) throw std::runtime_error("프레임 번호 범위 밖: " + std::to_string(t));
@@ -308,15 +308,16 @@ void Engine::Impl::process(Worker& w, int i) {
     const uint8_t* y = (const uint8_t*)dp;
     const uint8_t* uv = y + (size_t)pitch * ((d.h + 1) & ~1u);
     const int W = (int)d.w, H = (int)d.h;
-    if (mode == 1) {
-        launch_nv12_lut(y, uv, (int)pitch, W, H, lut, out + (size_t)i * W * H * 3, w.stream);
+    if (j.mode == 1) {
+        launch_nv12_lut(y, uv, (int)pitch, W, H, lut, j.out, w.stream);
         ck_rt("색 변환 커널");
     } else {
         launch_nv12_lut(y, uv, (int)pitch, W, H, lut, w.rgb, w.stream);
         ck_rt("색 변환 커널");
-        launch_resize(w.rgb, H, W, trow[v.cls], tcol[v.cls], w.tmp, out + (size_t)i * 224 * 224 * 3, w.stream);
+        launch_resize(w.rgb, H, W, trow[v.cls], tcol[v.cls], w.tmp, j.out, w.stream);
         ck_rt("크기 조정 커널");
     }
+    // 결과가 GPU 메모리에 다 써진 뒤에야 작업 완료로 센다 (배치 완료 = 모든 이미지 준비 끝)
     CK(cu->cuStreamSynchronize(w.stream));
     unmap.p = 0;
     CK(cv->cuvidUnmapVideoFrame(d.dec, dp));
@@ -325,36 +326,29 @@ void Engine::Impl::process(Worker& w, int i) {
 
 void Engine::Impl::loop(int wi) {
     Worker& w = workers[wi];
+    std::string init_err;
     try {
         CK(cu->cuCtxPushCurrent(ctx));
         CK(cu->cuStreamCreate(&w.stream, CU_STREAM_NON_BLOCKING));
-    } catch (...) {
-        std::lock_guard<std::mutex> g(m);
-        if (!err) err = std::current_exception();
+    } catch (const std::exception& e) {
+        init_err = e.what();
     }
-    long long seen = 0;
     for (;;) {
+        Job j;
         {
             std::unique_lock<std::mutex> g(m);
-            cv_job.wait(g, [&] { return stop || gen != seen; });
-            if (stop) break;
-            seen = gen;
+            cv_job.wait(g, [&] { return stop || !q.empty(); });
+            if (q.empty()) break;  // stop 이고 남은 일 없음
+            j = q.front();
+            q.pop_front();
         }
-        for (;;) {
-            int i = next.fetch_add(1);
-            if (i >= n) break;
-            try {
-                process(w, i);
-            } catch (...) {
-                std::lock_guard<std::mutex> g(m);
-                if (!err) err = std::current_exception();
-                next.store(n);
-            }
+        try {
+            if (!init_err.empty()) throw std::runtime_error(init_err);
+            process(w, j);
+        } catch (const std::exception& e) {
+            j.latch->fail(e.what());
         }
-        {
-            std::lock_guard<std::mutex> g(m);
-            if (--active == 0) cv_done.notify_all();
-        }
+        if (j.latch->left.fetch_sub(1) == 1) j.latch->finish();
     }
     for (Dec& d : w.decs) {
         if (d.parser) cv->cuvidDestroyVideoParser(d.parser);
@@ -365,20 +359,22 @@ void Engine::Impl::loop(int wi) {
     cu->cuCtxPopCurrent(&dummy);
 }
 
-Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::string>& indexes, uintptr_t lut_dev,
+Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::string>& indexes, const uint8_t* lut_host,
                const std::vector<int>& sizes, const int32_t* start, const int32_t* count, const float* weight,
                const int32_t* split_rows, const int32_t* split_cols, int threads, int device)
     : p_(new Impl) {
     load_libs();
     if (videos.size() != indexes.size()) throw std::runtime_error("videos 와 indexes 길이가 다르다");
+    if (threads < 1) throw std::runtime_error("threads >= 1");
     auto& P = *p_;
-    P.lut = (const uint8_t*)lut_dev;
     P.sizes = sizes;
     P.device = device;
     CK(cu->cuInit(0));
     CUdevice dev;
     CK(cu->cuDeviceGet(&dev, device));
     CK(cu->cuDevicePrimaryCtxRetain(&P.ctx, dev));
+    set_device(device);
+    ck_rt("cudaSetDevice");
     for (size_t i = 0; i < videos.size(); ++i) {
         P.files.push_back(load_index(videos[i], indexes[i]));
         VideoFile& v = P.files.back();
@@ -393,10 +389,11 @@ Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::st
         void* d = dev_alloc(bytes);
         if (!d) throw std::runtime_error("GPU 메모리 할당 실패");
         h2d(d, src, bytes);
-        ck_rt("탭 복사");
+        ck_rt("GPU 로 복사");
         P.allocs.push_back(d);
         return d;
     };
+    P.lut = (const uint8_t*)up(lut_host, (size_t)(1u << 24) * 3);
     for (size_t c = 0; c < sizes.size(); ++c) {
         TapsDev t;
         t.start = (const int*)up(start + c * 224, 224 * sizeof(int));
@@ -407,7 +404,7 @@ Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::st
         t.split = (const int*)up(split_cols + c * 224, 224 * sizeof(int));
         P.tcol.push_back(t);
     }
-    P.workers.resize(threads);
+    P.workers = std::vector<Worker>(threads);
     for (auto& w : P.workers) {
         w.decs.resize(sizes.size());
         w.rgb = (uint8_t*)dev_alloc((size_t)maxw * maxw * 3);
@@ -437,69 +434,65 @@ Engine::~Engine() {
     }
 }
 
-void Engine::run(const int64_t* req, int n, uintptr_t out, int mode) {
+void Engine::submit(const int64_t* req, int n, uint8_t* out, int mode, Latch* latch) {
     auto& P = *p_;
+    if (n <= 0) {
+        latch->finish();
+        return;
+    }
+    size_t stride = 224 * 224 * 3;
     if (mode == 1) {
+        const auto& v0 = P.files.at(req[0]);
         for (int i = 1; i < n; ++i)
-            if (P.files[req[2 * i]].w != P.files[req[0]].w) throw std::runtime_error("mode 1 은 같은 해상도끼리만");
+            if (P.files.at(req[2 * i]).w != v0.w) throw std::runtime_error("mode 1 은 같은 해상도끼리만");
+        stride = (size_t)v0.w * v0.h * 3;
     }
-    std::unique_lock<std::mutex> g(P.m);
-    if (P.err) {
-        auto e = P.err;
-        P.err = nullptr;
-        std::rethrow_exception(e);
+    {
+        std::lock_guard<std::mutex> g(P.m);
+        for (int i = 0; i < n; ++i) P.q.push_back(Job{req[2 * i], req[2 * i + 1], out + (size_t)i * stride, mode, latch});
     }
-    P.req = req;
-    P.n = n;
-    P.out = (uint8_t*)out;
-    P.mode = mode;
-    P.next.store(0);
-    P.active = (int)P.workers.size();
-    P.gen++;
     P.cv_job.notify_all();
-    P.cv_done.wait(g, [&] { return P.active == 0; });
-    if (P.err) {
-        auto e = P.err;
-        P.err = nullptr;
-        std::rethrow_exception(e);
-    }
 }
 
-void Engine::resize(uintptr_t in, int n, int W, uintptr_t out) {
+void Engine::run(const int64_t* req, int n, uint8_t* out, int mode) {
+    Latch l;
+    l.reset(n);
+    submit(req, n, out, mode, &l);
+    if (n > 0) l.wait();
+    if (!l.err.empty()) throw std::runtime_error(l.err);
+}
+
+void Engine::resize(const uint8_t* in, int n, int W, uint8_t* out) {
     auto& P = *p_;
     int cls = -1;
     for (size_t c = 0; c < P.sizes.size(); ++c)
         if (P.sizes[c] == W) cls = (int)c;
     if (cls < 0) throw std::runtime_error("탭이 없는 해상도");
+    set_device(P.device);
     float* tmp = (float*)dev_alloc((size_t)224 * W * 3 * sizeof(float));
     if (!tmp) throw std::runtime_error("GPU 메모리 할당 실패");
     for (int i = 0; i < n; ++i)
-        launch_resize((const uint8_t*)in + (size_t)i * W * W * 3, W, W, P.trow[cls], P.tcol[cls], tmp,
-                      (uint8_t*)out + (size_t)i * 224 * 224 * 3, nullptr);
+        launch_resize(in + (size_t)i * W * W * 3, W, W, P.trow[cls], P.tcol[cls], tmp, out + (size_t)i * 224 * 224 * 3,
+                      nullptr);
     dev_sync(nullptr);
     const char* e = last_error();
     dev_free(tmp);
     if (e) throw std::runtime_error(std::string("크기 조정 커널: ") + e);
 }
 
+int Engine::device() const { return p_->device; }
+
 std::vector<int64_t> Engine::info(int f) const {
     const auto& v = p_->files.at(f);
     return {v.w, v.h, v.timescale, (int64_t)v.s.size()};
 }
 
-std::vector<int64_t> Engine::pts(int f) const {
-    const auto& v = p_->files.at(f);
-    std::vector<int64_t> o(v.s.size());
-    for (size_t i = 0; i < v.s.size(); ++i) o[i] = v.s[i].pts;
-    return o;
-}
-
 std::vector<double> Engine::stats() const {
     double r = 0, fr = 0, pa = 0, ws = 0;
     for (auto& w : p_->workers) {
-        r += w.requests;
-        fr += w.frames;
-        pa += w.parsers;
+        r += w.requests.load();
+        fr += w.frames.load();
+        pa += w.parsers.load();
         ws += w.wait_s;
     }
     return {r, fr, pa, ws};

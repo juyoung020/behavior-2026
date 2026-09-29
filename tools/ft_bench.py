@@ -3,8 +3,9 @@
 WSL ~/openpi 환경에서 돌린다 (tools/ft_run.sh 가 PYTHONPATH·환경변수를 맞춘다):
     bash tools/ft_run.sh tools/ft_bench.py stages  --n 64            # 샘플 하나를 구간별로 (한 프로세스)
     bash tools/ft_run.sh tools/ft_bench.py loader  --workers 0,1,2,4 --batches 12   # 원래 로더 처리량
-    bash tools/ft_run.sh tools/ft_bench.py fast    --batches 30      # 가속 로더 처리량
-    JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES= bash tools/ft_run.sh tools/ft_bench.py cpu   # 가속판 워커 쪽(CPU)만
+    bash tools/ft_run.sh tools/ft_bench.py native  --threads 4,6,8   # 네이티브 로더 + JAX 소비 (학습과 같은 경로)
+    bash tools/ft_run.sh tools/ft_bench.py cbench  --threads 4,6,8   # 네이티브 로더만 (C++ ftbench, 파이썬 없음)
+이 도구가 파이썬인 이유: 원래 파이프라인(파이썬)을 계측해야 해서. 네이티브 쪽 한계는 C++ ftbench 가 잰다.
 
 구간 정의 (원래 코드 위치):
   행 읽기       hf_dataset[idx] + 행동 32개 + 영상 시각 (lerobot dataset_reader.py:292-306)
@@ -243,128 +244,85 @@ def cmd_loader(a):
             json.dump(res, f, indent=1)
 
 
-def cmd_fast(a):
-    """가속 로더 처리량. --step-ms 를 주면 학습 스텝을 흉내내(GPU 행렬곱을 그 시간만큼) 소비 쪽이 데이터를 기다린
-    시간(= GPU 가 데이터를 기다린 시간)을 잰다."""
+def cmd_native(a):
+    """네이티브 로더 + JAX 소비 쪽 (학습과 같은 경로: DLPack → device_put → Observation.from_dict).
+    --step-ms 를 주면 학습 스텝을 흉내내(GPU 행렬곱을 그 시간만큼) 소비 쪽이 데이터를 기다린 시간(= GPU 가 데이터를
+    기다린 시간)을 잰다."""
     import jax
     import jax.numpy as jnp
     from fasttrain import fast
 
     res = []
-    for w in [int(x) for x in a.workers.split(",")]:
-        for th in [int(x) for x in str(a.threads).split(",")]:
-            mem = GpuMem()
-            t0 = now()
-            ld = fast.loader(num_workers=w, batch_size=a.batch, shuffle=True, decode_threads=th)
-            it = iter(ld)
-            warm, nb = a.warm + 2 * w, max(a.batches, 2 * w)
-            for _ in range(warm):
-                jax.block_until_ready(next(it))
-            startup = now() - t0
-            eng0 = ld.engine.stats()
-            x = jnp.ones((2048, 2048), jnp.float32)
-            step = jax.jit(lambda x: (x @ x) * 1e-3)
-            jax.block_until_ready(step(x))
-            wait = 0.0
-            t1 = now()
-            for _ in range(nb):
-                s = now()
-                b = next(it)
-                jax.block_until_ready(b)
-                wait += now() - s
-                if a.step_ms:  # 학습 스텝 흉내: GPU 를 step_ms 동안 바쁘게
-                    e = now() + a.step_ms / 1e3
-                    while now() < e:
-                        x = jax.block_until_ready(step(x))
-            per = (now() - t1) / nb
-            eng1 = ld.engine.stats()
-            dmem = mem.stop()
-            frames = (eng1[1] - eng0[1]) / max(1.0, eng1[0] - eng0[0])
-            r = dict(workers=w, decode_threads=th, batch=a.batch, step_ms=a.step_ms, sec_per_batch=per,
-                     samples_per_s=a.batch / per, batches_per_s=1 / per, wait_ms_per_batch=1e3 * wait / nb,
-                     startup_s=startup, gpu_mem_mb=dmem, frames_per_request=frames, load=os.getloadavg()[0])
-            res.append(r)
-            print(f"[가속] 워커 {w:2d} 디코딩 스레드 {th:2d}: {r['samples_per_s']:7.1f} 샘플/s, "
-                  f"{r['batches_per_s']:5.2f} 배치/s, 스텝 {a.step_ms} ms 일 때 데이터 대기 {r['wait_ms_per_batch']:.1f} ms/배치, "
-                  f"요청당 디코딩 {frames:.2f} 프레임, GPU 메모리 +{dmem} MB, load {r['load']:.1f}", flush=True)
-            del it, ld
+    for th in [int(x) for x in str(a.threads).split(",")]:
+        mem = GpuMem()
+        t0 = now()
+        ld = fast.loader(batch_size=a.batch, shuffle=True, decode_threads=th, slots=a.slots, num_batches=None)
+        it = iter(ld)
+        for _ in range(a.warm + a.slots):
+            jax.block_until_ready(next(it))
+        startup = now() - t0
+        s0 = ld.stats()
+        x = jnp.ones((2048, 2048), jnp.float32)
+        step = jax.jit(lambda x: (x @ x) * 1e-3)
+        jax.block_until_ready(step(x))
+        wait = 0.0
+        t1 = now()
+        for _ in range(a.batches):
+            s = now()
+            b = next(it)
+            jax.block_until_ready(b)
+            wait += now() - s
+            del b
+            if a.step_ms:  # 학습 스텝 흉내: GPU 를 step_ms 동안 바쁘게
+                e = now() + a.step_ms / 1e3
+                while now() < e:
+                    x = jax.block_until_ready(step(x))
+        per = (now() - t1) / a.batches
+        s1 = ld.stats()
+        dmem = mem.stop()
+        fr = (s1["decoded_frames"] - s0["decoded_frames"]) / max(1.0, s1["requests"] - s0["requests"])
+        r = dict(decode_threads=th, batch=a.batch, slots=a.slots, step_ms=a.step_ms, sec_per_batch=per,
+                 samples_per_s=a.batch / per, batches_per_s=1 / per, wait_ms_per_batch=1e3 * wait / a.batches,
+                 startup_s=startup, gpu_mem_mb=dmem, frames_per_request=fr, load=os.getloadavg()[0])
+        res.append(r)
+        print(f"[네이티브+JAX] 디코딩 스레드 {th:2d}: {r['samples_per_s']:7.1f} 샘플/s, {r['batches_per_s']:5.2f} 배치/s, "
+              f"스텝 {a.step_ms} ms 일 때 데이터 대기 {r['wait_ms_per_batch']:.2f} ms/배치, 요청당 디코딩 {fr:.2f} 프레임, "
+              f"시작 {startup:.1f}s, GPU 메모리 +{dmem} MB, load {r['load']:.1f}", flush=True)
+        del it
+        ld.close()
+        del ld
     if a.json:
         with open(a.json, "w") as f:
             json.dump(res, f, indent=1)
 
 
-def cmd_cpu(a):
-    """가속판의 워커 쪽(CPU)만: 샘플 구간 시간과 워커 수별 CPU 배치 처리량. GPU 는 전혀 안 쓴다."""
-    import torch
-    from openpi.training import data_loader as DL
+def cmd_cbench(a):
+    """C++ ftbench (파이썬 없음) 를 스레드 수별로. 표·색표·보정 파일은 fast.py 가 만든 것을 쓴다."""
     from fasttrain import fast, orig
 
     cfg = orig.train_config()
-    fds = fast.FastDataset(cfg)
-    reader, meta = fds.lds.reader, fds.lds.meta
-    rng = random.Random(a.seed)
-    idxs = [rng.randrange(len(fds)) for _ in range(a.n + 4)]
-    T = defaultdict(float)
-    for it, idx in enumerate(idxs):
-        rec = it >= 4
-        t0 = now()
-        item = reader.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        q, pad = reader._get_query_indices(item["index"].item(), ep_idx)
-        qr = reader._query_hf_dataset(q)
-        t1 = now()
-        x = fds[idx]
-        t2 = now()
-        if rec:
-            T["행 읽기(원래와 같음)"] += t1 - t0
-            T["샘플 전체(행 읽기+프레임 번호+변환)"] += t2 - t1
-    for k, v in T.items():
-        print(f"  {k:<40}{1e3 * v / a.n:8.2f} ms/샘플")
-    # 변환 하나하나
-    tt = defaultdict(float)
-    for idx in idxs[4:]:
-        item = reader.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        q, pad = reader._get_query_indices(item["index"].item(), ep_idx)
-        item = {**item, **pad, **reader._query_hf_dataset(q)}
-        for key in fds.cams:
-            item[key] = fast._placeholder
-        item["task"] = meta.tasks.iloc[item["task_index"].item()].name
-        x = item
-        for tf in fds.tfs:
-            s = now()
-            x = tf(x)
-            tt[type(tf).__name__] += now() - s
-    for k, v in tt.items():
-        print(f"    변환 {k:<34}{1e3 * v / a.n:8.2f} ms/샘플")
-    import multiprocessing
-
+    tdir = fast.ensure_table(cfg)
+    if not os.path.exists(fast.CALIB_BIN):
+        fast._calib_arrays()
+    exe = os.path.join(fast.WORK, "build", "native", "ftbench")
     res = []
-    for w in [int(x) for x in a.workers.split(",")]:
-        g = torch.Generator()
-        g.manual_seed(cfg.seed)
-        dl = torch.utils.data.DataLoader(fds, batch_size=a.batch, shuffle=True, num_workers=w,
-                                         multiprocessing_context=multiprocessing.get_context("spawn") if w else None,
-                                         persistent_workers=w > 0, collate_fn=DL._collate_fn, drop_last=True,
-                                         generator=g)
-        it = iter(dl)
-        warm, nb = 2 + 2 * w, max(a.batches, 2 * w)
-        for _ in range(warm):
-            next(it)
-        t = now()
-        for _ in range(nb):
-            next(it)
-        per = (now() - t) / nb
-        r = dict(workers=w, samples_per_s=a.batch / per, batches_per_s=1 / per, load=os.getloadavg()[0])
+    for th in [int(x) for x in str(a.threads).split(",")]:
+        mem = GpuMem()
+        out = subprocess.run([exe, tdir, fast.CALIB_BIN, fast.LUT, str(a.batch), str(th), str(a.slots),
+                              str(a.batches), str(a.step_ms)], capture_output=True, text=True)
+        dmem = mem.stop()
+        if out.returncode:
+            print(out.stderr)
+            raise SystemExit(1)
+        r = json.loads(out.stdout.strip().splitlines()[-1])
+        r.update(gpu_mem_mb=dmem, load=os.getloadavg()[0])
         res.append(r)
-        print(f"[가속·CPU 쪽] 워커 {w:2d}: {r['samples_per_s']:8.1f} 샘플/s ({r['batches_per_s']:.2f} 배치/s), "
-              f"load {r['load']:.1f}", flush=True)
-        del it, dl
+        print(f"[C++ ftbench] 디코딩 스레드 {th:2d}: {r['samples_per_s']:7.1f} 샘플/s, {r['batches_per_s']:5.2f} 배치/s, "
+              f"스텝 {a.step_ms} ms 일 때 데이터 대기 {r['wait_ms_per_batch']:.2f} ms/배치, 요청당 디코딩 "
+              f"{r['frames_per_request']:.2f} 프레임, 시작 {r['startup_s']:.1f}s, GPU 메모리 +{dmem} MB", flush=True)
     if a.json:
         with open(a.json, "w") as f:
-            json.dump({"per_sample_ms": {k: 1e3 * v / a.n for k, v in T.items()},
-                       "transforms_ms": {k: 1e3 * v / a.n for k, v in tt.items()}, "loader": res}, f,
-                      ensure_ascii=False, indent=1)
+            json.dump(res, f, indent=1)
 
 
 def main():
@@ -382,23 +340,17 @@ def main():
     s.add_argument("--batches", type=int, default=10)
     s.add_argument("--warm", type=int, default=2)
     s.add_argument("--json", default="")
-    s = sp.add_parser("cpu")
-    s.add_argument("--n", type=int, default=200)
-    s.add_argument("--seed", type=int, default=0)
-    s.add_argument("--workers", default="1,2,4,8")
-    s.add_argument("--batch", type=int, default=32)
-    s.add_argument("--batches", type=int, default=10)
-    s.add_argument("--json", default="")
-    s = sp.add_parser("fast")
-    s.add_argument("--workers", default="2")
-    s.add_argument("--threads", default="6", help="디코딩 스레드 수(쉼표로 여러 개)")
-    s.add_argument("--step-ms", type=float, default=0.0, help="학습 스텝 흉내 시간")
-    s.add_argument("--batch", type=int, default=32)
-    s.add_argument("--batches", type=int, default=30)
-    s.add_argument("--warm", type=int, default=3)
-    s.add_argument("--json", default="")
+    for name in ("native", "cbench"):
+        s = sp.add_parser(name)
+        s.add_argument("--threads", default="6", help="디코딩 스레드 수(쉼표로 여러 개)")
+        s.add_argument("--batch", type=int, default=32)
+        s.add_argument("--slots", type=int, default=6)
+        s.add_argument("--batches", type=int, default=60)
+        s.add_argument("--warm", type=int, default=2)
+        s.add_argument("--step-ms", type=float, default=0.0, help="학습 스텝 흉내 시간")
+        s.add_argument("--json", default="")
     a = ap.parse_args()
-    {"stages": cmd_stages, "loader": cmd_loader, "fast": cmd_fast, "cpu": cmd_cpu}[a.cmd](a)
+    {"stages": cmd_stages, "loader": cmd_loader, "native": cmd_native, "cbench": cmd_cbench}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -104,6 +104,7 @@ void* dev_alloc(size_t bytes) {
 }
 void dev_free(void* p) { cudaFree(p); }
 void dev_sync(void* stream) { g_err = cudaStreamSynchronize((cudaStream_t)stream); }
+void set_device(int device) { g_err = cudaSetDevice(device); }
 void h2d(void* dst, const void* src, size_t bytes) { g_err = cudaMemcpy(dst, src, bytes, cudaMemcpyHostToDevice); }
 const char* last_error() { return g_err == cudaSuccess ? nullptr : cudaGetErrorString(g_err); }
 

@@ -150,9 +150,9 @@ def boundaries(st, split):
     return sorted({int(st[i] + split[i]) for i in range(len(st)) if split[i]})
 
 
-def validate(engine, sizes=(720, 480), n: int = 24, seed: int = 1):
-    """uint8 무작위 영상으로 원래 함수(영상 한 장씩, 원래처럼) vs 커널. 크기별 다른 값 개수 (0 이어야 한다)."""
-    import torch
+def validate(resize, sizes=(720, 480), n: int = 24, seed: int = 1):
+    """uint8 무작위 영상으로 원래 함수(영상 한 장씩, 원래처럼) vs 커널. 크기별 다른 값 개수 (0 이어야 한다).
+    resize: uint8 [n,W,W,3] 호스트 배열 → [n,224,224,3] (네이티브 엔진, fast.Engine.resize)."""
     from openpi.shared import image_tools
 
     rng = np.random.default_rng(seed)
@@ -160,9 +160,7 @@ def validate(engine, sizes=(720, 480), n: int = 24, seed: int = 1):
     for m in sizes:
         X = rng.integers(0, 256, (n, m, m, 3), dtype=np.uint8)
         ref = np.stack([np.asarray(image_tools.resize_with_pad(x, 224, 224)) for x in X])
-        out = torch.empty((n, 224, 224, 3), dtype=torch.uint8, device="cuda")
-        engine.resize(torch.from_numpy(X).cuda(), out)
-        res[m] = int((out.cpu().numpy() != ref).sum())
+        res[m] = int((resize(X) != ref).sum())
     return res
 
 

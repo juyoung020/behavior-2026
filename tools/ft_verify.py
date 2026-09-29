@@ -1,23 +1,24 @@
-"""가속 파이프라인이 원래 openpi 파이프라인과 같은 텐서를 내는지 대조한다 (JSBSim fdm_verify --check 와 같은 틀).
+"""네이티브 로더가 원래 openpi 파이프라인과 같은 텐서를 내는지 대조한다 (JSBSim fdm_verify --check 와 같은 틀).
 
-판정: "비트 동일" / "허용오차 안 (최대 |오차|)" / "다름". 기준은 원래 파이프라인이 같은 인덱스에서 낸 텐서다.
+판정: 텐서마다 "비트 동일" / "허용오차 안 (최대 |오차|)" / "다름". 기준은 원래 파이프라인이 같은 인덱스에서 낸 텐서를
+JAX 에 넘어가는 형(float64→float32, int64→int32)으로 바꾼 것. 하나라도 비트 동일이 아니면 exit 1.
+이 도구는 파이썬이다 — 기준 쪽이 원래 openpi·JAX·torchcodec(파이썬에만 있음)이라서. 대조 대상(네이티브)은 C ABI 로 부른다.
 
-    bash tools/ft_run.sh tools/ft_verify.py index                 # Rust mp4 색인 == libavformat(PyAV) 패킷 (GPU 안 씀)
-    JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES= bash tools/ft_run.sh tools/ft_verify.py nonimage   # 이미지 외 텐서만 (GPU 안 씀)
-    bash tools/ft_run.sh tools/ft_verify.py stage                 # 구간별: NVDEC+색표 == torchcodec RGB, 커널 == JAX 크기 조정
-    bash tools/ft_run.sh tools/ft_verify.py ref --tag a           # 원래 파이프라인 기준 저장 (고정 인덱스)
-    bash tools/ft_run.sh tools/ft_verify.py ref --tag b           # 다른 프로세스에서 한 번 더
-    bash tools/ft_run.sh tools/ft_verify.py same a b              # 원래가 매번 같은가
-    bash tools/ft_run.sh tools/ft_verify.py check --tag a         # 가속판 vs 기준 (다르면 exit 1)
-    bash tools/ft_run.sh tools/ft_verify.py check --tag a --negative lut   # 음성 대조: 일부러 틀리게 해서 잡는지
-    bash tools/ft_run.sh tools/ft_verify.py loader --batches 3    # 로더 통째 (섞기 순서·묶기·GPU 전송·uint8→float 까지)
-
-무작위 증강: 데이터 파이프라인에는 없다(증강은 학습 스텝 안 model.preprocess_observation). 섞기 순서는 seed 42 고정
-(openpi data_loader.py:488-489) — loader 대조는 두 로더를 같은 seed 로 만든다.
+GPU 없이 (JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES= bash tools/ft_run.sh tools/ft_verify.py ...):
+    index                 Rust mp4 색인 == libavformat(PyAV) 패킷
+    order                 네이티브 섞기 순서 == torch DataLoader (워커 지속·워커 0, 에포크 경계 넘어)
+    table [--n N]         이미지 외 값(행동·상태·토큰·마스크) + 영상 프레임 번호, 과제 전체 샘플 (기본 전부)
+GPU (bash tools/ft_run.sh tools/ft_verify.py ...):
+    stage                 NVDEC+색표 == torchcodec RGB, 크기 조정 커널 == JAX (파일 6개 × 프레임 24)
+    ref --tag a|b         원래 파이프라인 기준 저장 (고정 인덱스 288 = 무작위 224 + 경계 사례)
+    same a b              원래가 두 프로세스에서 같은가
+    check --tag a         네이티브 샘플 vs 기준 전체 텐서.  --negative lut|weight|frame 음성 대조
+    loader --batches 3    로더 통째: 원래 로더 vs 네이티브 로더 (같은 seed, 섞기 순서·GPU 위 Observation 까지)
 """
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import sys
 import time
@@ -27,10 +28,10 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 WORK = os.environ.get("FT_WORK", os.path.expanduser("~/fasttrain_work"))
 REF = os.path.join(WORK, "ref")
+FIELDS = ("actions", "state", "tokenized_prompt", "tokenized_prompt_mask", "image_mask")
 
 
 def flat(x, prefix=""):
-    """중첩 dict → {'image/base_0_rgb': arr, ...}"""
     out = {}
     if isinstance(x, dict):
         for k, v in x.items():
@@ -50,44 +51,52 @@ def verdict(a: np.ndarray, b: np.ndarray):
     return ("허용오차 안" if d.max() <= 1e-6 * max(1.0, np.abs(b).max()) else "다름"), f"다른 값 {n}/{a.size}", float(d.max())
 
 
+def table_files(tdir: str):
+    files, idx = [], []
+    for line in open(os.path.join(tdir, "table.txt")):
+        if line.startswith("file\t"):
+            _, v, i = line.rstrip("\n").split("\t")
+            files.append(v), idx.append(i)
+    return files, idx
+
+
 def fixed_indices(lds, n_random: int, seed: int = 1234):
-    """무작위 + 경계 사례(에피소드 처음·끝(행동 패딩), GOP 경계, 파일이 바뀌는 에피소드)."""
+    """무작위 + 경계 사례(에피소드 처음·끝(행동 창이 잘리는 곳), GOP 경계, 머리 카메라 파일이 바뀌는 에피소드)."""
     meta = lds.meta
     rng = np.random.default_rng(seed)
     idx = list(rng.integers(0, len(lds), n_random))
     eps = sorted(lds.episodes)
-    starts = {}
-    pos = 0
-    for e in eps:  # 선택된 에피소드 순서대로 이어 붙은 상대 인덱스
+    starts, pos = {}, 0
+    for e in eps:
         L = meta.episodes[e]["length"]
         starts[e] = (pos, L)
         pos += L
-    edge_eps = [eps[0], eps[1], eps[-1]]
+    edge = [eps[0], eps[1], eps[-1]]
     key = "videos/observation.rgb.zed_link_camera_0/file_index"
     for a, b in zip(eps[:-1], eps[1:]):
         if meta.episodes[a][key] != meta.episodes[b][key]:
-            edge_eps.append(b)  # 머리 카메라 파일이 바뀌는 첫 에피소드
-    for e in edge_eps:
+            edge.append(b)
+    for e in edge:
         s, L = starts[e]
         idx += [s, s + 1, s + 7, s + 8, s + L - 33, s + L - 32, s + L - 2, s + L - 1]
     return [int(i) for i in idx]
 
 
-# ------------------------------------------------------------------ Rust 색인
+# ------------------------------------------------------------------ Rust 색인 (GPU 없음)
 def cmd_index(a):
-    """Rust ftprep 가 mp4 에서 읽은 패킷(위치·크기·키프레임·표시 시각)이 libavformat 이 읽은 것과 같은지. GPU 안 씀."""
     import glob
 
     import av
     from fasttrain import fast
 
     root = os.path.expanduser("~/data/2026-challenge-demos/videos")
+    rec_t = np.dtype([("off", "<u8"), ("size", "<u4"), ("key", "<u4"), ("pts", "<i8")])
     bad_total, n_total = 0, 0
     for v in sorted(glob.glob(f"{root}/observation.rgb.*/chunk-*/*.mp4")):
         b = np.fromfile(fast.ensure_index(v), np.uint8)
-        _, _, _, _, plen, _ = np.frombuffer(b[8:32].tobytes(), "<u4")
+        plen = int(np.frombuffer(b[24:28].tobytes(), "<u4")[0])
         n = int(np.frombuffer(b[32 + plen: 40 + plen].tobytes(), "<u8")[0])
-        rec = np.frombuffer(b[40 + plen: 40 + plen + 24 * n].tobytes(), fast._IDX_REC)
+        rec = np.frombuffer(b[40 + plen: 40 + plen + 24 * n].tobytes(), rec_t)
         cols = {"pos": [], "size": [], "key": [], "pts": []}
         with av.open(v) as c:
             for p in c.demux(c.streams.video[0]):
@@ -105,39 +114,134 @@ def cmd_index(a):
     return 1 if bad_total else 0
 
 
-# ------------------------------------------------------------------ 이미지 외 텐서 (GPU 없이)
-def cmd_nonimage(a):
-    """상태·행동·토큰·마스크: 원래 ds[i] vs 가속판 FastDataset[i] (고정 인덱스). 이미지는 빼고 본다 — 원래의 크기 조정만
-    JAX 를 쓰고 나머지 변환은 JAX 장치와 무관하므로 CPU 에서도 같은 값이 나온다."""
-    from fasttrain import fast, orig
+# ------------------------------------------------------------------ 섞기 순서 (GPU 없음)
+class _Idx:
+    def __init__(self, n):
+        self.n = n
 
-    cfg = orig.train_config()
-    ds, dc = orig.dataset(cfg)
-    idx = fixed_indices(orig.lerobot_of(ds), a.n)
-    fds = fast.FastDataset(cfg)
-    R, F = {}, {}
-    for i in idx:
-        for k, v in flat(ds[i]).items():
-            R.setdefault(k, []).append(v)
-        x = fds[i]
-        x.pop("_ft_req")
-        for k, v in flat(x).items():
-            F.setdefault(k, []).append(v)
-    print(f"이미지 외 텐서: 원래 vs 가속판 ({len(idx)} 샘플, 무작위 {a.n} + 경계 사례)")
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, i):
+        return i
+
+
+def _ident(x):
+    return x
+
+
+def torch_order(n, bs, seed, workers, nbatches):
+    """원래 openpi TorchDataLoader 와 같은 설정의 torch DataLoader 가 내는 인덱스 (끝나면 다시 iter, data_loader.py:508-519)."""
+    import torch
+
+    g = torch.Generator()
+    g.manual_seed(seed)
+    dl = torch.utils.data.DataLoader(_Idx(n), batch_size=bs, shuffle=True, num_workers=workers,
+                                     multiprocessing_context=multiprocessing.get_context("spawn") if workers else None,
+                                     persistent_workers=workers > 0, collate_fn=_ident, drop_last=True, generator=g)
+    out = []
+    while len(out) < nbatches:
+        for b in dl:
+            out.append(list(b))
+            if len(out) >= nbatches:
+                break
+    return np.asarray(out, np.int64)
+
+
+def cmd_order(a):
+    from fasttrain import fast
+
     bad = 0
-    for k in sorted(R):
-        if k.startswith("image/"):
-            continue
-        v, why, err = verdict(np.stack(F[k]), np.stack(R[k]))
-        bad += v != "비트 동일"
-        print(f"  {k:<34}{v:<12}{why}")
-    print("통과 — 전부 비트 동일" if not bad else f"실패 — {bad}")
+    cases = [(429928, 32, 42, 2, 13435 * 2 + 5), (429928, 32, 42, 0, 13435 + 5), (1000, 32, 7, 2, 31 * 3 + 2),
+             (1024, 32, 7, 2, 32 * 2 + 3), (1003, 16, 1, 0, 62 * 3)]
+    print("섞기 순서: 네이티브(C++ MT19937) vs torch DataLoader")
+    for n, bs, seed, w, nb in cases:
+        t = torch_order(n, bs, seed, w, nb)
+        f = fast.sampler_order(n, bs, seed, nb, shuffle=True, persistent=w > 0)
+        same = np.array_equal(t, f)
+        bad += not same
+        epochs = nb / (n // bs)
+        print(f"  n={n:>7} 배치 {bs} seed {seed} 워커 {w}: 배치 {nb} 개 ({epochs:.2f} 에포크) → "
+              + ("같다" if same else f"다르다 (처음 다른 배치 {int(np.argmax((t != f).any(1)))})"))
+    print("통과" if not bad else f"실패 {bad}")
     return 1 if bad else 0
 
 
-# ------------------------------------------------------------------ 구간별
+# ------------------------------------------------------------------ 표 전수 대조 (GPU 없음)
+_W = {}
+
+
+def _table_init(tdir):
+    from fasttrain import fast, orig
+
+    _W["ref"] = orig.NonImageRef()
+    _W["tab"] = fast.Table(tdir)
+    _W["files"] = table_files(tdir)[0]
+
+
+def _table_chunk(idx):
+    ref, tab, files = _W["ref"], _W["tab"], _W["files"]
+    nat = tab.samples(idx)
+    bad = {k: 0 for k in FIELDS + ("req",)}
+    maxd = {k: 0.0 for k in FIELDS}
+    first = []
+    for j, i in enumerate(idx):
+        r, frames = ref(int(i))
+        for k in FIELDS:
+            nv = np.ones(3, bool) if k == "image_mask" else nat[k][j]
+            rv = r[k]
+            if nv.shape != rv.shape or nv.dtype != rv.dtype or not np.array_equal(nv, rv):
+                bad[k] += 1
+                if nv.shape == rv.shape:
+                    maxd[k] = max(maxd[k], float(np.abs(nv.astype(np.float64) - rv.astype(np.float64)).max()))
+                if len(first) < 5:
+                    first.append((int(i), k))
+        got = [(files[int(f)], int(fr)) for f, fr in nat["req"][j]]
+        if got != frames:
+            bad["req"] += 1
+            if len(first) < 5:
+                first.append((int(i), "req"))
+    return bad, maxd, first
+
+
+def cmd_table(a):
+    from fasttrain import fast, orig
+
+    cfg = orig.train_config()
+    tdir = fast.ensure_table(cfg)
+    n = len(fast.Table(tdir))
+    idx = np.arange(n) if a.n <= 0 else np.random.default_rng(0).choice(n, a.n, replace=False)
+    chunks = np.array_split(idx, max(1, len(idx) // 2000))
+    t = time.time()
+    ctx = multiprocessing.get_context("spawn")
+    tot = {k: 0 for k in FIELDS + ("req",)}
+    maxd = {k: 0.0 for k in FIELDS}
+    first = []
+    with ctx.Pool(a.procs, initializer=_table_init, initargs=(tdir,)) as pool:
+        for k, (b, m, f) in enumerate(pool.imap_unordered(_table_chunk, chunks)):
+            for x in b:
+                tot[x] += b[x]
+            for x in m:
+                maxd[x] = max(maxd[x], m[x])
+            first += f
+            if k % 20 == 0:
+                print(f"  ... {k + 1}/{len(chunks)} 묶음 ({time.time() - t:.0f}s)", flush=True)
+    print("=" * 78)
+    print(f"이미지 외 값 + 영상 프레임 번호: 네이티브 표(Rust+C++) vs 원래 파이썬, 샘플 {len(idx)} 개 ({time.time()-t:.0f}s)")
+    print("=" * 78)
+    for k in FIELDS + ("req",):
+        v = "비트 동일" if tot[k] == 0 else "다름"
+        extra = f"   다른 샘플 {tot[k]}, 최대 |오차| {maxd.get(k, 0):.3g}" if tot[k] else ""
+        print(f"  {k:<26}{v}{extra}")
+    if first:
+        print("  처음 다른 것:", first[:5])
+    bad = sum(tot.values())
+    print("\n" + ("통과 — 전부 비트 동일" if not bad else f"실패 — {bad}"))
+    return 1 if bad else 0
+
+
+# ------------------------------------------------------------------ 구간별 (GPU)
 def cmd_stage(a):
-    import torch
     from openpi.shared import image_tools
     from fasttrain import fast, lut
 
@@ -145,10 +249,10 @@ def cmd_stage(a):
     cams = ["observation.rgb.zed_link_camera_0", "observation.rgb.left_realsense_link_camera_0",
             "observation.rgb.right_realsense_link_camera_0"]
     videos = [f"{root}/{c}/chunk-000/file-00{k}.mp4" for c in cams for k in (0, 1)]
-    idxs = [fast.ensure_index(v) for v in videos]
-    eng = fast.make_engine(videos, idxs, threads=4)
+    eng = fast.Engine(videos, [fast.ensure_index(v) for v in videos], threads=4)
+    from fasttrain import calib
     print(f"크기 조정 보정 (이 GPU 의 원래 JAX 크기 조정이 나누어 더하는 경계, 입력 좌표): {eng.calib}")
-    print(f"보정 후 uint8 무작위 영상 24장×2 크기: 커널 != 원래 인 값 {eng.validated}")
+    print(f"보정 후 uint8 무작위 영상 24장×2 크기: 커널 != 원래 인 값 {calib.validate(eng.resize)}")
     rng = np.random.default_rng(a.seed)
     print("=" * 78)
     print(f"구간별 대조 (파일 {len(videos)}개 × 프레임 {a.n}개, 무작위 seed={a.seed})")
@@ -158,47 +262,43 @@ def cmd_stage(a):
     for f, v in enumerate(videos):
         W, H, ts, nfr = eng.info(f)
         frames = [int(x) for x in rng.integers(0, nfr, a.n)]
-        frames[0] = 0
-        frames[-1] = nfr - 1
-        req = torch.tensor([[f, t] for t in frames], dtype=torch.int64)
-        rgb = torch.empty((a.n, H, W, 3), dtype=torch.uint8, device="cuda")
-        eng.run(req, rgb, 1)
-        small = torch.empty((a.n, 224, 224, 3), dtype=torch.uint8, device="cuda")
-        eng.run(req, small, 0)
+        frames[0], frames[-1] = 0, nfr - 1
+        req = np.asarray([[f, t] for t in frames], np.int64)
+        g_rgb = eng.decode(req, 1)
+        g_small = eng.decode(req, 0)
         ref_rgb = lut.original_rgb(v, frames)  # 원래: torchcodec → /255 → (255*x).astype(uint8)
-        # 원래: JAX GPU 크기 조정을 **한 장씩** (ResizeImages 가 샘플마다 부른다 — 여러 장을 묶으면 GEMM 모양이 달라져 비트가 바뀐다)
+        # 원래: JAX GPU 크기 조정을 한 장씩 (ResizeImages 가 샘플마다 부른다)
         ref_small = np.stack([np.asarray(image_tools.resize_with_pad(x, 224, 224)) for x in ref_rgb])
-        g_rgb, g_small = rgb.cpu().numpy(), small.cpu().numpy()
-        n1 = int((g_rgb != ref_rgb).sum())
-        n2 = int((g_small != ref_small).sum())
+        n1, n2 = int((g_rgb != ref_rgb).sum()), int((g_small != ref_small).sum())
         bad += n1 + n2
         print(f"  {v.split('videos/')[1]:<52}{n1:>12}{n2:>12}")
-    print(f"\n  (표의 숫자 = 원래와 다른 값의 개수, 0 이면 비트 동일)   엔진 통계 {eng.stats()}")
+    print(f"\n  (표의 숫자 = 원래와 다른 값의 개수, 0 이면 비트 동일)   엔진 {eng.stats()}")
+    eng.close()
     print("통과" if bad == 0 else f"실패 — 다른 값 {bad}")
     return 1 if bad else 0
 
 
-# ------------------------------------------------------------------ 기준 저장·자기 일치
+# ------------------------------------------------------------------ 기준 저장·자기 일치 (GPU: 원래 JAX 크기 조정)
 def cmd_ref(a):
     from fasttrain import orig
 
     cfg = orig.train_config()
     ds, dc = orig.dataset(cfg)
-    lds = orig.lerobot_of(ds)
-    idx = fixed_indices(lds, a.n)
+    idx = fixed_indices(orig.lerobot_of(ds), a.n)
     os.makedirs(REF, exist_ok=True)
     t = time.time()
     cols = {}
     for i in idx:
         for k, v in flat(ds[i]).items():
             cols.setdefault(k, []).append(v)
-    arrs = {k: np.stack(v) for k, v in cols.items()}
+    arrs = {k: orig.to_jax_dtype(np.stack(v)) for k, v in cols.items()}
     arrs["_idx"] = np.asarray(idx)
     path = os.path.join(REF, f"ref_{a.tag}.npz")
     np.savez(path, **arrs)
     print(f"원래 파이프라인 기준 {len(idx)}개 샘플 → {path} ({time.time()-t:.0f}s)")
     for k, v in arrs.items():
         print(f"  {k:<32}{str(v.shape):<24}{v.dtype}")
+    return 0
 
 
 def cmd_same(a):
@@ -207,58 +307,49 @@ def cmd_same(a):
     print(f"원래 파이프라인 자기 일치: {a.a} vs {a.b} (다른 프로세스)")
     bad = 0
     for k in A.files:
-        v, why, err = verdict(A[k], B[k])
+        v, why, _ = verdict(A[k], B[k])
         bad += v != "비트 동일"
         print(f"  {k:<32}{v:<12}{why}")
     return 1 if bad else 0
 
 
-# ------------------------------------------------------------------ 가속판 대조
-def fast_samples(idx, negative: str = ""):
-    import torch
+# ------------------------------------------------------------------ 네이티브 샘플 vs 기준 (GPU)
+def cmd_check(a):
     from fasttrain import fast, orig
 
+    R = np.load(os.path.join(REF, f"ref_{a.tag}.npz"))
+    idx = np.asarray(R["_idx"], np.int64)
     cfg = orig.train_config()
-    fds = fast.FastDataset(cfg)
-    lutt, hook = None, None
-    if negative == "lut":  # 음성 대조 1: 색표 대신 부동소수 BT.601 공식 (최대 3 차이 나는 흔한 구현)
+    tdir = fast.ensure_table(cfg)
+    files, idxs = table_files(tdir)
+    lut_arr, hook = None, None
+    if a.negative == "lut":  # 음성 대조 1: 색표 대신 부동소수 BT.601 공식 (최대 3 차이 나는 흔한 구현)
         k = np.arange(1 << 24)
         y = (k >> 16).astype(np.float64) - 16
         u = ((k >> 8) & 255).astype(np.float64) - 128
         v = (k & 255).astype(np.float64) - 128
         rgb = np.stack([1.164383 * y + 1.596027 * v, 1.164383 * y - 0.391762 * u - 0.812968 * v,
                         1.164383 * y + 2.017232 * u], -1)
-        lutt = torch.from_numpy(np.clip(np.round(rgb), 0, 255).astype(np.uint8).reshape(-1))
-    if negative == "weight":  # 음성 대조 2: 크기 조정 가중치를 float32 한 칸(1 ulp)만 틀리게
+        lut_arr = np.clip(np.round(rgb), 0, 255).astype(np.uint8).reshape(-1)
+    if a.negative == "weight":  # 음성 대조 2: 크기 조정 가중치를 float32 한 칸(1 ulp)만 틀리게
         hook = lambda wt: np.where(wt != 0, np.nextafter(wt, np.float32(1)), wt).astype(np.float32)
-    # 음성 대조 3 "frame": 프레임 번호를 하나 밀기 (시각 맞추기 실수) — 아래에서
-    eng = fast.make_engine(fds.videos, fds.indexes, threads=6, lut_override=lutt, weight_hook=hook,
-                           check=not negative)
-    names = list(fast.NAMES)
-    cols = {}
+    eng = fast.Engine(files, idxs, threads=6, lut=lut_arr, weight_hook=hook)
+    tab = fast.Table(tdir)
     t = time.time()
-    xs = [fds[i] for i in idx]
-    req = np.stack([x.pop("_ft_req") for x in xs])  # (N,3,2)
-    if negative == "frame":
+    s = tab.samples(idx)
+    req = s["req"].astype(np.int64)  # [N,3,2]
+    if a.negative == "frame":  # 음성 대조 3: 프레임 번호를 하나 밀기 (시각 맞추기 실수)
         req[:, :, 1] = np.maximum(req[:, :, 1] - 1, 0)
-    out = torch.empty((len(idx) * 3, 224, 224, 3), dtype=torch.uint8, device="cuda")
-    eng.run(torch.from_numpy(np.ascontiguousarray(req.reshape(-1, 2))), out, 0)
-    imgs = out.view(len(idx), 3, 224, 224, 3).cpu().numpy()
-    for j, x in enumerate(xs):
-        for c, nm in enumerate(names):
-            x["image"][nm] = imgs[j, c]
-        for k, v in flat(x).items():
-            cols.setdefault(k, []).append(v)
-    print(f"가속판 {len(idx)}개 샘플 {time.time()-t:.1f}s, 엔진 통계 {eng.stats()}")
-    return {k: np.stack(v) for k, v in cols.items()}
-
-
-def cmd_check(a):
-    R = np.load(os.path.join(REF, f"ref_{a.tag}.npz"))
-    idx = [int(i) for i in R["_idx"]]
-    F = fast_samples(idx, a.negative)
+    imgs = eng.decode(req.reshape(-1, 2), 0).reshape(len(idx), 3, 224, 224, 3)
+    F = {f"image/{nm}": imgs[:, c] for c, nm in enumerate(fast.NAMES)}
+    for c, nm in enumerate(fast.NAMES):
+        F[f"image_mask/{nm}"] = np.ones(len(idx), bool)
+    for k in ("actions", "state", "tokenized_prompt", "tokenized_prompt_mask"):
+        F[k] = s[k]
+    print(f"네이티브 {len(idx)}개 샘플 {time.time()-t:.1f}s, 엔진 {eng.stats()}")
+    eng.close()
     print("=" * 78)
-    print(f"가속판 vs 원래 기준 '{a.tag}' ({len(idx)} 샘플{', 음성 대조 ' + a.negative if a.negative else ''})")
+    print(f"네이티브 vs 원래 기준 '{a.tag}' ({len(idx)} 샘플{', 음성 대조 ' + a.negative if a.negative else ''})")
     print("=" * 78)
     print(f"  {'텐서':<34}{'판정':<12}{'최대 |오차|':>12}   비고")
     bad = 0
@@ -266,45 +357,47 @@ def cmd_check(a):
         if k == "_idx":
             continue
         if k not in F:
-            print(f"  {k:<34}{'다름':<12}{'':>12}   가속판에 없음")
+            print(f"  {k:<34}{'다름':<12}{'':>12}   네이티브에 없음")
             bad += 1
             continue
         v, why, err = verdict(F[k], R[k])
         bad += v != "비트 동일"
         print(f"  {k:<34}{v:<12}{err:>12.3g}   {why}")
-    extra = [k for k in F if k not in R.files]
-    if extra:
-        print(f"  가속판에만 있는 키: {extra}")
-        bad += 1
     if a.negative:
-        print(f"\n음성 대조: " + ("잡았다 (정상)" if bad else "못 잡았다 — 대조가 무디다"))
+        print("\n음성 대조: " + ("잡았다 (정상)" if bad else "못 잡았다 — 대조가 무디다"))
         return 0 if bad else 1
     print("\n" + ("통과 — 전부 비트 동일" if not bad else f"실패 — {bad} 개 텐서가 비트 동일이 아님"))
     return 1 if bad else 0
 
 
+# ------------------------------------------------------------------ 로더 통째 (GPU)
 def cmd_loader(a):
-    """두 로더를 같은 seed 로 만들어 배치를 통째로 (GPU 위 Observation 까지) 대조."""
     import jax
     from fasttrain import fast, orig
 
     cfg = orig.train_config(num_workers=a.workers, batch_size=a.batch)
     it_o = iter(orig.loader(cfg, shuffle=True, num_batches=a.batches))
-    it_f = iter(fast.FastLoader(cfg, shuffle=True, num_batches=a.batches, num_workers=a.workers,
-                                batch_size=a.batch, decode_threads=6))
+    nat = fast.NativeLoader(cfg, shuffle=True, num_batches=a.batches, batch_size=a.batch, persistent=a.workers > 0)
+    it_f = iter(nat)
     bad = 0
     for b in range(a.batches):
         (oo, oa), (fo, fa) = next(it_o), next(it_f)
         lo = flat({"obs": oo.to_dict(), "actions": oa})
         lf = flat({"obs": fo.to_dict(), "actions": fa})
-        for k in lo:
-            if lo[k].dtype == object or lo[k].shape == ():
+        for k in sorted(lo):
+            if lo[k].dtype == object:
                 continue
-            v, why, err = verdict(np.asarray(jax.device_get(lf[k])), np.asarray(jax.device_get(lo[k])))
+            if k not in lf:
+                print(f"  배치 {b} {k:<44}네이티브에 없음")
+                bad += 1
+                continue
+            v, why, _ = verdict(np.asarray(jax.device_get(lf[k])), np.asarray(jax.device_get(lo[k])))
             bad += v != "비트 동일"
             if b == 0 or v != "비트 동일":
-                print(f"  배치 {b} {k:<40}{v:<12}{why}")
-    print("\n" + ("통과 — 로더 출력 전부 비트 동일" if not bad else f"실패 — {bad}"))
+                print(f"  배치 {b} {k:<44}{v:<12}{why}")
+        del oo, oa, fo, fa, lo, lf
+    print(f"\n네이티브 로더 통계 {nat.stats()}")
+    print("통과 — 로더 출력(섞기 순서 포함) 전부 비트 동일" if not bad else f"실패 — {bad}")
     return 1 if bad else 0
 
 
@@ -312,10 +405,12 @@ def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("index")
-    s = sp.add_parser("nonimage")
-    s.add_argument("--n", type=int, default=224)
+    sp.add_parser("order")
+    s = sp.add_parser("table")
+    s.add_argument("--n", type=int, default=0, help="0 = 전부")
+    s.add_argument("--procs", type=int, default=16)
     s = sp.add_parser("stage")
-    s.add_argument("--n", type=int, default=16)
+    s.add_argument("--n", type=int, default=24)
     s.add_argument("--seed", type=int, default=0)
     s = sp.add_parser("ref")
     s.add_argument("--tag", default="a")
@@ -331,8 +426,9 @@ def main():
     s.add_argument("--batch", type=int, default=32)
     s.add_argument("--workers", type=int, default=2)
     a = ap.parse_args()
-    sys.exit({"index": cmd_index, "nonimage": cmd_nonimage, "stage": cmd_stage, "ref": cmd_ref, "same": cmd_same, "check": cmd_check,
-              "loader": cmd_loader}[a.cmd](a) or 0)
+    fn = {"index": cmd_index, "order": cmd_order, "table": cmd_table, "stage": cmd_stage, "ref": cmd_ref,
+          "same": cmd_same, "check": cmd_check, "loader": cmd_loader}[a.cmd]
+    sys.exit(fn(a) or 0)
 
 
 if __name__ == "__main__":

@@ -1,301 +1,422 @@
-"""가속 로더 — 파이썬은 openpi 로더에 거는 접착부만 한다.
+"""네이티브 로더 접착부 — 파이썬은 ctypes 로 C ABI 를 부르고 DLPack 으로 JAX 에 넘기는 일만 한다. torch 를 부르지 않는다.
 
-원래 (openpi create_b1k_data_loader)                     가속
-------------------------------------------------------  ----------------------------------------------------------
-워커: 행 읽기 + 영상 6개 디코딩(깊이 3개는 버림)          워커: 행 읽기 + 영상 대신 "어느 파일의 몇 번 프레임" 계산
-      + 변환(JAX 크기 조정 포함, 워커마다 GPU 문맥)             + 원래 변환 그대로(크기 조정만 뺌, GPU 안 씀)
-메인: np.stack → jax 배열(호스트→GPU)                     메인(뒤 스레드): C++ 엔진이 NVDEC 로 3카메라×배치 프레임을
-                                                               풀고 색 변환·크기 조정 커널로 GPU 에 바로 224² 를 쓴다
-                                                               → DLPack 으로 JAX 에 넘김. 다음 배치를 미리 만든다.
-이미지 외 값(상태·행동·토큰)은 원래 openpi 코드가 그대로 만든다 → 비트 동일이 구조상 보장된다.
-이미지는 tools/ft_verify.py 가 원래 결과와 비트 단위로 대조한다.
+원래 (openpi create_b1k_data_loader)                  네이티브 (libftcore.so, C++/CUDA)
+---------------------------------------------------  --------------------------------------------------------------
+torch DataLoader + spawn 워커 8개                      C++ 생산 스레드 1 + NVDEC 엔진 스레드 N
+  샘플마다: parquet 행 읽기, 영상 6개 CPU 디코딩,        표(Rust `ftprep table`, mmap)에서 행동 창 델타·정규화·상태·토큰,
+  파이썬 변환 8개, JAX 크기 조정                         영상은 NVDEC → 색표 커널 → 크기 조정 커널 (GPU 슬롯에 바로)
+  np.stack → jax 배열(호스트→GPU 14.8 MB)              이미지 외 0.3 MB 만 고정 메모리 → GPU, 배치 10개 텐서를 DLPack 으로
+섞기: torch randperm (seed 42)                         같은 순서를 MT19937 로 (loader.cpp Sampler)
+
+학습 쪽에 넘기는 것은 원래와 같다: (Observation.from_dict(batch), batch["actions"]).
 """
 from __future__ import annotations
 
+import ctypes
+import hashlib
+import json
 import os
-import queue
-import threading
+import subprocess
 
 import numpy as np
 
 WORK = os.environ.get("FT_WORK", os.path.expanduser("~/fasttrain_work"))
-NVHDR = os.environ.get("FT_NVHDR", os.path.join(WORK, "third_party", "nv-codec-headers", "include"))
-CSRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csrc")
+LIB = os.environ.get("FT_LIB", os.path.join(WORK, "build", "native", "libftcore.so"))
+FTPREP = os.environ.get("FT_PREP", os.path.join(WORK, "target", "release", "ftprep"))
+LUT = os.path.join(WORK, "lut", "lut_w720.bin")
 SIZES = (720, 480)
 # 카메라 순서 = 로봇 설정 image_0,1,2 = B1KInputs 의 이름 순서 (openpi b1k_policy.py:71-80)
 NAMES = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
-_placeholder = np.zeros((3, 1, 1), np.float32)  # B1KInputs 가 받는 자리표시 (이미지는 GPU 에서 채운다)
+# openpi pi05_b1k 의 샘플 변환 순서 — 이것과 다르면 표가 원래와 달라질 수 있으니 멈춘다
+EXPECTED_TRANSFORMS = ("PromptFromLeRobotTask", "RepackTransform", "B1KInputs", "MappedDeltaActions", "Normalize",
+                       "InjectDefaultPrompt", "ResizeImages", "TokenizePrompt", "PadStatesAndActions")
+
+_P = ctypes.c_void_p
+_I64P = ctypes.POINTER(ctypes.c_int64)
+_I32P = ctypes.POINTER(ctypes.c_int32)
+_F32P = ctypes.POINTER(ctypes.c_float)
+_F64P = ctypes.POINTER(ctypes.c_double)
+_U8P = ctypes.POINTER(ctypes.c_uint8)
+_lib = None
 
 
-# ---------------------------------------------------------------- 빌드·준비
-def build_ext(verbose: bool = False):
-    """C++/CUDA 확장을 빌드(처음 한 번)하고 불러온다. 외부 GPU: FT_CUDA_ARCH 로 아키텍처 지정 (예 "9.0")."""
-    os.environ.setdefault("CUDA_HOME", "/usr/local/cuda-12.8")
-    os.environ["TORCH_CUDA_ARCH_LIST"] = os.environ.get("FT_CUDA_ARCH", os.environ.get("TORCH_CUDA_ARCH_LIST", "12.0"))
-    from torch.utils.cpp_extension import load
-
-    bdir = os.path.join(WORK, "build", "ftcore")
-    os.makedirs(bdir, exist_ok=True)
-    return load(name="ftcore", sources=[f"{CSRC}/ftcore.cpp", f"{CSRC}/nvdec.cpp", f"{CSRC}/kernels.cu"],
-                extra_include_paths=[CSRC, NVHDR], extra_cflags=["-O3"], extra_cuda_cflags=["-O3"],
-                extra_ldflags=["-ldl"], build_directory=bdir, verbose=verbose)
-
-
-def make_engine(videos, indexes, threads: int, lut_override=None, weight_hook=None, check: bool = True):
-    """C++ 엔진 만들기: 색 변환 표 + 이 GPU 에서 보정한 크기 조정 탭(calib.py) → 원래와 비트 동일한지 uint8 로 점검."""
-    import torch
-
-    from fasttrain import calib
-
-    ext = build_ext()
-    lut = lut_override if lut_override is not None else torch.from_file(
-        os.path.join(WORK, "lut", "lut_w720.bin"), size=(1 << 24) * 3, dtype=torch.uint8)
-    lut = lut.cuda()
-    st, ct, wt, sr, sc = calib.calibrate_all(SIZES)
-    if weight_hook is not None:
-        wt = weight_hook(wt)
-    t = torch.from_numpy
-    eng = ext.Engine(videos, indexes, lut, list(SIZES), t(st), t(ct), t(wt), t(sr), t(sc), threads=threads, device=0)
-    eng._keep = lut  # 표가 엔진보다 먼저 풀리지 않게
-    eng.calib = {m: (calib.boundaries(st[c], sr[c]), calib.boundaries(st[c], sc[c])) for c, m in enumerate(SIZES)}
-    if check:
-        bad = calib.validate(eng)
-        if any(bad.values()):
-            raise RuntimeError(f"크기 조정 커널이 원래 JAX 결과와 다르다 (다른 값 수 {bad}) — 보정 실패")
-        eng.validated = bad
-        eng.lut_checked = check_lut(eng, videos)
-    return eng
-
-
-def check_lut(eng, videos) -> int:
-    """해상도마다 실제 프레임 3장(처음·가운데·끝)을 NVDEC+색표 vs 원래 torchcodec 경로로 대조. 다르면 멈춘다.
-    원래 색 변환은 그 기계의 FFmpeg(libswscale) 빌드에 달려 있어서, 다른 기계에서는 표를 다시 만들어야 할 수 있다."""
-    import torch
-
-    from fasttrain import lut as L
-
-    seen, n_checked = set(), 0
-    for f, v in enumerate(videos):
-        W, H, _, n = eng.info(f)
-        if W in seen:
-            continue
-        seen.add(W)
-        frames = [0, n // 2, n - 1]
-        out = torch.empty((len(frames), H, W, 3), dtype=torch.uint8, device="cuda")
-        eng.run(torch.tensor([[f, t] for t in frames], dtype=torch.int64), out, 1)
-        nbad = int((out.cpu().numpy() != L.original_rgb(v, frames)).sum())
-        if nbad:
-            raise RuntimeError(f"색 변환 표가 이 기계의 원래 디코더 결과와 다르다 ({v}: 다른 값 {nbad}) — "
-                               "`ft_run.sh src/fasttrain/lut.py build` 로 이 기계에서 다시 만들 것")
-        n_checked += len(frames)
-    return n_checked
+def lib():
+    """libftcore.so 를 불러 함수 모양을 붙인다 (빌드: src/fasttrain/build.sh)."""
+    global _lib
+    if _lib is not None:
+        return _lib
+    if not os.path.exists(LIB):
+        raise FileNotFoundError(f"{LIB} 가 없다 — `bash src/fasttrain/build.sh` 로 빌드")
+    L = ctypes.CDLL(LIB)
+    sig = {
+        "ft_last_error": (ctypes.c_char_p, []),
+        "ft_table_open": (_P, [ctypes.c_char_p]),
+        "ft_table_close": (None, [_P]),
+        "ft_table_len": (ctypes.c_int64, [_P]),
+        "ft_table_dims": (ctypes.c_int, [_P, _I32P]),
+        "ft_table_samples": (ctypes.c_int, [_P, _I64P, ctypes.c_int64, _F32P, _F32P, _I32P, _U8P, _I32P]),
+        "ft_sampler_order": (ctypes.c_int, [ctypes.c_int64, ctypes.c_int, ctypes.c_uint64, ctypes.c_int, ctypes.c_int,
+                                            ctypes.c_int64, _I64P]),
+        "ft_engine_create": (_P, [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), _U8P,
+                                  ctypes.c_int, _I32P, _I32P, _I32P, _F32P, _I32P, _I32P, ctypes.c_int, ctypes.c_int]),
+        "ft_engine_destroy": (None, [_P]),
+        "ft_engine_info": (ctypes.c_int, [_P, ctypes.c_int, _I64P]),
+        "ft_engine_stats": (ctypes.c_int, [_P, _F64P]),
+        "ft_engine_decode_host": (ctypes.c_int, [_P, _I64P, ctypes.c_int, ctypes.c_int, _U8P, ctypes.c_int64]),
+        "ft_engine_resize_host": (ctypes.c_int, [_P, _U8P, ctypes.c_int, ctypes.c_int, _U8P]),
+        "ft_loader_create": (_P, [ctypes.c_char_p, _U8P, ctypes.c_int, _I32P, _I32P, _I32P, _F32P, _I32P, _I32P,
+                                  ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_int,
+                                  ctypes.c_int]),
+        "ft_loader_engine": (_P, [_P]),
+        "ft_loader_next": (ctypes.c_int, [_P, _I64P, ctypes.POINTER(_P)]),
+        "ft_loader_stats": (ctypes.c_int, [_P, _F64P]),
+        "ft_loader_destroy": (ctypes.c_int, [_P]),
+        "ft_dl_release": (None, [_P]),
+    }
+    for name, (res, args) in sig.items():
+        f = getattr(L, name)
+        f.restype, f.argtypes = res, args
+    _lib = L
+    return L
 
 
-def ensure_index(video_path: str) -> str:
-    """Rust ftprep 로 mp4 패킷 색인을 만든다 (없을 때만)."""
-    import subprocess
+def _err() -> str:
+    return lib().ft_last_error().decode("utf-8", "replace")
 
-    rel = os.path.relpath(video_path, os.path.dirname(os.path.dirname(os.path.dirname(video_path))))
-    out = os.path.join(WORK, "idx", rel.replace("/", ".") + ".ftidx")
-    if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(video_path):
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        subprocess.run([os.path.join(WORK, "target", "release", "ftprep"), "index", video_path, out], check=True,
-                       stdout=subprocess.DEVNULL)
+
+def _ptr(a: np.ndarray, t):
+    assert a.flags["C_CONTIGUOUS"]
+    return a.ctypes.data_as(t)
+
+
+# ---------------------------------------------------------------- 표 (Rust ftprep table)
+def table_spec(cfg) -> tuple[dict, bytes]:
+    """openpi 설정에서 표 스펙을 뽑는다 (학습 시작 때 한 번. openpi 설정 모듈을 읽으므로 여기만 openpi 를 import)."""
+    import openpi.models.model as _model
+    import openpi.training.config as C
+    import openpi.training.lerobot_compat as LC
+    from openpi.shared import download
+
+    from fasttrain import orig
+
+    dc = cfg.data.create(cfg.assets_dirs, cfg.model)
+    names = tuple(type(t).__name__ for t in orig.transform_list(dc))
+    if names != EXPECTED_TRANSFORMS:
+        raise RuntimeError(f"openpi 변환 순서가 표가 가정한 것과 다르다: {names}")
+    if cfg.model.model_type != _model.ModelType.PI05 or dc.use_quantile_norm or not dc.prompt_from_task:
+        raise RuntimeError("pi05 + z-score 정규화 + 과제 문장 설정만 지원")
+    robot = C.ROBOT_REGISTRY[cfg.data.robot_config_name]
+    cams = [robot.observations[f"image_{i}"].dataset_key for i in range(3)]
+    delta = cfg.data._build_delta_mappings(robot) if cfg.data.extra_delta_transform else []
+    S = sum(1 if p.is_eef else len(p.indices) for p in robot.proprio)
+    A = robot.action_dim
+    ns = dc.norm_stats
+    norm = np.concatenate([np.asarray(ns["state"].mean, np.float64)[:S], np.asarray(ns["state"].std, np.float64)[:S],
+                           np.asarray(ns["actions"].mean, np.float64)[:A], np.asarray(ns["actions"].std, np.float64)[:A]])
+    meta = LC.LeRobotDatasetMetadata(repo_id=dc.repo_id, root=dc.dataset_root)
+    prompts = {str(k): v for k, v in LC.tasks_from_metadata(meta).items()}
+    tok = str(download.maybe_download("gs://big_vision/paligemma_tokenizer.model", gs={"token": "anon"}))
+    kw = dc.dataset_kwargs or {}
+    spec = {
+        "root": str(dc.dataset_root).rstrip("/"),
+        "episodes": [int(e) for e in kw["episodes"]] if kw.get("episodes") is not None else None,
+        "cams": cams,
+        "state_key": "observation.state",
+        "action_key": robot.action_key,
+        "proprio": [{"indices": list(map(int, p.indices)), "eef": bool(p.is_eef)} for p in robot.proprio],
+        "delta": [{"action": list(map(int, a)), "state": list(map(int, s))} for a, s in delta],
+        "action_dim": int(A),
+        "model_dim": int(cfg.model.action_dim),
+        "horizon": int(cfg.model.action_horizon),
+        "prompts": prompts,
+        "tokenizer": tok,
+        "max_token_len": int(cfg.model.max_token_len),
+        "discrete_state": bool(cfg.model.discrete_state_input),
+        "tolerance_s": float(kw.get("tolerance_s", 1e-4)),
+    }
+    return spec, norm.astype("<f8").tobytes()
+
+
+def ensure_table(cfg, force: bool = False) -> str:
+    """표가 없거나 스펙이 바뀌었으면 Rust ftprep 로 만든다. 표 폴더 경로를 돌려준다."""
+    spec, norm = table_spec(cfg)
+    h = hashlib.sha1(json.dumps(spec, sort_keys=True).encode() + norm).hexdigest()[:12]
+    out = os.path.join(WORK, "cache", f"{cfg.name}-{cfg.data.repo_id}-{h}")
+    if os.path.exists(os.path.join(out, "table.txt")) and not force:
+        return out
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "norm.f64"), "wb") as f:
+        f.write(norm)
+    spec.update(out=out, idx_dir=os.path.join(WORK, "idx"), norm_file=os.path.join(out, "norm.f64"))
+    with open(os.path.join(out, "spec.json"), "w") as f:
+        json.dump(spec, f, ensure_ascii=False, indent=1)
+    subprocess.run([FTPREP, "table", os.path.join(out, "spec.json")], check=True)
     return out
 
 
-_IDX_REC = np.dtype([("off", "<u8"), ("size", "<u4"), ("key", "<u4"), ("pts", "<i8")])
+class Table:
+    """표 읽기 (CPU, 검증용): 샘플 번호 → 이미지 외 값 (네이티브 로더가 GPU 에 넣는 것과 같은 함수)."""
 
-
-def index_pts_seconds(path: str) -> np.ndarray:
-    """.ftidx(ftprep 형식)에서 표시 시각(초)만 읽는다. 머리 32 B + 매개변수 + u64 개수 + 24 B 레코드."""
-    b = np.fromfile(path, np.uint8)
-    assert bytes(b[:8]) == b"FTIDX1\0\0", path
-    w, h, ts, nal, plen, mono = np.frombuffer(b[8:32].tobytes(), "<u4")
-    n = int(np.frombuffer(b[32 + plen: 40 + plen].tobytes(), "<u8")[0])
-    rec = np.frombuffer(b[40 + plen: 40 + plen + 24 * n].tobytes(), _IDX_REC)
-    return rec["pts"] / float(ts)
-
-
-# ---------------------------------------------------------------- 워커 쪽 데이터셋
-class FastDataset:
-    """원래 샘플에서 영상 디코딩과 크기 조정만 뺀 것. 이미지 자리에는 (파일, 프레임) 요청을 담는다."""
-
-    def __init__(self, cfg):
-        import openpi.training.config as C
-        import openpi.transforms as T
-        from torchcodec.decoders import VideoDecoder
-
-        from fasttrain import orig
-
-        ds, dc = orig.dataset(cfg)
-        self.lds = orig.lerobot_of(ds)
-        self.tfs = [t for t in orig.transform_list(dc) if not isinstance(t, T.ResizeImages)]
-        robot = C.ROBOT_REGISTRY[cfg.data.robot_config_name]
-        self.cams = [robot.observations[f"image_{i}"].dataset_key for i in range(3)]
-        meta = self.lds.meta
-        self.tol = self.lds.tolerance_s
-        root = str(self.lds.root)
-        # 파일 표: 카메라 × (chunk, file) → 번호
-        self.videos, fid = [], {}
-        eps = sorted(self.lds.episodes) if self.lds.episodes is not None else range(meta.total_episodes)
-        self.ep_file, self.ep_from = {}, {}
-        for e in eps:
-            ep = meta.episodes[e]
-            fs, frs = [], []
-            for key in self.cams:
-                path = os.path.join(root, meta.get_video_file_path(e, key))
-                if path not in fid:
-                    fid[path] = len(self.videos)
-                    self.videos.append(path)
-                fs.append(fid[path])
-                frs.append(ep[f"videos/{key}/from_timestamp"])
-            self.ep_file[e], self.ep_from[e] = fs, frs
-        # lerobot 이 쓰는 값 그대로: torchcodec(approximate) 의 average_fps (lerobot video_utils.py:237, 305)
-        self.fps = [VideoDecoder(p, seek_mode="approximate").metadata.average_fps for p in self.videos]
-        self.indexes = [ensure_index(p) for p in self.videos]
-        self.pts_s = [index_pts_seconds(p) for p in self.indexes]  # 프레임 시각 검사용 (원래 lerobot 검사와 같은 식)
+    def __init__(self, path: str):
+        self.h = lib().ft_table_open(path.encode())
+        if not self.h:
+            raise RuntimeError(_err())
+        d = np.zeros(6, np.int32)
+        lib().ft_table_dims(self.h, _ptr(d, _I32P))
+        self.S, self.A, self.M, self.H, self.T, self.cams = map(int, d)
+        self.n = int(lib().ft_table_len(self.h))
 
     def __len__(self):
-        return len(self.lds)
+        return self.n
 
-    def __getitem__(self, idx):
-        reader, meta = self.lds.reader, self.lds.meta
-        # --- lerobot dataset_reader.get_item 과 같은 순서 (292-306), 영상 디코딩만 뺌
-        item = reader.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        abs_idx = item["index"].item()
-        q, pad = reader._get_query_indices(abs_idx, ep_idx)
-        qr = reader._query_hf_dataset(q)
-        item = {**item, **pad}
-        for k, v in qr.items():
-            item[k] = v
-        cur = item["timestamp"].item()
-        req = np.zeros((3, 2), np.int64)
-        for c, key in enumerate(self.cams):
-            f = self.ep_file[ep_idx][c]
-            ts = self.ep_from[ep_idx][c] + cur
-            fr = round(ts * self.fps[f])  # lerobot video_utils.py:305 와 같은 식
-            loaded = self.pts_s[f][fr]
-            if not abs(ts - loaded) < self.tol:  # lerobot video_utils.py:322 와 같은 검사
-                raise ValueError(f"프레임 시각 허용오차 초과: {ts} vs {loaded} ({self.videos[f]})")
-            req[c] = (f, fr)
-            item[key] = _placeholder
-        item["task"] = meta.tasks.iloc[item["task_index"].item()].name
-        x = item
-        for tf in self.tfs:
-            x = tf(x)
-        x["_ft_req"] = req
-        return x
+    def samples(self, idx) -> dict:
+        idx = np.ascontiguousarray(idx, np.int64)
+        k = len(idx)
+        act = np.zeros((k, self.H, self.M), np.float32)
+        st = np.zeros((k, self.M), np.float32)
+        tok = np.zeros((k, self.T), np.int32)
+        tm = np.zeros((k, self.T), np.uint8)
+        req = np.zeros((k, self.cams, 2), np.int32)
+        if lib().ft_table_samples(self.h, _ptr(idx, _I64P), k, _ptr(act, _F32P), _ptr(st, _F32P), _ptr(tok, _I32P),
+                                  _ptr(tm, _U8P), _ptr(req, _I32P)):
+            raise RuntimeError(_err())
+        return {"actions": act, "state": st, "tokenized_prompt": tok, "tokenized_prompt_mask": tm.astype(bool),
+                "req": req}
+
+    def close(self):
+        if self.h:
+            lib().ft_table_close(self.h)
+            self.h = None
 
 
-# ---------------------------------------------------------------- 메인 쪽 로더
-class FastLoader:
-    """openpi TorchDataLoader + DataLoaderImpl 자리에 그대로 들어간다: (Observation, actions) 를 낸다."""
+def sampler_order(n: int, bs: int, seed: int, nbatches: int, shuffle: bool = True, persistent: bool = True):
+    out = np.zeros((nbatches, bs), np.int64)
+    if lib().ft_sampler_order(n, bs, seed, int(shuffle), int(persistent), nbatches, _ptr(out, _I64P)):
+        raise RuntimeError(_err())
+    return out
 
-    def __init__(self, cfg, *, sharding=None, shuffle=False, num_batches=None, num_workers=None, batch_size=None,
-                 decode_threads=6, prefetch=2):
+
+# ---------------------------------------------------------------- 엔진 (검증용 직접 사용)
+def load_lut() -> np.ndarray:
+    if not os.path.exists(LUT):
+        raise FileNotFoundError(f"{LUT} 가 없다 — `ft_run.sh src/fasttrain/lut.py build`")
+    a = np.fromfile(LUT, np.uint8)
+    assert a.size == (1 << 24) * 3
+    return a
+
+
+CALIB_BIN = os.path.join(WORK, "cache", "calib.bin")
+
+
+def _calib_arrays():
+    """크기 조정 보정 (원래 JAX 함수를 이 GPU 에서 찔러 봄, calib.py). C++ ftbench 가 읽도록 calib.bin 에도 쓴다."""
+    from fasttrain import calib
+
+    st, ct, wt, sr, sc = (np.ascontiguousarray(x) for x in calib.calibrate_all(SIZES))
+    os.makedirs(os.path.dirname(CALIB_BIN), exist_ok=True)
+    with open(CALIB_BIN, "wb") as f:
+        f.write(np.asarray([len(SIZES), *SIZES], "<i4").tobytes())
+        for x, t in ((st, "<i4"), (ct, "<i4"), (wt, "<f4"), (sr, "<i4"), (sc, "<i4")):
+            f.write(x.astype(t).tobytes())
+    return [st, ct, wt, sr, sc], calib
+
+
+class Engine:
+    """NVDEC 엔진을 파일 목록으로 직접 (구간 대조용)."""
+
+    def __init__(self, videos, indexes, threads: int = 4, device: int = 0, lut=None, weight_hook=None):
+        (st, ct, wt, sr, sc), calib = _calib_arrays()
+        if weight_hook is not None:
+            wt = np.ascontiguousarray(weight_hook(wt), np.float32)
+        lut = load_lut() if lut is None else np.ascontiguousarray(lut, np.uint8)
+        sizes = np.asarray(SIZES, np.int32)
+        v = (ctypes.c_char_p * len(videos))(*[p.encode() for p in videos])
+        ix = (ctypes.c_char_p * len(indexes))(*[p.encode() for p in indexes])
+        self.h = lib().ft_engine_create(len(videos), v, ix, _ptr(lut, _U8P), len(SIZES), _ptr(sizes, _I32P),
+                                        _ptr(st, _I32P), _ptr(ct, _I32P), _ptr(wt, _F32P), _ptr(sr, _I32P),
+                                        _ptr(sc, _I32P), threads, device)
+        if not self.h:
+            raise RuntimeError(_err())
+        self.owned = True
+        self.calib = {m: (calib.boundaries(st[c], sr[c]), calib.boundaries(st[c], sc[c])) for c, m in enumerate(SIZES)}
+
+    @classmethod
+    def borrow(cls, handle):
+        e = cls.__new__(cls)
+        e.h, e.owned = handle, False
+        return e
+
+    def info(self, f: int):
+        o = np.zeros(4, np.int64)
+        if lib().ft_engine_info(self.h, f, _ptr(o, _I64P)):
+            raise RuntimeError(_err())
+        return [int(x) for x in o]  # W, H, timescale, 표본 수
+
+    def stats(self):
+        o = np.zeros(4, np.float64)
+        lib().ft_engine_stats(self.h, _ptr(o, _F64P))
+        return {"requests": o[0], "decoded_frames": o[1], "parsers": o[2], "map_s": o[3]}
+
+    def decode(self, req, mode: int = 0) -> np.ndarray:
+        req = np.ascontiguousarray(req, np.int64).reshape(-1, 2)
+        if mode == 0:
+            out = np.empty((len(req), 224, 224, 3), np.uint8)
+        else:
+            W, H, _, _ = self.info(int(req[0, 0]))
+            out = np.empty((len(req), H, W, 3), np.uint8)
+        if lib().ft_engine_decode_host(self.h, _ptr(req, _I64P), len(req), mode, _ptr(out, _U8P), out.nbytes):
+            raise RuntimeError(_err())
+        return out
+
+    def resize(self, rgb: np.ndarray) -> np.ndarray:
+        rgb = np.ascontiguousarray(rgb, np.uint8)
+        out = np.empty((len(rgb), 224, 224, 3), np.uint8)
+        if lib().ft_engine_resize_host(self.h, _ptr(rgb, _U8P), len(rgb), rgb.shape[2], _ptr(out, _U8P)):
+            raise RuntimeError(_err())
+        return out
+
+    def close(self):
+        if self.h and self.owned:
+            lib().ft_engine_destroy(self.h)
+        self.h = None
+
+
+def index_path(video: str) -> str:
+    """Rust ftprep 의 index_path 와 같은 이름 (videos/ 아래 상대 경로의 / → .)."""
+    rel = video.split("/videos/", 1)[1]
+    return os.path.join(WORK, "idx", rel.replace("/", ".") + ".ftidx")
+
+
+def ensure_index(video: str) -> str:
+    out = index_path(video)
+    if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(video):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        subprocess.run([FTPREP, "index", video, out], check=True, stdout=subprocess.DEVNULL)
+    return out
+
+
+# ---------------------------------------------------------------- DLPack → JAX
+_capsule_new = ctypes.pythonapi.PyCapsule_New
+_capsule_new.restype = ctypes.py_object
+_capsule_new.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
+
+
+class _DL:
+    """C 가 만든 DLManagedTensor 하나를 __dlpack__ 규약으로 감싼다. JAX 가 가져가면(복사 없음) 다 쓴 뒤 deleter 를 부른다."""
+
+    __slots__ = ("ptr", "dev")
+
+    def __init__(self, ptr: int, dev: tuple[int, int]):
+        self.ptr, self.dev = ptr, dev
+
+    def __dlpack__(self, stream=None, **_):  # 데이터는 C 쪽에서 이미 동기화돼 있다
+        return _capsule_new(self.ptr, b"dltensor", None)
+
+    def __dlpack_device__(self):
+        return self.dev
+
+
+# ---------------------------------------------------------------- 로더
+class NativeLoader:
+    """openpi TorchDataLoader + DataLoaderImpl 자리에 들어간다: (Observation, actions) 를 낸다."""
+
+    def __init__(self, cfg, *, sharding=None, shuffle=False, num_batches=None, batch_size=None, decode_threads=6,
+                 slots=6, persistent=True, device=0, check=True):
         import jax
-        import torch
-
-        from fasttrain import orig
-        from openpi.training import data_loader as DL
 
         self.cfg = cfg
-        self.data_config_ = orig.data_config(cfg)
-        self.ds = FastDataset(cfg)
-        self.engine = make_engine(self.ds.videos, self.ds.indexes, decode_threads)
-        bs = (batch_size or cfg.batch_size) // jax.process_count()
-        nw = cfg.num_workers if num_workers is None else num_workers
-        self.bs, self.num_batches, self.prefetch = bs, num_batches, prefetch
+        self.data_config_ = cfg.data.create(cfg.assets_dirs, cfg.model)
+        self.table_dir = ensure_table(cfg)
+        self.bs = (batch_size or cfg.batch_size) // jax.process_count()
+        self.num_batches = num_batches
+        self.device = device
+        (st, ct, wt, sr, sc), calib = _calib_arrays()
+        lut = load_lut()
+        sizes = np.asarray(SIZES, np.int32)
+        # persistent=True: 원래 워커 > 0 (openpi 기본 8) 일 때의 섞기 순서
+        self.h = lib().ft_loader_create(self.table_dir.encode(), _ptr(lut, _U8P), len(SIZES), _ptr(sizes, _I32P),
+                                        _ptr(st, _I32P), _ptr(ct, _I32P), _ptr(wt, _F32P), _ptr(sr, _I32P),
+                                        _ptr(sc, _I32P), decode_threads, device, self.bs, int(shuffle), cfg.seed,
+                                        int(persistent), slots)
+        if not self.h:
+            raise RuntimeError(_err())
+        self.engine = Engine.borrow(lib().ft_loader_engine(self.h))
+        self.calib = {m: (calib.boundaries(st[c], sr[c]), calib.boundaries(st[c], sc[c])) for c, m in enumerate(SIZES)}
+        if check:  # 이 GPU 에서 크기 조정 커널 == 원래 JAX 크기 조정 (다르면 멈춘다)
+            bad = calib.validate(self.engine.resize)
+            if any(bad.values()):
+                raise RuntimeError(f"크기 조정 커널이 원래 JAX 결과와 다르다 {bad} — 보정 실패")
         if sharding is None:
             sharding = jax.sharding.NamedSharding(jax.sharding.Mesh(jax.devices(), ("B",)),
                                                   jax.sharding.PartitionSpec("B"))
         self.sharding = sharding
-        g = torch.Generator()
-        g.manual_seed(cfg.seed)  # 원래와 같은 순서 (data_loader.py:488-489)
-        import multiprocessing
-
-        self.torch_loader = torch.utils.data.DataLoader(
-            self.ds, batch_size=bs, shuffle=shuffle, num_workers=nw,
-            multiprocessing_context=multiprocessing.get_context("spawn") if nw > 0 else None,
-            persistent_workers=nw > 0, collate_fn=DL._collate_fn, worker_init_fn=DL._worker_init_fn,
-            drop_last=True, generator=g)
+        self.last_indices = None
 
     def data_config(self):
         return self.data_config_
 
-    def _cpu_batches(self):
-        # 원래 TorchDataLoader.__iter__ 처럼 끝나면 처음부터 다시 돈다 (data_loader.py:508-519)
-        n = 0
-        while True:
-            for b in self.torch_loader:
-                if self.num_batches is not None and n >= self.num_batches:
-                    return
-                n += 1
-                yield b
+    def stats(self) -> dict:
+        o = np.zeros(4, np.float64)
+        lib().ft_loader_stats(self.h, _ptr(o, _F64P))
+        return {"batches": o[0], "consumer_wait_s": o[1], "producer_wait_slot_s": o[2], "fill_s": o[3],
+                **self.engine.stats()}
 
-    def _to_device(self, b):
+    def next_raw(self):
+        """다음 배치를 JAX 배열 dict 로 (원래 collate 뒤 + GPU 전송 뒤와 같은 모양·형)."""
         import jax
-        import jax.numpy as jnp
-        import torch
 
-        req = torch.from_numpy(np.ascontiguousarray(b.pop("_ft_req").transpose(1, 0, 2).reshape(-1, 2)))
-        out = torch.empty((3, self.bs, 224, 224, 3), dtype=torch.uint8, device="cuda")
-        self.engine.run(req, out, 0)  # GIL 을 풀고 NVDEC·커널 — 돌아오면 out 이 다 채워져 있다
-        # JAX 소유로 GPU 안에서 한 번 복사하고 끝날 때까지 기다린 뒤 torch 메모리를 놓는다
-        # (그냥 DLPack 으로 빌려 쓰면, torch 가 그 블록을 다음 배치에 다시 쓰는 것과 JAX 의 비동기 연산이 겹칠 수 있다)
-        imgs = [jnp.array(jax.dlpack.from_dlpack(out[c]), copy=True) for c in range(3)]
-        jax.block_until_ready(imgs)
-        del out
-        assert set(b["image"]) == set(NAMES), b["image"].keys()
-        for name, a in zip(NAMES, imgs):
-            b["image"][name] = jax.device_put(a, self.sharding)
-        return jax.tree.map(
-            lambda x: x if isinstance(x, jax.Array) else jax.make_array_from_process_local_data(self.sharding, x), b)
+        idx = np.empty(self.bs, np.int64)
+        ptrs = (_P * 10)()
+        if lib().ft_loader_next(self.h, _ptr(idx, _I64P), ptrs):
+            raise RuntimeError(_err())
+        dev = (2, self.device)  # kDLCUDA
+        arrs = []
+        try:
+            for k in range(10):
+                arrs.append(jax.dlpack.from_dlpack(_DL(ptrs[k], dev)))
+        except BaseException:
+            for k in range(len(arrs), 10):
+                lib().ft_dl_release(ptrs[k])
+            raise
+        batch = {
+            "image": dict(zip(NAMES, arrs[0:3])),
+            "image_mask": dict(zip(NAMES, arrs[3:6])),
+            "state": arrs[6],
+            "tokenized_prompt": arrs[7],
+            "tokenized_prompt_mask": arrs[8],
+            "actions": arrs[9],
+        }
+        self.last_indices = idx
+        return jax.tree.map(lambda a: jax.device_put(a, self.sharding), batch)
 
     def __iter__(self):
         import openpi.models.model as _model
 
-        q: queue.Queue = queue.Queue(maxsize=self.prefetch)
-        stop = threading.Event()
-        END = object()
+        n = 0
+        while self.num_batches is None or n < self.num_batches:
+            b = self.next_raw()
+            n += 1
+            yield _model.Observation.from_dict(b), b["actions"]
 
-        def producer():
-            try:
-                for b in self._cpu_batches():
-                    if stop.is_set():
-                        return
-                    q.put(self._to_device(b))
-                q.put(END)
-            except BaseException as e:  # 소비 쪽에서 다시 던진다
-                q.put(e)
-
-        th = threading.Thread(target=producer, daemon=True)
-        th.start()
-        try:
-            while True:
-                item = q.get()
-                if item is END:
-                    return
-                if isinstance(item, BaseException):
-                    raise item
-                yield _model.Observation.from_dict(item), item["actions"]
-        finally:
-            stop.set()
+    def close(self):
+        """JAX 가 아직 배치를 들고 있으면 지우지 않는다 (프로세스 끝까지 남김)."""
+        if self.h and lib().ft_loader_destroy(self.h) == 0:
+            self.h = None
 
 
-def loader(num_workers=2, batch_size=32, shuffle=True, decode_threads=6, num_batches=None, cfg=None):
+def loader(batch_size=32, shuffle=True, decode_threads=6, num_batches=None, slots=6, cfg=None):
     from fasttrain import orig
 
-    cfg = cfg or orig.train_config(batch_size=batch_size, num_workers=num_workers)
-    return FastLoader(cfg, shuffle=shuffle, num_batches=num_batches, num_workers=num_workers, batch_size=batch_size,
-                      decode_threads=decode_threads)
+    cfg = cfg or orig.train_config(batch_size=batch_size)
+    return NativeLoader(cfg, shuffle=shuffle, num_batches=num_batches, batch_size=batch_size,
+                        decode_threads=decode_threads, slots=slots)
 
 
-def create_fast_b1k_data_loader(config, *, sharding=None, shuffle=False, num_batches=None, skip_norm_stats=False,
-                                decode_threads=None):
-    """openpi data_loader.create_b1k_data_loader 와 같은 모양 (fast-data 브랜치의 train_b1k.py 가 부른다)."""
+def create_fast_b1k_data_loader(config, *, sharding=None, shuffle=False, num_batches=None, skip_norm_stats=False):
+    """openpi data_loader.create_b1k_data_loader 와 같은 모양 (train_b1k.py 에서 FT_FAST_DATA=1 일 때)."""
     assert not skip_norm_stats, "skip_norm_stats 는 지원 안 함"
-    threads = decode_threads or int(os.environ.get("FT_DECODE_THREADS", "6"))
-    return FastLoader(config, sharding=sharding, shuffle=shuffle, num_batches=num_batches, decode_threads=threads)
+    threads = int(os.environ.get("FT_DECODE_THREADS", "6"))
+    slots = int(os.environ.get("FT_SLOTS", "6"))
+    # 원래 섞기 순서는 워커 수에 따라 다르다: 워커 > 0 이면 지속 반복자(기준 시드 한 번), 0 이면 에포크마다
+    return NativeLoader(config, sharding=sharding, shuffle=shuffle, num_batches=num_batches, decode_threads=threads,
+                        slots=slots, persistent=config.num_workers > 0)
