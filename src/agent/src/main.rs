@@ -2,18 +2,17 @@
 
 use bagent::catalog::Catalog;
 use bagent::fakes;
-use bagent::graph::{HttpGraph, NullGraph, SceneGraph, SharedGraph, StaticGraph};
+use bagent::graph::{NullGraph, SharedGraph, StaticGraph};
 use bagent::instruction::Format;
-use bagent::llm::{HttpLlm, Llm, ManagedLlm};
-use bagent::planner::{Agent, Core, Decider, LlmDecider, PlannerCfg, PriorDecider};
+use bagent::planner::{Agent, Core, LlmDecider, PriorDecider};
 use bagent::relay::{self, Mode, RelayCfg};
+use bagent::setup::{build_decider, build_graph, build_llm, load_catalog, planner_cfg};
 use bagent::trace::{self, Tracer};
 use bagent::util::Args;
 use serde_json::{json, Value};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평가기↔π0.5 중계기
 
@@ -33,6 +32,11 @@ const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평�
   bench        가짜 평가기로 왕복 시간 재기. --target 127.0.0.1:8000 [--n 300] [--rgbd] [--batch 1]
   bench-local  한 프로세스 안에서 직접 연결 vs 중계기 비교. [--n 300] [--rgbd] [--mode passthrough|fixed|agent]
   llm-check    같은 계획 요청을 여러 번 보내 지연·결정론 확인. [--llm kau] [--n 3] [--scenario radio]
+  link         평가기 연결(평가기 안 π0.5 ↔ 계획기, 관측은 세기만 — ROS 로 내보내는 판은 src/integ/simlink).
+               --listen 0.0.0.0:7801 [--no-planner] [--prompt-mode task|subtask] [--stage external|vote|off]
+               [--pose integrate|corrected] [--head-gap 6] [--wrist-every 0] [--settle-ms 400] [--once]
+               + relay 와 같은 계획기 인자(--llm --graph --decider --format --task --max-steps --trace-dir)
+  link-bench   가짜 접착부(Rust)로 link 지연 재기. --target 127.0.0.1:7801 [--n 600] [--task turning_on_radio]
 공통: --catalog assets/tasks.json (기본: 크레이트 assets)  키는 환경변수로만(KAU_API_KEY)"#;
 
 fn main() {
@@ -63,6 +67,8 @@ fn main() {
         "bench" => cmd_bench(&a),
         "bench-local" => cmd_bench_local(&a),
         "llm-check" => cmd_llm_check(&a),
+        "link" => cmd_link(&a),
+        "link-bench" => cmd_link_bench(&a),
         "bench-image" => {
             // 경계 스냅숏 비용: 머리 720²(RGBA) → RGB 복사 → 448² 축소 → JPEG, 손목 480² → 224²
             let n = a.num("n", 50usize);
@@ -92,82 +98,6 @@ fn main() {
     if let Err(e) = r {
         eprintln!("오류: {e}");
         std::process::exit(1);
-    }
-}
-
-fn load_catalog(a: &Args) -> Result<Catalog, String> {
-    let p = a.get("catalog").map(PathBuf::from).unwrap_or_else(Catalog::default_path);
-    Catalog::load(&p)
-}
-
-fn planner_cfg(a: &Args) -> Result<PlannerCfg, String> {
-    let mut c = PlannerCfg::default();
-    if let Some(f) = a.get("format") {
-        c.format = Format::parse(f).ok_or_else(|| format!("--format 은 task|subtask|purpose|metric: {f}"))?;
-        if c.format == Format::Metric {
-            eprintln!("경고: --format metric 은 실험 전용이다(π0.5 에 숫자 명령을 쓰지 않기로 함, docs/에이전트_설계.md 1.5)");
-        }
-    }
-    c.send_images = !a.flag("no-images");
-    c.max_prompt_tokens = a.num("max-prompt-tokens", c.max_prompt_tokens);
-    c.decision_budget_s = a.num("decision-budget-s", c.decision_budget_s);
-    c.ctx_budget_tokens = a.num("ctx-budget", c.ctx_budget_tokens);
-    c.thinking = a.flag("thinking");
-    if let Some(s) = a.get("seed") {
-        c.sampling.seed = s.parse().ok();
-    }
-    Ok(c)
-}
-
-fn build_llm(a: &Args) -> Result<Box<dyn Llm>, String> {
-    let timeout = a.num("llm-timeout-s", 60u64);
-    let spec = a.str_or("llm", "oracle");
-    let inner: Box<dyn Llm> = match spec.as_str() {
-        "oracle" | "mock" => Box::new(fakes::oracle_llm()),
-        "kau" => Box::new(HttpLlm::kau(timeout)?),
-        url if url.starts_with("http") => Box::new(HttpLlm::new(url, &a.str_or("model", "qwen3.5-9b"), a.get("key-env"), timeout)),
-        other => return Err(format!("--llm 을 모름: {other}")),
-    };
-    if a.get("llm-up-cmd").is_some() || a.get("llm-down-cmd").is_some() {
-        if spec == "kau" {
-            return Err("API 모드(kau)에서는 서버 올리고 내리기 훅을 쓰지 않는다".into());
-        }
-        return Ok(Box::new(ManagedLlm {
-            inner,
-            up_cmd: a.get("llm-up-cmd").map(|s| s.to_string()),
-            down_cmd: a.get("llm-down-cmd").map(|s| s.to_string()),
-            health_url: a.get("llm-health").map(|s| s.to_string()),
-            ready_timeout: Duration::from_secs(a.num("llm-ready-s", 120)),
-            up: false,
-        }));
-    }
-    Ok(inner)
-}
-
-fn build_graph(a: &Args) -> Box<dyn SceneGraph> {
-    match a.str_or("graph", "none").as_str() {
-        "none" => Box::new(NullGraph),
-        m if m.starts_with("meridian") => {
-            // meridian | meridian:127.0.0.1:7791
-            let addr = m.strip_prefix("meridian:").unwrap_or("127.0.0.1:7791");
-            Box::new(bagent::graph::MeridianGraph::new(addr, a.num("graph-timeout-s", 5)))
-        }
-        u if u.starts_with("http") => Box::new(HttpGraph::new(u, a.num("graph-timeout-s", 5))),
-        path => match StaticGraph::load(path) {
-            Ok(g) => Box::new(g),
-            Err(e) => {
-                eprintln!("그래프 파일 못 읽음({e}) — 그래프 없이");
-                Box::new(NullGraph)
-            }
-        },
-    }
-}
-
-fn build_decider(a: &Args) -> Result<Box<dyn Decider>, String> {
-    match a.str_or("decider", "llm").as_str() {
-        "prior" => Ok(Box::new(PriorDecider)),
-        "llm" => Ok(Box::new(LlmDecider { llm: build_llm(a)? })),
-        o => Err(format!("--decider 는 llm|prior: {o}")),
     }
 }
 
@@ -464,5 +394,95 @@ fn cmd_llm_check(a: &Args) -> Result<(), String> {
     }
     let same = outs.iter().all(|o| *o == outs[0]);
     println!("{n}번 결정 모두 같음: {same}");
+    Ok(())
+}
+
+fn cmd_link(a: &Args) -> Result<(), String> {
+    let catalog = Arc::new(load_catalog(a)?);
+    let cfg = bagent::link::cfg_from_args(a, catalog)?;
+    if let Some(d) = &cfg.trace_dir {
+        eprintln!("[link] 기록: {}", d.display());
+    }
+    bagent::link::run(cfg, &|| Box::new(bagent::link::NullSink::default())).map_err(|e| e.to_string())
+}
+
+/// 가짜 접착부: 평가기와 같은 크기의 관측(머리 720² RGBA + 깊이 f32, 손목 480²)을 link 가 요청하는 대로 보낸다.
+fn cmd_link_bench(a: &Args) -> Result<(), String> {
+    use bagent::link::{self, Client, Frame, Hello, CamSpec};
+    let n: u64 = a.num("n", 600);
+    let hello = Hello {
+        task: a.str_or("task", "turning_on_radio"),
+        num_envs: 1,
+        hz: 30.0,
+        max_steps: Some(n),
+        cams: vec![
+            CamSpec { name: "head".into(), w: 720, h: 720, k: [306.0, 306.0, 360.0, 360.0] },
+            CamSpec { name: "left_wrist".into(), w: 480, h: 480, k: [388.6639, 388.6639, 240.0, 240.0] },
+            CamSpec { name: "right_wrist".into(), w: 480, h: 480, k: [388.6639, 388.6639, 240.0, 240.0] },
+        ],
+        crp_order: vec!["left_wrist".into(), "right_wrist".into(), "head".into()],
+        stage_count: a.num("stage-count", 5),
+        client: "bagent link-bench".into(),
+        ..Default::default()
+    };
+    let (mut c, ack) = Client::connect(&a.str_or("target", "127.0.0.1:7801"), &hello).map_err(|e| e.to_string())?;
+    eprintln!("[link-bench] HELLO_ACK {ack}");
+    c.reset().map_err(|e| e.to_string())?;
+    let head_rgba = vec![90u8; 720 * 720 * 4];
+    let head_d: Vec<u8> = (0..720 * 720).flat_map(|i| (1.0f32 + (i % 720) as f32 * 0.001).to_le_bytes()).collect();
+    let wr_rgba = vec![60u8; 480 * 480 * 4];
+    let wr_d: Vec<u8> = (0..480 * 480).flat_map(|_| 0.5f32.to_le_bytes()).collect();
+    let frames = |want: u16| -> Vec<Frame> {
+        let mut v = Vec::new();
+        for cam in 0..3u8 {
+            let (s, rgba, d) = if cam == 0 { (720, &head_rgba, &head_d) } else { (480, &wr_rgba, &wr_d) };
+            if want & link::want_rgb(cam) != 0 {
+                v.push(Frame { cam, kind: link::KIND_RGBA8, h: s, w: s, data: rgba.clone() });
+            }
+            if want & link::want_depth(cam) != 0 {
+                v.push(Frame { cam, kind: link::KIND_DEPTH_F32, h: s, w: s, data: d.clone() });
+            }
+        }
+        v
+    };
+    let mut t_small = Vec::new();
+    let mut t_frames = Vec::new();
+    let mut t_hold = Vec::new();
+    let mut decisions = 0;
+    let mut frames_sent = 0u64;
+    for step in 0..n {
+        let mut p = vec![0f32; 61];
+        // 앞으로 천천히, 가끔 돌기, 250 스텝마다 그리퍼 닫기/열기
+        p[0] = if (step / 100) % 2 == 0 { 0.3 } else { 0.0 };
+        p[2] = if step % 200 > 150 { 0.2 } else { 0.0 };
+        let g = if (step / 250) % 2 == 0 { 0.045 } else { 0.01 };
+        p[24] = g;
+        p[25] = g;
+        p[49] = 0.045;
+        p[50] = 0.045;
+        let crp: Vec<f32> = [[0.1f32, 0.2, 1.0, 0.0, 0.0, 0.0, 1.0], [0.1, -0.2, 1.0, 0.0, 0.0, 0.0, 1.0], [0.05, 0.0, 1.6, 0.0, 0.0, 0.0, 1.0]].concat();
+        let t0 = std::time::Instant::now();
+        let (bits, wait, decs) = c.step(0, step, &p, &crp, &frames).map_err(|e| e.to_string())?;
+        let us = t0.elapsed().as_micros() as u32;
+        if wait {
+            t_hold.push(us);
+        } else if bits != 0 {
+            t_frames.push(us);
+        } else {
+            t_small.push(us);
+        }
+        frames_sent += bits.count_ones() as u64;
+        for d in decs {
+            if d.get("kind").and_then(|k| k.as_str()) != Some("stage") {
+                decisions += 1;
+            }
+            eprintln!("[link-bench] step {step}: {d}");
+        }
+    }
+    c.bye().map_err(|e| e.to_string())?;
+    println!("스텝 {n}, 결정 {decisions}, 보낸 영상 {frames_sent}");
+    println!("  영상 없는 스텝 {}", summarize_us(&t_small));
+    println!("  영상 스텝     {}", summarize_us(&t_frames));
+    println!("  경계(대기) 스텝 {}", summarize_us(&t_hold));
     Ok(())
 }

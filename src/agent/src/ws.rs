@@ -130,7 +130,7 @@ pub fn set_fast(s: &TcpStream) {
 /// Windows 평가기 ↔ WSL 경계에서 보이는 약 40 ms 대기(docs/평가기_가속설계.md 4.3, 지연 ACK 추정)를 줄이려는 것.
 /// `BAGENT_NO_QUICKACK=1` 이면 끈다(비교용).
 #[inline]
-fn quickack(s: &TcpStream) {
+pub fn quickack(s: &TcpStream) {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
@@ -143,7 +143,7 @@ fn quickack(s: &TcpStream) {
     let _ = s;
 }
 
-fn quickack_enabled() -> bool {
+pub fn quickack_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("BAGENT_NO_QUICKACK").map(|v| v != "1").unwrap_or(true))
 }

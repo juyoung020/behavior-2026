@@ -1,0 +1,9 @@
+{
+  "source": "refs/behavior-1k-solution/src/b1k/models/pi_behavior_config.py TASK_NUM_STAGES (2025 1위 모델: 과제별 단계 수 = 평균 시연 길이 / 900, 5~15)",
+  "index": "평가기 task_id (OmniGibson eval_utils TASK_NAMES_TO_INDICES, 0 = turning_on_radio) — 0~49 만",
+  "task_num_stages": [5, 6, 15, 15, 14, 12, 9, 15, 10, 15,
+                      7, 13, 10, 15, 15, 15, 15, 11, 13, 12,
+                      14, 15, 9, 15, 15, 15, 15, 15, 15, 15,
+                      11, 10, 10, 13, 5, 5, 14, 6, 8, 10,
+                      5, 15, 8, 15, 12, 11, 9, 14, 15, 15]
+}
