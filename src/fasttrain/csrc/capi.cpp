@@ -9,6 +9,7 @@
 
 #include "engine.h"
 #include "loader.h"
+#include "pil_resize.h"
 
 namespace {
 thread_local std::string g_err;
@@ -70,6 +71,39 @@ int ft_table_samples(void* tp, const int64_t* idx, int64_t n, float* act, float*
             t->sample(idx[k], act + (size_t)k * t->H * t->M, st + (size_t)k * t->M, tok + (size_t)k * t->T,
                       tm + (size_t)k * t->T);
             if (req) std::memcpy(req + (size_t)k * t->cams * 2, t->req + (size_t)idx[k] * t->cams * 2, t->cams * 8);
+        }
+    });
+}
+
+// ---------------------------------------------------------------- PIL 크기 조정 계획의 CPU 판 (검증용, GPU 커널과 같은 식)
+int ft_pil_resize_cpu(const uint8_t* in, int n, int W, int H, uint8_t* out) {
+    return guard([&] {
+        const ft::PilPlan p = ft::pil_plan(W, H, 224);
+        const int PB = ft::PIL_PRECISION_BITS;
+        auto clip8 = [&](int s) { int v = s >> PB; return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); };
+        std::vector<uint8_t> tmp((size_t)p.rows * p.out_w * 3);
+        for (int i = 0; i < n; ++i) {
+            const uint8_t* rgb = in + (size_t)i * W * H * 3;
+            for (int r = 0; r < p.rows; ++r)
+                for (int xx = 0; xx < p.out_w; ++xx)
+                    for (int c = 0; c < 3; ++c) {
+                        int xmin = p.h.bounds[2 * xx], cnt = p.h.bounds[2 * xx + 1];
+                        int ss = 1 << (PB - 1);
+                        for (int x = 0; x < cnt; ++x)
+                            ss += (int)rgb[((size_t)(p.ybox_first + r) * W + xmin + x) * 3 + c] * p.h.kk[(size_t)xx * p.h.ksize + x];
+                        tmp[((size_t)r * p.out_w + xx) * 3 + c] = clip8(ss);
+                    }
+            uint8_t* o = out + (size_t)i * 224 * 224 * 3;
+            std::memset(o, 0, 224 * 224 * 3);
+            for (int yy = 0; yy < p.out_h; ++yy)
+                for (int xx = 0; xx < p.out_w; ++xx)
+                    for (int c = 0; c < 3; ++c) {
+                        int ymin = p.v.bounds[2 * yy], cnt = p.v.bounds[2 * yy + 1];
+                        int ss = 1 << (PB - 1);
+                        for (int y = 0; y < cnt; ++y)
+                            ss += (int)tmp[((size_t)(ymin + y) * p.out_w + xx) * 3 + c] * p.v.kk[(size_t)yy * p.v.ksize + y];
+                        o[((size_t)(yy + p.pad_y) * 224 + xx + p.pad_x) * 3 + c] = clip8(ss);
+                    }
         }
     });
 }

@@ -8,6 +8,7 @@ GPU 없이 (JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES= bash tools/ft_run.sh tools/f
     index                 Rust mp4 색인 == libavformat(PyAV) 패킷
     order                 네이티브 섞기 순서 == torch DataLoader (워커 지속·워커 0, 에포크 경계 넘어)
     table [--n N]         이미지 외 값(행동·상태·토큰·마스크) + 영상 프레임 번호, 과제 전체 샘플 (기본 전부)
+    resize                PIL 크기 조정 계획(C++, GPU 커널과 같은 식의 CPU 판) == 원래 openpi_client PIL, 여러 모양
 GPU (bash tools/ft_run.sh tools/ft_verify.py ...):
     stage                 NVDEC+색표 == torchcodec RGB, 크기 조정 커널 == 원래 PIL (파일 6개 × 프레임 24)
     ref --tag a|b         원래 파이프라인 기준 저장 (고정 인덱스 288 = 무작위 224 + 경계 사례)
@@ -240,6 +241,31 @@ def cmd_table(a):
     return 1 if bad else 0
 
 
+# ------------------------------------------------------------------ PIL 크기 조정 계획 (GPU 없음)
+def cmd_resize(a):
+    import ctypes
+
+    from openpi_client import image_tools as pil_tools
+    from fasttrain import fast
+
+    f = fast.lib().ft_pil_resize_cpu
+    f.restype, f.argtypes = ctypes.c_int, [fast._U8P, ctypes.c_int, ctypes.c_int, ctypes.c_int, fast._U8P]
+    rng = np.random.default_rng(3)
+    tot = 0
+    print("PIL 크기 조정: 네이티브 계획(C++ CPU 판) vs 원래 openpi_client.image_tools.resize_with_pad")
+    for h, w in ((720, 720), (480, 480), (480, 640), (640, 480), (300, 200), (224, 300), (1080, 1920), (37, 91)):
+        X = rng.integers(0, 256, (8, h, w, 3), dtype=np.uint8)
+        X[4:] = (np.linspace(0, 255, h * w * 3).reshape(h, w, 3) + rng.integers(-2, 3, (4, h, w, 3))).clip(0, 255)
+        out = np.empty((8, 224, 224, 3), np.uint8)
+        if f(X.ctypes.data_as(fast._U8P), 8, w, h, out.ctypes.data_as(fast._U8P)):
+            raise RuntimeError(fast._err())
+        d = int((out != pil_tools.resize_with_pad(X, 224, 224)).sum())
+        tot += d
+        print(f"  {h}x{w}: 무작위 4 + 부드러운 계조 4 장, 다른 값 {d}")
+    print("통과" if tot == 0 else f"실패 {tot}")
+    return 1 if tot else 0
+
+
 # ------------------------------------------------------------------ 구간별 (GPU)
 def cmd_stage(a):
     from openpi_client import image_tools as pil_tools  # 원래 ResizeImages 가 쓰는 것 (openpi transforms.py:9, 190)
@@ -409,6 +435,7 @@ def main():
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("index")
     sp.add_parser("order")
+    sp.add_parser("resize")
     s = sp.add_parser("table")
     s.add_argument("--n", type=int, default=0, help="0 = 전부")
     s.add_argument("--procs", type=int, default=16)
@@ -429,7 +456,7 @@ def main():
     s.add_argument("--batch", type=int, default=32)
     s.add_argument("--workers", type=int, default=2)
     a = ap.parse_args()
-    fn = {"index": cmd_index, "order": cmd_order, "table": cmd_table, "stage": cmd_stage, "ref": cmd_ref,
+    fn = {"index": cmd_index, "order": cmd_order, "resize": cmd_resize, "table": cmd_table, "stage": cmd_stage, "ref": cmd_ref,
           "same": cmd_same, "check": cmd_check, "loader": cmd_loader}[a.cmd]
     sys.exit(fn(a) or 0)
 
