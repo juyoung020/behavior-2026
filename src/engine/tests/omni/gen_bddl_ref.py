@@ -133,7 +133,10 @@ def main():
         # 시행: 원자마다 참/거짓. 일부는 ground option 하나를 만족하게 맞춰 성공 경우도 나오게
         trials = []
         prev_masks = None
-        for k in range(a.trials):
+        # 선택지가 많은 과제(선택지 33만 개)는 파이썬 평가가 느려 시행 수를 줄인다 (선택지·원소 수 합 기준)
+        work = sum(len(o) for o in opts) + 1
+        n_trials = max(12, min(a.trials, int(3e7 // work)))
+        for k in range(n_trials):
             p = rng.random()
             bits = [rng.random() < p for _ in atoms]
             if k % 3 == 1 and opts:
