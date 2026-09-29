@@ -264,6 +264,13 @@ impl Core {
         let memory = Some(s(a, "memory")).filter(|m| !m.is_empty());
         let spatial = str_list(a, "spatial");
         let budget = a.get("budget_steps").and_then(|v| v.as_u64());
+        // 이전 단계가 끝났다고 판단했으면, 다음 단계의 참조를 풀기 전에 손에 든 것부터 갱신한다
+        // (예: 방금 집은 캔 → "place can in trash can" 의 캔은 손에 든 그것).
+        if previous == "done" {
+            if let Some(cur) = self.mem.current().map(|c| c.instruction.clone()) {
+                self.belief_after_done(&cur);
+            }
+        }
         let ins = match self.make_instruction(&s(a, "skill"), &objects, memory.as_deref(), &spatial, &s(a, "purpose"), &s(a, "expected"), budget) {
             Ok(i) => i,
             Err(e) => return ToolOut::obs(tool_err(e)),

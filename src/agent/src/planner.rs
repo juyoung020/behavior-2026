@@ -372,6 +372,20 @@ impl Core {
         Decision::Finish { prompt: self.task.prompt.clone(), reason: "no remaining plan step; fall back to the whole-task instruction".into(), source: src }
     }
 
+    /// 끝난 단계가 손에 든 것을 어떻게 바꾸나(여러 번 불러도 같은 결과).
+    pub fn belief_after_done(&mut self, ins: &Instruction) {
+        let Some(o) = ins.objects.first().cloned() else { return };
+        match ins.skill.as_str() {
+            "pick up from" | "hold" | "lift" => {
+                if !self.holding.contains(&o) {
+                    self.holding.push(o);
+                }
+            }
+            "place on" | "place in" | "place on next to" | "place in next to" | "place under" | "release" | "hang" | "insert" | "attach" => self.holding.retain(|h| *h != o),
+            _ => {}
+        }
+    }
+
     /// 결정을 상태에 반영.
     pub fn commit(&mut self, ev: &BoundaryEvent, d: &Decision) {
         match d {
@@ -409,18 +423,8 @@ impl Core {
                                     }
                                 }
                             }
-                            match ins.skill.as_str() {
-                                "pick up from" | "hold" | "lift" => {
-                                    if !self.holding.contains(o) {
-                                        self.holding.push(o.clone());
-                                    }
-                                }
-                                "place on" | "place in" | "place on next to" | "place in next to" | "place under" | "release" | "hang" | "insert" | "attach" => {
-                                    self.holding.retain(|h| h != o)
-                                }
-                                _ => {}
-                            }
                         }
+                        self.belief_after_done(&cur.instruction);
                     }
                     self.trace("stage_close", json!({"stage": cur.idx, "outcome": outcome, "step": ev.step}));
                 }
