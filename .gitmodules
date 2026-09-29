@@ -1,0 +1,24 @@
+[submodule "BEHAVIOR-1K"]
+	path = BEHAVIOR-1K
+	url = https://github.com/StanfordVL/BEHAVIOR-1K.git
+[submodule "refs/2026-challenge-evaluation_wjmsxbd"]
+	path = refs/2026-challenge-evaluation_wjmsxbd
+	url = https://github.com/wjmsxbd/2026-challenge-evaluation.git
+[submodule "refs/behavior-1k-solution"]
+	path = refs/behavior-1k-solution
+	url = https://github.com/IliaLarchenko/behavior-1k-solution.git
+[submodule "refs/behavior-1k-solution_KunHsiang"]
+	path = refs/behavior-1k-solution_KunHsiang
+	url = https://github.com/KunHsiang/behavior-1k-solution.git
+[submodule "refs/behavior-1k-solution_alstar8"]
+	path = refs/behavior-1k-solution_alstar8
+	url = https://github.com/alstar8/behavior-1k-solution.git
+[submodule "refs/openpi-comet"]
+	path = refs/openpi-comet
+	url = https://github.com/mli0603/openpi-comet.git
+[submodule "refs/openpi-comet_SgtVincent"]
+	path = refs/openpi-comet_SgtVincent
+	url = https://github.com/SgtVincent/openpi-comet.git
+[submodule "refs/openpi-comet_bushuyeu"]
+	path = refs/openpi-comet_bushuyeu
+	url = https://github.com/bushuyeu/openpi-comet.git

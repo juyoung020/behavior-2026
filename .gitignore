@@ -1,0 +1,15 @@
+# 대용량·재다운로드 가능한 것 (받는 법은 tools/setup/, docs/설치기록.md)
+data/
+BEHAVIOR-1K/datasets/
+*.key
+
+# 실행 결과 중 큰 것 (결과 JSON·로그는 올린다)
+*.mp4
+*.prof
+*.prof.*.txt
+
+# 파이썬·편집기 잔재
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/

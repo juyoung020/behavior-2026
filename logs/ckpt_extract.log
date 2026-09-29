@@ -1,0 +1,10 @@
+== pi05_turning_on_radio
+files zip=24 extracted=24
+17G	pi05_turning_on_radio
+zip removed: /mnt/c/behavior-2026/checkpoints/pi05_turning_on_radio/pi05TurningOnRadio.zip
+== groot_n17_turning_on_radio
+files zip=13 extracted=13
+6.5G	groot_n17_turning_on_radio
+zip removed: /mnt/c/behavior-2026/checkpoints/groot_n17_turning_on_radio/turning_on_radio_GR00T-checkpoint-150000.zip
+/dev/sdd       1007G   41G  916G   5% /
+=== extract done ===

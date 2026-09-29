@@ -1,0 +1,3 @@
+DONE /home/juyoung/.cache/huggingface/hub/models--nvidia--Cosmos-Reason2-2B/snapshots/9ce19a195e423419c349abfc86fd07178b230561
+4.6G	/home/juyoung/.cache/huggingface/hub/models--nvidia--Cosmos-Reason2-2B
+ng 15 files:  67%|██████▋   | 10/15 [01:31<00:51, 10.24s/it]Fetching 15 files: 100%|██████████| 15/15 [01:31<00:00,  6.12s/it]
