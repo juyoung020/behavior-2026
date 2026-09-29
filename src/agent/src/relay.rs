@@ -1,15 +1,17 @@
 //! 중계기(다리): 평가기 ↔ [중계기] ↔ π0.5 서버.
 //!
 //! 매 스텝 경로(병목 제로 목표):
-//! - 평가기 프레임(클라이언트 → 서버, XOR 마스크됨)을 재사용 버퍼로 받고 **마스크를 풀지 않는다**.
-//! - msgpack 최상위 맵을 마스크된 채로 훑어 base_qvel·그리퍼·task_id 만 그 자리에서 읽는다(수십 바이트).
-//! - 보낼 때는 [맵 머리(개수+주입 수) | 원래 항목 바이트 그대로 | 주입 꼬리] 를 writev 한 번으로.
-//!   맵 머리 길이가 바뀐 만큼 마스크 키를 회전시켜([`ws::rotate_key`]) 원래 바이트를 다시 마스크하지 않는다.
+//! - 평가기 프레임(클라이언트 → 서버, XOR 마스크됨)의 **마스크를 풀지 않는다**. 맵 머리 길이가 바뀐 만큼 마스크 키를
+//!   회전시켜([`ws::rotate_key`]) 원래 바이트를 그대로 다시 보낸다(재마스크·재직렬화 0회).
+//! - **흘려보내기(cut-through)**: 경계가 아닌 스텝은 프레임 머리를 받자마자 새 머리(항목 수 + 주입 수)를 먼저 보내고,
+//!   몸통은 받는 조각마다 바로 π0.5 쪽으로 쓴다. 지시 문장은 이전 스텝에 이미 정해져 있어 꼬리(주입 항목)를 미리 안다.
+//!   다 받은 뒤에 마스크된 채로 훑어 base_qvel·그리퍼만 읽어(수십 바이트) 오도메트리·감시를 갱신한다.
+//! - **붙잡기(store)**: 스텝 수로 정해지는 경계(판 시작·예산 소진·정기 확인)가 올 스텝, 또는 직전 스텝에서 사건 경계
+//!   (이동 멈춤·그리퍼 변화)가 난 다음 스텝은 프레임을 통째로 받아 두고 계획이 끝난 뒤 보낸다(`pause`).
+//!   사건 경계는 그래서 한 스텝(1/30 s) 늦게 반영된다. 작은 프레임(reset 등)도 붙잡는다.
 //! - π0.5 응답(서버 → 클라이언트, 마스크 없음)은 그대로 평가기에 넘긴다.
-//! - LLM 은 이 경로에 없다. 경계(판 시작·예산 소진·정기 확인·이동 멈춤·그리퍼 변화)에서만 계획기 스레드로 넘긴다.
-//!   `pause` 면 결정이 올 때까지 이번 관측을 붙잡는다(시뮬레이터 시간 정지, 결정 재현 가능). 그동안 두 소켓의
-//!   ping 에 답한다(평가기 ping_timeout 300 s, π0.5 서버 기본 20 s). `pause` 가 아니면 지시를 바꾸지 않고 계속 넘기다가
-//!   결정이 오는 스텝에 바꾼다(벽시계 지연 0, 대신 재현성은 기록으로만).
+//! - LLM 은 이 경로에 없다. 계획은 별도 스레드. `pause` 면 결정이 올 때까지 기다리며 두 소켓의 ping 에 답한다
+//!   (평가기 ping_timeout 300 s, π0.5 서버 기본 20 s). `pause` 가 아니면 붙잡지 않고, 결정이 도착한 스텝부터 문장을 바꾼다.
 //!
 //! 관측·행동 값은 한 바이트도 바꾸지 않는다: 원래 항목 바이트는 그대로 가고, 주입 키(`__agent_prompt__`,
 //! `__agent_flush__`)는 π0.5 서버 쪽 훅(`tools/serve_b1k_agent.py`)이 꺼내 쓰고 지운다.
@@ -21,7 +23,7 @@ use crate::planner::{Agent, Decision};
 use crate::session::EnvSession;
 use crate::trace::Tracer;
 use crate::wire::{self, Cam};
-use crate::ws::{self, Accepted, Buf, Conn, OP_BIN, OP_CLOSE};
+use crate::ws::{self, Accepted, Buf, Conn, Head, OP_BIN, OP_CLOSE, OP_CONT, OP_PING, OP_PONG};
 use serde_json::json;
 use std::io;
 use std::net::TcpListener;
@@ -54,6 +56,10 @@ pub struct RelayCfg {
     pub max_steps_override: Option<u64>,
     pub monitor: MonitorCfg,
     pub pause: bool,
+    /// 흘려보내기(cut-through). 끄면 모든 프레임을 다 받은 뒤 보낸다(비교용).
+    pub stream: bool,
+    /// 이보다 작은 프레임은 붙잡는다(reset 등)
+    pub stream_min_bytes: usize,
     pub images: bool,
     pub image_side: usize,
     pub jpeg_quality: u8,
@@ -79,6 +85,8 @@ impl RelayCfg {
             max_steps_override: None,
             monitor: MonitorCfg::default(),
             pause: true,
+            stream: true,
+            stream_min_bytes: 64 * 1024,
             images: true,
             image_side: 448,
             jpeg_quality: 80,
@@ -113,12 +121,13 @@ fn idle(s: &Slot) -> bool {
 /// 스텝마다 잰 시간(µs)
 #[derive(Default)]
 pub struct Lat {
-    pub scan: Vec<u32>,
-    pub fwd: Vec<u32>,
+    pub parse: Vec<u32>,
+    pub hold_fwd: Vec<u32>,
     pub upstream: Vec<u32>,
     pub back: Vec<u32>,
-    pub relay_total: Vec<u32>,
     pub plan_wait: Vec<u32>,
+    pub streamed: u64,
+    pub held: u64,
 }
 
 fn pct(v: &[u32]) -> serde_json::Value {
@@ -133,8 +142,8 @@ fn pct(v: &[u32]) -> serde_json::Value {
 
 impl Lat {
     pub fn summary(&self) -> serde_json::Value {
-        json!({"unit": "us", "scan": pct(&self.scan), "forward": pct(&self.fwd), "upstream_rtt": pct(&self.upstream),
-               "back": pct(&self.back), "relay_total": pct(&self.relay_total), "plan_wait": pct(&self.plan_wait)})
+        json!({"unit": "us", "streamed_frames": self.streamed, "held_frames": self.held, "parse": pct(&self.parse),
+               "hold_forward": pct(&self.hold_fwd), "upstream_rtt": pct(&self.upstream), "back": pct(&self.back), "plan_wait": pct(&self.plan_wait)})
     }
 }
 
@@ -145,7 +154,14 @@ pub fn run(cfg: RelayCfg) -> io::Result<()> {
 
 /// 이미 연 소켓으로(시험: 포트 0 으로 열고 주소를 먼저 알아 둔다).
 pub fn run_listener(l: TcpListener, cfg: RelayCfg) -> io::Result<()> {
-    eprintln!("[relay] {} ← 평가기, → π0.5 {} (모드 {:?}, pause {})", cfg.listen, cfg.upstream, mode_name(&cfg.mode), cfg.pause);
+    eprintln!(
+        "[relay] {} ← 평가기, → π0.5 {} (모드 {}, pause {}, stream {})",
+        l.local_addr().map(|a| a.to_string()).unwrap_or_default(),
+        cfg.upstream,
+        mode_name(&cfg.mode),
+        cfg.pause,
+        cfg.stream
+    );
     let tracer = match &cfg.trace_dir {
         Some(d) => Some(Tracer::create(d)?),
         None => None,
@@ -198,162 +214,95 @@ fn mode_name(m: &Mode) -> &'static str {
     }
 }
 
-/// 평가기 연결 하나를 처리한다. 반환: 지연 통계.
-pub fn serve(cfg: RelayCfg, mut ev: Conn, tracer: Option<Tracer>) -> io::Result<Lat> {
-    let mut up = Conn::connect(&cfg.upstream)?;
-    let mut ebuf = Buf::default();
-    let mut ubuf = Buf::default();
-    let mut cbuf = Buf::default();
-    let mut suffix: Vec<u8> = Vec::with_capacity(1024);
-    let mut scratch: Vec<u8> = Vec::with_capacity(1024);
-    let mut lat = Lat::default();
+fn io_bad(e: impl ToString) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+}
 
-    // 서버가 먼저 보내는 metadata 를 그대로 넘긴다
-    let (op, _) = up.read_message(&mut ubuf)?;
-    ev.write_frame_raw(true, op, None, &[ubuf.data()])?;
+struct Ctx<'a> {
+    cfg: &'a RelayCfg,
+    tracer: &'a Option<Tracer>,
+    slots: Vec<Slot>,
+    task: Option<TaskCard>,
+    episode: u32,
+    batched: bool,
+    /// 직전 스텝에서 난(흘려보낸 프레임이라 아직 처리 못 한) 사건 경계
+    pending: Vec<(usize, Trigger, [f64; 2])>,
+    tx: mpsc::Sender<PMsg>,
+    rx: mpsc::Receiver<PMsg>,
+    suffix: Vec<u8>,
+    scratch: Vec<u8>,
+    cbuf: Buf,
+}
 
-    let (tx, rx) = mpsc::channel::<PMsg>();
-    let mut slots: Vec<Slot> = Vec::new();
-    let mut task: Option<TaskCard> = cfg.task_override.as_ref().and_then(|n| cfg.catalog.task_by_name(n).cloned());
-    let mut episode: u32 = 0;
-    let mut steps: u64 = 0;
-    let trace = |env: usize, kind: &str, v: serde_json::Value| {
-        if let Some(t) = &tracer {
+impl Ctx<'_> {
+    fn trace(&self, env: usize, kind: &str, v: serde_json::Value) {
+        if let Some(t) = self.tracer {
             t.event(env, kind, v);
         }
-    };
-    trace(0, "relay_start", json!({"mode": mode_name(&cfg.mode), "pause": cfg.pause, "upstream": cfg.upstream}));
+    }
 
-    loop {
-        let (op, mask) = ev.read_message(&mut ebuf)?;
-        let t_in = Instant::now();
-        if op == OP_CLOSE {
-            let _ = up.send_close(1000);
-            break;
+    /// 이번 프레임을 붙잡아야 하나(흘려보낼 수 없나)
+    fn must_hold(&self, h: &Head) -> bool {
+        if !self.cfg.stream || h.mask.is_none() || h.len < self.cfg.stream_min_bytes || !h.fin {
+            return true;
         }
-        if op != OP_BIN || matches!(cfg.mode, Mode::Passthrough) {
-            // 그대로 넘기기(바이트 동일)
-            forward_raw(&mut up, op, mask, ebuf.data())?;
-            if op == OP_BIN && !is_reset_quick(ebuf.data(), mask) {
-                let t_f = Instant::now();
-                let (op2, _) = up.read_message(&mut ubuf)?;
-                let t_r = Instant::now();
-                ev.write_frame_raw(true, op2, None, &[ubuf.data()])?;
-                let t_o = Instant::now();
-                lat.fwd.push(us(t_f - t_in));
-                lat.upstream.push(us(t_r - t_f));
-                lat.back.push(us(t_o - t_r));
-                lat.relay_total.push(us((t_f - t_in) + (t_o - t_r)));
-                steps += 1;
+        match &self.cfg.mode {
+            Mode::Passthrough => false,
+            Mode::Fixed(_) | Mode::Schedule(_) => self.slots.is_empty(),
+            Mode::Agent => {
+                if self.slots.is_empty() {
+                    return true;
+                }
+                if !self.cfg.pause {
+                    return false;
+                }
+                // 사건 경계가 미뤄져 있거나, 스텝 수로 정해진 경계가 올 스텝만 붙잡는다
+                !self.pending.is_empty() || self.slots.iter().any(|s| s.owns && s.sess.mon.scheduled_due())
             }
-            continue;
         }
+    }
 
-        let src = match mask {
-            Some(k) => AnySrc::M(Masked { buf: ebuf.data(), key: k }),
-            None => AnySrc::P(Plain(ebuf.data())),
-        };
-        let view = wire::view(&src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        let t_scan = Instant::now();
-
-        if view.is_reset {
-            // 새 판: 계획기가 돌아올 때까지 기다린 뒤 모두 초기화
-            wait_all_returned(&mut slots, &rx, &tx, &mut ev, &mut up, &mut cbuf, &cfg)?;
-            episode += 1;
-            for s in slots.iter_mut() {
-                s.sess.reset(episode);
-                if let Some(a) = s.agent.as_mut() {
+    /// 과제·환경 수가 정해지면 환경마다 세션·에이전트를 만든다.
+    fn ensure_slots(&mut self, view: &wire::ObsView) {
+        if self.task.is_none() {
+            self.task = view.task_id.and_then(|i| self.cfg.catalog.task_by_index(i)).cloned();
+            self.trace(0, "task", json!({"task_id": view.task_id, "task": self.task.as_ref().map(|t| t.name.clone())}));
+        }
+        self.batched = view.batched;
+        if self.slots.len() == view.batch {
+            return;
+        }
+        let (tp, ms) = self.task.as_ref().map(|t| (t.prompt.clone(), t.max_steps)).unwrap_or_default();
+        let ms = self.cfg.max_steps_override.unwrap_or(if ms == 0 { 100_000 } else { ms });
+        let cfg = self.cfg;
+        let task = self.task.clone();
+        let tracer = self.tracer.clone();
+        let episode = self.episode;
+        self.slots = (0..view.batch)
+            .map(|e| {
+                let mut agent = match (&cfg.mode, &cfg.factory, &task) {
+                    (Mode::Agent, Some(f), Some(t)) => Some(Box::new(f(e, t))),
+                    _ => None,
+                };
+                if let Some(a) = agent.as_mut() {
+                    a.set_tracer(tracer.clone());
                     a.reset_episode(episode);
                 }
-            }
-            trace(0, "episode_reset", json!({"episode": episode, "steps_total": steps}));
-            forward_raw(&mut up, op, mask, ebuf.data())?; // 응답 없음
-            continue;
-        }
+                Slot { sess: EnvSession::new(e, cfg.monitor.clone(), cfg.hz, ms, &tp), owns: agent.is_some(), agent, waiting: false }
+            })
+            .collect();
+    }
 
-        // 과제·환경 수 확인(첫 관측)
-        if task.is_none() {
-            task = view.task_id.and_then(|i| cfg.catalog.task_by_index(i)).cloned();
-            trace(0, "task", json!({"task_id": view.task_id, "task": task.as_ref().map(|t| t.name.clone())}));
-        }
-        if slots.len() != view.batch {
-            let (tp, ms) = task.as_ref().map(|t| (t.prompt.clone(), t.max_steps)).unwrap_or_default();
-            let ms = cfg.max_steps_override.unwrap_or(if ms == 0 { 100_000 } else { ms });
-            slots = (0..view.batch)
-                .map(|e| {
-                    let mut agent = match (&cfg.mode, &cfg.factory, &task) {
-                        (Mode::Agent, Some(f), Some(t)) => Some(Box::new(f(e, t))),
-                        _ => None,
-                    };
-                    if let Some(a) = agent.as_mut() {
-                        a.set_tracer(tracer.clone());
-                        a.reset_episode(episode);
-                    }
-                    Slot { sess: EnvSession::new(e, cfg.monitor.clone(), cfg.hz, ms, &tp), owns: agent.is_some(), agent, waiting: false }
-                })
-                .collect();
-        }
-
-        // 매 스텝: 오도메트리·감시(산술만)
-        let mut triggered: Vec<(usize, Trigger, [f64; 2])> = Vec::new();
-        for (e, s) in slots.iter_mut().enumerate() {
-            let g = view.grippers(&src, e);
-            if let Some(t) = s.sess.on_obs(view.base_qvel(&src, e), g) {
-                triggered.push((e, t, g));
-            }
-        }
-
-        // 비동기로 도착한 결정 반영
-        drain(&rx, &mut slots, &tracer);
-
-        let mut plan_us = 0u32;
-        match &cfg.mode {
-            Mode::Agent if !triggered.is_empty() => {
-                let tp = Instant::now();
-                for (e, t, g) in triggered {
-                    if slots[e].waiting {
-                        continue;
-                    }
-                    if slots[e].agent.is_none() {
-                        if cfg.pause {
-                            wait_returned(e, &mut slots, &rx, &mut ev, &mut up, &mut cbuf, &cfg)?;
-                        } else {
-                            continue;
-                        }
-                    }
-                    let Some(mut agent) = slots[e].agent.take() else { continue };
-                    let images = if cfg.images { snapshot(&view, &src, e, cfg.image_side, cfg.jpeg_quality) } else { vec![] };
-                    let mut bev = slots[e].sess.event(t, g, images);
-                    if let Some(tr) = &tracer {
-                        bev.image_files = bev
-                            .images
-                            .iter()
-                            .map(|(c, j)| tr.save_image(&format!("ep{}_env{}_s{}_{}.jpg", bev.episode, e, bev.step, c), j))
-                            .collect();
-                    }
-                    slots[e].waiting = true;
-                    slots[e].sess.mon.busy = true;
-                    let txc = tx.clone();
-                    std::thread::spawn(move || {
-                        let d = agent.decide(&bev);
-                        let _ = txc.send(PMsg::Decision(e, d));
-                        agent.maintain();
-                        agent.release();
-                        let _ = txc.send(PMsg::Returned(e, agent));
-                    });
-                }
-                if cfg.pause {
-                    wait_decisions(&mut slots, &rx, &mut ev, &mut up, &mut cbuf, &cfg, &tracer)?;
-                }
-                plan_us = us(tp.elapsed());
-            }
+    /// 고정·표 모드의 이번 스텝 문장
+    fn update_static_prompts(&mut self) {
+        match &self.cfg.mode {
             Mode::Fixed(p) => {
-                for s in slots.iter_mut() {
+                for s in self.slots.iter_mut() {
                     s.sess.prompt = p.clone();
                 }
             }
             Mode::Schedule(tab) => {
-                for s in slots.iter_mut() {
+                for s in self.slots.iter_mut() {
                     if let Some((_, p)) = tab.iter().rev().find(|(st, _)| *st <= s.sess.mon.step) {
                         if *p != s.sess.prompt {
                             s.sess.prompt = p.clone();
@@ -364,54 +313,294 @@ pub fn serve(cfg: RelayCfg, mut ev: Conn, tracer: Option<Tracer>) -> io::Result<
             }
             _ => {}
         }
+    }
 
-        // 주입 꼬리 만들기 → 복사 없이 보내기
-        let t_fwd0 = Instant::now();
-        let inject = !matches!(cfg.mode, Mode::Agent) || task.is_some();
-        let extra = if inject {
-            let prompts: Vec<String> = slots.iter().map(|s| s.sess.prompt.clone()).collect();
-            let any_flush = slots.iter().any(|s| s.sess.pending_flush);
-            let flush: Vec<bool> = slots.iter().map(|s| s.sess.pending_flush).collect();
-            for s in slots.iter_mut() {
-                if s.sess.pending_flush {
-                    trace(s.sess.env, "prompt_applied", json!({"step": s.sess.mon.step, "prompt": s.sess.prompt}));
-                }
-                s.sess.pending_flush = false;
-            }
-            wire::build_suffix(&prompts, if any_flush { Some(&flush) } else { None }, view.batched, &mut suffix)
-        } else {
-            suffix.clear();
-            0
+    /// 주입 꼬리(평문)를 만들고 항목 수를 돌려준다.
+    fn build_suffix(&mut self) -> usize {
+        let inject = match self.cfg.mode {
+            Mode::Passthrough => false,
+            Mode::Agent => self.task.is_some(),
+            _ => true,
         };
-        forward_obs(&mut up, ebuf.data(), mask, &view.top, &suffix, extra, &mut scratch)?;
-        let t_f = Instant::now();
-        let (op2, _) = up.read_message(&mut ubuf)?;
-        let t_r = Instant::now();
-        ev.write_frame_raw(true, op2, None, &[ubuf.data()])?;
-        let t_o = Instant::now();
-        for s in slots.iter_mut() {
+        if !inject || self.slots.is_empty() {
+            self.suffix.clear();
+            return 0;
+        }
+        let prompts: Vec<String> = self.slots.iter().map(|s| s.sess.prompt.clone()).collect();
+        let any_flush = self.slots.iter().any(|s| s.sess.pending_flush);
+        let flush: Vec<bool> = self.slots.iter().map(|s| s.sess.pending_flush).collect();
+        for s in self.slots.iter() {
+            if s.sess.pending_flush {
+                self.trace(s.sess.env, "prompt_applied", json!({"step": s.sess.mon.step, "prompt": s.sess.prompt}));
+            }
+        }
+        for s in self.slots.iter_mut() {
+            s.sess.pending_flush = false;
+        }
+        wire::build_suffix(&prompts, if any_flush { Some(&flush) } else { None }, self.batched, &mut self.suffix)
+    }
+
+    /// 계획기 스레드로 넘긴다.
+    fn dispatch(&mut self, e: usize, t: Trigger, g: [f64; 2], view: &wire::ObsView, src: &AnySrc) {
+        let Some(mut agent) = self.slots[e].agent.take() else { return };
+        let images = if self.cfg.images { snapshot(view, src, e, self.cfg.image_side, self.cfg.jpeg_quality) } else { vec![] };
+        let mut bev = self.slots[e].sess.event(t, g, images);
+        if let Some(tr) = self.tracer {
+            bev.image_files = bev.images.iter().map(|(c, j)| tr.save_image(&format!("ep{}_env{}_s{}_{}.jpg", bev.episode, e, bev.step, c), j)).collect();
+        }
+        self.slots[e].waiting = true;
+        self.slots[e].sess.mon.busy = true;
+        let txc = self.tx.clone();
+        std::thread::spawn(move || {
+            let d = agent.decide(&bev);
+            let _ = txc.send(PMsg::Decision(e, d));
+            agent.maintain();
+            agent.release();
+            let _ = txc.send(PMsg::Returned(e, agent));
+        });
+    }
+
+    fn drain(&mut self) {
+        while let Ok(m) = self.rx.try_recv() {
+            self.handle(m);
+        }
+    }
+
+    fn handle(&mut self, m: PMsg) {
+        match m {
+            PMsg::Decision(e, d) => {
+                if let Some(s) = self.slots.get_mut(e) {
+                    s.sess.apply(&d);
+                    s.waiting = false;
+                    s.sess.mon.busy = false;
+                    let step = s.sess.mon.step;
+                    self.trace(e, "decision_applied", json!({"step": step, "kind": d.key()}));
+                }
+            }
+            PMsg::Returned(e, a) => {
+                if let Some(s) = self.slots.get_mut(e) {
+                    s.agent = Some(a);
+                }
+            }
+        }
+    }
+
+    /// 조건이 맞을 때까지 두 소켓의 제어 프레임(ping)에 답하며 기다린다.
+    fn pump_until(&mut self, done: &dyn Fn(&[Slot]) -> bool, ev: &mut Conn, up: &mut Conn) -> io::Result<bool> {
+        let t0 = Instant::now();
+        loop {
+            self.drain();
+            if done(&self.slots) {
+                return Ok(true);
+            }
+            if t0.elapsed().as_secs_f64() > self.cfg.hard_wait_s {
+                return Ok(false);
+            }
+            let ready = ws::poll_readable(&[&*ev, &*up], 20)?;
+            if ready[0] && !ev.service_control(&mut self.cbuf)? {
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "평가기가 계획 중에 연결을 닫음"));
+            }
+            if ready[1] && !up.service_control(&mut self.cbuf)? {
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "π0.5 서버가 계획 중에 연결을 닫음"));
+            }
+        }
+    }
+
+    fn wait_all_idle(&mut self, ev: &mut Conn, up: &mut Conn) -> io::Result<()> {
+        if self.slots.iter().all(idle) {
+            return Ok(());
+        }
+        self.pump_until(&|s: &[Slot]| s.iter().all(idle), ev, up).map(|_| ())
+    }
+}
+
+/// 평가기 연결 하나를 처리한다. 반환: 지연 통계.
+pub fn serve(cfg: RelayCfg, mut ev: Conn, tracer: Option<Tracer>) -> io::Result<Lat> {
+    let mut up = Conn::connect(&cfg.upstream)?;
+    let mut ebuf = Buf::default();
+    let mut ubuf = Buf::default();
+    let mut lat = Lat::default();
+
+    // 서버가 먼저 보내는 metadata 를 그대로 넘긴다
+    let (op, _) = up.read_message(&mut ubuf)?;
+    ev.write_frame_raw(true, op, None, &[ubuf.data()])?;
+
+    let (tx, rx) = mpsc::channel::<PMsg>();
+    let task = cfg.task_override.as_ref().and_then(|n| cfg.catalog.task_by_name(n).cloned());
+    let mut c = Ctx {
+        cfg: &cfg,
+        tracer: &tracer,
+        slots: Vec::new(),
+        task,
+        episode: 0,
+        batched: true,
+        pending: Vec::new(),
+        tx,
+        rx,
+        suffix: Vec::with_capacity(1024),
+        scratch: Vec::with_capacity(1024),
+        cbuf: Buf::default(),
+    };
+    let mut steps: u64 = 0;
+    c.trace(0, "relay_start", json!({"mode": mode_name(&cfg.mode), "pause": cfg.pause, "stream": cfg.stream, "upstream": cfg.upstream}));
+
+    loop {
+        let h = ev.read_head()?;
+        // 제어 프레임
+        if matches!(h.op, OP_PING | OP_PONG | OP_CLOSE) {
+            let dst = c.cbuf.ensure(h.len);
+            ev.read_exact(dst)?;
+            if let Some(k) = h.mask {
+                ws::mask_at(c.cbuf.data_mut(), k, 0);
+            }
+            match h.op {
+                OP_PING => {
+                    let p = c.cbuf.data().to_vec();
+                    ev.send(ws::OP_PONG, &[&p])?;
+                }
+                OP_CLOSE => {
+                    let _ = up.send_close(1000);
+                    break;
+                }
+                _ => {}
+            }
+            continue;
+        }
+        c.drain();
+        let hold = c.must_hold(&h);
+        let t_in = Instant::now();
+        let mut plan_us = 0u32;
+
+        if !hold {
+            // ---------- 흘려보내기 ----------
+            c.update_static_prompts();
+            let extra = c.build_suffix();
+            stream_frame(&mut ev, &mut up, &h, &mut ebuf, &c.suffix, extra, &mut c.scratch)?;
+            let t_f = Instant::now();
+            lat.streamed += 1;
+            // 다 받은 뒤: 마스크된 채로 훑어 오도메트리·감시 갱신
+            if !matches!(cfg.mode, Mode::Passthrough) {
+                let src = AnySrc::M(Masked { buf: ebuf.data(), key: h.mask.unwrap() });
+                let view = wire::view(&src).map_err(io_bad)?;
+                let mut trig = Vec::new();
+                for (e, s) in c.slots.iter_mut().enumerate() {
+                    let g = view.grippers(&src, e);
+                    if let Some(t) = s.sess.on_obs(view.base_qvel(&src, e), g) {
+                        trig.push((e, t, g));
+                    }
+                }
+                if matches!(cfg.mode, Mode::Agent) {
+                    if cfg.pause {
+                        c.pending.extend(trig);
+                    } else {
+                        for (e, t, g) in trig {
+                            if c.slots[e].owns && c.slots[e].agent.is_some() && !c.slots[e].waiting {
+                                c.dispatch(e, t, g, &view, &src);
+                            }
+                        }
+                    }
+                }
+                lat.parse.push(us(t_f.elapsed()));
+            }
+            let t_p = Instant::now();
+            let (op2, _) = up.read_message(&mut ubuf)?;
+            let t_r = Instant::now();
+            ev.write_frame_raw(true, op2, None, &[ubuf.data()])?;
+            lat.upstream.push(us(t_r - t_p));
+            lat.back.push(us(t_r.elapsed()));
+        } else {
+            // ---------- 붙잡기 ----------
+            let (op, mask) = read_rest(&mut ev, &h, &mut ebuf)?;
+            if op != OP_BIN {
+                forward_raw(&mut up, op, mask, ebuf.data())?;
+                let (op2, _) = up.read_message(&mut ubuf)?;
+                ev.write_frame_raw(true, op2, None, &[ubuf.data()])?;
+                continue;
+            }
+            let src = match mask {
+                Some(k) => AnySrc::M(Masked { buf: ebuf.data(), key: k }),
+                None => AnySrc::P(Plain(ebuf.data())),
+            };
+            let view = wire::view(&src).map_err(io_bad)?;
+            if view.is_reset {
+                // 새 판: 계획기가 돌아올 때까지 기다린 뒤 모두 초기화. reset 은 응답이 없다.
+                c.wait_all_idle(&mut ev, &mut up)?;
+                c.episode += 1;
+                c.pending.clear();
+                let ep = c.episode;
+                for s in c.slots.iter_mut() {
+                    s.sess.reset(ep);
+                    if let Some(a) = s.agent.as_mut() {
+                        a.reset_episode(ep);
+                    }
+                }
+                c.trace(0, "episode_reset", json!({"episode": ep, "steps_total": steps}));
+                forward_raw(&mut up, op, mask, ebuf.data())?;
+                continue;
+            }
+            if matches!(cfg.mode, Mode::Passthrough) {
+                forward_raw(&mut up, op, mask, ebuf.data())?;
+            } else {
+                c.ensure_slots(&view);
+                // 매 스텝: 오도메트리·감시(산술만) + 직전 스텝에서 미뤄 둔 사건 경계
+                let mut trig: Vec<(usize, Trigger, [f64; 2])> = std::mem::take(&mut c.pending);
+                for (e, s) in c.slots.iter_mut().enumerate() {
+                    let g = view.grippers(&src, e);
+                    if let Some(t) = s.sess.on_obs(view.base_qvel(&src, e), g) {
+                        if !trig.iter().any(|x| x.0 == e) {
+                            trig.push((e, t, g));
+                        }
+                    }
+                }
+                if matches!(cfg.mode, Mode::Agent) && !trig.is_empty() {
+                    let tp = Instant::now();
+                    for (e, t, g) in trig {
+                        if !c.slots[e].owns || c.slots[e].waiting {
+                            continue;
+                        }
+                        if c.slots[e].agent.is_none() {
+                            if !cfg.pause {
+                                continue;
+                            }
+                            // 앞 결정의 기억 정리가 아직이면 기다린다(결정 순서 고정)
+                            c.pump_until(&|s: &[Slot]| s[e].agent.is_some(), &mut ev, &mut up)?;
+                        }
+                        c.dispatch(e, t, g, &view, &src);
+                    }
+                    if cfg.pause && !c.pump_until(&|s: &[Slot]| s.iter().all(|x| !x.waiting), &mut ev, &mut up)? {
+                        eprintln!("[relay] 결정이 {} s 안에 안 옴 — 지금 문장으로 계속, 결정은 도착하면 반영", cfg.hard_wait_s);
+                    }
+                    plan_us = us(tp.elapsed());
+                }
+                c.update_static_prompts();
+                let extra = c.build_suffix();
+                forward_obs(&mut up, ebuf.data(), mask, &view.top, &c.suffix, extra, &mut c.scratch)?;
+            }
+            let t_f = Instant::now();
+            lat.held += 1;
+            let (op2, _) = up.read_message(&mut ubuf)?;
+            let t_r = Instant::now();
+            ev.write_frame_raw(true, op2, None, &[ubuf.data()])?;
+            lat.hold_fwd.push(us((t_f - t_in).saturating_sub(Duration::from_micros(plan_us as u64))));
+            lat.upstream.push(us(t_r - t_f));
+            lat.back.push(us(t_r.elapsed()));
+            if plan_us > 0 {
+                lat.plan_wait.push(plan_us);
+            }
+        }
+        for s in c.slots.iter_mut() {
             s.sess.mon.advance();
         }
         steps += 1;
-        let pre = (t_scan - t_in) + (t_f - t_fwd0);
-        lat.scan.push(us(t_scan - t_in));
-        lat.fwd.push(us(t_f - t_fwd0));
-        lat.upstream.push(us(t_r - t_f));
-        lat.back.push(us(t_o - t_r));
-        lat.relay_total.push(us(pre + (t_o - t_r)));
-        if plan_us > 0 {
-            lat.plan_wait.push(plan_us);
-        }
         if cfg.latency_every > 0 && steps % cfg.latency_every == 0 {
-            trace(0, "latency", json!({"steps": steps, "stats": lat.summary()}));
+            c.trace(0, "latency", json!({"steps": steps, "stats": lat.summary()}));
         }
     }
-    // 남은 계획기 정리
-    let _ = wait_all_returned(&mut slots, &rx, &tx, &mut ev, &mut up, &mut cbuf, &cfg);
-    trace(0, "relay_end", json!({"steps": steps, "stats": lat.summary()}));
-    for s in &slots {
+    let _ = c.wait_all_idle(&mut ev, &mut up);
+    c.trace(0, "relay_end", json!({"steps": steps, "stats": lat.summary()}));
+    for s in &c.slots {
         if let Some(a) = &s.agent {
-            trace(s.sess.env, "agent_stats", json!(a.core.stats));
+            c.trace(s.sess.env, "agent_stats", json!(a.core.stats));
         }
     }
     Ok(lat)
@@ -422,12 +611,101 @@ fn us(d: Duration) -> u32 {
     d.as_micros().min(u32::MAX as u128) as u32
 }
 
-fn is_reset_quick(data: &[u8], mask: Option<[u8; 4]>) -> bool {
-    let src = match mask {
-        Some(k) => AnySrc::M(Masked { buf: data, key: k }),
-        None => AnySrc::P(Plain(data)),
+/// 머리를 읽은 프레임의 나머지를 받는다. 조각난 메시지는 이어 붙여 평문(마스크 None)으로.
+fn read_rest(ev: &mut Conn, h: &Head, buf: &mut Buf) -> io::Result<(u8, Option<[u8; 4]>)> {
+    let dst = buf.ensure(h.len);
+    ev.read_exact(dst)?;
+    if h.fin {
+        return Ok((h.op, h.mask));
+    }
+    let mut all = buf.data().to_vec();
+    if let Some(k) = h.mask {
+        ws::mask_at(&mut all, k, 0);
+    }
+    let mut tmp = Buf::default();
+    loop {
+        let h2 = ev.read_frame(&mut tmp)?;
+        match h2.op {
+            OP_PING => {
+                let mut p = tmp.data().to_vec();
+                if let Some(k) = h2.mask {
+                    ws::mask_at(&mut p, k, 0);
+                }
+                ev.send(OP_PONG, &[&p])?;
+            }
+            OP_PONG => {}
+            OP_CONT => {
+                let s = all.len();
+                all.extend_from_slice(tmp.data());
+                if let Some(k) = h2.mask {
+                    ws::mask_at(&mut all[s..], k, 0);
+                }
+                if h2.fin {
+                    break;
+                }
+            }
+            o => return Err(io_bad(format!("조각 사이에 op {o}"))),
+        }
+    }
+    buf.ensure(all.len()).copy_from_slice(&all);
+    Ok((h.op, None))
+}
+
+/// 흘려보내기: 새 머리를 먼저 보내고, 몸통은 받는 대로 쓰고, 마지막에 꼬리.
+fn stream_frame(ev: &mut Conn, up: &mut Conn, h: &Head, ebuf: &mut Buf, suffix: &[u8], extra: usize, scratch: &mut Vec<u8>) -> io::Result<()> {
+    let k = h.mask.expect("흘려보내기는 마스크된 프레임만");
+    let len = h.len;
+    let dst = ebuf.ensure(len);
+    ev.read_exact(&mut dst[..1])?;
+    let b0 = dst[0] ^ k[0];
+    let hl = match b0 {
+        0x80..=0x8f => 1,
+        0xde => 3,
+        0xdf => 5,
+        _ => 0,
     };
-    msgpack::scan_top(&src).map(|t| t.find(|k| k == "reset").is_some()).unwrap_or(false)
+    let (new_len, k2, head_part): (usize, [u8; 4], Vec<u8>);
+    let body_start;
+    if hl == 0 || extra == 0 {
+        // 맵이 아니거나 주입 없음: 머리·키 그대로
+        new_len = len;
+        k2 = k;
+        head_part = vec![dst[0]];
+        body_start = 1;
+    } else {
+        ev.read_exact(&mut dst[1..hl])?;
+        let mut hb = [0u8; 5];
+        for i in 0..hl {
+            hb[i] = dst[i] ^ k[i & 3];
+        }
+        let count = match hl {
+            1 => (hb[0] & 0x0f) as usize,
+            3 => u16::from_be_bytes([hb[1], hb[2]]) as usize,
+            _ => u32::from_be_bytes([hb[1], hb[2], hb[3], hb[4]]) as usize,
+        };
+        let (nh, nhl) = msgpack::map_hdr(count + extra);
+        k2 = ws::rotate_key(k, nhl as isize - hl as isize);
+        let mut hp = nh[..nhl].to_vec();
+        ws::mask_at(&mut hp, k2, 0);
+        head_part = hp;
+        new_len = len - hl + nhl + suffix.len();
+        body_start = hl;
+    }
+    up.write_head(true, h.op, Some(k2), new_len)?;
+    up.write_raw(&[&head_part])?;
+    let mut off = body_start;
+    while off < len {
+        let n = ev.read_some(&mut dst[off..])?;
+        up.write_raw(&[&dst[off..off + n]])?;
+        off += n;
+    }
+    if extra > 0 && hl > 0 {
+        scratch.clear();
+        scratch.extend_from_slice(suffix);
+        ws::mask_at(scratch, k2, new_len - suffix.len());
+        up.write_raw(&[scratch])?;
+    }
+    Ok(())
 }
 
 /// 프레임을 바이트 그대로 넘긴다(같은 마스크 키).
@@ -438,7 +716,7 @@ fn forward_raw(up: &mut Conn, op: u8, mask: Option<[u8; 4]>, data: &[u8]) -> io:
     }
 }
 
-/// 관측 + 주입 꼬리를 복사 없이 보낸다.
+/// 다 받은 관측 + 주입 꼬리를 복사 없이 보낸다.
 pub fn forward_obs(up: &mut Conn, data: &[u8], mask: Option<[u8; 4]>, top: &msgpack::TopMap, suffix: &[u8], extra: usize, scratch: &mut Vec<u8>) -> io::Result<()> {
     let (nh, nhl) = msgpack::map_hdr(top.count + extra);
     let old = top.hdr_len;
@@ -474,87 +752,4 @@ fn snapshot(view: &wire::ObsView, src: &AnySrc, env: usize, side: usize, q: u8) 
         .iter()
         .filter_map(|&c| view.image(src, c, env).map(|img| (c.name().to_string(), img.downscale(if c == Cam::Head { side } else { side / 2 }).jpeg(q))))
         .collect()
-}
-
-fn drain(rx: &mpsc::Receiver<PMsg>, slots: &mut [Slot], tracer: &Option<Tracer>) {
-    while let Ok(m) = rx.try_recv() {
-        handle(m, slots, tracer);
-    }
-}
-
-fn handle(m: PMsg, slots: &mut [Slot], tracer: &Option<Tracer>) {
-    match m {
-        PMsg::Decision(e, d) => {
-            if let Some(s) = slots.get_mut(e) {
-                s.sess.apply(&d);
-                s.waiting = false;
-                s.sess.mon.busy = false;
-                if let Some(t) = tracer {
-                    t.event(e, "decision_applied", json!({"step": s.sess.mon.step, "kind": d.key()}));
-                }
-            }
-        }
-        PMsg::Returned(e, a) => {
-            if let Some(s) = slots.get_mut(e) {
-                s.agent = Some(a);
-            }
-        }
-    }
-}
-
-/// 결정이 모두 올 때까지 두 소켓의 제어 프레임(ping)에 답하며 기다린다.
-fn pump_until(
-    done: &dyn Fn(&[Slot]) -> bool,
-    slots: &mut [Slot],
-    rx: &mpsc::Receiver<PMsg>,
-    ev: &mut Conn,
-    up: &mut Conn,
-    cbuf: &mut Buf,
-    cfg: &RelayCfg,
-    tracer: &Option<Tracer>,
-) -> io::Result<bool> {
-    let t0 = Instant::now();
-    loop {
-        drain(rx, slots, tracer);
-        if done(slots) {
-            return Ok(true);
-        }
-        if t0.elapsed().as_secs_f64() > cfg.hard_wait_s {
-            return Ok(false);
-        }
-        match rx.recv_timeout(Duration::from_millis(0)) {
-            Ok(m) => {
-                handle(m, slots, tracer);
-                continue;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(false),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-        let ready = ws::poll_readable(&[&*ev, &*up], 20)?;
-        if ready[0] && !ev.service_control(cbuf)? {
-            return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "평가기가 계획 중에 연결을 닫음"));
-        }
-        if ready[1] && !up.service_control(cbuf)? {
-            return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "π0.5 서버가 계획 중에 연결을 닫음"));
-        }
-    }
-}
-
-fn wait_decisions(slots: &mut [Slot], rx: &mpsc::Receiver<PMsg>, ev: &mut Conn, up: &mut Conn, cbuf: &mut Buf, cfg: &RelayCfg, tracer: &Option<Tracer>) -> io::Result<()> {
-    let ok = pump_until(&|s: &[Slot]| s.iter().all(|x| !x.waiting), slots, rx, ev, up, cbuf, cfg, tracer)?;
-    if !ok {
-        eprintln!("[relay] 결정이 {} s 안에 안 옴 — 지금 문장으로 계속, 결정은 도착하면 반영", cfg.hard_wait_s);
-    }
-    Ok(())
-}
-
-fn wait_returned(e: usize, slots: &mut [Slot], rx: &mpsc::Receiver<PMsg>, ev: &mut Conn, up: &mut Conn, cbuf: &mut Buf, cfg: &RelayCfg) -> io::Result<()> {
-    pump_until(&|s: &[Slot]| s[e].agent.is_some(), slots, rx, ev, up, cbuf, cfg, &None).map(|_| ())
-}
-
-fn wait_all_returned(slots: &mut [Slot], rx: &mpsc::Receiver<PMsg>, _tx: &mpsc::Sender<PMsg>, ev: &mut Conn, up: &mut Conn, cbuf: &mut Buf, cfg: &RelayCfg) -> io::Result<()> {
-    if slots.iter().all(idle) {
-        return Ok(());
-    }
-    pump_until(&|s: &[Slot]| s.iter().all(idle), slots, rx, ev, up, cbuf, cfg, &None).map(|_| ())
 }

@@ -169,6 +169,7 @@ fn cmd_relay(a: &Args) -> Result<(), String> {
     cfg.task_override = a.get("task").map(|s| s.to_string());
     cfg.max_steps_override = a.get("max-steps").and_then(|s| s.parse().ok());
     cfg.pause = !a.flag("no-pause");
+    cfg.stream = !a.flag("no-stream");
     cfg.images = !a.flag("no-images");
     cfg.once = a.flag("once");
     cfg.latency_every = a.num("latency-every", 1000);
@@ -370,6 +371,7 @@ fn cmd_bench_local(a: &Args) -> Result<(), String> {
     };
     let mut cfg = RelayCfg::new(&raddr, &paddr, mode.clone(), catalog.clone());
     cfg.latency_every = 0;
+    cfg.stream = !a.flag("no-stream");
     if matches!(mode, Mode::Agent) {
         let a2 = a.clone();
         let cat2 = catalog.clone();

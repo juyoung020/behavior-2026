@@ -62,6 +62,17 @@ pub struct Conn {
     /// 클라이언트 쪽(우리가 접속한 쪽)이면 보낼 때 마스크를 건다.
     pub is_client: bool,
     rng: crate::util::Rng,
+    quick: bool,
+}
+
+/// 소켓 read + (켜져 있으면) TCP_QUICKACK 다시 걸기
+#[inline]
+fn read_q(s: &mut TcpStream, quick: bool, dst: &mut [u8]) -> io::Result<usize> {
+    let n = s.read(dst)?;
+    if quick {
+        quickack(s);
+    }
+    Ok(n)
 }
 
 fn io_err(s: impl Into<String>) -> io::Error {
@@ -115,6 +126,28 @@ pub fn set_fast(s: &TcpStream) {
     let _ = s.set_nodelay(true);
 }
 
+/// 지연 ACK 끄기(리눅스 TCP_QUICKACK). 커널이 한동안 뒤 다시 켜므로 읽을 때마다 다시 건다.
+/// Windows 평가기 ↔ WSL 경계에서 보이는 약 40 ms 대기(docs/평가기_가속설계.md 4.3, 지연 ACK 추정)를 줄이려는 것.
+/// `BAGENT_NO_QUICKACK=1` 이면 끈다(비교용).
+#[inline]
+fn quickack(s: &TcpStream) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let one: libc::c_int = 1;
+        unsafe {
+            libc::setsockopt(s.as_raw_fd(), libc::IPPROTO_TCP, libc::TCP_QUICKACK, &one as *const libc::c_int as *const libc::c_void, std::mem::size_of::<libc::c_int>() as libc::socklen_t);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = s;
+}
+
+fn quickack_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BAGENT_NO_QUICKACK").map(|v| v != "1").unwrap_or(true))
+}
+
 impl Conn {
     fn new(s: TcpStream, leftover: Vec<u8>, is_client: bool) -> Conn {
         set_fast(&s);
@@ -123,7 +156,11 @@ impl Conn {
         if rb.len() < 64 * 1024 {
             rb.resize(64 * 1024, 0);
         }
-        Conn { s, rb, rp: 0, re, is_client, rng: crate::util::Rng::from_time() }
+        let quick = quickack_enabled();
+        if quick {
+            quickack(&s);
+        }
+        Conn { s, rb, rp: 0, re, is_client, rng: crate::util::Rng::from_time(), quick }
     }
 
     /// 서버 쪽: 접속을 받아 핸드셰이크. `/healthz` 는 200 OK 로 응답하고 닫는다.
@@ -203,14 +240,24 @@ impl Conn {
         }
         let rest = &mut dst[have..];
         if rest.len() >= self.rb.len() / 2 {
-            return self.s.read_exact(rest);
+            // 큰 읽기: 버퍼를 거치지 않고 바로
+            let mut off = 0;
+            while off < rest.len() {
+                match read_q(&mut self.s, self.quick, &mut rest[off..]) {
+                    Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "연결 끊김")),
+                    Ok(n) => off += n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            return Ok(());
         }
         // 작은 읽기: 버퍼를 채워서 시스템 호출 수를 줄인다.
         let mut filled = 0;
         while filled < rest.len() {
             self.rp = 0;
             self.re = 0;
-            let n = self.s.read(&mut self.rb)?;
+            let n = read_q(&mut self.s, self.quick, &mut self.rb)?;
             if n == 0 {
                 return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "연결 끊김"));
             }
@@ -221,6 +268,36 @@ impl Conn {
             filled += take;
         }
         Ok(())
+    }
+
+    /// 있는 만큼 읽는다(버퍼에 남은 것 먼저, 없으면 소켓 read 한 번). 반환: 읽은 바이트 수(> 0).
+    /// 중계기의 흘려보내기(cut-through)에 쓴다: 받은 조각을 바로 다음 쪽으로 쓴다.
+    pub fn read_some(&mut self, dst: &mut [u8]) -> io::Result<usize> {
+        let have = self.buffered().min(dst.len());
+        if have > 0 {
+            dst[..have].copy_from_slice(&self.rb[self.rp..self.rp + have]);
+            self.rp += have;
+            return Ok(have);
+        }
+        loop {
+            match read_q(&mut self.s, self.quick, dst) {
+                Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "연결 끊김")),
+                Ok(n) => return Ok(n),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// 프레임 머리만 쓴다(몸통은 [`Conn::write_raw`] 로 이어서).
+    pub fn write_head(&mut self, fin: bool, op: u8, mask: Option<[u8; 4]>, len: usize) -> io::Result<()> {
+        let (h, hl) = encode_head(fin, op, mask, len);
+        self.s.write_all(&h[..hl])
+    }
+
+    pub fn write_raw(&mut self, parts: &[&[u8]]) -> io::Result<()> {
+        let mut v: Vec<IoSlice<'_>> = parts.iter().filter(|p| !p.is_empty()).map(|p| IoSlice::new(p)).collect();
+        write_all_vectored(&mut self.s, &mut v)
     }
 
     pub fn read_head(&mut self) -> io::Result<Head> {

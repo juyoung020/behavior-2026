@@ -107,6 +107,18 @@ impl Monitor {
         *self = Monitor::new(cfg);
     }
 
+    /// 다음 관측에서 스텝 수로 정해지는 경계(판 시작·예산 소진·정기 확인)가 날 수 있는가.
+    /// 중계기는 이때만 관측을 통째로 붙잡고, 나머지 스텝은 흘려보낸다.
+    pub fn scheduled_due(&self) -> bool {
+        if !self.started {
+            return true;
+        }
+        if self.busy || self.last_trigger.map(|lt| self.step < lt + self.cfg.min_gap).unwrap_or(false) {
+            return false;
+        }
+        self.steps_in_stage() >= self.budget || self.step >= self.next_check
+    }
+
     pub fn moved_in_stage(&self, dist: f64) -> f64 {
         (dist - self.dist_at_start).max(0.0)
     }
