@@ -1,0 +1,4 @@
+[gpu_lock] 잡음: fasttrain (NVDEC 사용률 측정 (ftbench)) ~ 00:04:44
+스레드 2: {"batch": 32, "threads": 2, "slots": 6, "batches": 250, "step_ms": 0.0, "startup_s": 1.81, "batches_per_s": 5.47, "samples_per_s": 174.9, "wait_ms_per_batch": 182.90, "frames_per_request": 4.47} | decoder 평균 41% (최대 60%), SM 평균 2%
+스레드 4: {"batch": 32, "threads": 4, "slots": 6, "batches": 250, "step_ms": 0.0, "startup_s": 1.63, "batches_per_s": 6.88, "samples_per_s": 220.2, "wait_ms_per_batch": 145.26, "frames_per_request": 4.47} | decoder 평균 51% (최대 69%), SM 평균 2%
+스레드 8: {"batch": 32, "threads": 8, "slots": 6, "batches": 250, "step_ms": 0.0, "startup_s": 2.26, "batches_per_s": 4.89, "samples_per_s": 156.3, "wait_ms_per_batch": 204.68, "frames_per_request": 4.47} | decoder 평균 34% (최대 61%), SM 평균 1%
