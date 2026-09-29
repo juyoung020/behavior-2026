@@ -13,7 +13,7 @@ namespace eng {
 namespace sv {
 
 SV_HD V4 ldf3(const float* p) { return V4{p[0], p[1], p[2], 0.0f}; }  // V3LoadA
-SV_HD void stf3(V4 a, float* p) { p[0] = a.x; p[1] = a.y; p[2] = a.z; }
+SV_HD void stf3(V4 a, float* p) { p[0] = a.f[0]; p[1] = a.f[1]; p[2] = a.f[2]; }
 
 // DyTGSContactPrep.cpp:1492
 SV_HD FV solveDynamicContactsStep(SolverContactPointStep* contacts, uint32_t nbContactPoints, V4 contactNormal, FV invMassA, FV invMassB,
@@ -111,7 +111,7 @@ SV_HDN void solveContact(const SDesc& desc, SBodyVel* vels, ByteArena& arena, bo
       const FV maxFrictionImpulse = FMul(staticFrictionCof, accumulatedNormalImpulse);
       const FV maxDynFrictionImpulse = FMul(dynamicFrictionCof, accumulatedNormalImpulse);
       const FV negMaxDynFrictionImpulse = FNeg(maxDynFrictionImpulse);
-      BS broken = BFFFF_S();
+      BoolV broken = BFFFF();
       const uint32_t numFrictionPairs = (numFrictionConstr & 6);
       for (uint32_t i = 0; i < numFrictionPairs; i += 2) {
         SolverContactFrictionStep& f0 = frictions[i];
@@ -201,7 +201,7 @@ SV_HDN void solveContact(const SDesc& desc, SBodyVel* vels, ByteArena& arena, bo
         angState1 = V3NegScaleSub(rbXnI, FMul(deltaF, angDom1), angState1);
         FStore(newAppliedForce, &f.appliedForce);
       }
-      hdr->broken = broken.m;  // Store_From_BoolV
+      Store_From_BoolV(broken, &hdr->broken);
     }
   }
   stf3(linVel0, b0.lin);
@@ -476,8 +476,8 @@ SV_HDN void solveContact4_Block(const SDesc* desc, SBodyVel* vels, ByteArena& ar
   const V4* A0[3] = {&angState0T0, &angState0T1, &angState0T2};
   const V4* A1[3] = {&angState1T0, &angState1T1, &angState1T2};
   for (int k = 0; k < 3; ++k) {
-    b0[0]->lin[k] = L0[k]->x; b0[1]->lin[k] = L0[k]->y; b0[2]->lin[k] = L0[k]->z; b0[3]->lin[k] = L0[k]->w;
-    b0[0]->ang[k] = A0[k]->x; b0[1]->ang[k] = A0[k]->y; b0[2]->ang[k] = A0[k]->z; b0[3]->ang[k] = A0[k]->w;
+    b0[0]->lin[k] = L0[k]->f[0]; b0[1]->lin[k] = L0[k]->f[1]; b0[2]->lin[k] = L0[k]->f[2]; b0[3]->lin[k] = L0[k]->f[3];
+    b0[0]->ang[k] = A0[k]->f[0]; b0[1]->ang[k] = A0[k]->f[1]; b0[2]->ang[k] = A0[k]->f[2]; b0[3]->ang[k] = A0[k]->f[3];
   }
   const float* lanes1L[4];
   (void)lanes1L;
@@ -486,8 +486,8 @@ SV_HDN void solveContact4_Block(const SDesc* desc, SBodyVel* vels, ByteArena& ar
       for (int k = 0; k < 3; ++k) {
         const V4& l = *L1[k];
         const V4& g = *A1[k];
-        b1[a]->lin[k] = a == 0 ? l.x : a == 1 ? l.y : a == 2 ? l.z : l.w;
-        b1[a]->ang[k] = a == 0 ? g.x : a == 1 ? g.y : a == 2 ? g.z : g.w;
+        b1[a]->lin[k] = l.f[a];
+        b1[a]->ang[k] = g.f[a];
       }
     }
   }
@@ -509,7 +509,8 @@ SV_HDN void writeBackContact4_Block(const SDesc* desc, ByteArena& arena, Frictio
     currPtr += sizeof(V4) * numFrictionConstr;
     currPtr += numFrictionConstr * sizeof(SolverContactFrictionStepBlock);
     if (numFrictionConstr) {
-      const uint32_t broken[4] = {hdr->broken.x, hdr->broken.y, hdr->broken.z, hdr->broken.w};
+      uint32_t broken[4];
+      BStoreA(hdr->broken, broken);  // DyTGSContactPrepBlock.cpp 원본과 같음
       const uint8_t* frictionCounts = hdr->numNormalConstrs;  // 원본도 numNormalConstrs 를 본다 (DyTGSContactPrepBlock.cpp:2897)
       for (uint32_t a = 0; a < 4; ++a)
         if (frictionCounts[a] && broken[a] && hdr->frictionBrokenWriteback[a] != NONE) frictionCur.data[hdr->frictionBrokenWriteback[a]].broken = 1;

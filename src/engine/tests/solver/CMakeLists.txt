@@ -18,7 +18,7 @@ set(PX_INTERNAL_INCS
   ${PHYSX_ROOT}/source/scenequery/include ${PHYSX_ROOT}/source/simulationcontroller/include ${PHYSX_ROOT}/source/simulationcontroller/src
   ${PHYSX_ROOT}/source/omnipvd ${PHYSX_ROOT}/source/immediatemode/include ${PHYSX_ROOT}/source/physxmetadata/core/include)
 
-engine_test(test_contact_solver test_contact_solver.cpp PHYSX)
+engine_test(test_contact_solver test_contact_solver.cpp ${CMAKE_SOURCE_DIR}/../core/solver/solver_host.cpp PHYSX)
 target_include_directories(test_contact_solver PRIVATE ${PX_INTERNAL_INCS})
 target_compile_definitions(test_contact_solver PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
 target_compile_options(test_contact_solver PRIVATE -Wno-everything)
@@ -59,3 +59,12 @@ target_link_options(test_islands PRIVATE
   -Wl,--wrap=_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj
   -Wl,--wrap=_ZN5physx2IG9IslandSim20removeDestroyedEdgesEv
 )
+
+# 같은 층 1 시험을 FloatV 한 칸 표현(-DENG_AOS_FLOATV_ONE_LANE, docs 12.7)으로 (aos 는 solver_host.cpp 번역 단위에만 있다)
+engine_test(test_contact_solver_1lane test_contact_solver.cpp ${CMAKE_SOURCE_DIR}/../core/solver/solver_host.cpp PHYSX)
+target_include_directories(test_contact_solver_1lane PRIVATE ${PX_INTERNAL_INCS})
+target_compile_definitions(test_contact_solver_1lane PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_compile_options(test_contact_solver_1lane PRIVATE -Wno-everything)
+target_compile_definitions(test_contact_solver_1lane PRIVATE ENG_AOS_FLOATV_ONE_LANE)
+engine_test(test_contact_solver_gpu_1lane test_contact_solver_gpu.cu)
+target_compile_definitions(test_contact_solver_gpu_1lane PRIVATE ENG_AOS_FLOATV_ONE_LANE)

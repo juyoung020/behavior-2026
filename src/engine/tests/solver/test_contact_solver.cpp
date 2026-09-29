@@ -13,7 +13,8 @@
 #include <random>
 
 #include "px_internal.h"
-#include "core/solver/tgs_solver.h"
+#define SVS_HOST_API  // 풀이 본체(aos)는 core/solver/solver_host.cpp 번역 단위에 (PhysX 헤더와 분리)
+#include "core/solver/solver_io.h"
 #include "solver_stream.h"
 
 using namespace physx;

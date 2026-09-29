@@ -7,7 +7,12 @@
 #include <cstring>
 #include <vector>
 
+// SVS_HOST_API 를 정의하면(PhysX 와 같은 번역 단위) solver_io.h 의 호스트 진입 함수를 부르고, 아니면 풀이 본체를 직접 넣는다(GPU).
+#if defined(SVS_HOST_API)
+#include "core/solver/solver_io.h"
+#else
 #include "core/solver/tgs_solver.h"
+#endif
 
 namespace svs {
 namespace sv = eng::sv;
@@ -67,9 +72,15 @@ SV_HD void runStep(sv::SolverBoard& B, const sv::SolverParams& prm, const StepVi
   B.nbActivatedCMs = v.c.nAct;
   B.patches = v.patches;
   B.contacts = v.contacts;
+#if defined(SVS_HOST_API)
+  sv::solverStepHost(B, prm);
+  sv::afterIntegrationHost(B);
+  sv::deactivateBodiesHost(B, v.deact, v.c.nDeact);
+#else
   sv::solverStep(B, prm);
   sv::afterIntegration(B);
   sv::deactivateBodies(B, v.deact, v.c.nDeact);
+#endif
 }
 
 SV_HD void bodyResult(const eng::Body& b, float* r) {

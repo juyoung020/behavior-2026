@@ -71,8 +71,8 @@ SV_HDN bool createContactPatches(CorrelationBuffer& fb, const ContactPoint* cb, 
         patchIndex = i;
         currentPatchData->count = count;
         count = 1;
-        currentPatchData->patchBounds.minimum = V3{minV.x, minV.y, minV.z};  // StoreBounds
-        currentPatchData->patchBounds.maximum = V3{maxV.x, maxV.y, maxV.z};
+        currentPatchData->patchBounds.minimum = V3{minV.f[0], minV.f[1], minV.f[2]};  // StoreBounds
+        currentPatchData->patchBounds.maximum = V3{maxV.f[0], maxV.f[1], maxV.f[2]};
         currentPatchData = fb.contactPatches + contactPatchCount;
         initContactPatch(fb.contactPatches[contactPatchCount++], uint16_t(i), curContact.restitution, curContact.staticFriction,
                          curContact.dynamicFriction, curContact.materialFlags);
@@ -81,8 +81,8 @@ SV_HDN bool createContactPatches(CorrelationBuffer& fb, const ContactPoint* cb, 
       }
     }
     if (count != 1) currentPatchData->count = count;
-    currentPatchData->patchBounds.minimum = V3{minV.x, minV.y, minV.z};
-    currentPatchData->patchBounds.maximum = V3{maxV.x, maxV.y, maxV.z};
+    currentPatchData->patchBounds.minimum = V3{minV.f[0], minV.f[1], minV.f[2]};
+    currentPatchData->patchBounds.maximum = V3{maxV.f[0], maxV.f[1], maxV.f[2]};
   }
   fb.contactPatchCount = contactPatchCount;
   return true;
