@@ -594,8 +594,8 @@ class Replayer {
       else if (an == "restOffset") s->setRestOffset(as<float>(p));
       else if (an == "torsionalPatchRadius") s->setTorsionalPatchRadius(as<float>(p));
       else if (an == "minTorsionalPatchRadius") s->setMinTorsionalPatchRadius(as<float>(p));
-      else if (an == "shapeFlags") s->setFlags(PxShapeFlags(PxU8(flagv(p, n))));
-      else if (an == "simulationFilterData") s->setSimulationFilterData(as<PxFilterData>(p));
+      else if (an == "shapeFlags") { s->setFlags(PxShapeFlags(PxU8(flagv(p, n)))); mark_refilter(s); }
+      else if (an == "simulationFilterData") { s->setSimulationFilterData(as<PxFilterData>(p)); mark_refilter(s); }
       else if (an == "queryFilterData") s->setQueryFilterData(as<PxFilterData>(p));
       else if (an == "materials") {
         std::vector<PxMaterial*> mats;
@@ -941,6 +941,7 @@ class Replayer {
       auto* s = o.px ? o.px->is<PxShape>() : nullptr;
       if (!a || !s) { unsupported["attach missing"]++; return; }
       if (add) a->attachShape(*s); else a->detachShape(*s);
+      filters_dirty = true;
       return;
     }
     if (key == "PxScene.actors") {
@@ -1074,6 +1075,70 @@ class Replayer {
     while (scall_next < scalls.size() && scalls[scall_next].after <= after) apply_side(scalls[scall_next++]);
   }
 
+  // ------------------------------------------------------------------ 거르개: resetFiltering 따라 하기 + 경로 기반 표 풀기
+  // omni.physx 는 장면 안 액터의 모양 filterData / 모양 플래그를 바꾸면 resetFiltering(actor) 를 부른다
+  // (InternalFilteredPairs.cpp:159, InternalActor.cpp:258~, PhysXCollisionPropertiesUpdate.cpp:52). 이 호출은 OVD 에 안 남는다.
+  bool refilter_on = true;
+  std::vector<PxRigidActor*> refilter;
+  bool filters_dirty = true;
+  void mark_refilter(PxShape* s) {
+    filters_dirty = true;
+    PxRigidActor* a = s->getActor();
+    if (refilter_on && a && a->getScene()) refilter.push_back(a);
+  }
+  void do_refilter() {
+    std::set<PxRigidActor*> done;
+    for (PxRigidActor* a : refilter)
+      if (done.insert(a).second && a->getScene()) { a->getScene()->resetFiltering(*a); applied["refilter"]++; }
+    refilter.clear();
+  }
+  std::vector<PxShape*> shapes_of_prim(const std::string& path) {
+    std::vector<PxShape*> out;
+    auto add_actor = [&](PxRigidActor* a) {
+      PxU32 n = a->getNbShapes();
+      size_t b = out.size();
+      out.resize(b + n);
+      a->getShapes(out.data() + b, n);
+    };
+    const std::string pre = path + "/";
+    bool any = false;
+    for (auto& kv : actor_by_name)
+      if (kv.first == path || kv.first.compare(0, pre.size(), pre) == 0) { add_actor(kv.second); any = true; }
+    if (!any) {  // 충돌체 prim 이면 그것을 품은 강체(이름이 경로의 앞부분인 가장 긴 액터)
+      size_t best = 0;
+      PxRigidActor* ba = nullptr;
+      for (auto& kv : actor_by_name)
+        if (kv.first.size() > best && path.compare(0, kv.first.size() + 1, kv.first + "/") == 0) { best = kv.first.size(); ba = kv.second; }
+      if (ba) add_actor(ba);
+    }
+    return out;
+  }
+  void resolve_filters() {
+    filters_dirty = false;
+    if (spec.groups.empty() && spec.rels.empty()) return;
+    std::unordered_map<std::string, std::set<uint32_t>> gid;
+    for (auto& g : spec.groups)
+      for (auto& inc : g.includes)
+        for (PxShape* s : shapes_of_prim(inc)) { uint32_t w2 = s->getSimulationFilterData().word2; if (w2) gid[g.path].insert(w2); }
+    const size_t before = spec.group_pairs.size();
+    for (auto& g : spec.groups)
+      for (auto& fpath : g.filtered)
+        for (uint32_t a : gid[g.path]) for (uint32_t b : gid[fpath]) spec.group_pairs.insert(engine::pair_key(a, b));
+    const size_t before_p = spec.filtered_pairs.size();
+    for (auto& r : spec.rels) {
+      auto sa = shapes_of_prim(r.first), sb = shapes_of_prim(r.second);
+      for (PxShape* x : sa)
+        for (PxShape* y : sb) {
+          uint32_t a = x->getSimulationFilterData().word1, b = y->getSimulationFilterData().word1;
+          if (a && b) spec.filtered_pairs.insert(engine::pair_key(a, b));
+        }
+    }
+    if (verbose)
+      fprintf(stderr, "[filter] sim %llu: group pairs %zu(+%zu), filtered pairs %zu(+%zu)\n", (unsigned long long)sims,
+              spec.group_pairs.size(), spec.group_pairs.size() - before, spec.filtered_pairs.size(),
+              spec.filtered_pairs.size() - before_p);
+  }
+
   // ------------------------------------------------------------------ 비교
   int shown = 0;
   std::string cur_obj;
@@ -1176,6 +1241,8 @@ class Replayer {
             Obj& so = objs[e.obj];
             if (!so.scene) { unsupported["simulate without scene"]++; break; }
             apply_side_until(sims);
+            do_refilter();
+            if (filters_dirty) resolve_filters();
             float dt; memcpy(&dt, F.data(e), 4);
             so.scene->simulate(dt);
             so.scene->fetchResults(true);
@@ -1262,6 +1329,7 @@ int main(int argc, char** argv) {
     else if (a == "--max-frames" && i + 1 < argc) R.max_frames = atoll(argv[++i]);
     else if (a == "--verbose") R.verbose = true;
     else if (a == "--record" && i + 1 < argc) R.record_path = argv[++i];
+    else if (a == "--no-refilter") R.refilter_on = false;
   }
   if (!convex.empty() && !engine::read_convex_bin(convex, R.convex)) fprintf(stderr, "convex 보조 파일을 못 읽음: %s\n", convex.c_str());
   if (!filters.empty() && !engine::read_filters(filters, R.spec)) fprintf(stderr, "filters 파일을 못 읽음: %s\n", filters.c_str());

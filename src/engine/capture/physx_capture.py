@@ -46,6 +46,8 @@ class Capture:
         self.n_pre = 0
         self.log = []  # (post_count, kind, method, view_id, indices, data)
         self.views = {}  # id(view) -> (kind, prim_paths)
+        self.view_extra = {}  # id(view) -> {dof_paths, signs, max_dofs}
+        self.filters = {}  # 태그 -> 거르개 표 재료
         self.meta = {"started": time.strftime("%Y-%m-%d %H:%M:%S")}
         self._subs = []
         self.convex_done = False
@@ -105,6 +107,9 @@ class Capture:
                     except Exception:
                         paths = []
                     self.views[vid] = (kind, paths)
+                    if kind == "art":
+                        self.view_extra[vid] = self.view_meta(view) or {}
+                        self.view_extra[vid]["max_dofs"] = int(getattr(view, "max_dofs", 0))
                 self.log.append((self.n_post, self.n_pre, kind, name, vid, to_np(indices, np.uint32),
                                  to_np(data, np.float32)))
                 return orig(view, data, indices, *a, **kw)
@@ -133,6 +138,8 @@ class Capture:
                             self.views[vid] = ("art", list(self_._view.prim_paths))
                         except Exception:
                             self.views[vid] = ("art", [])
+                        self.view_extra[vid] = self.view_meta(self_._view) or {}
+                        self.view_extra[vid]["max_dofs"] = int(getattr(self_._view, "max_dofs", 0))
                     self.log.append((self.n_post, self.n_pre, "batch", name, vid, to_np(indices, np.uint32),
                                      to_np(data, np.float32)))
                     return orig(self_, data, indices, cast=cast)
@@ -142,6 +149,101 @@ class Capture:
             setattr(B, name, mk(orig, name))
             n += 1
         print(f"[capture] 텐서 쓰기 {n} 개 함수 감쌈", flush=True)
+        self.install_psi_proxy()
+
+    def install_psi_proxy(self):
+        """og.sim.psi (IPhysxSimulation) 의 wake_up / put_to_sleep / apply_force_at_pos / apply_torque 도 OVD 에 안 남는다.
+        Simulator.psi 속성을 기록 대리 객체로 바꿔 끼운다 (호출은 그대로 넘긴다)."""
+        import omnigibson as og
+        from pxr import PhysicsSchemaTools
+
+        cap = self
+        Sim = type(og.sim)
+        orig_prop = Sim.psi
+
+        class PsiProxy:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                attr = getattr(self._inner, name)
+                if name not in ("wake_up", "put_to_sleep", "apply_force_at_pos", "apply_torque", "apply_force"):
+                    return attr
+
+                def logged(stage_id, prim_id, *a):
+                    path = str(PhysicsSchemaTools.intToSdfPath(prim_id))
+                    vid = ("psi", path)
+                    if vid not in cap.views:
+                        cap.views[vid] = ("psi", [path])
+                    data = np.concatenate([np.asarray(x, np.float32).ravel() for x in a]) if a else np.zeros(0, np.float32)
+                    cap.log.append((cap.n_post, cap.n_pre, "psi", name, vid, np.zeros(0, np.uint32), data))
+                    return attr(stage_id, prim_id, *a)
+
+                return logged
+
+        def psi(sim_self):
+            return PsiProxy(orig_prop.fget(sim_self))
+
+        Sim.psi = property(psi)
+        print("[capture] og.sim.psi 대리 객체 설치 (wake_up/put_to_sleep/힘)", flush=True)
+
+    # ------------------------------------------------------------------ 충돌 거르개 표 (omni.physx 내부 표의 재료)
+    def dump_filters(self, tag):
+        """omni.physx 거르개(PhysXScene.cpp:48)가 보는 두 표의 재료를 USD 에서 뜬다.
+        - 충돌 그룹: CollisionGroup prim 의 filteredGroups 와 includes (그룹 번호 = 모양 filterData.word2, OVD 에서 찾음)
+        - 거른 쌍: FilteredPairsAPI 의 filteredPairs (쌍 번호 = 모양 포인터 해시 = word1, InternalFilteredPairs.cpp:157)"""
+        import omni.usd
+        from pxr import PhysxSchema, UsdPhysics
+
+        stage = omni.usd.get_context().get_stage()
+        groups, rels, reports = [], [], 0
+        for prim in stage.Traverse():
+            if prim.IsA(UsdPhysics.CollisionGroup):
+                g = UsdPhysics.CollisionGroup(prim)
+                inc = g.GetCollidersCollectionAPI().GetIncludesRel().GetTargets()
+                groups.append({"path": str(prim.GetPath()),
+                               "filtered": [str(t) for t in g.GetFilteredGroupsRel().GetTargets()],
+                               "includes": [str(t) for t in inc]})
+            if prim.HasAPI(UsdPhysics.FilteredPairsAPI):
+                for t in UsdPhysics.FilteredPairsAPI(prim).GetFilteredPairsRel().GetTargets():
+                    rels.append([str(prim.GetPath()), str(t)])
+            if prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
+                reports += 1
+        self.filters[tag] = {"groups": groups, "rels": rels, "contact_report_prims": reports, "post": self.n_post}
+        print(f"[capture] 거르개 표({tag}): 그룹 {len(groups)}, 거른 쌍 {len(rels)}, 접촉 보고 prim {reports}", flush=True)
+
+    def view_meta(self, view):
+        """관절체 뷰의 dof 부호(isDofBody0Parent)를 USD 로 계산: dof 의 조인트 body0 가 부모 링크면 +1, 아니면 -1."""
+        from pxr import UsdPhysics
+        import omni.usd
+
+        stage = omni.usd.get_context().get_stage()
+        signs = []
+        try:
+            dof_paths = list(view.dof_paths)
+            link_paths = list(view.link_paths)
+        except Exception:
+            return None
+        for a, dofs in enumerate(dof_paths):
+            try:
+                mt = view.get_metatype(a)
+                names = list(mt.link_names)
+                parents = list(mt.link_parents)
+                lp = list(link_paths[a])
+                name2path = dict(zip(names, lp))
+                parent_of = {name2path.get(n): name2path.get(p) for n, p in zip(names, parents)}
+            except Exception:
+                parent_of = {}
+            s = []
+            for jp in dofs:
+                j = UsdPhysics.Joint(stage.GetPrimAtPath(str(jp)))
+                b0 = [str(t) for t in j.GetBody0Rel().GetTargets()]
+                b1 = [str(t) for t in j.GetBody1Rel().GetTargets()]
+                b0 = b0[0] if b0 else None
+                b1 = b1[0] if b1 else None
+                s.append(-1 if (b0 is not None and parent_of.get(b0) == b1) else 1)
+            signs.append(s)
+        return {"dof_paths": [[str(x) for x in d] for d in dof_paths], "signs": signs}
 
     # ------------------------------------------------------------------ 볼록 메시 원본
     def dump_convex(self):
@@ -207,15 +309,21 @@ class Capture:
             np.savez_compressed(
                 os.path.join(self.dump_dir, "sidelog.npz"),
                 post=np.array([e[0] for e in self.log], np.int64), pre=np.array([e[1] for e in self.log], np.int64),
-                kind=kinds, method=np.array([e[3] for e in self.log]), view=np.array([e[4] for e in self.log], np.int64),
+                kind=kinds, method=np.array([e[3] for e in self.log]), view=np.array([str(e[4]) for e in self.log]),
                 idx_len=np.array([len(e[5]) for e in self.log], np.int64),
                 idx=np.concatenate([e[5] for e in self.log]) if self.log else np.zeros(0, np.uint32),
                 data_len=np.array([e[6].size for e in self.log], np.int64),
                 data=np.concatenate([e[6].ravel() for e in self.log]) if self.log else np.zeros(0, np.float32),
-                view_ids=np.array(list(self.views), np.int64),
+                view_ids=np.array([str(k) for k in self.views]),
                 view_kind=np.array([v[0] for v in self.views.values()]),
                 view_paths=np.array(["|".join(v[1]) for v in self.views.values()]))
+            # 뷰 id 는 str(id) 로 맞춘다 (psi 는 튜플)
+            with open(os.path.join(self.dump_dir, "views.json"), "w", encoding="utf-8") as f:
+                json.dump({str(k): {"kind": v[0], "prims": v[1], **(self.view_extra.get(k) or {})}
+                           for k, v in self.views.items()}, f, ensure_ascii=False)
             self.meta["sidelog_calls"] = len(self.log)
+        with open(os.path.join(self.dump_dir, "filters.json"), "w", encoding="utf-8") as f:
+            json.dump(self.filters, f, ensure_ascii=False, indent=1)
         if self.ovd:
             cs = carb.settings.get_settings()
             cs.set_bool("/physics/omniPvdOutputEnabled", False)  # -> omni.physx 가 SDK 를 정리하며 tmp.ovd 를 *_rec.ovd 로
@@ -243,14 +351,33 @@ def install(cap: Capture):
     from omnigibson.eval import evaluator as E
 
     Ev = E.BatchedEvaluator
-    orig_init = Ev.__init__
 
-    @functools.wraps(orig_init)
-    def ev_init(self, *a, **kw):
-        cap.install_sidelog()  # omni.physics.tensors 는 앱이 뜬 뒤에만 import 된다
-        return orig_init(self, *a, **kw)
+    # og.sim(Simulator 클래스)은 og.launch 안에서 만들어진다 -> launch 가 끝난 직후에 곁기록 겉싸개를 건다
+    orig_og_launch = og.launch
 
-    Ev.__init__ = ev_init
+    @functools.wraps(orig_og_launch)
+    def og_launch(*a, **kw):
+        r = orig_og_launch(*a, **kw)
+        if not getattr(cap, "_sidelog_installed", False):
+            cap._sidelog_installed = True
+            cap.install_sidelog()
+        return r
+
+    og.launch = og_launch
+
+    orig_load = Ev.load_batch
+
+    @functools.wraps(orig_load)
+    def load_batch(self, *a, **kw):
+        r = orig_load(self, *a, **kw)
+        try:
+            cap.dump_filters("episode_start")
+            cap.meta["episode_start_post"] = cap.n_post  # 이 번호 뒤부터가 정책 롤아웃
+        except Exception as e:
+            print(f"[capture] 거르개 표 기록 실패: {e!r}", flush=True)
+        return r
+
+    Ev.load_batch = load_batch
 
     orig_exit = Ev.__exit__
 
@@ -260,6 +387,10 @@ def install(cap: Capture):
             cap.dump_convex()  # 장면이 아직 살아 있을 때 (물리에 쓰지 않는 읽기 전용 요청)
         except Exception as e:  # 기록 실패가 평가 결과를 바꾸면 안 된다
             print(f"[capture] 볼록 메시 기록 실패: {e!r}", flush=True)
+        try:
+            cap.dump_filters("end")
+        except Exception as e:
+            print(f"[capture] 거르개 표 기록 실패: {e!r}", flush=True)
         return orig_exit(self, *a, **kw)
 
     Ev.__exit__ = ev_exit

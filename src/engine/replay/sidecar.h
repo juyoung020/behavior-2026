@@ -74,8 +74,18 @@ inline bool read_filters(const std::string& path, FilterSpec& s) {
   if (!f) return false;
   char key[64];
   unsigned a = 0, b = 0;
-  char line[256];
+  char line[4096];
+  auto group_of = [&](const std::string& path) -> FilterSpec::Group& {
+    for (auto& g : s.groups) if (g.path == path) return g;
+    s.groups.push_back(FilterSpec::Group{path, {}, {}});
+    return s.groups.back();
+  };
   while (fgets(line, sizeof line, f)) {
+    // 경로 기반: "groupfilter <G> <F>" / "groupinclude <G> <prim>" / "rel <A> <B>"
+    char p1[2048], p2[2048];
+    if (sscanf(line, "groupfilter %2047s %2047s", p1, p2) == 2) { group_of(p1).filtered.push_back(p2); continue; }
+    if (sscanf(line, "groupinclude %2047s %2047s", p1, p2) == 2) { group_of(p1).includes.push_back(p2); continue; }
+    if (sscanf(line, "rel %2047s %2047s", p1, p2) == 2) { s.rels.push_back({p1, p2}); continue; }
     if (sscanf(line, "%63s %u %u", key, &a, &b) >= 2) {
       if (!strcmp(key, "group")) s.group_pairs.insert(pair_key(a, b));
       else if (!strcmp(key, "pair")) s.filtered_pairs.insert(pair_key(a, b));

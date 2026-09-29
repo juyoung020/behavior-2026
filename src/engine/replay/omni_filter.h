@@ -3,7 +3,10 @@
 // 원본은 omni.physx 내부 표(충돌 그룹 쌍, 거른 쌍)를 보는데 이 표는 OVD 에 없다 -> FilterSpec 으로 따로 받는다.
 #pragma once
 #include <cstdint>
+#include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "PxPhysicsAPI.h"
 
@@ -24,6 +27,10 @@ struct FilterSpec {
   std::unordered_set<uint64_t> filtered_pairs;  // FilteredPairsSet (개수 > 0 인 것)
   bool inverted_group_filter = false;           // OmniGibson: set_invert_collision_group_filter(False)
   bool any_contact_report = false;              // scene->getContactReport()->empty() 의 반대
+  // 경로 기반 재료 (capture 가 USD 에서 뜬 것). 번호는 재생 중 OVD 이름으로 푼다 (ovd_replay resolve_filters)
+  struct Group { std::string path; std::vector<std::string> filtered, includes; };
+  std::vector<Group> groups;
+  std::vector<std::pair<std::string, std::string>> rels;  // FilteredPairsAPI (prim, target)
 };
 
 inline physx::PxFilterFlags OmniFilterShader(physx::PxFilterObjectAttributes attributes0, physx::PxFilterData filterData0,
