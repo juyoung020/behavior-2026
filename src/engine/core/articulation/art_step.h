@@ -67,8 +67,76 @@ EHD void getImpulseSelfResponse(const Articulation& a, uint32_t linkID0, const V
     dv1Lin = delV1W.bottom;
     dv1Ang = delV1W.top;
   } else {
-    // getImpulseResponseSlow (:1916) — 관절체 내부 제약은 늘 부모-자식 쌍이라 여기서는 안 쓴다(조인트 모듈이 필요하면 옮김)
-    dv0Lin = dv0Ang = dv1Lin = dv1Ang = V3{0, 0, 0};
+    // getImpulseResponseSlow (:1916): 공통 조상까지 올렸다가 내린다 (같은 관절체의 두 링크 사이 접촉·조인트)
+    uint32_t stack[kMaxLinks];
+    uint32_t i0, i1;
+    uint32_t id0 = linkID0, id1 = linkID1;
+    for (i0 = id0, i1 = id1; i0 != i1;) {
+      if (i0 < i1) i1 = a.links[i1].parent;
+      else i0 = a.links[i0].parent;
+    }
+    const uint32_t common = i0;
+    SV Z0{-lin0, -ang0};
+    SV Z1{-lin1, -ang1};
+    float qstZ[kMaxDofs];
+    for (uint32_t d = 0; d < a.dofs; ++d) qstZ[d] = 0.0f;
+    for (i0 = 0; id0 != common; id0 = a.links[id0].parent) {
+      const uint32_t jointOffset = a.jointData[id0].jointOffset;
+      const uint8_t dofCount = a.jointData[id0].nbDof;
+      Z0 = propagateImpulseW(a.rw[id0], Z0, nullptr, &a.isInvStIS[jointOffset], &a.worldMotionMatrix[jointOffset], dofCount, &qstZ[jointOffset]);
+      stack[i0++] = id0;
+    }
+    for (i1 = i0; id1 != common; id1 = a.links[id1].parent) {
+      const uint32_t jointOffset = a.jointData[id1].jointOffset;
+      const uint8_t dofCount = a.jointData[id1].nbDof;
+      Z1 = propagateImpulseW(a.rw[id1], Z1, nullptr, &a.isInvStIS[jointOffset], &a.worldMotionMatrix[jointOffset], dofCount, &qstZ[jointOffset]);
+      stack[i1++] = id1;
+    }
+    const SV ZZ = Z0 + Z1;
+    const SV v = responseOf(a.responseW[common], -ZZ);
+    SV dv1 = v;
+    for (uint32_t index = i1; (index--) > i0;) {
+      const uint32_t id = stack[index];
+      const uint32_t jointOffset = a.jointData[id].jointOffset;
+      const uint32_t dofCount = a.jointData[id].nbDof;
+      dv1 = propagateAccelerationW(a.rw[id], dv1, a.invStIs[id], &a.worldMotionMatrix[jointOffset], &a.isW[jointOffset], &qstZ[jointOffset], dofCount,
+                                   nullptr);
+    }
+    SV dv0 = v;
+    for (uint32_t index = i0; (index--) > 0;) {
+      const uint32_t id = stack[index];
+      const uint32_t jointOffset = a.jointData[id].jointOffset;
+      const uint32_t dofCount = a.jointData[id].nbDof;
+      dv0 = propagateAccelerationW(a.rw[id], dv0, a.invStIs[id], &a.worldMotionMatrix[jointOffset], &a.isW[jointOffset], &qstZ[jointOffset], dofCount,
+                                   nullptr);
+    }
+    dv0Lin = dv0.bottom;
+    dv0Ang = dv0.top;
+    dv1Lin = dv1.bottom;
+    dv1Ang = dv1.top;
+  }
+}
+
+// 링크 상태 조회 (:905-973): 풀이 전 속도(월드), TGS 누적 운동량, 회전 변화, 깊이 뚫림 한계, cfm, 가속도
+EHD void getLinkVelocity(const Articulation& a, uint32_t linkID, V3& linear, V3& angular) {
+  linear = a.motionVelocities[linkID].bottom;
+  angular = a.motionVelocities[linkID].top;
+}
+EHD void getLinkMotionVector(const Articulation& a, uint32_t linkID, V3& linear, V3& angular) {
+  linear = a.deltaMotion[linkID].bottom;
+  angular = a.deltaMotion[linkID].top;
+}
+EHD const Q& getDeltaQ(const Articulation& a, uint32_t linkID) { return a.deltaQ[linkID]; }
+EHD float getLinkMaxPenBias(const Articulation& a, uint32_t linkID) { return a.linkMaxPenBias[linkID]; }
+EHD float getCfm(const Articulation& a, uint32_t linkID) { return a.links[linkID].cfm; }
+EHD void getMotionAcceleration(const Articulation& a, uint32_t linkID, V3& linear, V3& angular) {  // :944 (CPU)
+  linear = V3{0, 0, 0};
+  angular = V3{0, 0, 0};
+  if (a.dt > 0.0f) {
+    const float invDt = 1.0f / a.dt;
+    const SV linkAccel = a.motionAccelerations[linkID] + a.solverLinkSpatialDeltaVels[linkID] * invDt;
+    linear = linkAccel.bottom;
+    angular = linkAccel.top;
   }
 }
 
@@ -129,6 +197,49 @@ EHD void pxcFsGetVelocity(const Articulation& a, uint32_t linkID, float* jointDo
   const SV vel = a.motionVelocities[linkID] + deltaV;
   linear = vel.bottom;
   angular = vel.top;
+}
+
+// pxcFsGetVelocities (:1299): 두 링크 속도를 공통 경로 한 번으로
+EHD void pxcFsGetVelocities(const Articulation& a, uint32_t linkID, uint32_t linkID1, V3& lin0, V3& ang0, V3& lin1, V3& ang1) {
+  const bool fixBase = a.flags & AF_FIX_BASE;
+  SV deltaV = svzero();
+  if (!fixBase) deltaV = a.baseInvSpatialArticulatedInertiaW * (-a.rootDeferredZ);
+  const Link& link0 = a.links[linkID];
+  const Link& link1 = a.links[linkID1];
+  const uint32_t* pathToRoot0 = &a.pathToRoot[link0.pathStart];
+  const uint32_t* pathToRoot1 = &a.pathToRoot[link1.pathStart];
+  const uint32_t numElems0 = link0.pathCount;
+  const uint32_t numElems1 = link1.pathCount;
+  uint32_t offset = 0;
+  while (pathToRoot0[offset] == pathToRoot1[offset]) {
+    const uint32_t index = pathToRoot0[offset++];
+    if (offset >= numElems0 || offset >= numElems1) break;
+    const uint32_t jointOffset = a.jointData[index].jointOffset;
+    const uint32_t dofCount = a.jointData[index].nbDof;
+    deltaV = propagateAccelerationW(a.rw[index], deltaV, a.invStIs[index], &a.worldMotionMatrix[jointOffset], &a.isW[jointOffset],
+                                    &a.deferredQstZ[jointOffset], dofCount, nullptr);
+  }
+  SV deltaV1 = deltaV;
+  for (uint32_t idx = offset; idx < numElems0; ++idx) {
+    const uint32_t index = pathToRoot0[idx];
+    const uint32_t jointOffset = a.jointData[index].jointOffset;
+    const uint32_t dofCount = a.jointData[index].nbDof;
+    deltaV = propagateAccelerationW(a.rw[index], deltaV, a.invStIs[index], &a.worldMotionMatrix[jointOffset], &a.isW[jointOffset],
+                                    &a.deferredQstZ[jointOffset], dofCount, nullptr);
+  }
+  for (uint32_t idx = offset; idx < numElems1; ++idx) {
+    const uint32_t index = pathToRoot1[idx];
+    const uint32_t jointOffset = a.jointData[index].jointOffset;
+    const uint32_t dofCount = a.jointData[index].nbDof;
+    deltaV1 = propagateAccelerationW(a.rw[index], deltaV1, a.invStIs[index], &a.worldMotionMatrix[jointOffset], &a.isW[jointOffset],
+                                     &a.deferredQstZ[jointOffset], dofCount, nullptr);
+  }
+  const SV vel = a.motionVelocities[linkID] + deltaV;
+  lin0 = vel.bottom;
+  ang0 = vel.top;
+  const SV vel1 = a.motionVelocities[linkID1] + deltaV1;
+  lin1 = vel1.bottom;
+  ang1 = vel1.top;
 }
 
 // pxcFsApplyImpulse (:1400): 월드 충격 (선형, 회전) + 선택적 관절 충격

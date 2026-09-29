@@ -120,6 +120,8 @@ int main(int argc, char** argv) {
     else if (arg("--check")) C = atoi(argv[++i]);
     else if (arg("--benchenvs")) benchEnvs = atoi(argv[++i]);
     else if (arg("--spherical")) o.spherical = atoi(argv[++i]);
+    else if (arg("--r1pro")) o.r1pro = argv[++i];
+    else if (arg("--r1copies")) o.r1copies = atoi(argv[++i]);
   }
   if (C > E) C = E;
   if (o.nLinksMax > int(A::kMaxLinks)) o.nLinksMax = int(A::kMaxLinks);

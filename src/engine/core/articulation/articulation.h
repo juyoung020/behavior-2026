@@ -303,8 +303,14 @@ EHD uint32_t createLink(Articulation& a, uint32_t parent, const Tf& poseIn, cons
 EHD uint32_t slot(const Articulation& a, uint32_t creationIdx) { return a.ll[creationIdx]; }
 
 // ---- 링크 API (NpRigidBodyTemplate.h, NpArticulationLink.cpp)
-EHD void linkSetMass(Articulation& a, uint32_t l, float m) { a.bodies[slot(a, l)].invMass = m > 0.0f ? 1.0f / m : 0.0f; }
+// checked 빌드의 PX_CHECK_AND_RETURN 을 그대로: 거부되는 호출은 무시 (NpRigidBodyTemplate.h:419-460)
+EHD bool finiteF(float x) { return x - x == 0.0f; }  // PxIsFinite
+EHD void linkSetMass(Articulation& a, uint32_t l, float m) {
+  if (!finiteF(m) || !(m > 0.0f)) return;  // 링크는 질량 > 0
+  a.bodies[slot(a, l)].invMass = m > 0.0f ? 1.0f / m : 0.0f;
+}
 EHD void linkSetMassSpaceInertiaTensor(Articulation& a, uint32_t l, const V3& m) {
+  if (!finiteF(m.x) || !finiteF(m.y) || !finiteF(m.z) || !(m.x > 0.0f && m.y > 0.0f && m.z > 0.0f)) return;  // 링크는 성분 > 0
   a.bodies[slot(a, l)].invInertia =
       V3{m.x == 0.0f ? 0.0f : 1.0f / m.x, m.y == 0.0f ? 0.0f : 1.0f / m.y, m.z == 0.0f ? 0.0f : 1.0f / m.z};
 }
@@ -345,14 +351,55 @@ EHD JointCore& J(Articulation& a, uint32_t l) { return a.joints[slot(a, l)]; }
 EHD void markSimDirty(Articulation& a) {
   if (a.inScene) a.jcalcDirty = 1;  // Sc::ArticulationJointCore::setSimDirty
 }
-EHD void jointSetType(Articulation& a, uint32_t l, uint8_t t) { J(a, l).jointType = t; }
-EHD void jointSetMotion(Articulation& a, uint32_t l, uint8_t axis, uint8_t m) { J(a, l).motion[axis] = m; }
-EHD void jointSetLimit(Articulation& a, uint32_t l, uint8_t axis, float lo, float hi) {
+EHD void jointSetType(Articulation& a, uint32_t l, uint8_t t) {
+  if (t == JT_UNDEFINED || a.inScene) return;  // NpArticulationJointReducedCoordinate.cpp:78-85
+  J(a, l).jointType = t;
+}
+// isValidMotion (:98)
+EHD bool isValidMotion(const JointCore& j, uint8_t axis, uint8_t motion) {
+  bool valid = true;
+  switch (j.jointType) {
+    case JT_PRISMATIC:
+      if (axis < AX_X && motion != M_LOCKED) valid = false;
+      else if (motion != M_LOCKED)
+        for (uint32_t i = AX_X; i <= AX_Z; i++)
+          if (i != axis && j.motion[i] != M_LOCKED) valid = false;
+      break;
+    case JT_REVOLUTE:
+    case JT_REVOLUTE_UNWRAPPED:
+      if (axis >= AX_X && motion != M_LOCKED) valid = false;
+      else if (motion != M_LOCKED)
+        for (uint32_t i = AX_TWIST; i < AX_X; i++)
+          if (i != axis && j.motion[i] != M_LOCKED) valid = false;
+      break;
+    case JT_SPHERICAL:
+      if (axis >= AX_X && motion != M_LOCKED) valid = false;
+      break;
+    case JT_FIX:
+      if (motion != M_LOCKED) valid = false;
+      break;
+    default:
+      break;
+  }
+  return valid;
+}
+EHD void jointSetMotion(Articulation& a, uint32_t l, uint8_t axis, uint8_t m) {
+  if (J(a, l).jointType == JT_UNDEFINED || !isValidMotion(J(a, l), axis, m) || a.inScene) return;
+  J(a, l).motion[axis] = m;
+}
+EHD void jointSetLimit(Articulation& a, uint32_t l, uint8_t axis, float lo, float hi) {  // :292-294
+  const uint8_t t = J(a, l).jointType;
+  if (!(finiteF(lo) && finiteF(hi) && lo <= hi)) return;
+  if (t == JT_SPHERICAL && !(fabsP(lo) <= 3.14159265358979323846f && fabsP(hi) <= 3.14159265358979323846f)) return;
+  if (t == JT_REVOLUTE && !(fabsP(lo) <= 2.0f * 3.14159265358979323846f && fabsP(hi) <= 2.0f * 3.14159265358979323846f)) return;
   J(a, l).limLow[axis] = lo;
   J(a, l).limHigh[axis] = hi;
   markSimDirty(a);
 }
-EHD void jointSetDrive(Articulation& a, uint32_t l, uint8_t axis, const Drive& d) {
+EHD void jointSetDrive(Articulation& a, uint32_t l, uint8_t axis, const Drive& d) {  // :328 성능곡선 값 >= 0
+  if (!(d.envelope.maxActuatorVelocity >= 0.0f && d.envelope.maxEffort >= 0.0f && d.envelope.velocityDependentResistance >= 0.0f &&
+        d.envelope.speedEffortGradient >= 0.0f))
+    return;
   J(a, l).drives[axis] = d;
   markSimDirty(a);
 }
@@ -367,6 +414,7 @@ EHD void jointSetFrictionCoefficient(Articulation& a, uint32_t l, float v) {
   markSimDirty(a);
 }
 EHD void jointSetFrictionParams(Articulation& a, uint32_t l, uint8_t axis, float st, float dyn, float visc) {
+  if (!(st >= dyn)) return;  // :209 정적 >= 동적
   J(a, l).fStatic[axis] = st;
   J(a, l).fDynamic[axis] = dyn;
   J(a, l).fViscous[axis] = visc;
@@ -415,7 +463,13 @@ EHD void autoWake(Articulation& a) {
   }
 }
 // setDriveTarget / setDriveVelocity (NpArticulationJointReducedCoordinate.cpp:386, ScArticulationJointCore.cpp setTargetP/V)
+EHD bool angleOk(uint8_t t, float v) {  // :390-391, :543-544
+  if (t == JT_SPHERICAL && !(fabsP(v) <= 3.14159265358979323846f)) return false;
+  if (t == JT_REVOLUTE && !(fabsP(v) <= 2.0f * 3.14159265358979323846f)) return false;
+  return true;
+}
 EHD void jointSetDriveTarget(Articulation& a, uint32_t l, uint8_t axis, float v, bool autowake = true) {
+  if (!angleOk(J(a, l).jointType, v)) return;
   if (autowake && a.inScene) autoWake(a);
   JointCore& j = J(a, l);
   j.targetP[axis] = v;
@@ -434,6 +488,7 @@ EHD void jointSetDriveVelocity(Articulation& a, uint32_t l, uint8_t axis, float 
   }
 }
 EHD void jointSetJointPosition(Articulation& a, uint32_t l, uint8_t axis, float v) {
+  if (!finiteF(v) || !angleOk(J(a, l).jointType, v)) return;
   JointCore& j = J(a, l);
   j.jointPos[axis] = v;
   if (a.inScene) {
@@ -442,6 +497,7 @@ EHD void jointSetJointPosition(Articulation& a, uint32_t l, uint8_t axis, float 
   }
 }
 EHD void jointSetJointVelocity(Articulation& a, uint32_t l, uint8_t axis, float v) {
+  if (!finiteF(v)) return;
   JointCore& j = J(a, l);
   j.jointVel[axis] = v;
   if (a.inScene) {

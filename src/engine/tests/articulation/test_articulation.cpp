@@ -39,6 +39,8 @@ int main(int argc, char** argv) {
     else if (arg("--extevery")) extEvery = atoi(argv[++i]);
     else if (arg("--contactlast")) contactLast = atoi(argv[++i]);
     else if (arg("--spherical")) o.spherical = atoi(argv[++i]);
+    else if (arg("--r1pro")) o.r1pro = argv[++i];
+    else if (arg("--r1copies")) o.r1copies = atoi(argv[++i]);
     else if (arg("--floating")) o.floatingOnly = atoi(argv[++i]);
     else if (arg("--threads")) threads = atoi(argv[++i]);
     else if (arg("--verbose")) o.verbose = atoi(argv[++i]);
@@ -150,7 +152,7 @@ int main(int argc, char** argv) {
   uint64_t total = 0;
   for (int k = 0; k < K_N; ++k) total += cmp[k];
   printf("\n관절체 %d 개 x %d 스텝 (위치반복 %d, 속도반복 %d, 매반복외력 %d, 접촉마지막 %d, 구면 %d, seed %d): 비교 %" PRIu64 ", 끝에 잠든 관절체 %d\n",
-         o.nArts, steps, o.posIt, o.velIt, extEvery, contactLast, o.spherical, o.seed, total, nSleep);
+         int(arts.size()), steps, o.posIt, o.velIt, extEvery, contactLast, o.spherical, o.seed, total, nSleep);
   bool ok = true;
   for (int k = 0; k < K_N; ++k) {
     printf("  %-12s 비교 %8" PRIu64 "  비트 다름 %8" PRIu64 "  첫 다름 스텝 %5" PRId64 "  최대|차| %.3e  양쪽 NaN %" PRIu64 "\n", names[k], cmp[k],

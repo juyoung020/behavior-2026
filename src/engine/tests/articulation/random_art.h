@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "core/articulation/art_step.h"
@@ -257,8 +258,212 @@ struct Mirror {
   }
 };
 
+// ---- R1Pro 모양 관절체: 실제 URDF(BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/r1pro/urdf/r1pro.urdf)의 링크·관절·질량으로.
+// OmniGibson 홀로노믹 바닥(examples/robots/import_custom_robot.py:977-1022): 뿌리 base_footprint_x(고정 바닥) - x,y,z 직선 - rx,ry,rz 회전 - base_link,
+// 바퀴·조향 관절은 고정(28 dof = r1pro.yaml tucked_default_joint_pos 길이). 드라이브 값은 추정(USD 원본 값 아님).
+// 관성: URDF 대각 성분만 (비대각 무시 — PxDiagonalize 이식 전), 질량중심 자세 = inertial origin.
+struct UrdfLink {
+  std::string name;
+  PxVec3 com{0, 0, 0}, comRpy{0, 0, 0};
+  float mass = 1.0f;
+  PxVec3 I{1, 1, 1};
+};
+struct UrdfJoint {
+  std::string name, type, parent, child;
+  PxVec3 xyz{0, 0, 0}, rpy{0, 0, 0}, axis{1, 0, 0};
+  float lower = 0, upper = 0, effort = 0;
+};
+inline std::string xmlAttr(const std::string& tag, const char* key) {
+  const std::string k = std::string(" ") + key + "=\"";
+  const size_t i = tag.find(k);
+  if (i == std::string::npos) return "";
+  const size_t j = tag.find('"', i + k.size());
+  return tag.substr(i + k.size(), j - i - k.size());
+}
+inline std::string xmlTag(const std::string& blk, const char* open, size_t from = 0) {
+  const size_t o = blk.find(open, from);
+  if (o == std::string::npos) return "";
+  return blk.substr(o, blk.find('>', o) - o);
+}
+inline PxVec3 vec3(const std::string& s) {
+  PxVec3 v(0, 0, 0);
+  if (!s.empty()) sscanf(s.c_str(), "%f %f %f", &v.x, &v.y, &v.z);
+  return v;
+}
+inline PxQuat rpyQuat(const PxVec3& rpy) {  // URDF 고정축 XYZ: q = qz * qy * qx (double 로 계산 후 float)
+  const double cr = std::cos(rpy.x * 0.5), sr = std::sin(rpy.x * 0.5), cp = std::cos(rpy.y * 0.5), sp = std::sin(rpy.y * 0.5);
+  const double cy = std::cos(rpy.z * 0.5), sy = std::sin(rpy.z * 0.5);
+  return PxQuat(float(sr * cp * cy - cr * sp * sy), float(cr * sp * cy + sr * cp * sy), float(cr * cp * sy - sr * sp * cy),
+                float(cr * cp * cy + sr * sp * sy));
+}
+inline PxQuat xToAxis(const PxVec3& a) {  // (1,0,0) 을 a 로 돌리는 쿼터니언 (double)
+  const double n = std::sqrt(double(a.x) * a.x + double(a.y) * a.y + double(a.z) * a.z);
+  const double x = a.x / n, y = a.y / n, z = a.z / n;
+  if (x > 0.999999) return PxQuat(PxIdentity);
+  if (x < -0.999999) return PxQuat(0.0f, 0.0f, 1.0f, 0.0f);
+  const double w = std::sqrt((1.0 + x) * 0.5), s = 1.0 / (2.0 * w);  // 축 (1,0,0)x a = (0,-z,y), 반각 쿼터니언
+  return PxQuat(0.0f, float(-z * s), float(y * s), float(w));
+}
+inline bool buildR1Pro(PxPhysics* phys, PxScene* scene, const char* urdfPath, int posIt, int velIt, Mirror& m) {
+  FILE* f = fopen(urdfPath, "rb");
+  if (!f) return false;
+  std::string x;
+  char b[65536];
+  size_t n;
+  while ((n = fread(b, 1, sizeof b, f)) > 0) x.append(b, n);
+  fclose(f);
+  std::vector<UrdfLink> links;
+  std::vector<UrdfJoint> joints;
+  size_t pos = 0;
+  while (true) {
+    const size_t li = x.find("<link name=", pos), ji = x.find("<joint name=", pos);
+    if (li == std::string::npos && ji == std::string::npos) break;
+    if (li < ji) {
+      const size_t end = x.find("</link>", li);
+      const std::string blk = x.substr(li, end - li);
+      UrdfLink L;
+      L.name = xmlAttr(blk.substr(0, blk.find('>')), "name");
+      const size_t in = blk.find("<inertial>");
+      if (in != std::string::npos) {
+        const std::string ot = xmlTag(blk, "<origin", in);
+        L.com = vec3(xmlAttr(ot, "xyz"));
+        L.comRpy = vec3(xmlAttr(ot, "rpy"));
+        L.mass = float(atof(xmlAttr(xmlTag(blk, "<mass", in), "value").c_str()));
+        const std::string itt = xmlTag(blk, "<inertia", in);
+        L.I = PxVec3(float(atof(xmlAttr(itt, "ixx").c_str())), float(atof(xmlAttr(itt, "iyy").c_str())),
+                     float(atof(xmlAttr(itt, "izz").c_str())));
+      }
+      links.push_back(L);
+      pos = end;
+    } else {
+      const size_t end = x.find("</joint>", ji);
+      const std::string blk = x.substr(ji, end - ji);
+      UrdfJoint J;
+      const std::string head = blk.substr(0, blk.find('>'));
+      J.name = xmlAttr(head, "name");
+      J.type = xmlAttr(head, "type");
+      const std::string ot = xmlTag(blk, "<origin");
+      if (!ot.empty()) {
+        J.xyz = vec3(xmlAttr(ot, "xyz"));
+        J.rpy = vec3(xmlAttr(ot, "rpy"));
+      }
+      J.parent = xmlAttr(xmlTag(blk, "<parent"), "link");
+      J.child = xmlAttr(xmlTag(blk, "<child"), "link");
+      const std::string at = xmlTag(blk, "<axis");
+      if (!at.empty()) J.axis = vec3(xmlAttr(at, "xyz"));
+      const std::string lt = xmlTag(blk, "<limit");
+      if (!lt.empty()) {
+        J.lower = float(atof(xmlAttr(lt, "lower").c_str()));
+        J.upper = float(atof(xmlAttr(lt, "upper").c_str()));
+        J.effort = float(atof(xmlAttr(lt, "effort").c_str()));
+      }
+      if (J.name.find("wheel_motor") != std::string::npos || J.name.find("steer_motor") != std::string::npos) J.type = "fixed";
+      joints.push_back(J);
+      pos = end;
+    }
+  }
+  m.create(phys);
+  m.in.touched = 1;
+  m.px->setSolverIterationCounts(PxU32(posIt), PxU32(velIt));
+  A::artSetSolverIterationCounts(*m.e, uint32_t(posIt), uint32_t(velIt));
+  m.px->setArticulationFlag(PxArticulationFlag::eDRIVE_LIMITS_ARE_FORCES, true);
+  A::artSetFlag(*m.e, A::AF_DRIVE_LIMITS_ARE_FORCES, true);
+  m.px->setArticulationFlag(PxArticulationFlag::eFIX_BASE, true);
+  A::artSetFlag(*m.e, A::AF_FIX_BASE, true);
+  auto addDriven = [&](uint32_t l, PxArticulationAxis::Enum ax) {
+    if (m.in.n < kMaxDriven) {
+      m.in.link[m.in.n] = l;
+      m.in.axis[m.in.n] = uint8_t(ax);
+      m.in.spherical[m.in.n] = 0;
+      m.in.n++;
+    }
+  };
+  // 가상 바닥 사슬: x(직선 X) y(직선 Y) z(직선 Z) rx ry rz(회전) -> base_link
+  const PxTransform root(PxVec3(0.0f, 0.0f, 0.0f), PxQuat(PxIdentity));
+  uint32_t prev = m.link(A::kNone, root);
+  m.mass(prev, 0.1f, PxVec3(1e-3f, 1e-3f, 1e-3f));
+  const PxVec3 vaxis[6] = {PxVec3(1, 0, 0), PxVec3(0, 1, 0), PxVec3(0, 0, 1), PxVec3(1, 0, 0), PxVec3(0, 1, 0), PxVec3(0, 0, 1)};
+  std::vector<std::pair<std::string, uint32_t>> idx;
+  for (int k = 0; k < 6; ++k) {
+    const uint32_t l = m.link(prev, root);
+    if (k < 5) m.mass(l, 0.1f, PxVec3(1e-3f, 1e-3f, 1e-3f));
+    const bool lin = k < 3;
+    m.type(l, lin ? PxArticulationJointType::ePRISMATIC : PxArticulationJointType::eREVOLUTE);
+    const PxQuat q = xToAxis(vaxis[k]);
+    m.parentPose(l, PxTransform(PxVec3(0, 0, 0), q));
+    m.childPose(l, PxTransform(PxVec3(0, 0, 0), q));
+    const PxArticulationAxis::Enum ax = lin ? PxArticulationAxis::eX : PxArticulationAxis::eTWIST;
+    m.motion(l, ax, PxArticulationMotion::eFREE);
+    if (k == 0 || k == 1 || k == 5) {  // DriveAPI 는 x, y, rz 만 (import_custom_robot.py:1016)
+      m.drive(l, ax, 0.0f, 5000.0f, 1e6f, PxArticulationDriveType::eFORCE);
+      addDriven(l, ax);
+    }
+    prev = l;
+    if (k == 5) idx.push_back({"base_link", l});
+  }
+  auto find = [&](const std::string& nm) -> uint32_t {
+    for (auto& p : idx)
+      if (p.first == nm) return p.second;
+    return A::kNone;
+  };
+  auto linkInfo = [&](const std::string& nm) -> const UrdfLink* {
+    for (auto& L : links)
+      if (L.name == nm) return &L;
+    return nullptr;
+  };
+  {
+    const UrdfLink* L = linkInfo("base_link");
+    const uint32_t bl = find("base_link");
+    if (!L) return false;
+    m.mass(bl, L->mass, L->I);
+    m.cmass(bl, PxTransform(L->com, rpyQuat(L->comRpy)));
+  }
+  for (const UrdfJoint& J : joints) {
+    const uint32_t p = find(J.parent);
+    if (p == A::kNone) return false;
+    const PxTransform origin(J.xyz, rpyQuat(J.rpy));
+    const PxTransform pw = m.pl[p]->getGlobalPose();  // 장면 전: 만든 자세 그대로
+    const uint32_t l = m.link(p, pw * origin);
+    idx.push_back({J.child, l});
+    const UrdfLink* L = linkInfo(J.child);
+    m.mass(l, L ? L->mass : 0.1f, L ? L->I : PxVec3(1e-3f, 1e-3f, 1e-3f));
+    if (L) m.cmass(l, PxTransform(L->com, rpyQuat(L->comRpy)));
+    if (J.type == "fixed") {
+      m.type(l, PxArticulationJointType::eFIX);
+      m.parentPose(l, origin);
+      m.childPose(l, PxTransform(PxIdentity));
+      continue;
+    }
+    const PxQuat q = xToAxis(J.axis);
+    m.parentPose(l, origin * PxTransform(PxVec3(0, 0, 0), q));
+    m.childPose(l, PxTransform(PxVec3(0, 0, 0), q));
+    const bool finger = J.name.find("finger") != std::string::npos;
+    if (J.type == "prismatic") {
+      m.type(l, PxArticulationJointType::ePRISMATIC);
+      m.motion(l, PxArticulationAxis::eX, PxArticulationMotion::eLIMITED);
+      m.limit(l, PxArticulationAxis::eX, J.lower, J.upper);
+      m.drive(l, PxArticulationAxis::eX, finger ? 1000.0f : 20000.0f, finger ? 50.0f : 1000.0f, J.effort > 0 ? J.effort : 1e4f,
+              PxArticulationDriveType::eFORCE);
+      addDriven(l, PxArticulationAxis::eX);
+    } else {
+      const bool cont = J.type == "continuous";
+      m.type(l, cont ? PxArticulationJointType::eREVOLUTE : PxArticulationJointType::eREVOLUTE_UNWRAPPED);
+      m.motion(l, PxArticulationAxis::eTWIST, cont ? PxArticulationMotion::eFREE : PxArticulationMotion::eLIMITED);
+      if (!cont) m.limit(l, PxArticulationAxis::eTWIST, J.lower, J.upper);
+      m.drive(l, PxArticulationAxis::eTWIST, 5000.0f, 300.0f, J.effort > 0 ? J.effort : 1e4f, PxArticulationDriveType::eFORCE);
+      addDriven(l, PxArticulationAxis::eTWIST);
+    }
+  }
+  scene->addArticulation(*m.px);
+  if (!A::addToScene(*m.e)) return false;
+  m.cache = m.px->createCache();
+  return true;
+}
+
 struct BuildOpts {
   int nArts = 12, nLinksMax = 9, seed = 1, posIt = 16, velIt = 1, spherical = 1, floatingOnly = 0, verbose = 0;
+  const char* r1pro = nullptr;  // R1Pro URDF 경로 (있으면 무작위 관절체 뒤에 R1Pro 모양 관절체 r1copies 개)
+  int r1copies = 1;
 };
 
 // 무작위 관절체 nArts 개를 만들어 장면에 넣는다 (PhysX + 엔진). 실패하면 false.
@@ -398,6 +603,11 @@ inline bool buildRandom(PxPhysics* phys, PxScene* scene, const BuildOpts& o, std
     if (!A::addToScene(*m.e)) return false;
     m.cache = m.px->createCache();
   }
+  if (o.r1pro)
+    for (int c = 0; c < o.r1copies; ++c) {
+      arts.emplace_back();
+      if (!buildR1Pro(phys, scene, o.r1pro, o.posIt, o.velIt, arts.back())) return false;
+    }
   return true;
 }
 
