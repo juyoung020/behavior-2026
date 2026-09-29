@@ -1,0 +1,5 @@
+﻿[gpu_lock] 사용 중: pi05_native / JAX GPU dumps + native layer check (+CPU JAX 19 GB RAM) / 끝 예정까지 24 분 -- 45 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 12 분 -- 45 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 11 분 -- 45 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 10 분 -- 45 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 9 분 -- 45 초 뒤 다시

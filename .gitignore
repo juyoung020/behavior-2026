@@ -21,3 +21,10 @@ __pycache__/
 
 # GPU 사용 잠금(에이전트 간)
 .gpu_lock/
+
+# Windows 빌드 산출물
+build_win/
+*.obj
+*.pdb
+*.exp
+*.ilk

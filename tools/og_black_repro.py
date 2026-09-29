@@ -101,6 +101,11 @@ for kv in a.set:
                 pass
     cs.set(k, val)
     print(f"[og-repro] 설정 {k}: {cur!r} -> {cs.get(k)!r}", flush=True)
+_watch = ("/app/settings/fabricDefaultStageFrameHistoryCount", "/app/settings/fabricStageFrameHistoryCount",
+          "/app/gatherRenderResults", "/app/asyncRendering", "/app/hydraEngine/waitIdle", "/rtx/rendermode", "/rtx/post/aa/op",
+          "/rtx-transient/hydra/geometrystreaming/syncLoad", "/rtx/rendering/perViewTlas", "/rtx/raytracing/cached/enabled",
+          "/rtx/raytracing/lightcache/spatialCache/enabled")
+print("[og-repro] 렌더 설정 " + " ".join(f"{k}={cs.get(k)!r}" for k in _watch), flush=True)
 
 env.reset()
 r = env.scenes[0].robots[0]  # v3.9.3: env.robots 는 환경마다 목록

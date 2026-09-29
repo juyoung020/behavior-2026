@@ -1,0 +1,79 @@
+﻿=== 21:30:54 run1 --scene radio --diag C:\behavior-2026\outputs\og_diag_radio_a.json gpu=1068 MiB
+2026-09-29T12:33:25Z [139,487ms] [Error] [omni.kit.app._impl] [py stderr]: Traceback (most recent call last):
+2026-09-29T12:33:25Z [139,488ms] [Error] [omni.kit.app._impl] [py stderr]: RuntimeError: USD edit detected outside of og.sim.editing_usd() context!
+=== run1 end
+=== 21:33:46 run2 --scene radio --diag C:\behavior-2026\outputs\og_diag_radio_reread.json --reread gpu=1068 MiB
+2026-09-29T12:37:14Z [196,995ms] [Error] [omni.kit.app._impl] [py stderr]: Traceback (most recent call last):
+2026-09-29T12:37:14Z [196,999ms] [Error] [omni.kit.app._impl] [py stderr]: RuntimeError: USD edit detected outside of og.sim.editing_usd() context!
+=== run2 end
+=== og_diag done ===
+=== 21:37:45 d1 run1 --scene gpu=1042 MiB
+og_black_repro.py: error: 紐⑤Ⅴ???몄옄: ['-', '-', 's', 'c', 'e', 'n', 'e']
+=== d1 run1 end
+=== og_diag d1 done ===
+=== 21:38:12 d2 run1 --scene radio --diag C:\behavior-2026\outputs\og_diag_radio_a.json --reread gpu=1033 MiB
+2026-09-29T12:42:01Z [218,520ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+[og-repro] scene=radio res=224 steps=600 (12.0 steps/s) set=[] kit=[]
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] robot_r1:zed_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] 다시 읽기(렌더 없이) 검정 0/0, 렌더 한 번 더 뒤 검정 0/0
+[og-repro] robot_r1:left_realsense_link:Camera:0: 지연(시뮬시각-프레임시각) 검정 [] / 정상 [-3.5583] | 앞 스텝과 영상 같음 검정 0 정상 0 | 검은 프레임 알파 최대 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: 지연(시뮬시각-프레임시각) 검정 [] / 정상 [-3.5583] | 앞 스텝과 영상 같음 검정 0 정상 0 | 검은 프레임 알파 최대 []
+[og-repro] robot_r1:zed_link:Camera:0: 지연(시뮬시각-프레임시각) 검정 [] / 정상 [-3.5583] | 앞 스텝과 영상 같음 검정 0 정상 0 | 검은 프레임 알파 최대 []
+[og-repro] 진단 저장 C:\behavior-2026\outputs\og_diag_radio_a.json
+=== d2 run1 end
+=== og_diag d2 done ===
+=== 21:43:27 d3 run1 --scene radio gpu=1040 MiB
+2026-09-29T12:47:29Z [229,159ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+[og-repro] scene=radio res=224 steps=600 (10.4 steps/s) set=[] kit=[]
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 검정 100/600 처음 [4, 10, 16, 22, 28, 34, 40, 46, 52, 58, 64, 70]
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] robot_r1:zed_link:Camera:0: RGB 검정 100/600 처음 [1, 7, 13, 19, 25, 31, 37, 43, 49, 55, 61, 67]
+=== d3 run1 end
+=== 21:48:32 d3 run2 --scene radio gpu=1042 MiB
+2026-09-29T12:51:41Z [175,654ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+[og-repro] scene=radio res=224 steps=600 (12.0 steps/s) set=[] kit=[]
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] robot_r1:zed_link:Camera:0: RGB 검정 0/600 처음 []
+=== d3 run2 end
+=== 21:52:36 d3 run3 --scene radio --diag C:\behavior-2026\outputs\og_diag_radio_b.json gpu=1052 MiB
+2026-09-29T12:55:46Z [181,906ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+[og-repro] scene=radio res=224 steps=600 (10.1 steps/s) set=[] kit=[]
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 검정 200/600 처음 [3, 4, 6, 10, 12, 16, 18, 22, 24, 28, 30, 34]
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 검정 0/600 처음 []
+[og-repro] robot_r1:zed_link:Camera:0: RGB 검정 200/600 처음 [0, 1, 7, 9, 13, 15, 19, 21, 25, 27, 31, 33]
+[og-repro] robot_r1:left_realsense_link:Camera:0: 지연(시뮬시각-프레임시각) 검정 [-3.5583] / 정상 [-3.5583] | 앞 스텝과 영상 같음 검정 1 정상 0 | 검은 프레임 알파 최대 [0]
+[og-repro] robot_r1:right_realsense_link:Camera:0: 지연(시뮬시각-프레임시각) 검정 [] / 정상 [-3.5583] | 앞 스텝과 영상 같음 검정 0 정상 0 | 검은 프레임 알파 최대 []
+[og-repro] robot_r1:zed_link:Camera:0: 지연(시뮬시각-프레임시각) 검정 [-3.5583] / 정상 [-3.5583] | 앞 스텝과 영상 같음 검정 1 정상 0 | 검은 프레임 알파 최대 [0]
+[og-repro] 진단 저장 C:\behavior-2026\outputs\og_diag_radio_b.json
+=== d3 run3 end
+=== og_diag d3 done ===
+=== 21:57:09 d4 run1 --scene radio --steps 300 --reattach 150 gpu=1083 MiB
+2026-09-29T13:00:41Z [201,609ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+[og-repro] 스텝 150: rgb annotator 다시 붙임
+2026-09-29T13:00:57Z [217,805ms] [Error] [omni.kit.app._impl] [py stderr]: Traceback (most recent call last):
+2026-09-29T13:00:57Z [217,806ms] [Error] [omni.kit.app._impl] [py stderr]:   File "C:\behavior-2026\tools\og_black_repro.py", line 147, in <module>
+2026-09-29T13:00:57Z [217,807ms] [Error] [omni.kit.app._impl] [py stderr]:     obs_list = env.step(zero)[0]  # v3.9.3: 환경마다 관측 딕셔너리 목록
+2026-09-29T13:00:57Z [217,808ms] [Error] [omni.kit.app._impl] [py stderr]:                ^^^^^^^^^^^^^^
+2026-09-29T13:00:57Z [217,808ms] [Error] [omni.kit.app._impl] [py stderr]:   File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\envs\env_base.py", line 759, in step
+2026-09-29T13:00:57Z [217,810ms] [Error] [omni.kit.app._impl] [py stderr]:     robot.apply_action(action_dict[robot.name])
+2026-09-29T13:00:57Z [217,810ms] [Error] [omni.kit.app._impl] [py stderr]:   File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\robots\robot.py", line 769, in apply_action
+2026-09-29T13:00:57Z [217,811ms] [Error] [omni.kit.app._impl] [py stderr]:     j_pos = self.get_joint_positions()[rz_joint_dof_indices]
+2026-09-29T13:00:57Z [217,811ms] [Error] [omni.kit.app._impl] [py stderr]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-09-29T13:00:57Z [217,811ms] [Error] [omni.kit.app._impl] [py stderr]:   File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\prims\entity_prim.py", line 871, in get_joint_positions
+2026-09-29T13:00:57Z [217,813ms] [Error] [omni.kit.app._impl] [py stderr]:     joint_positions = self._articulation_view.get_joint_positions().view(self.n_dof)
+2026-09-29T13:00:57Z [217,813ms] [Error] [omni.kit.app._impl] [py stderr]:                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-09-29T13:00:57Z [217,813ms] [Error] [omni.kit.app._impl] [py stderr]: AttributeError: 'NoneType' object has no attribute 'view'
+=== d4 run1 end
+=== 22:01:56 d4 run2 --scene radio --steps 300 --reattach 150 gpu=1083 MiB
+=== 22:56:11 sd run1 --scene radio --steps 200 --kit-arg=--/rtx-transient/hydra/geometrystreaming/syncLoad=true --kit-arg=--/rtx/rendering/perViewTlas=false --kit-arg=--/rtx/raytracing/cached/enabled=false --kit-arg=--/rtx/raytracing/lightcache/spatialCache/enabled=false gpu=1051 MiB
+[og-repro] kit extra_args=['--/rtx-transient/hydra/geometrystreaming/syncLoad=true', '--/rtx/rendering/perViewTlas=false', '--/rtx/raytracing/cached/enabled=false', '--/rtx/raytracing/lightcache/spatialCache/enabled=false']
+[og-repro] 렌더 설정 /app/settings/fabricDefaultStageFrameHistoryCount=3 /app/settings/fabricStageFrameHistoryCount=None /app/gatherRenderResults=True /app/asyncRendering=False /app/hydraEngine/waitIdle=False /rtx/rendermode='RaytracedLighting' /rtx/post/aa/op=3 /rtx-transient/hydra/geometrystreaming/syncLoad=True /rtx/rendering/perViewTlas=False /rtx/raytracing/cached/enabled=False /rtx/raytracing/lightcache/spatialCache/enabled=False
+[og-repro] scene=radio res=224 steps=200 (16.8 steps/s) set=[] kit=['--/rtx-transient/hydra/geometrystreaming/syncLoad=true', '--/rtx/rendering/perViewTlas=false', '--/rtx/raytracing/cached/enabled=false', '--/rtx/raytracing/lightcache/spatialCache/enabled=false']
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 검정 0/200 처음 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 검정 0/200 처음 []
+[og-repro] robot_r1:zed_link:Camera:0: RGB 검정 0/200 처음 []
+=== sd run1 end
+=== 22:59:01 sd run2 --scene radio --steps 200 --kit-arg=--/rtx-transient/hydra/geometrystreaming/syncLoad=true --kit-arg=--/rtx/rendering/perViewTlas=false --kit-arg=--/rtx/raytracing/cached/enabled=false --kit-arg=--/rtx/raytracing/lightcache/spatialCache/enabled=false gpu=1051 MiB

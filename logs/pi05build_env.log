@@ -1,0 +1,1545 @@
+﻿conda.exe : WARNING conda.core.prefix_data:validate_path(332): Environment paths should not contain spaces. Prefix: 'C:
+\Users\user one\anaconda3\envs\pi05build'
+At line:1 char:352
++ ... d_env.log"; & "C:\Users\user one\anaconda3\Scripts\conda.exe" create  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING conda.c...envs\pi05build':String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Channels:
+ - conda-forge
+Platform: win-64
+Collecting package metadata (repodata.json): - \ | / done
+Solving environment: \ done
+
+## Package Plan ##
+
+  environment location: C:\Users\user one\anaconda3\envs\pi05build
+
+  added / updated specs:
+    - cuda-cccl=12.8
+    - cuda-cudart-dev=12.8
+    - cuda-nvcc=12.8
+    - cuda-version=12.8
+
+
+The following packages will be downloaded:
+
+    package                    |            build
+    ---------------------------|-----------------
+    cccl-2.7.0                 |       h49adc43_0         1.0 MB  conda-forge
+    cuda-cccl-12.8.90          |       h57928b3_1          22 KB  conda-forge
+    cuda-cccl_win-64-12.8.90   |       h57928b3_1         1.0 MB  conda-forge
+    cuda-crt-dev_win-64-12.8.93|       h57928b3_3          92 KB  conda-forge
+    cuda-crt-tools-12.8.93     |       h57928b3_3          28 KB  conda-forge
+    cuda-cudart-12.8.90        |       he0c23c2_1         163 KB  conda-forge
+    cuda-cudart-dev-12.8.90    |       he0c23c2_1          22 KB  conda-forge
+    cuda-cudart-dev_win-64-12.8.90|       he0c23c2_1        1023 KB  conda-forge
+    cuda-cudart-static-12.8.90 |       he0c23c2_1          22 KB  conda-forge
+    cuda-cudart-static_win-64-12.8.90|       he0c23c2_1         340 KB  conda-forge
+    cuda-cudart_win-64-12.8.90 |       he0c23c2_1          22 KB  conda-forge
+    cuda-nvcc-12.8.93          |       h8f04d04_2          25 KB  conda-forge
+    cuda-nvcc-dev_win-64-12.8.93|       h36c15f3_3        49.4 MB  conda-forge
+    cuda-nvcc-impl-12.8.93     |       h53cbb54_3          26 KB  conda-forge
+    cuda-nvcc-tools-12.8.93    |       he0c23c2_3          26 KB  conda-forge
+    cuda-nvcc_win-64-12.8.93   |       hd70436c_2          26 KB  conda-forge
+    cuda-nvvm-dev_win-64-12.8.93|       h57928b3_3          26 KB  conda-forge
+    cuda-nvvm-impl-12.8.93     |       he0c23c2_3          30 KB  conda-forge
+    cuda-nvvm-tools-12.8.93    |       he0c23c2_3        37.8 MB  conda-forge
+    cuda-version-12.8          |       h5d125a7_3          21 KB  conda-forge
+    vs2019_win-64-19.29.30139  |      h7dcff83_41          25 KB  conda-forge
+    vswhere-3.1.7              |       h40126e0_1         233 KB  conda-forge
+    ------------------------------------------------------------
+                                           Total:        91.3 MB
+
+The following NEW packages will be INSTALLED:
+
+  cccl               conda-forge/win-64::cccl-2.7.0-h49adc43_0 
+  cuda-cccl          conda-forge/win-64::cuda-cccl-12.8.90-h57928b3_1 
+  cuda-cccl_win-64   conda-forge/noarch::cuda-cccl_win-64-12.8.90-h57928b3_1 
+  cuda-crt-dev_win-~ conda-forge/noarch::cuda-crt-dev_win-64-12.8.93-h57928b3_3 
+  cuda-crt-tools     conda-forge/win-64::cuda-crt-tools-12.8.93-h57928b3_3 
+  cuda-cudart        conda-forge/win-64::cuda-cudart-12.8.90-he0c23c2_1 
+  cuda-cudart-dev    conda-forge/win-64::cuda-cudart-dev-12.8.90-he0c23c2_1 
+  cuda-cudart-dev_w~ conda-forge/noarch::cuda-cudart-dev_win-64-12.8.90-he0c23c2_1 
+  cuda-cudart-static conda-forge/win-64::cuda-cudart-static-12.8.90-he0c23c2_1 
+  cuda-cudart-stati~ conda-forge/noarch::cuda-cudart-static_win-64-12.8.90-he0c23c2_1 
+  cuda-cudart_win-64 conda-forge/noarch::cuda-cudart_win-64-12.8.90-he0c23c2_1 
+  cuda-nvcc          conda-forge/win-64::cuda-nvcc-12.8.93-h8f04d04_2 
+  cuda-nvcc-dev_win~ conda-forge/noarch::cuda-nvcc-dev_win-64-12.8.93-h36c15f3_3 
+  cuda-nvcc-impl     conda-forge/win-64::cuda-nvcc-impl-12.8.93-h53cbb54_3 
+  cuda-nvcc-tools    conda-forge/win-64::cuda-nvcc-tools-12.8.93-he0c23c2_3 
+  cuda-nvcc_win-64   conda-forge/win-64::cuda-nvcc_win-64-12.8.93-hd70436c_2 
+  cuda-nvvm-dev_win~ conda-forge/noarch::cuda-nvvm-dev_win-64-12.8.93-h57928b3_3 
+  cuda-nvvm-impl     conda-forge/win-64::cuda-nvvm-impl-12.8.93-he0c23c2_3 
+  cuda-nvvm-tools    conda-forge/win-64::cuda-nvvm-tools-12.8.93-he0c23c2_3 
+  cuda-version       conda-forge/noarch::cuda-version-12.8-h5d125a7_3 
+  ucrt               conda-forge/win-64::ucrt-10.0.26100.0-h57928b3_0 
+  vc                 conda-forge/win-64::vc-14.5-ha367084_41 
+  vc14_runtime       conda-forge/win-64::vc14_runtime-14.51.36247-habf1de7_41 
+  vcomp14            conda-forge/win-64::vcomp14-14.51.36247-habf1de7_41 
+  vs2019_win-64      conda-forge/win-64::vs2019_win-64-19.29.30139-h7dcff83_41 
+  vswhere            conda-forge/noarch::vswhere-3.1.7-h40126e0_1 
+
+
+
+Downloading and Extracting Packages: ...working...
+cuda-nvcc-dev_win-64 | 49.4 MB   |            |   0% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   |            |   0% [A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    |            |   0% [A[A
+
+
+
+cccl-2.7.0           | 1.0 MB    |            |   0% [A[A[A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   |            |   0% [A[A[A[A
+
+
+
+
+
+cuda-cudart-static_w | 340 KB    |            |   0% [A[A[A[A[A
+
+
+
+
+
+
+vswhere-3.1.7        | 233 KB    |            |   0% [A[A[A[A[A[A
+
+
+
+
+
+
+
+cuda-cudart-12.8.90  | 163 KB    |            |   0% [A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+cuda-crt-dev_win-64- | 92 KB     |            |   0% [A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+cuda-nvvm-impl-12.8. | 30 KB     |            |   0% [A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+cuda-crt-tools-12.8. | 28 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-impl-12.8. | 26 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc_win-64-12. | 26 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-tools-12.8 | 26 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvvm-dev_win-64 | 26 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-12.8.93    | 25 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+vs2019_win-64-19.29. | 25 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart_win-64-1 | 22 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart-dev-12.8 | 22 KB     |            |   0% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ... (more hidden) ...[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   |            |   0% 
+
+
+
+cccl-2.7.0           | 1.0 MB    | 1          |   2% [A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   |            |   0% [A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   | 1          |   2% [A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | 1          |   2% [A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   |            |   1% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   |            |   1% 
+
+
+
+cccl-2.7.0           | 1.0 MB    | ##9        |  30% [A[A[A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   | ###4       |  34% [A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | #2         |  12% [A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 1          |   2% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 1          |   2% 
+
+
+
+cccl-2.7.0           | 1.0 MB    | #####9     |  59% [A[A[A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   | ######7    |  67% [A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | ##4        |  25% [A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 2          |   3% [A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   | ########## | 100% [A[A[A[A
+
+
+
+cccl-2.7.0           | 1.0 MB    | ########7  |  87% [A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 2          |   2% 
+
+
+
+
+
+cuda-cudart-static_w | 340 KB    | 4          |   5% [A[A[A[A[A
+
+
+
+cccl-2.7.0           | 1.0 MB    | ########## | 100% [A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | ###8       |  39% [A[A
+
+
+
+
+
+
+vswhere-3.1.7        | 233 KB    | 6          |   7% [A[A[A[A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 3          |   4% [A
+
+
+
+
+
+cuda-cudart-static_w | 340 KB    | ########## | 100% [A[A[A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 3          |   3% 
+
+
+
+
+
+
+
+cuda-cudart-12.8.90  | 163 KB    | 9          |  10% [A[A[A[A[A[A[A
+
+
+
+
+
+
+vswhere-3.1.7        | 233 KB    | ########## | 100% [A[A[A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | #####1     |  51% [A[A
+
+
+
+
+
+cuda-cudart-static_w | 340 KB    | ########## | 100% [A[A[A[A[A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   | ########## | 100% [A[A[A[A
+
+
+
+
+
+cuda-cudart-static_w | 340 KB    | ########## | 100% [A[A[A[A[A
+
+
+
+
+cuda-cudart-dev_win- | 1023 KB   | ########## | 100% [A[A[A[A
+
+
+
+
+
+
+vswhere-3.1.7        | 233 KB    | ########## | 100% [A[A[A[A[A[A
+
+
+
+
+
+
+vswhere-3.1.7        | 233 KB    | ########## | 100% [A[A[A[A[A[A
+
+
+
+
+
+
+
+cuda-cudart-12.8.90  | 163 KB    | ########## | 100% [A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+cuda-crt-dev_win-64- | 92 KB     | #7         |  17% [A[A[A[A[A[A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 4          |   5% [A
+
+
+
+
+
+
+
+
+cuda-crt-dev_win-64- | 92 KB     | ########## | 100% [A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+cuda-cudart-12.8.90  | 163 KB    | ########## | 100% [A[A[A[A[A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 4          |   4% 
+
+
+
+
+
+
+
+
+
+cuda-nvvm-impl-12.8. | 30 KB     | #####4     |  54% [A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+cuda-nvvm-impl-12.8. | 30 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+cuda-crt-tools-12.8. | 28 KB     | #####7     |  57% [A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+cuda-crt-tools-12.8. | 28 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | ######3    |  64% [A[A
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-impl-12.8. | 26 KB     | ######1    |  61% [A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-impl-12.8. | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc_win-64-12. | 26 KB     | ######1    |  62% [A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+cuda-nvvm-impl-12.8. | 30 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc_win-64-12. | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 5          |   6% [A
+
+
+
+
+
+
+
+
+cuda-crt-dev_win-64- | 92 KB     | ########## | 100% [A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+cuda-crt-dev_win-64- | 92 KB     | ########## | 100% [A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvvm-dev_win-64 | 26 KB     | ######2    |  62% [A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-tools-12.8 | 26 KB     | ######2    |  62% [A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvvm-dev_win-64 | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-tools-12.8 | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 5          |   5% 
+
+
+
+
+
+
+
+
+
+
+cuda-crt-tools-12.8. | 28 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-12.8.93    | 25 KB     | ######4    |  64% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-12.8.93    | 25 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+vs2019_win-64-19.29. | 25 KB     | ######4    |  64% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+vs2019_win-64-19.29. | 25 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | #######6   |  76% [A[A
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-impl-12.8. | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-impl-12.8. | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart_win-64-1 | 22 KB     | #######1   |  72% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart_win-64-1 | 22 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart-dev-12.8 | 22 KB     | #######1   |  72% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 7          |   7% [A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart-dev-12.8 | 22 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 6          |   7% 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ... (more hidden) ...[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc_win-64-12. | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc_win-64-12. | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ... (more hidden) ...[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-tools-12.8 | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-tools-12.8 | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvvm-dev_win-64 | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvvm-dev_win-64 | 26 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | #########  |  90% [A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-12.8.93    | 25 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-nvcc-12.8.93    | 25 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+vs2019_win-64-19.29. | 25 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+vs2019_win-64-19.29. | 25 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 8          |   8% [A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart_win-64-1 | 22 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart_win-64-1 | 22 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 8          |   8% 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart-dev-12.8 | 22 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cuda-cudart-dev-12.8 | 22 KB     | ########## | 100% [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ... (more hidden) ...[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ... (more hidden) ...[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | 9          |  10% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | 9          |  10% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #1         |  11% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #1         |  11% 
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | ########## | 100% [A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #3         |  13% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #2         |  13% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #5         |  16% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #3         |  14% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #7         |  17% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #5         |  16% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #9         |  19% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #6         |  17% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ##         |  21% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #8         |  18% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ##2        |  23% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ##         |  20% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ##4        |  25% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ##1        |  22% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ##6        |  27% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ##4        |  24% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ##8        |  29% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ##5        |  26% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ###1       |  31% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ##7        |  27% 
+
+
+
+cccl-2.7.0           | 1.0 MB    | ########## | 100% [A[A[A
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ###3       |  33% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ##8        |  29% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ###4       |  35% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###        |  30% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ###6       |  37% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###1       |  32% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ###8       |  39% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###3       |  34% 
+
+
+cuda-cccl_win-64-12. | 1.0 MB    | ########## | 100% [A[A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###5       |  35% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ####1      |  41% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###6       |  37% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ####3      |  44% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###8       |  38% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ####5      |  46% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ###9       |  40% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ####7      |  48% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ####1      |  42% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ####9      |  49% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ####3      |  43% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #####1     |  52% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ####5      |  45% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #####3     |  54% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ####6      |  47% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #####6     |  56% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ####8      |  48% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #####8     |  58% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #####      |  51% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ######     |  60% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #####2     |  53% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ######2    |  62% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #####4     |  54% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ######4    |  64% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #####5     |  56% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ######5    |  66% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #####7     |  58% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ######7    |  68% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #####9     |  59% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #######    |  70% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ######1    |  61% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #######1   |  72% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ######3    |  63% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #######4   |  74% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ######5    |  65% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #######5   |  76% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ######7    |  67% 
+cuda-nvcc-dev_win-64 | 49.4 MB   | ######8    |  69% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #######7   |  77% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #######    |  71% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #######9   |  79% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #######2   |  72% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########1  |  81% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #######4   |  75% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########2  |  83% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #######6   |  77% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########4  |  84% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #######8   |  79% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########5  |  86% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########   |  80% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########7  |  87% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########2  |  82% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########9  |  89% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########3  |  84% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########  |  91% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########5  |  86% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########2 |  92% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########7  |  87% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########3 |  94% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########9  |  89% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########5 |  95% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #########1 |  91% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########6 |  97% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #########3 |  93% 
+cuda-nvcc-dev_win-64 | 49.4 MB   | #########5 |  95% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########8 |  98% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #########7 |  97% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | #########9 |  99% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | #########9 |  99% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########## | 100% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########## | 100% 
+
+cuda-nvvm-tools-12.8 | 37.8 MB   | ########## | 100% [A
+cuda-nvcc-dev_win-64 | 49.4 MB   | ########## | 100% 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                      
+[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+                                                     
+
+
+                                                     [A
+
+
+                                                     [A[A
+
+
+
+                                                     [A[A[A
+
+
+
+
+                                                     [A[A[A[A
+
+
+
+
+
+                                                     [A[A[A[A[A
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                     [A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
+
+
+
+[A
+
+
+[A[A done
+Preparing transaction: / - done
+Verifying transaction: | / - \ | / - done
+Executing transaction: | / - \ | / - \ | / - \ done
+#
+# To activate this environment, use
+#
+#     $ conda activate pi05build
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+

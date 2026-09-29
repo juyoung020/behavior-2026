@@ -7,3 +7,135 @@
 [repro] 합계 RGB 검정 1800/1800
 === 20:53:13 s_def3 --kit default --cams 3 nv=False gpu=1629 MiB
 [repro] 설정: {'/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+=== restart (재생 켬) 20:53:44
+=== 20:53:56 s_og3 --kit omnigibson --cams 3 nv=False gpu=1632 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=[] frames=600 (59.6 fps)
+[repro] 카메라 0: RGB 검정 15/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 15
+[repro] 카메라 1: RGB 검정 15/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 15
+[repro] 카메라 2: RGB 검정 14/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 14
+[repro] 합계 RGB 검정 44/1800
+=== 20:54:19 s_def3 --kit default --cams 3 nv=False gpu=1632 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] kit=default cams=3 res=224 renderer=RaytracedLighting play=True set=[] frames=600 (69.0 fps)
+[repro] 카메라 0: RGB 검정 0/600 처음 []  depth 0 0
+[repro] 카메라 1: RGB 검정 0/600 처음 []  depth 0 0
+[repro] 카메라 2: RGB 검정 0/600 처음 []  depth 0 0
+[repro] 합계 RGB 검정 0/1800
+=== 20:55:13 --kit omnigibson --cams 3 --og-render gpu=1637 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (53.6 fps)
+[repro] 카메라 0: RGB 검정 0/600 처음 []  depth 0 0
+[repro] 카메라 1: RGB 검정 0/600 처음 []  depth 0 0
+[repro] 카메라 2: RGB 검정 0/600 처음 []  depth 0 0
+[repro] 합계 RGB 검정 0/1800
+=== iso2 done ===
+=== 20:56:24 --kit omnigibson --cams 3 --og-render --simctx gpu=1622 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (52.3 fps)
+[repro] 카메라 0: RGB 검정 22/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 22
+[repro] 카메라 1: RGB 검정 22/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 22
+[repro] 카메라 2: RGB 검정 21/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 21
+[repro] 합계 RGB 검정 65/1800
+=== iso2 done ===
+=== 20:57:49 hog=8GiB --kit omnigibson --cams 3 --og-render --simctx gpu=10044 MiB
+=== 20:58:46 hog=11GiB --kit omnigibson --cams 3 --og-render --simctx gpu=13114 MiB
+=== 20:59:48 hog=8GiB --kit omnigibson --cams 3 --og-render --simctx gpu=10015 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (43.9 fps)
+[repro] 카메라 0: RGB 검정 600/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 24
+[repro] 카메라 1: RGB 검정 600/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 24
+[repro] 카메라 2: RGB 검정 600/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 23
+[repro] 합계 RGB 검정 1800/1800
+=== 21:00:45 hog=11GiB --kit omnigibson --cams 3 --og-render --simctx gpu=13085 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (22.0 fps)
+[repro] 카메라 0: RGB 검정 49/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 49
+[repro] 카메라 1: RGB 검정 49/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 49
+[repro] 카메라 2: RGB 검정 48/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 48
+[repro] 합계 RGB 검정 146/1800
+=== 21:01:57 hog=13GiB --kit omnigibson --cams 3 --og-render --simctx gpu=14640 MiB
+[repro] 설정: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (15.2 fps)
+[repro] 카메라 0: RGB 검정 46/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 46
+[repro] 카메라 1: RGB 검정 46/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 46
+[repro] 카메라 2: RGB 검정 43/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 43
+[repro] 합계 RGB 검정 135/1800
+=== vram done ===
+=== 21:05:21 hog=0GiB --kit omnigibson --cams 3 --og-render --simctx gpu=529 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (48.8 fps)
+[repro] 移대찓??0: RGB 寃??105/600 泥섏쓬 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 105
+[repro] 移대찓??1: RGB 寃??105/600 泥섏쓬 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 105
+[repro] 移대찓??2: RGB 寃??104/600 泥섏쓬 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 104
+[repro] ?⑷퀎 RGB 寃??314/1800
+=== 21:06:28 hog=4GiB --kit omnigibson --cams 3 --og-render --simctx gpu=4857 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (49.9 fps)
+[repro] 移대찓??0: RGB 寃??17/600 泥섏쓬 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 17
+[repro] 移대찓??1: RGB 寃??17/600 泥섏쓬 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 17
+[repro] 移대찓??2: RGB 寃??16/600 泥섏쓬 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 16
+[repro] ?⑷퀎 RGB 寃??50/1800
+=== 21:07:23 hog=6GiB --kit omnigibson --cams 3 --og-render --simctx gpu=6899 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (42.3 fps)
+[repro] cam 0: rgb_black 600/600 depth_zero 67 RGB_ONLY(symptom) 533 first [67, 68, 69, 70, 71, 72, 73, 74, 75, 76]
+[repro] cam 1: rgb_black 600/600 depth_zero 67 RGB_ONLY(symptom) 533 first [67, 68, 69, 70, 71, 72, 73, 74, 75, 76]
+[repro] cam 2: rgb_black 600/600 depth_zero 66 RGB_ONLY(symptom) 534 first [66, 67, 68, 69, 70, 71, 72, 73, 74, 75]
+[repro] total rgb_black 1800/1800 RGB_ONLY 1600
+=== 21:08:24 hog=8GiB --kit omnigibson --cams 3 --og-render --simctx gpu=8962 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (44.0 fps)
+[repro] cam 0: rgb_black 600/600 depth_zero 34 RGB_ONLY(symptom) 566 first [34, 35, 36, 37, 38, 39, 40, 41, 42, 43]
+[repro] cam 1: rgb_black 600/600 depth_zero 34 RGB_ONLY(symptom) 566 first [34, 35, 36, 37, 38, 39, 40, 41, 42, 43]
+[repro] cam 2: rgb_black 600/600 depth_zero 33 RGB_ONLY(symptom) 567 first [33, 34, 35, 36, 37, 38, 39, 40, 41, 42]
+[repro] total rgb_black 1800/1800 RGB_ONLY 1699
+=== 21:09:22 hog=8GiB --kit omnigibson --cams 3 --og-render --simctx gpu=9027 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (30.2 fps)
+[repro] cam 0: rgb_black 600/600 depth_zero 22 RGB_ONLY(symptom) 578 first [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+[repro] cam 1: rgb_black 600/600 depth_zero 22 RGB_ONLY(symptom) 578 first [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+[repro] cam 2: rgb_black 600/600 depth_zero 21 RGB_ONLY(symptom) 579 first [21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+[repro] total rgb_black 1800/1800 RGB_ONLY 1735
+=== vram done ===
+=== 21:11:04 --kit omnigibson --cams 3 --og-render --simctx --cuda-hold-gib 6 gpu=568 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] 媛숈? ?꾨줈?몄뒪 CUDA 6.0 GiB ?≪쓬
+[repro] cuda_hold=6.0 simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (57.9 fps)
+[repro] cam 0: rgb_black 31/600 depth_zero 31 RGB_ONLY(symptom) 0 first []
+[repro] cam 1: rgb_black 31/600 depth_zero 31 RGB_ONLY(symptom) 0 first []
+[repro] cam 2: rgb_black 30/600 depth_zero 30 RGB_ONLY(symptom) 0 first []
+[repro] total rgb_black 92/1800 RGB_ONLY 0
+=== 21:11:29 --kit omnigibson --cams 3 --og-render --simctx --cuda-hold-gib 8 gpu=576 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] 媛숈? ?꾨줈?몄뒪 CUDA 8.0 GiB ?≪쓬
+[repro] cuda_hold=8.0 simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (66.7 fps)
+[repro] cam 0: rgb_black 0/600 depth_zero 0 RGB_ONLY(symptom) 0 first []
+[repro] cam 1: rgb_black 0/600 depth_zero 0 RGB_ONLY(symptom) 0 first []
+[repro] cam 2: rgb_black 0/600 depth_zero 0 RGB_ONLY(symptom) 0 first []
+[repro] total rgb_black 0/1800 RGB_ONLY 0
+=== 21:11:53 --kit omnigibson --cams 3 --og-render --simctx --cuda-hold-gib 4 gpu=568 MiB
+[repro] ?ㅼ젙: {'/app/gatherRenderResults': True, '/app/settings/fabricDefaultStageFrameHistoryCount': 3, '/omni/replicator/captureOnPlay': True, '/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] 媛숈? ?꾨줈?몄뒪 CUDA 4.0 GiB ?≪쓬
+[repro] cuda_hold=4.0 simctx=True phys=120.0 rend=30.0 kit=omnigibson cams=3 res=224 renderer=RaytracedLighting play=True set=['/rtx/rtx/modes/rt/enabled=true', '/rtx/rtx/modes/rt2/enabled=true', '/rtx/rendermode=RealTimePathTracing', '/rtx/raytracing/fractionalCutoutOpacity=true', '/rtx/reflections/enabled=true', '/rtx/indirectDiffuse/enabled=true', '/rtx/post/dlss/execMode=0', '/rtx/ambientOcclusion/enabled=true', '/rtx/directLighting/sampledLighting/enabled=true', '/rtx/raytracing/showLights=1', '/rtx/sceneDb/ambientLightIntensity=1.0', '/app/renderer/skipMaterialLoading=false', '/rtx/flow/enabled=true', '/physics/updateToUsd=false', '/physics/updateParticlesToUsd=true', '/physics/updateVelocitiesToUsd=false', '/physics/fabricUpdateTransformations=true', '/physics/fabricUseGPUInterop=true'] frames=600 (64.7 fps)
+[repro] cam 0: rgb_black 0/600 depth_zero 0 RGB_ONLY(symptom) 0 first []
+[repro] cam 1: rgb_black 0/600 depth_zero 0 RGB_ONLY(symptom) 0 first []
+[repro] cam 2: rgb_black 0/600 depth_zero 0 RGB_ONLY(symptom) 0 first []
+[repro] total rgb_black 0/1800 RGB_ONLY 0
+=== iso2 done ===
+=== 21:22:29 og scene=empty gpu=1072 MiB
+2026-09-29T12:23:02Z [27,682ms] [Error] [omni.kit.app._impl] [py stderr]: Traceback (most recent call last):
+2026-09-29T12:23:02Z [27,683ms] [Error] [omni.kit.app._impl] [py stderr]: AttributeError: 'list' object has no attribute 'sensors'
+=== og_iso done ===
+=== 21:23:35 og scene=empty gpu=1069 MiB
+[og-repro] scene=empty res=224 steps=600 (21.7 steps/s)
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 寃??0/600 泥섏쓬 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 寃??0/600 泥섏쓬 []
+[og-repro] robot_r1:zed_link:Camera:0: RGB 寃??0/600 泥섏쓬 []
+=== og_iso done ===
+=== 21:24:58 og scene=radio gpu=1072 MiB
+[og-repro] scene=radio res=224 steps=600 (15.1 steps/s)
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 寃??0/600 泥섏쓬 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 寃??200/600 泥섏쓬 [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33]
+[og-repro] robot_r1:zed_link:Camera:0: RGB 寃??0/600 泥섏쓬 []
+=== og_iso done ===

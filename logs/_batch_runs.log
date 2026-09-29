@@ -33,3 +33,10 @@
 === 20:47:53 start bk_resetuser gpu=1686 MiB
 === 20:51:24 end bk_resetuser ===
 === black_exp4 done ===
+=== 21:12:24 start eh_0 gpu=565 MiB
+=== 21:15:34 end eh_0
+=== 21:15:54 start eh_2 gpu=2935 MiB
+=== 21:18:54 end eh_2
+=== 21:19:19 start eh_4 gpu=5391 MiB
+=== 21:22:15 end eh_4
+=== eval_hog done ===
