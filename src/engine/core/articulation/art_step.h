@@ -702,7 +702,7 @@ EHD void computeUnconstrainedVelocitiesTGS(Articulation& a, float dt, const V3& 
 
 // ---------------------------------------------------------------- 내부 제약 준비
 // setupInternalConstraintsRecursive (:2432)
-EHD void setupInternalConstraintsLink(Articulation& a, float stepDt, float dt, bool isTGS, uint32_t linkID, float maxForceScale) {
+EHDR void setupInternalConstraintsLink(Articulation& a, float stepDt, float dt, bool isTGS, uint32_t linkID, float maxForceScale) {
   const Link& link = a.links[linkID];
   const JointData& jd = a.jointData[linkID];
   const Link& pLink = a.links[link.parent];
@@ -1021,11 +1021,11 @@ EHD void accumulateLinkImpulses(float deltaF, const InternalConstraint& c, SV& i
 
 // solveInternalJointConstraintRecursive (:4560). 재귀 대신 명시적 스택 (GPU 에서도 되게). 연산 순서는 같다.
 template <class Static>
-EHD SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
+EHDR SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
                       uint32_t& dofId, uint32_t& limitId, const Static& st);
 
 template <class Static>
-EHD SV solveJointLinkBody(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
+EHDR SV solveJointLinkBody(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
                           uint32_t& dofId, uint32_t& limitId, const Static& st) {
   const Link& link = a.links[linkID];
   const uint32_t startDofId = dofId;
@@ -1160,7 +1160,7 @@ EHD SV solveJointLinkBody(Articulation& a, const SolveData& data, uint32_t linkI
   return SV{i0.top, i0.bottom} + propagatedImpulseAtParentW;
 }
 template <class Static>
-EHD SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
+EHDR SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
                       uint32_t& dofId, uint32_t& limitId, const Static& st) {
   return solveJointLinkBody(a, data, linkID, parentDeltaV, cfg, dofId, limitId, st);
 }

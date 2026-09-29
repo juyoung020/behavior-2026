@@ -11,6 +11,13 @@
 
 #include "../common/pmath.h"
 
+// 재귀 함수용 (강제 인라인 불가): 호스트·GPU 공용이되 __forceinline__ 없음
+#if defined(__CUDACC__)
+#define EHDR __host__ __device__
+#else
+#define EHDR inline
+#endif
+
 namespace eng {
 namespace art {
 
