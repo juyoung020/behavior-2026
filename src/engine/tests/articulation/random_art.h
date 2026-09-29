@@ -347,7 +347,7 @@ inline bool buildR1Pro(PxPhysics* phys, PxScene* scene, const char* urdfPath, in
         L.com = vec3(xmlAttr(ot, "xyz"));
         L.comRpy = vec3(xmlAttr(ot, "rpy"));
         L.mass = float(atof(xmlAttr(xmlTag(blk, "<mass", in), "value").c_str()));
-        const std::string itt = xmlTag(blk, "<inertia", in);
+        const std::string itt = xmlTag(blk, "<inertia ", in);  // 빈칸까지: "<inertia" 만 찾으면 "<inertial>" 자신이 걸려 관성이 0 이 됐다
         L.I = PxVec3(float(atof(xmlAttr(itt, "ixx").c_str())), float(atof(xmlAttr(itt, "iyy").c_str())),
                      float(atof(xmlAttr(itt, "izz").c_str())));
       }

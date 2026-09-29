@@ -28,6 +28,7 @@
 #define ENG_ART_MAX_MIMIC 4
 #endif
 #include "random_art.h"
+#include "../../cuda/articulation/art_batch.cuh"
 
 using namespace physx;
 using namespace artest;
@@ -70,17 +71,13 @@ EHD void extract(const A::Articulation& a, float* r) {
   r[kRec - 1] = a.awake ? 0.0f : 1.0f;
 }
 
-__global__ void kStep(A::Articulation* arts, const ArtInputs* in, int K, int E, int s0, int nSteps, A::StepParams sp) {
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= K * E) return;
-  const int art = idx / E, env = idx % E;
-  A::Articulation& a = arts[size_t(idx)];
-  const ArtInputs& ai = in[art];
-  for (int s = s0; s < s0 + nSteps; ++s) {
-    stepInputsEng(a, ai, s, env, sp.dt);
-    A::stepAlone(a, sp);
-  }
-}
+// 시험 입력 (random_art.h 의 입력 계획) -> cuda/articulation 의 판 묶음 커널
+struct TestInputs {
+  const ArtInputs* in;
+  float dt;
+  __device__ void operator()(A::Articulation& a, int k, int e, int s) const { stepInputsEng(a, in[k], s, e, dt); }
+};
+static const auto kStep = A::kStepAloneBatch<TestInputs>;
 __global__ void kExtract(const A::Articulation* arts, int K, int E, int C, float* out) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;  // (관절체, 판 < C)
   if (idx >= K * C) return;
@@ -126,7 +123,6 @@ int main(int argc, char** argv) {
   }
   if (C > E) C = E;
   if (o.nLinksMax > int(A::kMaxLinks)) o.nLinksMax = int(A::kMaxLinks);
-  const int K = o.nArts;
   const float dt = 1.0f / 120.0f;
   A::StepParams sp;
   sp.gravity = eng::V3{0.0f, 0.0f, -9.81f};
@@ -147,6 +143,11 @@ int main(int argc, char** argv) {
   std::vector<Mirror> arts;
   if (!buildRandom(phys, scene, o, arts)) {
     fprintf(stderr, "addToScene 실패\n");
+    return 1;
+  }
+  const int K = int(arts.size());  // 무작위 nArts 개 + R1Pro r1copies 개 (예전엔 nArts 만 써서 R1Pro 가 빠졌다)
+  if (K == 0) {
+    fprintf(stderr, "관절체가 없다\n");
     return 1;
   }
   uint32_t totLinks = 0, totDofs = 0;
@@ -221,7 +222,7 @@ int main(int argc, char** argv) {
     cpuMs += std::chrono::duration<double, std::milli>(t2 - t1).count();
     // 층 2: GPU 판 E 개
     CK(cudaEventRecord(ev0));
-    kStep<<<unsigned((nV + threads - 1) / threads), threads>>>(dArts, dIn, K, E, s, 1, sp);
+    CK(A::launchStepAloneBatch(dArts, K, E, s, 1, sp, TestInputs{dIn, dt}, threads));
     CK(cudaEventRecord(ev1));
     CK(cudaGetLastError());
     CK(cudaEventSynchronize(ev1));
@@ -307,7 +308,7 @@ int main(int argc, char** argv) {
       }
     }
     CK(cudaEventRecord(ev0));
-    kStep<<<unsigned((nB + threads - 1) / threads), threads>>>(dB, dIn, K, benchEnvs, 1, steps, sp);
+    CK(A::launchStepAloneBatch(dB, K, benchEnvs, 1, steps, sp, TestInputs{dIn, dt}, threads));
     CK(cudaEventRecord(ev1));
     CK(cudaGetLastError());
     CK(cudaEventSynchronize(ev1));

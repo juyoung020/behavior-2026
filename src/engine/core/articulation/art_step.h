@@ -17,7 +17,7 @@
 #pragma once
 #include <cstdint>
 
-#include "../joints/glibc_trig.h"
+#include "../common/glibc_trig.h"
 #include "articulation.h"
 
 namespace eng {
@@ -1326,8 +1326,8 @@ EHD void computeSphericalJointPositionsQ(const Q& newRot, const Q& pBody2WorldRo
   newParentToChild = normalized(conj(newRot) * pBody2WorldRot);
   if (newParentToChild.w < 0.f) newParentToChild = qneg(newParentToChild);
 }
-// PxQuat::toRadiansAndUnitAxis (PxQuat.h:158): atan2f — 호스트는 libm(::atan2f = PhysX 와 같은 함수), GPU 는 joints 모듈의 glibc 2.35
-// e_atan2f.c 이식본(core/joints/glibc_trig.h, 리드에게 common 으로 옮겨 달라고 요청). 구면 관절에서만 쓴다.
+// PxQuat::toRadiansAndUnitAxis (PxQuat.h:158): PxAtan2 -> ::atan2f (PxMath.h). 호스트·GPU 모두 glibc 2.35 e_atan2f.c 이식본
+// (core/common/glibc_trig.h, libm 과 비트 동일 — tests/common/test_glibc_trig). 구면 관절에서만 쓴다.
 EHD void toRadiansAndUnitAxis(const Q& q, float& angle, V3& axis) {
   const float quatEpsilon = 1.0e-8f;
   const float s2 = q.x * q.x + q.y * q.y + q.z * q.z;
@@ -1337,11 +1337,7 @@ EHD void toRadiansAndUnitAxis(const Q& q, float& angle, V3& axis) {
   } else {
     const float s = 1.0f / psqrt(s2);
     axis = V3{q.x, q.y, q.z} * s;
-#if defined(__CUDA_ARCH__)
-    angle = fabsP(q.w) < quatEpsilon ? 3.14159265358979323846f : glibcj::atan2f(s2 * s, q.w) * 2.0f;
-#else
-    angle = fabsP(q.w) < quatEpsilon ? 3.14159265358979323846f : ::atan2f(s2 * s, q.w) * 2.0f;
-#endif
+    angle = fabsP(q.w) < quatEpsilon ? 3.14159265358979323846f : glibc::atan2f(s2 * s, q.w) * 2.0f;
   }
 }
 

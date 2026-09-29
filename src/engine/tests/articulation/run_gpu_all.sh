@@ -1,5 +1,6 @@
 #!/bin/bash
 # 층 2 시험 전부를 GPU 잠금 한 번 안에서 (WSL): 검증(무작위·R1Pro·구면) + R1Pro 처리량(레지스터 상한별)
+ulimit -c 0
 source /mnt/c/behavior-2026/src/engine/scripts/gpu_lock.sh
 gpu_lock_acquire engine-articulation "관절체 CUDA 판 비트·처리량 시험 (무작위 + R1Pro + 레지스터)" 15 3
 trap 'gpu_lock_release engine-articulation' EXIT
