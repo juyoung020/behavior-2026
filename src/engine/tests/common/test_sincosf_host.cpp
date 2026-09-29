@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-#include "core/glibc_sincosf.h"
+#include "core/common/glibc_sincosf.h"
 
 int main() {
   const unsigned nt = std::thread::hardware_concurrency();

@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "PxPhysicsAPI.h"
-#include "core/rigid.h"
+#include "core/solver/free_body.h"
 
 using namespace physx;
 
