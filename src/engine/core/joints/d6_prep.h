@@ -6,29 +6,25 @@
 //   원뿔 한계: source/common/src/CmConeLimitHelper.h:52,163 (ConeLimitHelperTanLess), include/foundation/PxMathUtils.h:204 (PxEllipseClamp)
 //   SIMD    : include/foundation/PxSIMDHelpers.h:77 (transformMultiply), PxMat33Padded = QuatGetMat33V (common/pmath.h mat_from_quat_simd)
 // 행 배열은 호출 전에 setupConstraintRows 로 초기화한다 (DyConstraintPrep.h:115 와 같음).
-// libm: 한계(limit) 경로만 atan2f/asinf/acosf/tanf 를 쓴다(PhysX 는 ::atan2f 등, PxMath.h:245-315). atan2f/asinf/acosf 는
-//       glibc 2.35 이식본(glibc_trig.h)을 CPU·GPU 공용으로 쓴다. tanf(원뿔 한계)만 아직 libm/CUDA 그대로 — GPU 비트 다를 수 있음.
+// libm: 한계(limit) 경로만 atan2f/asinf/acosf/tanf 를 쓴다(PhysX 는 ::atan2f 등, PxMath.h:230-315). 모두 glibc 2.35 이식본을
+//       CPU·GPU 공용으로 쓴다: atan2f/asinf/acosf = core/common/glibc_trig.h(eng::glibc), tanf = glibc_tanf.h(원뿔 한계, 2^32 전수 동일).
 #pragma once
 #include <cmath>
 #include <cstdint>
 
 #include "../common/aos.h"
+#include "../common/glibc_trig.h"
 #include "d6_joint.h"
-#include "glibc_trig.h"
+#include "glibc_tanf.h"
 
 namespace eng {
 namespace jnt {
 
 namespace lm {
-// glibc 2.35 이식본 (glibc_trig.h) — CPU·GPU 같은 코드. CPU 에서 libm 과 float 2^32 전수 비트 동일 확인(tests/joints/test_libm_joints)
-EHD float atan2f_(float y, float x) { return glibcj::atan2f(y, x); }
-EHD float asinf_(float x) { return glibcj::asinf(x); }
-EHD float acosf_(float x) { return glibcj::acosf(x); }
-#if defined(__CUDA_ARCH__)
-EHD float tanf_(float x) { return ::tanf(x); }  // TODO: glibc s_tanf 이식 (원뿔 한계에서만 씀) — GPU 비트 다를 수 있음
-#else
-inline float tanf_(float x) { return ::tanf(x); }
-#endif
+EHD float atan2f_(float y, float x) { return glibc::atan2f(y, x); }
+EHD float asinf_(float x) { return glibc::asinf(x); }
+EHD float acosf_(float x) { return glibc::acosf(x); }
+EHD float tanf_(float x) { return glibc::tanf(x); }
 EHD float pclamp(float v, float lo, float hi) { return pmin(hi, pmax(lo, v)); }  // PxClamp = PxMin(hi, PxMax(lo, v))
 EHD float PxAsin(float f) { return asinf_(pclamp(f, -1.0f, 1.0f)); }
 EHD float PxAcos(float f) { return acosf_(pclamp(f, -1.0f, 1.0f)); }
