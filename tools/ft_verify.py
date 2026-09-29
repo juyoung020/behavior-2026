@@ -170,8 +170,7 @@ def fast_samples(idx, negative: str = ""):
     # 음성 대조 3 "frame": 프레임 번호를 하나 밀기 (시각 맞추기 실수) — 아래에서
     eng = fast.make_engine(fds.videos, fds.indexes, threads=6, lut_override=lutt, weight_hook=hook,
                            check=not negative)
-    fds.set_pts([np.asarray(eng.pts(i), np.int64) / eng.info(i)[2] for i in range(len(fds.videos))])
-    names = ["base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"]
+    names = list(fast.NAMES)
     cols = {}
     t = time.time()
     xs = [fds[i] for i in idx]

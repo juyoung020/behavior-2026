@@ -22,6 +22,8 @@ WORK = os.environ.get("FT_WORK", os.path.expanduser("~/fasttrain_work"))
 NVHDR = os.environ.get("FT_NVHDR", os.path.join(WORK, "third_party", "nv-codec-headers", "include"))
 CSRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csrc")
 SIZES = (720, 480)
+# 카메라 순서 = 로봇 설정 image_0,1,2 = B1KInputs 의 이름 순서 (openpi b1k_policy.py:71-80)
+NAMES = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
 _placeholder = np.zeros((3, 1, 1), np.float32)  # B1KInputs 가 받는 자리표시 (이미지는 GPU 에서 채운다)
 
 
@@ -61,7 +63,32 @@ def make_engine(videos, indexes, threads: int, lut_override=None, weight_hook=No
         if any(bad.values()):
             raise RuntimeError(f"크기 조정 커널이 원래 JAX 결과와 다르다 (다른 값 수 {bad}) — 보정 실패")
         eng.validated = bad
+        eng.lut_checked = check_lut(eng, videos)
     return eng
+
+
+def check_lut(eng, videos) -> int:
+    """해상도마다 실제 프레임 3장(처음·가운데·끝)을 NVDEC+색표 vs 원래 torchcodec 경로로 대조. 다르면 멈춘다.
+    원래 색 변환은 그 기계의 FFmpeg(libswscale) 빌드에 달려 있어서, 다른 기계에서는 표를 다시 만들어야 할 수 있다."""
+    import torch
+
+    from fasttrain import lut as L
+
+    seen, n_checked = set(), 0
+    for f, v in enumerate(videos):
+        W, H, _, n = eng.info(f)
+        if W in seen:
+            continue
+        seen.add(W)
+        frames = [0, n // 2, n - 1]
+        out = torch.empty((len(frames), H, W, 3), dtype=torch.uint8, device="cuda")
+        eng.run(torch.tensor([[f, t] for t in frames], dtype=torch.int64), out, 1)
+        nbad = int((out.cpu().numpy() != L.original_rgb(v, frames)).sum())
+        if nbad:
+            raise RuntimeError(f"색 변환 표가 이 기계의 원래 디코더 결과와 다르다 ({v}: 다른 값 {nbad}) — "
+                               "`ft_run.sh src/fasttrain/lut.py build` 로 이 기계에서 다시 만들 것")
+        n_checked += len(frames)
+    return n_checked
 
 
 def ensure_index(video_path: str) -> str:
@@ -75,6 +102,19 @@ def ensure_index(video_path: str) -> str:
         subprocess.run([os.path.join(WORK, "target", "release", "ftprep"), "index", video_path, out], check=True,
                        stdout=subprocess.DEVNULL)
     return out
+
+
+_IDX_REC = np.dtype([("off", "<u8"), ("size", "<u4"), ("key", "<u4"), ("pts", "<i8")])
+
+
+def index_pts_seconds(path: str) -> np.ndarray:
+    """.ftidx(ftprep 형식)에서 표시 시각(초)만 읽는다. 머리 32 B + 매개변수 + u64 개수 + 24 B 레코드."""
+    b = np.fromfile(path, np.uint8)
+    assert bytes(b[:8]) == b"FTIDX1\0\0", path
+    w, h, ts, nal, plen, mono = np.frombuffer(b[8:32].tobytes(), "<u4")
+    n = int(np.frombuffer(b[32 + plen: 40 + plen].tobytes(), "<u8")[0])
+    rec = np.frombuffer(b[40 + plen: 40 + plen + 24 * n].tobytes(), _IDX_REC)
+    return rec["pts"] / float(ts)
 
 
 # ---------------------------------------------------------------- 워커 쪽 데이터셋
@@ -111,13 +151,10 @@ class FastDataset:
                 fs.append(fid[path])
                 frs.append(ep[f"videos/{key}/from_timestamp"])
             self.ep_file[e], self.ep_from[e] = fs, frs
-        # lerobot 이 쓰는 값 그대로: torchcodec(approximate) 의 average_fps (video_utils.py:299-302)
+        # lerobot 이 쓰는 값 그대로: torchcodec(approximate) 의 average_fps (lerobot video_utils.py:237, 305)
         self.fps = [VideoDecoder(p, seek_mode="approximate").metadata.average_fps for p in self.videos]
         self.indexes = [ensure_index(p) for p in self.videos]
-        self.pts_s = None  # 엔진에서 받아 채운다 (set_pts)
-
-    def set_pts(self, pts_seconds):
-        self.pts_s = pts_seconds
+        self.pts_s = [index_pts_seconds(p) for p in self.indexes]  # 프레임 시각 검사용 (원래 lerobot 검사와 같은 식)
 
     def __len__(self):
         return len(self.lds)
@@ -138,9 +175,9 @@ class FastDataset:
         for c, key in enumerate(self.cams):
             f = self.ep_file[ep_idx][c]
             ts = self.ep_from[ep_idx][c] + cur
-            fr = round(ts * self.fps[f])  # video_utils.py:302 와 같은 식
+            fr = round(ts * self.fps[f])  # lerobot video_utils.py:305 와 같은 식
             loaded = self.pts_s[f][fr]
-            if not abs(ts - loaded) < self.tol:  # video_utils.py:314-318 와 같은 검사
+            if not abs(ts - loaded) < self.tol:  # lerobot video_utils.py:322 와 같은 검사
                 raise ValueError(f"프레임 시각 허용오차 초과: {ts} vs {loaded} ({self.videos[f]})")
             req[c] = (f, fr)
             item[key] = _placeholder
@@ -168,8 +205,6 @@ class FastLoader:
         self.data_config_ = orig.data_config(cfg)
         self.ds = FastDataset(cfg)
         self.engine = make_engine(self.ds.videos, self.ds.indexes, decode_threads)
-        self.ds.set_pts([np.asarray(self.engine.pts(i), np.int64) / self.engine.info(i)[2]
-                         for i in range(len(self.ds.videos))])
         bs = (batch_size or cfg.batch_size) // jax.process_count()
         nw = cfg.num_workers if num_workers is None else num_workers
         self.bs, self.num_batches, self.prefetch = bs, num_batches, prefetch
@@ -202,15 +237,20 @@ class FastLoader:
 
     def _to_device(self, b):
         import jax
+        import jax.numpy as jnp
         import torch
 
         req = torch.from_numpy(np.ascontiguousarray(b.pop("_ft_req").transpose(1, 0, 2).reshape(-1, 2)))
-        B = self.bs
-        out = torch.empty((3, B, 224, 224, 3), dtype=torch.uint8, device="cuda")
-        self.engine.run(req, out, 0)  # GIL 을 풀고 NVDEC·커널 — 끝나면 out 이 채워져 있다
-        imgs = b["image"]
-        for c, name in enumerate(imgs.keys()):
-            imgs[name] = jax.device_put(jax.dlpack.from_dlpack(out[c]), self.sharding)
+        out = torch.empty((3, self.bs, 224, 224, 3), dtype=torch.uint8, device="cuda")
+        self.engine.run(req, out, 0)  # GIL 을 풀고 NVDEC·커널 — 돌아오면 out 이 다 채워져 있다
+        # JAX 소유로 GPU 안에서 한 번 복사하고 끝날 때까지 기다린 뒤 torch 메모리를 놓는다
+        # (그냥 DLPack 으로 빌려 쓰면, torch 가 그 블록을 다음 배치에 다시 쓰는 것과 JAX 의 비동기 연산이 겹칠 수 있다)
+        imgs = [jnp.array(jax.dlpack.from_dlpack(out[c]), copy=True) for c in range(3)]
+        jax.block_until_ready(imgs)
+        del out
+        assert set(b["image"]) == set(NAMES), b["image"].keys()
+        for name, a in zip(NAMES, imgs):
+            b["image"][name] = jax.device_put(a, self.sharding)
         return jax.tree.map(
             lambda x: x if isinstance(x, jax.Array) else jax.make_array_from_process_local_data(self.sharding, x), b)
 

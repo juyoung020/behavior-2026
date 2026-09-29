@@ -5,10 +5,10 @@
   - dataset_root  : 이 PC 의 데이터 사본 (기본 ~/data/2026-challenge-demos, WSL ext4)
   - episodes      : 과제 0(turning_on_radio) 의 에피소드 0~199. 내려받은 것이 과제 0 뿐인데 meta/info.json 은
                     20000 에피소드라, 안 주면 LeRobot 이 나머지를 허브에서 받으려 한다
-                    (lerobot/datasets/dataset_reader.py:152-158 → lerobot_dataset.py:258-261).
+                    (lerobot/datasets/dataset_reader.py:152-158 → lerobot_dataset.py:260).
   - assets_base_dir: 정규화 통계. 기본 체크포인트의 assets/turning_on_radio/norm_stats.json 사본.
 나머지(action_horizon 32, 변환 순서, 토크나이저, 배치 32, 워커 8, seed 42)는 pi05_b1k 그대로
-(openpi src/openpi/training/config.py:756-773, 609-615).
+(openpi src/openpi/training/config.py:757-773, 605-610).
 """
 from __future__ import annotations
 
