@@ -25,7 +25,7 @@ target_include_directories(ovd PUBLIC ${PHYSX_ROOT}/pvdruntime/include)
 target_compile_options(ovd PRIVATE ${COMMON_FLAGS})
 target_link_libraries(ovd PUBLIC dl)
 
-foreach(t ovd_dump ovd_diff)
+foreach(t ovd_dump ovd_diff ovd_pairs)
   add_executable(${t} ${t}.cpp)
   target_link_libraries(${t} ovd)
   target_compile_options(${t} PRIVATE ${COMMON_FLAGS})

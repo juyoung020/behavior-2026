@@ -841,7 +841,8 @@ class Replayer {
     auto f = [&](int i) { return as<float>(p + 4 * i); };
     auto u = [&](int i) { return as<uint32_t>(p + 4 * i); };
     auto AX = [](int i) { return PxArticulationAxis::Enum(i); };
-    if (an == "type") { if (j->getJointType() != PxArticulationJointType::Enum(u(0))) j->setJointType(PxArticulationJointType::Enum(u(0))); return true; }
+    // 원본은 같은 값도 setter 를 부른다(omni 가 eFIX 로 한 번 놓고 제 종류로 다시 놓음). setter 는 관절체를 더럽힘 표시하므로 늘 부른다.
+    if (an == "type") { j->setJointType(PxArticulationJointType::Enum(u(0))); return true; }
     if (an == "motion") { for (int i = 0; i < na && i < 6; ++i) if (j->getMotion(AX(i)) != PxArticulationMotion::Enum(u(i))) j->setMotion(AX(i), PxArticulationMotion::Enum(u(i))); return true; }
     if (an == "parentTranslation") { PxTransform t = j->getParentPose(); t.p = as<PxVec3>(p); j->setParentPose(t); return true; }
     if (an == "parentRotation") { PxTransform t = j->getParentPose(); t.q = as<PxQuat>(p); j->setParentPose(t); return true; }
@@ -853,9 +854,27 @@ class Replayer {
     if (an == "concreteTypeName" || an == "parentLink" || an == "childLink" || an == "jointForce") return true;
     // 축 6 개짜리 배열: 값이 바뀐 축만 setter 로 (원본은 축 하나씩 부른다)
     auto changed = [&](int i, float cur) { float v = f(i); return memcmp(&v, &cur, 4) != 0; };
-    if (an == "armature") { for (int i = 0; i < na && i < 6; ++i) if (changed(i, j->getArmature(AX(i)))) j->setArmature(AX(i), f(i)); return true; }
-    if (an == "jointPosition") { for (int i = 0; i < na && i < 6; ++i) if (j->getMotion(AX(i)) != PxArticulationMotion::eLOCKED && changed(i, j->getJointPosition(AX(i)))) j->setJointPosition(AX(i), f(i)); return true; }
-    if (an == "jointVelocity") { for (int i = 0; i < na && i < 6; ++i) if (j->getMotion(AX(i)) != PxArticulationMotion::eLOCKED && changed(i, j->getJointVelocity(AX(i)))) j->setJointVelocity(AX(i), f(i)); return true; }
+    // 같은 값이어도 원본 setter 가 불렸다(OVD 에 set 이 남음) -> 바뀐 축이 없으면 첫 풀린 축에 같은 값을 다시 넣어 부수효과를 낸다.
+    //   setJointPosition/Velocity: 관절체 위치·속도 더럽힘 -> 다음 simulate 에서 링크 자세를 관절값으로 다시 계산 (NpArticulationJointReducedCoordinate.cpp)
+    //   setArmature: 관절 더럽힘. (09-30 S0: 로봇이 simulate 1 부터 다르던 원인)
+    auto first_free = [&]() { for (int i = 0; i < 6; ++i) if (j->getMotion(AX(i)) != PxArticulationMotion::eLOCKED) return i; return -1; };
+    if (an == "armature") {
+      bool any = false;
+      for (int i = 0; i < na && i < 6; ++i) if (changed(i, j->getArmature(AX(i)))) { j->setArmature(AX(i), f(i)); any = true; }
+      if (!any) { const int k = first_free(); const int a = k < 0 ? 0 : k; j->setArmature(AX(a), j->getArmature(AX(a))); }
+      return true;
+    }
+    if (an == "jointPosition" || an == "jointVelocity") {
+      const bool pos = an == "jointPosition";
+      bool any = false;
+      for (int i = 0; i < na && i < 6; ++i) {
+        if (j->getMotion(AX(i)) == PxArticulationMotion::eLOCKED) continue;
+        if (changed(i, pos ? j->getJointPosition(AX(i)) : j->getJointVelocity(AX(i)))) { if (pos) j->setJointPosition(AX(i), f(i)); else j->setJointVelocity(AX(i), f(i)); any = true; }
+      }
+      const int k = first_free();
+      if (!any && k >= 0) { if (pos) j->setJointPosition(AX(k), j->getJointPosition(AX(k))); else j->setJointVelocity(AX(k), j->getJointVelocity(AX(k))); }
+      return true;
+    }
     if (an == "limitLow" || an == "limitHigh") {
       for (int i = 0; i < na && i < 6; ++i) {
         PxArticulationLimit l = j->getLimitParams(AX(i));
@@ -1380,6 +1399,58 @@ class Replayer {
     }
     return out;
   }
+  // omni.physx 의 거른 쌍 표(PhysXSetup::mFilteredPairs)는 프로세스 전체에 하나이고 커지기만 한다: handleFilteringPair 가
+  // 모양 포인터 해시(word1)로 쌍을 넣고(InternalFilteredPairs.cpp:137), PxPhysics 를 다시 만들어도 비우지 않는다.
+  // 새 PhysX 인스턴스가 옛 주소를 재사용하면 옛 쌍이 새 모양 쌍을 우연히 거른다. 그래서 같은 기록의 모든 OVD 파일에서
+  // (관계 prim 쌍 x 그 파일에서 그 prim 모양에 붙었던 모든 word1) 을 모아 표에 더한다.  --filter-history <ovd> [...]
+  size_t add_filter_history(const std::string& path) {
+    ovd::File H;
+    std::string err;
+    if (!ovd::load(path, H, err)) { fprintf(stderr, "filter-history 를 못 읽음: %s\n", path.c_str()); return 0; }
+    uint32_t a_name = 0, a_sfd = 0, a_shapes = 0;
+    for (auto& kv : H.attrs) {
+      const std::string& c = H.classes[kv.second.cls].name;
+      if (c == "PxActor" && kv.second.name == "name") a_name = kv.first;
+      if (c == "PxShape" && kv.second.name == "simulationFilterData") a_sfd = kv.first;
+      if (c == "PxRigidActor" && kv.second.name == "shapes") a_shapes = kv.first;
+    }
+    std::unordered_map<uint64_t, std::string> actor_name;             // 액터 핸들 -> 이름 (핸들 재사용은 이름 덮어쓰기로 충분)
+    std::unordered_map<uint64_t, uint64_t> shape_actor;               // 모양 -> 액터
+    std::vector<std::pair<uint64_t, uint32_t>> w1;                    // (모양, word1) 모두
+    for (const ovd::Event& e : H.events) {
+      if (e.cmd == ovd::kSet && e.attr == a_name) actor_name[e.obj] = H.str(e);
+      else if (e.cmd == ovd::kAddToList && e.attr == a_shapes && e.data_len >= 8) { uint64_t s; memcpy(&s, H.data(e), 8); shape_actor[s] = e.obj; }
+      else if (e.cmd == ovd::kSet && e.attr == a_sfd && e.data_len >= 16) { uint32_t w[4]; memcpy(w, H.data(e), 16); if (w[1]) w1.emplace_back(e.obj, w[1]); }
+    }
+    // 이름 -> word1 들
+    std::unordered_map<std::string, std::set<uint32_t>> by_name;
+    for (auto& p : w1) {
+      auto ia = shape_actor.find(p.first);
+      if (ia == shape_actor.end()) continue;
+      auto in = actor_name.find(ia->second);
+      if (in != actor_name.end()) by_name[in->second].insert(p.second);
+    }
+    auto of_prim = [&](const std::string& prim) {  // shapes_of_prim 과 같은 규칙: 이름 = prim 또는 prim/ 아래, 없으면 prim 을 품은 가장 긴 액터
+      std::set<uint32_t> out;
+      const std::string pre = prim + "/";
+      bool any = false;
+      for (auto& kv : by_name)
+        if (kv.first == prim || kv.first.compare(0, pre.size(), pre) == 0) { out.insert(kv.second.begin(), kv.second.end()); any = true; }
+      if (!any) {
+        const std::string* best = nullptr;
+        for (auto& kv : by_name)
+          if ((!best || kv.first.size() > best->size()) && prim.compare(0, kv.first.size() + 1, kv.first + "/") == 0) best = &kv.first;
+        if (best) out = by_name[*best];
+      }
+      return out;
+    };
+    const size_t before = spec.filtered_pairs.size();
+    for (auto& r : spec.rels) {
+      const auto a = of_prim(r.first), b = of_prim(r.second);
+      for (uint32_t x : a) for (uint32_t y : b) spec.filtered_pairs.insert(engine::pair_key(x, y));
+    }
+    return spec.filtered_pairs.size() - before;
+  }
   void resolve_filters() {
     filters_dirty = false;
     if (spec.groups.empty() && spec.rels.empty()) return;
@@ -1653,6 +1724,7 @@ int main(int argc, char** argv) {
   Replayer R(F);
   int threads = 4;
   std::string convex, filters, sidelog, csv;
+  std::vector<std::string> filter_hist;
   for (int i = 2; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--convex" && i + 1 < argc) convex = argv[++i];
@@ -1668,6 +1740,7 @@ int main(int argc, char** argv) {
     else if (a == "--trace-obj" && i + 1 < argc) R.trace_sub = argv[++i];
     else if (a == "--diag-no-self-collision") R.diag_no_self_collision = true;
     else if (a == "--contact-report-all") R.contact_report_all = true;
+    else if (a == "--filter-history") { while (i + 1 < argc && argv[i + 1][0] != '-') filter_hist.push_back(argv[++i]); }
     else if (a == "--side-offset" && i + 1 < argc) R.side_offset = strtoull(argv[++i], nullptr, 10);
   }
   if (!convex.empty() && !engine::read_convex_bin(convex, R.convex)) fprintf(stderr, "convex 보조 파일을 못 읽음: %s\n", convex.c_str());
@@ -1675,6 +1748,7 @@ int main(int argc, char** argv) {
   if (!sidelog.empty() && !engine::read_sidelog(sidelog, R.sviews, R.scalls)) fprintf(stderr, "sidelog 를 못 읽음: %s\n", sidelog.c_str());
   if (!csv.empty()) { R.csv = fopen(csv.c_str(), "w"); if (R.csv) fprintf(R.csv, "simulate,compared,bitdiff,maxabs\n"); }
   if (!R.init(threads)) return 1;
+  for (auto& h : filter_hist) printf("거른 쌍 역사 %s: +%zu 쌍\n", h.c_str(), R.add_filter_history(h));
   // 앞선 PhysX 인스턴스(omni.physx 는 stop/play 때 장면을 통째로 다시 만든다) 몫의 곁기록은 버린다:
   // 그 쓰기의 결과는 USD 에 되쓰여(updateToUsd) 이 OVD 의 생성 값에 이미 들어 있다.
   size_t side_dropped = 0;

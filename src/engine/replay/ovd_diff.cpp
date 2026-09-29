@@ -155,6 +155,52 @@ static IdSnap id_snap_first_sim(File& f, const std::vector<std::string>& skip) {
   }
   return s;
 }
+// --seq-dump FILTER: 첫 simulate 까지(또는 --seq-frames N 까지) 명령을 순서대로, 객체는 정체로 적는다 (두 파일 순서 비교용, 줄 단위 diff)
+static void seq_dump(File& f, const std::string& filt, long frames) {
+  uint32_t a_elapsed = 0;
+  for (auto& kv : f.attrs) if (kv.second.name == "elapsedTime") a_elapsed = kv.first;
+  // 정체는 첫 simulate 직전 스냅샷 규칙과 같게 (이름/자식 링크/붙은 액터) — 스냅샷을 만들며 핸들->정체 표를 얻는다
+  std::unordered_map<uint64_t, std::string> nm;       // 핸들 -> 이름 (set name 이 오면)
+  std::unordered_map<uint64_t, uint64_t> child;       // 조인트 -> 자식 링크
+  std::unordered_map<uint64_t, std::pair<uint64_t, int>> owner;
+  std::unordered_map<uint64_t, int> nsh;
+  std::unordered_map<uint64_t, std::string> cls;
+  // 1차: 이름·관계 모으기 (끝까지)
+  long sims = 0;
+  for (const Event& e : f.events) {
+    if (e.cmd == kSet && e.attr == a_elapsed) { if (++sims >= frames) break; continue; }
+    if (e.cmd == kCreate) { cls[e.obj] = f.classes.at(e.cls).name; continue; }
+    if (e.cmd == kAddToList && f.attrs[e.attr].name == "shapes" && e.data_len >= 8 && cls[e.obj] != "PxPhysics") { uint64_t s; memcpy(&s, f.data(e), 8); owner[s] = {e.obj, nsh[e.obj]++}; continue; }
+    if (e.cmd != kSet) continue;
+    const std::string& an = f.attrs[e.attr].name;
+    if (an == "name") nm[e.obj] = cstr(f.data(e), e.data_len);
+    if (an == "childLink" && e.data_len >= 8) { uint64_t c; memcpy(&c, f.data(e), 8); child[e.obj] = c; }
+  }
+  auto id = [&](uint64_t h) -> std::string {
+    if (child.count(h)) return "joint->" + (nm.count(child[h]) ? nm[child[h]] : std::string("?"));
+    if (nm.count(h)) return nm[h];
+    if (owner.count(h)) return "shape@" + (nm.count(owner[h].first) ? nm[owner[h].first] : std::string("?")) + "#" + std::to_string(owner[h].second);
+    return cls.count(h) ? cls[h] : "?";
+  };
+  const char* cn[] = {"?", "regClass", "regEnum", "regAttr", "regClassAttr", "regList", "set", "add", "remove", "create", "destroy", "start", "stop", "msg"};
+  sims = 0;
+  for (const Event& e : f.events) {
+    if (e.cmd == kSet && e.attr == a_elapsed) { printf("==== simulate %ld\n", ++sims); if (sims >= frames) break; continue; }
+    if (e.cmd != kSet && e.cmd != kAddToList && e.cmd != kRemoveFromList && e.cmd != kCreate) continue;
+    const std::string who = id(e.obj);
+    std::string what = e.cmd == kCreate ? f.classes.at(e.cls).name : f.attr_name(e.attr);
+    std::string val;
+    if (e.cmd != kCreate) {
+      const AttrInfo& ai = f.attrs[e.attr];
+      if (ai.type == OmniPvdDataType::eOBJECT_HANDLE || ai.is_list) { for (uint32_t k = 0; k + 8 <= e.data_len; k += 8) { uint64_t h; memcpy(&h, f.data(e) + k, 8); val += " " + id(h); } }
+      else if (ai.name == "name" || ai.name == "concreteTypeName") val = " \"" + cstr(f.data(e), e.data_len) + "\"";
+      else val = " " + hex(f.data(e), e.data_len, &ai);
+    }
+    if (!filt.empty() && who.find(filt) == std::string::npos && val.find(filt) == std::string::npos) continue;
+    printf("%s %s %s%s\n", cn[e.cmd], who.c_str(), what.c_str(), val.c_str());
+  }
+}
+
 static int id_state_diff(File& A, File& B, const std::vector<std::string>& skip, int maxd) {
   IdSnap a = id_snap_first_sim(A, skip), b = id_snap_first_sim(B, skip);
   printf("첫 simulate 직전 정체 수: A %zu, B %zu\n", a.val.size(), b.val.size());
@@ -238,17 +284,22 @@ int main(int argc, char** argv) {
   if (!load(argv[1], A, err) || !load(argv[2], B, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
   int maxd = 10;
   bool inputs_only = false, state = false;
+  std::string seq_filter;
+  long seq_frames = 0;
   std::vector<std::string> skip;
   for (int i = 3; i < argc; ++i) {
     if (!strcmp(argv[i], "--max") && i + 1 < argc) maxd = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--inputs-only")) inputs_only = true;
     else if (!strcmp(argv[i], "--state")) state = true;
+    else if (!strcmp(argv[i], "--seq-dump") && i + 1 < argc) seq_filter = argv[++i];
+    else if (!strcmp(argv[i], "--seq-frames") && i + 1 < argc) seq_frames = atol(argv[++i]);
     else if (!strcmp(argv[i], "--skip-class") && i + 1 < argc) {
       std::string l = argv[++i];
       size_t p = 0;
       while (p <= l.size()) { size_t c = l.find(',', p); skip.push_back(l.substr(p, c == std::string::npos ? std::string::npos : c - p)); if (c == std::string::npos) break; p = c + 1; }
     }
   }
+  if (!seq_filter.empty() || seq_frames) { seq_dump(A, seq_filter, seq_frames ? seq_frames : 1); return 0; }
   if (state) return id_state_diff(A, B, skip, maxd);
   if (false) return state_diff(A, B, skip, maxd);
   Walker wa(A), wb(B);
