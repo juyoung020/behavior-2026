@@ -83,13 +83,8 @@ int ft_sampler_order(int64_t n, int bs, uint64_t seed, int shuffle, int persiste
 }
 
 // ---------------------------------------------------------------- 엔진 (검증용 직접 사용)
-void* ft_engine_create(int nfiles, const char** videos, const char** idx, const uint8_t* lut, int nsizes,
-                       const int32_t* sizes, const int32_t* start, const int32_t* count, const float* weight,
-                       const int32_t* srow, const int32_t* scol, int threads, int device) {
-    return guard_ptr([&] {
-        return (void*)new ft::Engine(strs(nfiles, videos), strs(nfiles, idx), lut, std::vector<int>(sizes, sizes + nsizes),
-                                     start, count, weight, srow, scol, threads, device);
-    });
+void* ft_engine_create(int nfiles, const char** videos, const char** idx, const uint8_t* lut, int threads, int device) {
+    return guard_ptr([&] { return (void*)new ft::Engine(strs(nfiles, videos), strs(nfiles, idx), lut, threads, device); });
 }
 void ft_engine_destroy(void* e) { delete (ft::Engine*)e; }
 int ft_engine_info(void* e, int file, int64_t* out4) {
@@ -122,28 +117,26 @@ int ft_engine_decode_host(void* ep, const int64_t* req, int n, int mode, uint8_t
         ckr(cudaMemcpy(out, d, stride * n, cudaMemcpyDeviceToHost), "cudaMemcpy");
     });
 }
-int ft_engine_resize_host(void* ep, const uint8_t* in, int n, int W, uint8_t* out) {
+int ft_engine_resize_host(void* ep, const uint8_t* in, int n, int W, int H, uint8_t* out) {
     return guard([&] {
         auto* e = (ft::Engine*)ep;
         ckr(cudaSetDevice(e->device()), "cudaSetDevice");
         uint8_t *di = nullptr, *dout = nullptr;
-        ckr(cudaMalloc((void**)&di, (size_t)n * W * W * 3), "cudaMalloc");
+        ckr(cudaMalloc((void**)&di, (size_t)n * W * H * 3), "cudaMalloc");
         std::unique_ptr<uint8_t, void (*)(uint8_t*)> h1(di, [](uint8_t* p) { cudaFree(p); });
         ckr(cudaMalloc((void**)&dout, (size_t)n * 224 * 224 * 3), "cudaMalloc");
         std::unique_ptr<uint8_t, void (*)(uint8_t*)> h2(dout, [](uint8_t* p) { cudaFree(p); });
-        ckr(cudaMemcpy(di, in, (size_t)n * W * W * 3, cudaMemcpyHostToDevice), "cudaMemcpy");
-        e->resize(di, n, W, dout);
+        ckr(cudaMemcpy(di, in, (size_t)n * W * H * 3, cudaMemcpyHostToDevice), "cudaMemcpy");
+        e->resize(di, n, W, H, dout);
         ckr(cudaMemcpy(out, dout, (size_t)n * 224 * 224 * 3, cudaMemcpyDeviceToHost), "cudaMemcpy");
     });
 }
 
 // ---------------------------------------------------------------- 로더
-void* ft_loader_create(const char* table_dir, const uint8_t* lut, int nsizes, const int32_t* sizes, const int32_t* start,
-                       const int32_t* count, const float* weight, const int32_t* srow, const int32_t* scol, int threads,
-                       int device, int batch, int shuffle, uint64_t seed, int persistent, int nslots) {
+void* ft_loader_create(const char* table_dir, const uint8_t* lut, int threads, int device, int batch, int shuffle,
+                       uint64_t seed, int persistent, int nslots) {
     return guard_ptr([&] {
-        return (void*)new ft::Loader(table_dir, lut, std::vector<int>(sizes, sizes + nsizes), start, count, weight, srow,
-                                     scol, threads, device, batch, shuffle != 0, seed, persistent != 0, nslots);
+        return (void*)new ft::Loader(table_dir, lut, threads, device, batch, shuffle != 0, seed, persistent != 0, nslots);
     });
 }
 void* ft_loader_engine(void* l) { return &((ft::Loader*)l)->engine(); }

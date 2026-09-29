@@ -191,13 +191,10 @@ void Sampler::next(int64_t* out) {
 }
 
 // ------------------------------------------------------------------ Loader
-Loader::Loader(const std::string& table_dir, const uint8_t* lut_host, const std::vector<int>& sizes,
-               const int32_t* start, const int32_t* count, const float* weight, const int32_t* split_rows,
-               const int32_t* split_cols, int threads, int device, int batch, bool shuffle, uint64_t seed,
-               bool persistent, int nslots)
+Loader::Loader(const std::string& table_dir, const uint8_t* lut_host, int threads, int device, int batch,
+               bool shuffle, uint64_t seed, bool persistent, int nslots)
     : tab_(new Table(table_dir)),
-      eng_(new Engine(tab_->files, tab_->indexes, lut_host, sizes, start, count, weight, split_rows, split_cols,
-                      threads, device)),
+      eng_(new Engine(tab_->files, tab_->indexes, lut_host, threads, device)),
       smp_(tab_->n, batch, seed, shuffle, persistent),
       B_(batch),
       device_(device) {

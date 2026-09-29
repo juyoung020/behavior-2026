@@ -9,10 +9,10 @@ GPU 없이 (JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES= bash tools/ft_run.sh tools/f
     order                 네이티브 섞기 순서 == torch DataLoader (워커 지속·워커 0, 에포크 경계 넘어)
     table [--n N]         이미지 외 값(행동·상태·토큰·마스크) + 영상 프레임 번호, 과제 전체 샘플 (기본 전부)
 GPU (bash tools/ft_run.sh tools/ft_verify.py ...):
-    stage                 NVDEC+색표 == torchcodec RGB, 크기 조정 커널 == JAX (파일 6개 × 프레임 24)
+    stage                 NVDEC+색표 == torchcodec RGB, 크기 조정 커널 == 원래 PIL (파일 6개 × 프레임 24)
     ref --tag a|b         원래 파이프라인 기준 저장 (고정 인덱스 288 = 무작위 224 + 경계 사례)
     same a b              원래가 두 프로세스에서 같은가
-    check --tag a         네이티브 샘플 vs 기준 전체 텐서.  --negative lut|weight|frame 음성 대조
+    check --tag a         네이티브 샘플 vs 기준 전체 텐서.  --negative lut|resize|frame 음성 대조
     loader --batches 3    로더 통째: 원래 로더 vs 네이티브 로더 (같은 seed, 섞기 순서·GPU 위 Observation 까지)
 """
 from __future__ import annotations
@@ -242,7 +242,7 @@ def cmd_table(a):
 
 # ------------------------------------------------------------------ 구간별 (GPU)
 def cmd_stage(a):
-    from openpi.shared import image_tools
+    from openpi_client import image_tools as pil_tools  # 원래 ResizeImages 가 쓰는 것 (openpi transforms.py:9, 190)
     from fasttrain import fast, lut
 
     root = os.path.expanduser("~/data/2026-challenge-demos/videos")
@@ -250,9 +250,7 @@ def cmd_stage(a):
             "observation.rgb.right_realsense_link_camera_0"]
     videos = [f"{root}/{c}/chunk-000/file-00{k}.mp4" for c in cams for k in (0, 1)]
     eng = fast.Engine(videos, [fast.ensure_index(v) for v in videos], threads=4)
-    from fasttrain import calib
-    print(f"크기 조정 보정 (이 GPU 의 원래 JAX 크기 조정이 나누어 더하는 경계, 입력 좌표): {eng.calib}")
-    print(f"보정 후 uint8 무작위 영상 24장×2 크기: 커널 != 원래 인 값 {calib.validate(eng.resize)}")
+    print(f"크기 조정 커널 vs 원래 PIL, 무작위 uint8 영상 16장씩 (모양별 다른 값 수): {fast.validate_resize(eng)}")
     rng = np.random.default_rng(a.seed)
     print("=" * 78)
     print(f"구간별 대조 (파일 {len(videos)}개 × 프레임 {a.n}개, 무작위 seed={a.seed})")
@@ -267,8 +265,7 @@ def cmd_stage(a):
         g_rgb = eng.decode(req, 1)
         g_small = eng.decode(req, 0)
         ref_rgb = lut.original_rgb(v, frames)  # 원래: torchcodec → /255 → (255*x).astype(uint8)
-        # 원래: JAX GPU 크기 조정을 한 장씩 (ResizeImages 가 샘플마다 부른다)
-        ref_small = np.stack([np.asarray(image_tools.resize_with_pad(x, 224, 224)) for x in ref_rgb])
+        ref_small = pil_tools.resize_with_pad(ref_rgb, 224, 224)  # 원래: PIL BILINEAR (CPU)
         n1, n2 = int((g_rgb != ref_rgb).sum()), int((g_small != ref_small).sum())
         bad += n1 + n2
         print(f"  {v.split('videos/')[1]:<52}{n1:>12}{n2:>12}")
@@ -322,7 +319,7 @@ def cmd_check(a):
     cfg = orig.train_config()
     tdir = fast.ensure_table(cfg)
     files, idxs = table_files(tdir)
-    lut_arr, hook = None, None
+    lut_arr = None
     if a.negative == "lut":  # 음성 대조 1: 색표 대신 부동소수 BT.601 공식 (최대 3 차이 나는 흔한 구현)
         k = np.arange(1 << 24)
         y = (k >> 16).astype(np.float64) - 16
@@ -331,16 +328,22 @@ def cmd_check(a):
         rgb = np.stack([1.164383 * y + 1.596027 * v, 1.164383 * y - 0.391762 * u - 0.812968 * v,
                         1.164383 * y + 2.017232 * u], -1)
         lut_arr = np.clip(np.round(rgb), 0, 255).astype(np.uint8).reshape(-1)
-    if a.negative == "weight":  # 음성 대조 2: 크기 조정 가중치를 float32 한 칸(1 ulp)만 틀리게
-        hook = lambda wt: np.where(wt != 0, np.nextafter(wt, np.float32(1)), wt).astype(np.float32)
-    eng = fast.Engine(files, idxs, threads=6, lut=lut_arr, weight_hook=hook)
+    eng = fast.Engine(files, idxs, threads=6, lut=lut_arr)
     tab = fast.Table(tdir)
     t = time.time()
     s = tab.samples(idx)
     req = s["req"].astype(np.int64)  # [N,3,2]
     if a.negative == "frame":  # 음성 대조 3: 프레임 번호를 하나 밀기 (시각 맞추기 실수)
         req[:, :, 1] = np.maximum(req[:, :, 1] - 1, 0)
-    imgs = eng.decode(req.reshape(-1, 2), 0).reshape(len(idx), 3, 224, 224, 3)
+    if a.negative == "resize":
+        # 음성 대조 2: 크기 조정만 그럴듯한 다른 구현(JAX jax.image.resize — 처음에 기준으로 잘못 짚었던 것)으로.
+        # 색표까지는 네이티브(mode 1), 크기 조정은 JAX 로 → 대조가 이 차이(±1)를 잡아야 한다.
+        from openpi.shared import image_tools as jax_tools
+        flat_req = req.reshape(-1, 2)
+        imgs = np.stack([np.asarray(jax_tools.resize_with_pad(eng.decode(r[None], 1)[0], 224, 224))
+                         for r in flat_req]).reshape(len(idx), 3, 224, 224, 3)
+    else:
+        imgs = eng.decode(req.reshape(-1, 2), 0).reshape(len(idx), 3, 224, 224, 3)
     F = {f"image/{nm}": imgs[:, c] for c, nm in enumerate(fast.NAMES)}
     for c, nm in enumerate(fast.NAMES):
         F[f"image_mask/{nm}"] = np.ones(len(idx), bool)
@@ -420,7 +423,7 @@ def main():
     s.add_argument("b")
     s = sp.add_parser("check")
     s.add_argument("--tag", default="a")
-    s.add_argument("--negative", default="", choices=["", "lut", "weight", "frame"])
+    s.add_argument("--negative", default="", choices=["", "lut", "resize", "frame"])
     s = sp.add_parser("loader")
     s.add_argument("--batches", type=int, default=3)
     s.add_argument("--batch", type=int, default=32)

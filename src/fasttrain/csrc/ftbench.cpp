@@ -1,9 +1,7 @@
 // ftbench — 네이티브 로더 처리량을 파이썬 없이 잰다 (C ABI 만 사용).
-//   ftbench <table_dir> <calib.bin> <lut.bin> [batch=32] [threads=6] [slots=6] [batches=200] [step_ms=0]
+//   ftbench <table_dir> <lut.bin> [batch=32] [threads=6] [slots=6] [batches=200] [step_ms=0]
 // 소비 쪽 흉내: 배치를 받자마자 10개 텐서를 돌려준다. step_ms > 0 이면 그 시간만큼 기다린 뒤 돌려준다(학습 스텝 흉내,
 // CPU 에서 잠만 잔다 — GPU 는 로더만 쓴다). 결과: 배치/s, 샘플/s, 소비 쪽이 데이터를 기다린 시간(= GPU 가 기다릴 시간).
-// calib.bin 은 src/fasttrain/fast.py 가 보정할 때 쓴다: i32 nsizes, i32 sizes[], i32 start[], i32 count[], f32 weight[],
-// i32 split_rows[], i32 split_cols[] (각 [nsizes][224], weight 는 [nsizes][224][8]).
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -15,8 +13,7 @@
 
 extern "C" {
 const char* ft_last_error(void);
-void* ft_loader_create(const char*, const uint8_t*, int, const int32_t*, const int32_t*, const int32_t*, const float*,
-                       const int32_t*, const int32_t*, int, int, int, int, uint64_t, int, int);
+void* ft_loader_create(const char*, const uint8_t*, int, int, int, int, uint64_t, int, int);
 int ft_loader_next(void*, int64_t*, void**);
 int ft_loader_stats(void*, double*);
 void* ft_loader_engine(void*);
@@ -34,29 +31,19 @@ static std::vector<char> slurp(const char* p) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 4) {
-        std::fprintf(stderr, "사용법: ftbench <table_dir> <calib.bin> <lut.bin> [batch] [threads] [slots] [batches] [step_ms]\n");
+    if (argc < 3) {
+        std::fprintf(stderr, "사용법: ftbench <table_dir> <lut.bin> [batch] [threads] [slots] [batches] [step_ms]\n");
         return 2;
     }
-    const int batch = argc > 4 ? std::atoi(argv[4]) : 32;
-    const int threads = argc > 5 ? std::atoi(argv[5]) : 6;
-    const int slots = argc > 6 ? std::atoi(argv[6]) : 6;
-    const int nb = argc > 7 ? std::atoi(argv[7]) : 200;
-    const double step_ms = argc > 8 ? std::atof(argv[8]) : 0.0;
-    auto cal = slurp(argv[2]);
-    auto lut = slurp(argv[3]);
-    const int32_t* ci = (const int32_t*)cal.data();
-    const int ns = ci[0];
-    const int32_t* sizes = ci + 1;
-    const int32_t* start = sizes + ns;
-    const int32_t* count = start + ns * 224;
-    const float* weight = (const float*)(count + ns * 224);
-    const int32_t* srow = (const int32_t*)(weight + ns * 224 * 8);
-    const int32_t* scol = srow + ns * 224;
+    const int batch = argc > 3 ? std::atoi(argv[3]) : 32;
+    const int threads = argc > 4 ? std::atoi(argv[4]) : 6;
+    const int slots = argc > 5 ? std::atoi(argv[5]) : 6;
+    const int nb = argc > 6 ? std::atoi(argv[6]) : 200;
+    const double step_ms = argc > 7 ? std::atof(argv[7]) : 0.0;
+    auto lut = slurp(argv[2]);
     using clk = std::chrono::steady_clock;
     auto t0 = clk::now();
-    void* L = ft_loader_create(argv[1], (const uint8_t*)lut.data(), ns, sizes, start, count, weight, srow, scol, threads,
-                               0, batch, 1, 42, 1, slots);
+    void* L = ft_loader_create(argv[1], (const uint8_t*)lut.data(), threads, 0, batch, 1, 42, 1, slots);
     if (!L) {
         std::fprintf(stderr, "로더 실패: %s\n", ft_last_error());
         return 1;

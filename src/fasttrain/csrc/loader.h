@@ -97,9 +97,8 @@ struct Slot {
 
 class Loader {
 public:
-    Loader(const std::string& table_dir, const uint8_t* lut_host, const std::vector<int>& sizes, const int32_t* start,
-           const int32_t* count, const float* weight, const int32_t* split_rows, const int32_t* split_cols, int threads,
-           int device, int batch, bool shuffle, uint64_t seed, bool persistent, int nslots);
+    Loader(const std::string& table_dir, const uint8_t* lut_host, int threads, int device, int batch, bool shuffle,
+           uint64_t seed, bool persistent, int nslots);
     ~Loader();
 
     // 다음 배치 (순서대로). dl[10] = 이미지 3, 이미지 마스크 3, 상태, 토큰, 토큰 마스크, 행동. idx[batch] = 샘플 번호.

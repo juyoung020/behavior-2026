@@ -1,14 +1,11 @@
 // 색 변환 + 크기 조정 CUDA 커널.
 //
-// 크기 조정은 원래 openpi image_tools.resize_with_pad(jax.image.resize LINEAR, antialias) 의 **GPU 컴파일 결과와 같은
-// 계산 순서**로 한다. XLA 가 만든 프로그램(~/fasttrain_work/hlo_resize_720.txt, tools/ft_verify.py 가 다시 뽑는다):
-//   1) 가중치 W[입력, 224] (jax 가 GPU 에서 계산한 값을 그대로 받아 쓴다)
-//   2) cuBLAS SGEMM #1: T[i, (w,c)] = Σ_h W[h,i] · X[h,(w,c)]      (행 방향 먼저)
-//   3) cuBLAS SGEMM #2: O[(i,c), j] = Σ_w T[i,(w,c)] · W[w,j]      (열 방향)
-//   4) round-half-even → clamp[0,255] → uint8
-// SGEMM 은 각 출력 원소를 k 오름차순 FMA 로 누적하되, cuBLAS 가 split-K 를 고르면 k 구간마다 따로 누적해 더한다.
-// 어디서 나누는지는 GPU·cuBLAS 에 따라 달라서 calib.py 가 시작 때 원래 함수로 알아내 split 표로 넘긴다.
-// 0 인 가중치는 fma(x,0,acc)=acc 라 건너뛰어도 비트가 같다 (docs/학습환경_가속.md 3절).
+// 크기 조정은 원래 openpi 가 쓰는 openpi_client.image_tools.resize_with_pad (PIL BILINEAR) 를 Pillow 11.2.1
+// Resample.c 와 같은 정수 연산으로 옮긴 것이다 (계수·범위 계산은 호스트 pil_resize.h):
+//   가로: tmp[r][xx][c] = clip8(2^21 + Σ_x rgb[ybox_first + r][xmin + x][c] × kh[xx][x])     (ImagingResampleHorizontal_8bpc)
+//   세로: out[yy][xx][c] = clip8(2^21 + Σ_y tmp[ymin + y][xx][c] × kv[yy][y])                (ImagingResampleVertical_8bpc)
+//   clip8(s) = s >> 22 을 [0, 255] 로 자름.  그 뒤 0 으로 채운 target² 의 (pad_x, pad_y) 에 붙인다 (image_tools.py:53-56).
+// int32 합 순서도 원래와 같지만, 정수 덧셈이라 순서가 달라도 결과가 같다.
 #include "kernels.h"
 
 #include <cuda_runtime.h>
@@ -16,8 +13,12 @@
 namespace ft {
 
 namespace {
-constexpr int OUT = 224;
-constexpr int MAXTAP = 8;
+constexpr int PRECISION_BITS = 32 - 8 - 2;
+
+__device__ __forceinline__ uint8_t clip8(int s) {
+    int v = s >> PRECISION_BITS;  // 산술 시프트 (Pillow clip8_lookups[in >> PRECISION_BITS])
+    return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
 
 __global__ void k_nv12_lut(const uint8_t* __restrict__ y, const uint8_t* __restrict__ uv, int pitch, int W, int H,
                            const uint8_t* __restrict__ lut, uint8_t* __restrict__ rgb) {
@@ -34,47 +35,40 @@ __global__ void k_nv12_lut(const uint8_t* __restrict__ y, const uint8_t* __restr
     o[2] = e[2];
 }
 
-// T[i][n] = Σ (h 오름차순, split 에서 두 구간) W[h][i] * X[h][n],  n = w*3 + c
-__global__ void k_resize_rows(const uint8_t* __restrict__ rgb, int W, TapsDev t, float* __restrict__ T) {
-    int n = blockIdx.x * blockDim.x + threadIdx.x;
-    int i = blockIdx.y;
-    int WC = W * 3;
-    if (n >= WC) return;
-    int s = t.start[i], cnt = t.count[i], sp = t.split[i];
-    float p = 0.f, q = 0.f;
-    for (int k = 0; k < cnt; ++k) {
-        float x = (float)rgb[(size_t)(s + k) * WC + n];
-        float w = t.weight[i * MAXTAP + k];
-        if (sp && k >= sp)
-            q = __fmaf_rn(w, x, q);
-        else
-            p = __fmaf_rn(w, x, p);
-    }
-    T[(size_t)i * WC + n] = sp ? __fadd_rn(p, q) : p;
+// 가로 단계: 입력 행 ybox_first + r, 출력 열 xx, 채널 c
+__global__ void k_pil_h(const uint8_t* __restrict__ rgb, PilDev p, uint8_t* __restrict__ tmp) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = p.rows * p.out_w * 3;
+    if (idx >= total) return;
+    int c = idx % 3;
+    int xx = (idx / 3) % p.out_w;
+    int r = idx / (3 * p.out_w);
+    const uint8_t* row = rgb + (size_t)(p.ybox_first + r) * p.in_w * 3;
+    int xmin = p.bh[2 * xx], n = p.bh[2 * xx + 1];
+    const int* k = p.kkh + (size_t)xx * p.kh;
+    int ss = 1 << (PRECISION_BITS - 1);
+    for (int x = 0; x < n; ++x) ss += (int)row[(xmin + x) * 3 + c] * k[x];
+    tmp[idx] = clip8(ss);
 }
 
-// O[i][j][c] = round(Σ (w 오름차순, split 에서 두 구간) T[i][w*3+c] * W[w][j])
-__global__ void k_resize_cols(const float* __restrict__ T, int W, TapsDev t, uint8_t* __restrict__ out) {
+// 세로 단계 + 붙이기: 출력 target² 전체 (붙인 영역 밖은 0)
+__global__ void k_pil_v(const uint8_t* __restrict__ tmp, PilDev p, uint8_t* __restrict__ out) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= OUT * OUT * 3) return;
+    int total = p.target * p.target * 3;
+    if (idx >= total) return;
     int c = idx % 3;
-    int j = (idx / 3) % OUT;
-    int i = idx / (3 * OUT);
-    const float* row = T + (size_t)i * W * 3;
-    int s = t.start[j], cnt = t.count[j], sp = t.split[j];
-    float p = 0.f, q = 0.f;
-    for (int k = 0; k < cnt; ++k) {
-        float x = row[(s + k) * 3 + c];
-        float w = t.weight[j * MAXTAP + k];
-        if (sp && k >= sp)
-            q = __fmaf_rn(x, w, q);
-        else
-            p = __fmaf_rn(x, w, p);
+    int X = (idx / 3) % p.target;
+    int Y = idx / (3 * p.target);
+    int xx = X - p.pad_x, yy = Y - p.pad_y;
+    if (xx < 0 || xx >= p.out_w || yy < 0 || yy >= p.out_h) {
+        out[idx] = 0;
+        return;
     }
-    float acc = sp ? __fadd_rn(p, q) : p;
-    float r = rintf(acc);  // round-half-even (XLA round-nearest-even)
-    r = fminf(fmaxf(r, 0.f), 255.f);
-    out[idx] = (uint8_t)r;
+    int ymin = p.bv[2 * yy], n = p.bv[2 * yy + 1];
+    const int* k = p.kkv + (size_t)yy * p.kv;
+    int ss = 1 << (PRECISION_BITS - 1);
+    for (int y = 0; y < n; ++y) ss += (int)tmp[((size_t)(ymin + y) * p.out_w + xx) * 3 + c] * k[y];
+    out[idx] = clip8(ss);
 }
 
 thread_local cudaError_t g_err = cudaSuccess;
@@ -87,13 +81,11 @@ void launch_nv12_lut(const uint8_t* y, const uint8_t* uv, int pitch, int W, int 
     g_err = cudaGetLastError();
 }
 
-void launch_resize(const uint8_t* rgb, int H, int W, TapsDev th, TapsDev tw, float* tmp, uint8_t* out, void* stream) {
-    (void)H;
-    int WC = W * 3;
-    dim3 b1(256), g1((WC + 255) / 256, OUT);
-    k_resize_rows<<<g1, b1, 0, (cudaStream_t)stream>>>(rgb, W, th, tmp);
-    int n = OUT * OUT * 3;
-    k_resize_cols<<<(n + 255) / 256, 256, 0, (cudaStream_t)stream>>>(tmp, W, tw, out);
+void launch_resize_pil(const uint8_t* rgb, const PilDev& p, uint8_t* tmp, uint8_t* out, void* stream) {
+    int n1 = p.rows * p.out_w * 3;
+    k_pil_h<<<(n1 + 255) / 256, 256, 0, (cudaStream_t)stream>>>(rgb, p, tmp);
+    int n2 = p.target * p.target * 3;
+    k_pil_v<<<(n2 + 255) / 256, 256, 0, (cudaStream_t)stream>>>(tmp, p, out);
     g_err = cudaGetLastError();
 }
 

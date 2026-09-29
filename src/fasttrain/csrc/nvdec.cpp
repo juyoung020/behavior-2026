@@ -27,6 +27,7 @@
 #include <ffnvcodec/dynlink_loader.h>
 
 #include "kernels.h"
+#include "pil_resize.h"
 
 namespace ft {
 namespace {
@@ -67,7 +68,7 @@ struct VideoFile {
     std::vector<uint8_t> params;
     std::vector<Sample> s;
     std::vector<int32_t> key_before;  // 각 표본의 직전(자기 포함) 키프레임
-    int cls = -1;                     // 해상도 종류 (sizes 에서의 위치)
+    int cls = -1;                     // 해상도 종류 (Impl::plans 에서의 위치)
 };
 
 template <class T>
@@ -184,7 +185,7 @@ struct Worker {
     CUstream stream = nullptr;
     std::vector<Dec> decs;
     uint8_t* rgb = nullptr;
-    float* tmp = nullptr;
+    uint8_t* tmp = nullptr;  // PIL 가로 단계의 8비트 중간 영상
     std::vector<uint8_t> pkt, annexb;
     // 통계
     std::atomic<long long> frames{0}, parsers{0}, requests{0};
@@ -202,8 +203,8 @@ struct Job {
 
 struct Engine::Impl {
     std::vector<VideoFile> files;
-    std::vector<int> sizes;
-    std::vector<TapsDev> trow, tcol;  // 해상도별 행·열 방향
+    std::vector<std::pair<int, int>> sizes;  // 해상도 (W, H)
+    std::vector<PilDev> plans;               // 해상도별 PIL 크기 조정 계획 (GPU)
     std::vector<void*> allocs;
     const uint8_t* lut = nullptr;  // GPU
     CUcontext ctx = nullptr;
@@ -314,7 +315,7 @@ void Engine::Impl::process(Worker& w, const Job& j) {
     } else {
         launch_nv12_lut(y, uv, (int)pitch, W, H, lut, w.rgb, w.stream);
         ck_rt("색 변환 커널");
-        launch_resize(w.rgb, H, W, trow[v.cls], tcol[v.cls], w.tmp, j.out, w.stream);
+        launch_resize_pil(w.rgb, plans[v.cls], w.tmp, j.out, w.stream);
         ck_rt("크기 조정 커널");
     }
     // 결과가 GPU 메모리에 다 써진 뒤에야 작업 완료로 센다 (배치 완료 = 모든 이미지 준비 끝)
@@ -360,14 +361,12 @@ void Engine::Impl::loop(int wi) {
 }
 
 Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::string>& indexes, const uint8_t* lut_host,
-               const std::vector<int>& sizes, const int32_t* start, const int32_t* count, const float* weight,
-               const int32_t* split_rows, const int32_t* split_cols, int threads, int device)
+               int threads, int device)
     : p_(new Impl) {
     load_libs();
     if (videos.size() != indexes.size()) throw std::runtime_error("videos 와 indexes 길이가 다르다");
     if (threads < 1) throw std::runtime_error("threads >= 1");
     auto& P = *p_;
-    P.sizes = sizes;
     P.device = device;
     CK(cu->cuInit(0));
     CUdevice dev;
@@ -378,13 +377,14 @@ Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::st
     for (size_t i = 0; i < videos.size(); ++i) {
         P.files.push_back(load_index(videos[i], indexes[i]));
         VideoFile& v = P.files.back();
-        if (v.w != v.h) throw std::runtime_error("정사각 영상만: " + videos[i]);
-        for (size_t c = 0; c < sizes.size(); ++c)
-            if ((int)v.w == sizes[c]) v.cls = (int)c;
-        if (v.cls < 0) throw std::runtime_error("크기 조정 탭이 없는 해상도: " + std::to_string(v.w));
+        for (size_t c = 0; c < P.sizes.size(); ++c)
+            if (P.sizes[c] == std::make_pair((int)v.w, (int)v.h)) v.cls = (int)c;
+        if (v.cls < 0) {
+            v.cls = (int)P.sizes.size();
+            P.sizes.emplace_back((int)v.w, (int)v.h);
+        }
     }
-    int maxw = 0;
-    for (int s : sizes) maxw = std::max(maxw, s);
+    size_t max_rgb = 0, max_tmp = 0;
     auto up = [&](const void* src, size_t bytes) {
         void* d = dev_alloc(bytes);
         if (!d) throw std::runtime_error("GPU 메모리 할당 실패");
@@ -394,21 +394,25 @@ Engine::Engine(const std::vector<std::string>& videos, const std::vector<std::st
         return d;
     };
     P.lut = (const uint8_t*)up(lut_host, (size_t)(1u << 24) * 3);
-    for (size_t c = 0; c < sizes.size(); ++c) {
-        TapsDev t;
-        t.start = (const int*)up(start + c * 224, 224 * sizeof(int));
-        t.count = (const int*)up(count + c * 224, 224 * sizeof(int));
-        t.weight = (const float*)up(weight + c * 224 * 8, 224 * 8 * sizeof(float));
-        t.split = (const int*)up(split_rows + c * 224, 224 * sizeof(int));
-        P.trow.push_back(t);
-        t.split = (const int*)up(split_cols + c * 224, 224 * sizeof(int));
-        P.tcol.push_back(t);
+    for (auto& s : P.sizes) {
+        PilPlan pl = pil_plan(s.first, s.second, 224);
+        PilDev d;
+        d.in_w = pl.in_w, d.in_h = pl.in_h, d.out_w = pl.out_w, d.out_h = pl.out_h, d.pad_x = pl.pad_x;
+        d.pad_y = pl.pad_y, d.target = pl.target, d.ybox_first = pl.ybox_first, d.rows = pl.rows;
+        d.kh = pl.h.ksize, d.kv = pl.v.ksize;
+        d.bh = (const int*)up(pl.h.bounds.data(), pl.h.bounds.size() * sizeof(int));
+        d.kkh = (const int*)up(pl.h.kk.data(), pl.h.kk.size() * sizeof(int));
+        d.bv = (const int*)up(pl.v.bounds.data(), pl.v.bounds.size() * sizeof(int));
+        d.kkv = (const int*)up(pl.v.kk.data(), pl.v.kk.size() * sizeof(int));
+        P.plans.push_back(d);
+        max_rgb = std::max(max_rgb, (size_t)s.first * s.second * 3);
+        max_tmp = std::max(max_tmp, (size_t)pl.rows * pl.out_w * 3);
     }
     P.workers = std::vector<Worker>(threads);
     for (auto& w : P.workers) {
-        w.decs.resize(sizes.size());
-        w.rgb = (uint8_t*)dev_alloc((size_t)maxw * maxw * 3);
-        w.tmp = (float*)dev_alloc((size_t)224 * maxw * 3 * sizeof(float));
+        w.decs.resize(std::max<size_t>(P.sizes.size(), 1));
+        w.rgb = (uint8_t*)dev_alloc(std::max<size_t>(max_rgb, 1));
+        w.tmp = (uint8_t*)dev_alloc(std::max<size_t>(max_tmp, 1));
         if (!w.rgb || !w.tmp) throw std::runtime_error("GPU 메모리 할당 실패");
         P.allocs.push_back(w.rgb);
         P.allocs.push_back(w.tmp);
@@ -462,21 +466,35 @@ void Engine::run(const int64_t* req, int n, uint8_t* out, int mode) {
     if (!l.err.empty()) throw std::runtime_error(l.err);
 }
 
-void Engine::resize(const uint8_t* in, int n, int W, uint8_t* out) {
+void Engine::resize(const uint8_t* in, int n, int W, int H, uint8_t* out) {
     auto& P = *p_;
-    int cls = -1;
-    for (size_t c = 0; c < P.sizes.size(); ++c)
-        if (P.sizes[c] == W) cls = (int)c;
-    if (cls < 0) throw std::runtime_error("탭이 없는 해상도");
     set_device(P.device);
-    float* tmp = (float*)dev_alloc((size_t)224 * W * 3 * sizeof(float));
+    // 검증용: 이 해상도의 계획을 새로 만든다 (엔진 파일 목록과 무관)
+    PilPlan pl = pil_plan(W, H, 224);
+    std::vector<void*> tmpa;
+    auto up = [&](const void* src, size_t bytes) {
+        void* d = dev_alloc(bytes);
+        if (!d) throw std::runtime_error("GPU 메모리 할당 실패");
+        h2d(d, src, bytes);
+        tmpa.push_back(d);
+        return d;
+    };
+    PilDev d;
+    d.in_w = pl.in_w, d.in_h = pl.in_h, d.out_w = pl.out_w, d.out_h = pl.out_h, d.pad_x = pl.pad_x;
+    d.pad_y = pl.pad_y, d.target = pl.target, d.ybox_first = pl.ybox_first, d.rows = pl.rows;
+    d.kh = pl.h.ksize, d.kv = pl.v.ksize;
+    d.bh = (const int*)up(pl.h.bounds.data(), pl.h.bounds.size() * sizeof(int));
+    d.kkh = (const int*)up(pl.h.kk.data(), pl.h.kk.size() * sizeof(int));
+    d.bv = (const int*)up(pl.v.bounds.data(), pl.v.bounds.size() * sizeof(int));
+    d.kkv = (const int*)up(pl.v.kk.data(), pl.v.kk.size() * sizeof(int));
+    uint8_t* tmp = (uint8_t*)dev_alloc((size_t)pl.rows * pl.out_w * 3);
     if (!tmp) throw std::runtime_error("GPU 메모리 할당 실패");
+    tmpa.push_back(tmp);
     for (int i = 0; i < n; ++i)
-        launch_resize(in + (size_t)i * W * W * 3, W, W, P.trow[cls], P.tcol[cls], tmp, out + (size_t)i * 224 * 224 * 3,
-                      nullptr);
+        launch_resize_pil(in + (size_t)i * W * H * 3, d, tmp, out + (size_t)i * 224 * 224 * 3, nullptr);
     dev_sync(nullptr);
     const char* e = last_error();
-    dev_free(tmp);
+    for (void* a : tmpa) dev_free(a);
     if (e) throw std::runtime_error(std::string("크기 조정 커널: ") + e);
 }
 

@@ -297,18 +297,16 @@ def cmd_native(a):
 
 
 def cmd_cbench(a):
-    """C++ ftbench (파이썬 없음) 를 스레드 수별로. 표·색표·보정 파일은 fast.py 가 만든 것을 쓴다."""
+    """C++ ftbench (파이썬 없음) 를 스레드 수별로. 표·색표는 fast.py·lut.py 가 만든 것을 쓴다."""
     from fasttrain import fast, orig
 
     cfg = orig.train_config()
     tdir = fast.ensure_table(cfg)
-    if not os.path.exists(fast.CALIB_BIN):
-        fast._calib_arrays()
     exe = os.path.join(fast.WORK, "build", "native", "ftbench")
     res = []
     for th in [int(x) for x in str(a.threads).split(",")]:
         mem = GpuMem()
-        out = subprocess.run([exe, tdir, fast.CALIB_BIN, fast.LUT, str(a.batch), str(th), str(a.slots),
+        out = subprocess.run([exe, tdir, fast.LUT, str(a.batch), str(th), str(a.slots),
                               str(a.batches), str(a.step_ms)], capture_output=True, text=True)
         dmem = mem.stop()
         if out.returncode:

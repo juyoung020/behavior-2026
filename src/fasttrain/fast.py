@@ -4,7 +4,7 @@
 ---------------------------------------------------  --------------------------------------------------------------
 torch DataLoader + spawn 워커 8개                      C++ 생산 스레드 1 + NVDEC 엔진 스레드 N
   샘플마다: parquet 행 읽기, 영상 6개 CPU 디코딩,        표(Rust `ftprep table`, mmap)에서 행동 창 델타·정규화·상태·토큰,
-  파이썬 변환 8개, JAX 크기 조정                         영상은 NVDEC → 색표 커널 → 크기 조정 커널 (GPU 슬롯에 바로)
+  파이썬 변환 8개, PIL 크기 조정(CPU)                    영상은 NVDEC → 색표 커널 → PIL 과 같은 정수 크기 조정 커널 (GPU 슬롯에 바로)
   np.stack → jax 배열(호스트→GPU 14.8 MB)              이미지 외 0.3 MB 만 고정 메모리 → GPU, 배치 10개 텐서를 DLPack 으로
 섞기: torch randperm (seed 42)                         같은 순서를 MT19937 로 (loader.cpp Sampler)
 
@@ -24,7 +24,6 @@ WORK = os.environ.get("FT_WORK", os.path.expanduser("~/fasttrain_work"))
 LIB = os.environ.get("FT_LIB", os.path.join(WORK, "build", "native", "libftcore.so"))
 FTPREP = os.environ.get("FT_PREP", os.path.join(WORK, "target", "release", "ftprep"))
 LUT = os.path.join(WORK, "lut", "lut_w720.bin")
-SIZES = (720, 480)
 # 카메라 순서 = 로봇 설정 image_0,1,2 = B1KInputs 의 이름 순서 (openpi b1k_policy.py:71-80)
 NAMES = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
 # openpi pi05_b1k 의 샘플 변환 순서 — 이것과 다르면 표가 원래와 달라질 수 있으니 멈춘다
@@ -58,15 +57,14 @@ def lib():
         "ft_sampler_order": (ctypes.c_int, [ctypes.c_int64, ctypes.c_int, ctypes.c_uint64, ctypes.c_int, ctypes.c_int,
                                             ctypes.c_int64, _I64P]),
         "ft_engine_create": (_P, [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), _U8P,
-                                  ctypes.c_int, _I32P, _I32P, _I32P, _F32P, _I32P, _I32P, ctypes.c_int, ctypes.c_int]),
+                                  ctypes.c_int, ctypes.c_int]),
         "ft_engine_destroy": (None, [_P]),
         "ft_engine_info": (ctypes.c_int, [_P, ctypes.c_int, _I64P]),
         "ft_engine_stats": (ctypes.c_int, [_P, _F64P]),
         "ft_engine_decode_host": (ctypes.c_int, [_P, _I64P, ctypes.c_int, ctypes.c_int, _U8P, ctypes.c_int64]),
-        "ft_engine_resize_host": (ctypes.c_int, [_P, _U8P, ctypes.c_int, ctypes.c_int, _U8P]),
-        "ft_loader_create": (_P, [ctypes.c_char_p, _U8P, ctypes.c_int, _I32P, _I32P, _I32P, _F32P, _I32P, _I32P,
-                                  ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_int,
-                                  ctypes.c_int]),
+        "ft_engine_resize_host": (ctypes.c_int, [_P, _U8P, ctypes.c_int, ctypes.c_int, ctypes.c_int, _U8P]),
+        "ft_loader_create": (_P, [ctypes.c_char_p, _U8P, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_uint64, ctypes.c_int, ctypes.c_int]),
         "ft_loader_engine": (_P, [_P]),
         "ft_loader_next": (ctypes.c_int, [_P, _I64P, ctypes.POINTER(_P)]),
         "ft_loader_stats": (ctypes.c_int, [_P, _F64P]),
@@ -205,40 +203,30 @@ def load_lut() -> np.ndarray:
     return a
 
 
-CALIB_BIN = os.path.join(WORK, "cache", "calib.bin")
+def validate_resize(engine, n: int = 16, seed: int = 1) -> dict:
+    """크기 조정 커널 == 원래 (openpi_client.image_tools.resize_with_pad, PIL). 무작위 uint8 영상, 크기별 다른 값 수 (0 이어야)."""
+    from openpi_client import image_tools as pil_tools
 
-
-def _calib_arrays():
-    """크기 조정 보정 (원래 JAX 함수를 이 GPU 에서 찔러 봄, calib.py). C++ ftbench 가 읽도록 calib.bin 에도 쓴다."""
-    from fasttrain import calib
-
-    st, ct, wt, sr, sc = (np.ascontiguousarray(x) for x in calib.calibrate_all(SIZES))
-    os.makedirs(os.path.dirname(CALIB_BIN), exist_ok=True)
-    with open(CALIB_BIN, "wb") as f:
-        f.write(np.asarray([len(SIZES), *SIZES], "<i4").tobytes())
-        for x, t in ((st, "<i4"), (ct, "<i4"), (wt, "<f4"), (sr, "<i4"), (sc, "<i4")):
-            f.write(x.astype(t).tobytes())
-    return [st, ct, wt, sr, sc], calib
+    rng = np.random.default_rng(seed)
+    res = {}
+    for h, w in ((720, 720), (480, 480), (480, 640), (300, 200)):  # 정사각 두 가지 + 붙이기(패딩) 가 생기는 모양
+        X = rng.integers(0, 256, (n, h, w, 3), dtype=np.uint8)
+        ref = pil_tools.resize_with_pad(X, 224, 224)
+        res[f"{h}x{w}"] = int((engine.resize(X) != ref).sum())
+    return res
 
 
 class Engine:
     """NVDEC 엔진을 파일 목록으로 직접 (구간 대조용)."""
 
-    def __init__(self, videos, indexes, threads: int = 4, device: int = 0, lut=None, weight_hook=None):
-        (st, ct, wt, sr, sc), calib = _calib_arrays()
-        if weight_hook is not None:
-            wt = np.ascontiguousarray(weight_hook(wt), np.float32)
+    def __init__(self, videos, indexes, threads: int = 4, device: int = 0, lut=None):
         lut = load_lut() if lut is None else np.ascontiguousarray(lut, np.uint8)
-        sizes = np.asarray(SIZES, np.int32)
         v = (ctypes.c_char_p * len(videos))(*[p.encode() for p in videos])
         ix = (ctypes.c_char_p * len(indexes))(*[p.encode() for p in indexes])
-        self.h = lib().ft_engine_create(len(videos), v, ix, _ptr(lut, _U8P), len(SIZES), _ptr(sizes, _I32P),
-                                        _ptr(st, _I32P), _ptr(ct, _I32P), _ptr(wt, _F32P), _ptr(sr, _I32P),
-                                        _ptr(sc, _I32P), threads, device)
+        self.h = lib().ft_engine_create(len(videos), v, ix, _ptr(lut, _U8P), threads, device)
         if not self.h:
             raise RuntimeError(_err())
         self.owned = True
-        self.calib = {m: (calib.boundaries(st[c], sr[c]), calib.boundaries(st[c], sc[c])) for c, m in enumerate(SIZES)}
 
     @classmethod
     def borrow(cls, handle):
@@ -269,9 +257,10 @@ class Engine:
         return out
 
     def resize(self, rgb: np.ndarray) -> np.ndarray:
+        """uint8 [n,H,W,3] → [n,224,224,3] (GPU 크기 조정 커널, 원래 PIL 과 같아야 한다)."""
         rgb = np.ascontiguousarray(rgb, np.uint8)
         out = np.empty((len(rgb), 224, 224, 3), np.uint8)
-        if lib().ft_engine_resize_host(self.h, _ptr(rgb, _U8P), len(rgb), rgb.shape[2], _ptr(out, _U8P)):
+        if lib().ft_engine_resize_host(self.h, _ptr(rgb, _U8P), len(rgb), rgb.shape[2], rgb.shape[1], _ptr(out, _U8P)):
             raise RuntimeError(_err())
         return out
 
@@ -330,22 +319,17 @@ class NativeLoader:
         self.bs = (batch_size or cfg.batch_size) // jax.process_count()
         self.num_batches = num_batches
         self.device = device
-        (st, ct, wt, sr, sc), calib = _calib_arrays()
         lut = load_lut()
-        sizes = np.asarray(SIZES, np.int32)
         # persistent=True: 원래 워커 > 0 (openpi 기본 8) 일 때의 섞기 순서
-        self.h = lib().ft_loader_create(self.table_dir.encode(), _ptr(lut, _U8P), len(SIZES), _ptr(sizes, _I32P),
-                                        _ptr(st, _I32P), _ptr(ct, _I32P), _ptr(wt, _F32P), _ptr(sr, _I32P),
-                                        _ptr(sc, _I32P), decode_threads, device, self.bs, int(shuffle), cfg.seed,
-                                        int(persistent), slots)
+        self.h = lib().ft_loader_create(self.table_dir.encode(), _ptr(lut, _U8P), decode_threads, device, self.bs,
+                                        int(shuffle), cfg.seed, int(persistent), slots)
         if not self.h:
             raise RuntimeError(_err())
         self.engine = Engine.borrow(lib().ft_loader_engine(self.h))
-        self.calib = {m: (calib.boundaries(st[c], sr[c]), calib.boundaries(st[c], sc[c])) for c, m in enumerate(SIZES)}
-        if check:  # 이 GPU 에서 크기 조정 커널 == 원래 JAX 크기 조정 (다르면 멈춘다)
-            bad = calib.validate(self.engine.resize)
+        if check:  # 시작 때 한 번: 크기 조정 커널 == 원래 PIL (다르면 멈춘다)
+            bad = validate_resize(self.engine)
             if any(bad.values()):
-                raise RuntimeError(f"크기 조정 커널이 원래 JAX 결과와 다르다 {bad} — 보정 실패")
+                raise RuntimeError(f"크기 조정 커널이 원래(PIL) 결과와 다르다 {bad}")
         if sharding is None:
             sharding = jax.sharding.NamedSharding(jax.sharding.Mesh(jax.devices(), ("B",)),
                                                   jax.sharding.PartitionSpec("B"))

@@ -49,11 +49,9 @@ class Engine {
 public:
     // videos[i] 의 패킷 색인이 indexes[i] (Rust ftprep 가 만든 .ftidx).
     // lut_host: 색 변환 표 (2^24 × 3 바이트, 호스트) — 엔진이 GPU 로 복사해 들고 있는다.
-    // sizes: 입력 해상도 목록(정사각), start/count: [len(sizes)][224] int32, weight: [len(sizes)][224][8] float32,
-    // split_rows/split_cols: [len(sizes)][224] int32 (calib.py 가 원래 크기 조정에서 알아낸 분할 위치)
+    // 크기 조정은 원래(openpi_client PIL BILINEAR → 224²)와 같은 계획을 해상도마다 여기서 만든다 (pil_resize.h).
     Engine(const std::vector<std::string>& videos, const std::vector<std::string>& indexes, const uint8_t* lut_host,
-           const std::vector<int>& sizes, const int32_t* start, const int32_t* count, const float* weight,
-           const int32_t* split_rows, const int32_t* split_cols, int threads, int device);
+           int threads, int device);
     ~Engine();
 
     // 비동기: req [n][2] = (파일 번호, 프레임 번호) 를 작업 큐에 넣는다 (req 는 복사됨).
@@ -62,8 +60,8 @@ public:
     void submit(const int64_t* req, int n, uint8_t* out, int mode, Latch* latch);
     // 동기 판 (검증용)
     void run(const int64_t* req, int n, uint8_t* out, int mode);
-    // 검증용: GPU uint8 [n][W][W][3] → [n][224][224][3] (크기 조정 커널만)
-    void resize(const uint8_t* in, int n, int W, uint8_t* out);
+    // 검증용: GPU uint8 [n][H][W][3] → [n][224][224][3] (크기 조정 커널만)
+    void resize(const uint8_t* in, int n, int W, int H, uint8_t* out);
 
     int device() const;
     std::vector<int64_t> info(int file) const;  // width, height, timescale, 표본 수

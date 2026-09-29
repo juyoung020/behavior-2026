@@ -11,7 +11,7 @@ Full write-up (Korean): [`docs/학습환경_가속.md`](../../docs/학습환경_
 | torch `DataLoader`, 8 spawn workers | one C++ producer thread + N NVDEC engine threads (`csrc/loader.cpp`, `csrc/nvdec.cpp`) |
 | CPU HEVC decode of 6 videos (3 depth videos decoded and then dropped) | NVDEC via the cuvid driver API, RGB only, reading just the needed packets (`.ftidx` index from `ftprep index`) |
 | swscale YUV→RGB, /255, ×255 | 2^24-entry colour LUT built by decoding a synthetic video with the *original* decoder (`lut.py`) |
-| JAX `resize_with_pad` (cuBLAS GEMMs) | hand-written CUDA kernels reproducing cuBLAS's split-K summation order, calibrated at start-up against the original JAX function (`calib.py`) |
+| `openpi_client.image_tools.resize_with_pad` (PIL BILINEAR on CPU) | hand-written CUDA kernels doing Pillow's fixed-point (22-bit) two-pass resample exactly (`csrc/pil_resize.h`, `csrc/kernels.cu`); checked against PIL at start-up |
 | per-sample Python transforms (state extraction, normalisation, tokenisation, delta actions) | per-frame table built once in Rust (`ftprep table`), per-sample action window + delta + normalisation in C++ |
 | torch `randperm` shuffle (seed 42) | the same MT19937 / randperm / seed-consumption sequence in C++ |
 | `np.stack` + host→GPU copy (14.8 MB/batch) | images written straight into GPU slots; 0.3 MB of non-image data via pinned memory |
@@ -47,12 +47,12 @@ The per-frame table is built automatically on first use (`fast.ensure_table`, ca
 | path | language | role |
 |---|---|---|
 | `csrc/nvdec.cpp`, `engine.h` | C++ | NVDEC engine: job queue, per-thread decoders and CUDA streams |
-| `csrc/kernels.cu`, `kernels.h` | CUDA | colour-LUT kernel, two-pass resize kernels with explicit FMA order |
+| `csrc/kernels.cu`, `kernels.h`, `pil_resize.h` | CUDA | colour-LUT kernel, Pillow-exact integer resize kernels (plan built on the host) |
 | `csrc/loader.cpp`, `loader.h` | C++ | table (mmap), torch-identical sampler, GPU slot ring, DLPack tensors |
 | `csrc/capi.cpp`, `dlpack_min.h` | C++ | C ABI (`ft_loader_*`, `ft_table_*`, `ft_engine_*`, `ft_sampler_order`) |
 | `csrc/ftbench.cpp` | C++ | loader throughput without Python |
 | `ftprep/` | Rust | `index` (mp4 → packet index), `table` (per-frame table), `yuvgrid` (LUT source) |
 | `fast.py` | Python | ctypes glue, table spec from the openpi config, DLPack → JAX |
-| `calib.py`, `lut.py` | Python | start-up calibration and LUT build — they must call the original JAX / torchcodec code |
+| `lut.py` | Python | colour-LUT build — it must call the original torchcodec decoder |
 | `orig.py` | Python | the original pipeline on local paths (measurement and verification reference) |
 | `openpi-fast-data.patch` | — | the 20-line `train_b1k.py` switch (`FT_FAST_DATA=1`), already merged into `~/openpi` `behavior` |
