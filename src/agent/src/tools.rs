@@ -19,7 +19,16 @@ impl ToolOut {
     }
 }
 
-pub fn definitions() -> Vec<Value> {
+/// 도구 정의. `images` 가 거짓이면 `look` 을 뺀다(없는 영상을 찾느라 호출을 낭비하지 않게).
+pub fn definitions(images: bool) -> Vec<Value> {
+    let mut v = all_definitions();
+    if !images {
+        v.retain(|t| t["function"]["name"] != "look");
+    }
+    v
+}
+
+fn all_definitions() -> Vec<Value> {
     let skills: Vec<&str> = crate::vocab::names();
     vec![
         tool_def(
@@ -66,7 +75,7 @@ pub fn definitions() -> Vec<Value> {
         tool_def(
             "look",
             "Attach the latest image of a wrist camera (the head image is already attached to the event).",
-            json!({"type": "object", "properties": {"camera": {"type": "string", "enum": ["left_wrist", "right_wrist", "head"]}}, "required": ["camera"]}),
+            json!({"type": "object", "properties": {"camera": {"type": "string", "enum": ["left_wrist", "right_wrist"]}}, "required": ["camera"]}),
         ),
         tool_def("robot_state", "Pose, grippers, what is believed to be in hand, steps used and left.", json!({"type": "object", "properties": {}})),
         tool_def("goal_status", "BDDL goal conditions and plan progress.", json!({"type": "object", "properties": {}})),
@@ -242,6 +251,16 @@ impl Core {
                         self.continues
                     )));
                 }
+                if !self.pushback {
+                    let (v, why) = self.evidence(&ev);
+                    if v == "done" || v == "failed" {
+                        self.pushback = true;
+                        return ToolOut::obs(tool_err(format!(
+                            "The automatic check says the current step already looks {v} ({why}); continuing it wastes steps. \
+Call continue_current again if you disagree, otherwise use issue_command."
+                        )));
+                    }
+                }
                 let extra = a.get("extra_steps").and_then(|v| v.as_u64()).unwrap_or(0).min(ev.stage_budget.max(300)).min(ev.steps_left());
                 ToolOut { result: json!({"status": "ok", "extra_steps": extra}), decision: Some(Decision::Continue { extra, check_every: 0, reason: s(a, "reason"), source: "llm".into() }) }
             }
@@ -275,6 +294,18 @@ impl Core {
             Ok(i) => i,
             Err(e) => return ToolOut::obs(tool_err(e)),
         };
+        // 자동 증거는 끝났다는데 같은 단계를 다시 보내려 하면 한 번 되묻는다(작은 모델의 과한 재시도 방지)
+        let same = self.mem.current().map(|c| c.instruction.same_step(&ins)).unwrap_or(false);
+        if same && previous != "done" && !self.pushback {
+            let (v, why) = self.evidence(&ev);
+            if v == "done" {
+                self.pushback = true;
+                return ToolOut::obs(tool_err(format!(
+                    "The automatic check says the current step already looks done ({why}). Re-issuing the same step usually wastes time. \
+If you still think it failed, call issue_command again with the same arguments; otherwise set previous='done' and send the next step."
+                )));
+            }
+        }
         // 재시도 한도: 같은 단계가 연달아 실패했으면 다른 방법을 요구
         if let Some(cur) = self.mem.current() {
             if cur.instruction.same_step(&ins) && previous != "done" {

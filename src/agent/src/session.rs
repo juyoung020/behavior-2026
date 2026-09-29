@@ -57,6 +57,7 @@ impl EnvSession {
             stage_budget: if self.mon.budget == u64::MAX { 0 } else { self.mon.budget },
             moved_in_stage: self.mon.moved_in_stage(self.odom.dist),
             base_speed: self.odom.speed().0,
+            still_steps: self.mon.still_steps(),
             grippers: grips,
             images,
             image_files: vec![],

@@ -62,6 +62,11 @@ pub struct World {
     pub log: Vec<String>,
 }
 
+/// 이름이 같은 종류인가("radio receiver" ↔ "radio" 처럼 BDDL 이름과 장면 이름이 달라도)
+fn label_match(want: &str, label: &str) -> bool {
+    norm_category(label) == want || crate::graph::text_score(want, label) >= 0.6
+}
+
 fn obj(id: &str, label: &str, x: f64, y: f64, z: f64, on: Option<&str>, room: &str) -> WObj {
     WObj { id: id.into(), label: label.into(), pos: [x, y, z], orig: [x, y, z], on: on.map(|s| s.into()), inside: None, room: room.into(), toggled: false, open: false }
 }
@@ -132,7 +137,7 @@ impl World {
         let near = self
             .objs
             .iter()
-            .filter(|o| norm_category(&o.label) == want && !self.held.contains(&o.id) && o.inside.is_none())
+            .filter(|o| label_match(&want, &o.label) && !self.held.contains(&o.id) && o.inside.is_none())
             .min_by(|a, b| {
                 let da = (a.pos[0] - self.robot.x).hypot(a.pos[1] - self.robot.y);
                 let db = (b.pos[0] - self.robot.x).hypot(b.pos[1] - self.robot.y);
@@ -152,7 +157,7 @@ impl World {
         let want = norm_category(id);
         self.objs
             .iter()
-            .filter(|o| norm_category(&o.label) == want && o.inside.is_none())
+            .filter(|o| label_match(&want, &o.label) && o.inside.is_none())
             .min_by(|a, b| {
                 let da = (a.pos[0] - self.robot.x).hypot(a.pos[1] - self.robot.y);
                 let db = (b.pos[0] - self.robot.x).hypot(b.pos[1] - self.robot.y);
@@ -246,6 +251,7 @@ impl World {
                     }
                     None => ex.t > 60,
                 },
+                skill if matches!(skill, "pick up from" | "hold" | "lift") && self.held.contains(&first_id) => true, // 이미 들고 있음
                 skill => {
                     let near = self.dist(&first_id) < 1.3 || self.held.contains(&first_id);
                     let placing = matches!(skill, "place on" | "place in" | "place on next to" | "place in next to" | "place under");
@@ -311,6 +317,7 @@ impl World {
         let hand = self.hand_of(&first);
         let msg = match ex.ins.skill.as_str() {
             "move to" => format!("arrived near {}", ex.ins.objects.first().cloned().unwrap_or_default()),
+            "pick up from" | "hold" | "lift" if self.held.contains(&first) => format!("already holding {first}"),
             "pick up from" | "hold" | "lift" if ex.ok && self.held.len() < 2 && !self.held.contains(&first) => {
                 self.held.push(first.clone());
                 if let Some(o) = self.objs.iter_mut().find(|o| o.id == first) {

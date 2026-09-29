@@ -119,6 +119,11 @@ impl Monitor {
         self.steps_in_stage() >= self.budget || self.step >= self.next_check
     }
 
+    /// base 가 연달아 멈춰 있던 스텝 수
+    pub fn still_steps(&self) -> u32 {
+        self.still
+    }
+
     pub fn moved_in_stage(&self, dist: f64) -> f64 {
         (dist - self.dist_at_start).max(0.0)
     }

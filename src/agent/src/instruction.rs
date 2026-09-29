@@ -11,6 +11,8 @@
 //! ④ metric  ② + 로봇 기준 이동량("go forward 2.1 m, 0.4 m to the left, turn left 30 degrees", 앞 +x, 왼쪽 +y, 반시계 +yaw)
 //!           — 이동량은 LLM 이 아니라 그래프 좌표와 오도메트리로 계산한다.
 
+use crate::util::tokens_with_margin;
+#[cfg(test)]
 use crate::util::estimate_tokens;
 use serde::{Deserialize, Serialize};
 
@@ -129,7 +131,7 @@ impl Instruction {
             }
         };
         for c in &candidates {
-            if estimate_tokens(c) <= max_tokens {
+            if tokens_with_margin(c) <= max_tokens {
                 return c.clone();
             }
         }
@@ -137,7 +139,7 @@ impl Instruction {
         let mut out = String::new();
         for w in candidates.last().unwrap().split_whitespace() {
             let t = if out.is_empty() { w.to_string() } else { format!("{out} {w}") };
-            if estimate_tokens(&t) > max_tokens {
+            if tokens_with_margin(&t) > max_tokens {
                 break;
             }
             out = t;
@@ -189,21 +191,29 @@ mod tests {
         assert!(s.contains("Expected action"));
     }
 
-    /// 실제 PaliGemma 토크나이저 토큰 수(openpi venv 에서 sentencepiece 로 잰 값)와 추정 비교: 추정은 실제 이상이어야 한다.
+    /// 실제 PaliGemma 토크나이저 토큰 수(openpi venv 에서 sentencepiece 로 잰 값)와 비교:
+    /// 여유를 더한 추정은 실제 이상, 그리고 너무 크지 않아야 한다.
     #[test]
     fn estimate_is_conservative() {
         for (real, s) in crate::instruction::CALIBRATION {
-            let e = estimate_tokens(s);
-            assert!(e >= *real, "추정 {e} < 실제 {real}: {s}");
-            assert!(e <= real + real / 3 + 3, "추정 {e} 이 너무 큼(실제 {real}): {s}");
+            let e = tokens_with_margin(s);
+            assert!(e >= *real, "여유 추정 {e} < 실제 {real}: {s}");
+            assert!(e <= real + real / 3 + 4, "여유 추정 {e} 이 너무 큼(실제 {real}): {s}");
+            assert!(estimate_tokens(s) + 3 >= *real);
         }
     }
 }
 
-/// (실제 토큰 수, 문장). docs/에이전트_설계.md 의 토큰 예산 절에 잰 방법이 있다.
+/// (실제 토큰 수, 문장). 잰 방법: docs/에이전트_설계.md 의 토큰 예산 절(556문장 중 추정이 모자랐던 것 포함).
 pub const CALIBRATION: &[(usize, &str)] = &[
     (16, "Turn on the radio receiver that's on the table in the living room."),
     (6, "pick up radio from coffee table"),
     (23, "Purpose: turn on the radio so it plays. Expected action: walk to the coffee table and face the radio."),
     (27, "move to radio: go forward 2.1 m, 0.4 m to the left, turn left 30 degrees"),
+    (53, "Take the four mousetraps from the cabinet in the bathroom and place them on the bathroom floor. Make sure all four end up on the same floor surface, and ensure that at least two of them are either under or directly next to the same bathroom sink."),
+    (5, "move to mousetrap"),
+    (21, "Purpose: progress the task 'setting mousetraps'. Expected action: move to mousetrap."),
+    (29, "move to mousetrap: go forward 1.5 m, 0.3 m to the right, turn left 20 degrees"),
+    (8, "pick up mousetrap from bottom cabinet"),
+    (32, "pick up mousetrap from bottom cabinet: go forward 1.5 m, 0.3 m to the right, turn left 20 degrees"),
 ];

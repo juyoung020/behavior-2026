@@ -21,6 +21,8 @@ pub struct Ctx<'a> {
     pub finished: bool,
     /// 맥락 줄이기 단계: 1 참고 순서 1위만, 2 물체 표 15줄
     pub shrink: u8,
+    /// 지금 단계에 대한 자동 증거(판정, 근거)
+    pub evidence: (&'static str, String),
 }
 
 fn relevance(c: &Ctx, label: &str) -> f64 {
@@ -173,21 +175,36 @@ pub fn event_text(c: &Ctx) -> String {
         None => s.push_str("No step has been issued yet in this episode.\n"),
     }
     s.push_str(&format!(
-        "Robot (odometry from the start): x {:.2} m, y {:.2} m, heading {:.0} deg; moved {:.2} m during this step; base speed {:.2} m/s.\n",
+        "Robot (odometry from the start): x {:.2} m, y {:.2} m, heading {:.0} deg; moved {:.2} m during this step; base speed {:.2} m/s{}.\n",
         ev.pose.x,
         ev.pose.y,
         ev.pose.yaw.to_degrees(),
         ev.moved_in_stage,
-        ev.base_speed
+        ev.base_speed,
+        if ev.still_steps >= 30 { format!(", base not moving for the last {} steps", ev.still_steps) } else { String::new() }
     ));
-    let g = |w: f64| if w < 0.005 { "closed empty" } else if w < 0.07 { "closed on something" } else if w > 0.09 { "open" } else { "half open" };
+    // 그리퍼는 지금 보이는 증거로(믿음과 따로): 닫혀 있고 벌어짐이 남아 있으면 무언가를 쥔 것
+    let g = |w: f64| {
+        if w < 0.005 {
+            "closed on nothing (grasp missed or released)"
+        } else if w < 0.07 {
+            "closed on an object (likely holding it)"
+        } else if w > 0.09 {
+            "open"
+        } else {
+            "partly closed"
+        }
+    };
     s.push_str(&format!(
-        "Grippers: left {:.3} m ({}), right {:.3} m ({}). Believed in hand: {}.\n",
+        "Grippers now: left {:.3} m = {}; right {:.3} m = {}.\n",
         ev.grippers[0],
         g(ev.grippers[0]),
         ev.grippers[1],
         g(ev.grippers[1]),
-        if c.holding.is_empty() { "nothing".to_string() } else { c.holding.join(", ") }
+    ));
+    s.push_str(&format!(
+        "Objects in hand according to steps you already confirmed: {}.\n",
+        if c.holding.is_empty() { "none".to_string() } else { c.holding.join(", ") }
     ));
     if let Some(cur) = c.mem.current() {
         for o in &cur.instruction.objects {
@@ -204,6 +221,16 @@ pub fn event_text(c: &Ctx) -> String {
                 ));
             }
         }
+    }
+    if c.mem.current().is_some() {
+        let (v, why) = &c.evidence;
+        let label = match *v {
+            "done" => "LOOKS DONE",
+            "failed" => "LOOKS FAILED",
+            "running" => "STILL IN PROGRESS",
+            _ => "UNCLEAR",
+        };
+        s.push_str(&format!("Automatic check of the current step (from proprioception and the scene graph): {label} — {why}.\n"));
     }
     if c.cfg.send_images && ev.images.iter().any(|(c, _)| c == "head") {
         s.push_str("The head camera image is attached. ");

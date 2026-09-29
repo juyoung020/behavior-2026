@@ -63,6 +63,27 @@ fn main() {
         "bench" => cmd_bench(&a),
         "bench-local" => cmd_bench_local(&a),
         "llm-check" => cmd_llm_check(&a),
+        "bench-image" => {
+            // 경계 스냅숏 비용: 머리 720²(RGBA) → RGB 복사 → 448² 축소 → JPEG, 손목 480² → 224²
+            let n = a.num("n", 50usize);
+            let mut rgba = vec![0u8; 720 * 720 * 4];
+            let mut rng = bagent::util::Rng::new(3);
+            for p in rgba.iter_mut() {
+                *p = rng.next_u64() as u8;
+            }
+            let mut t = Vec::new();
+            for _ in 0..n {
+                let t0 = std::time::Instant::now();
+                let px: Vec<u8> = rgba.chunks_exact(4).flat_map(|c| [c[0], c[1], c[2]]).collect();
+                let img = bagent::image::Rgb { w: 720, h: 720, px };
+                let j = img.downscale(448).jpeg(80);
+                let w = bagent::image::Rgb { w: 480, h: 480, px: vec![128; 480 * 480 * 3] }.downscale(224).jpeg(80);
+                t.push(t0.elapsed().as_micros() as u32);
+                std::hint::black_box((j, w));
+            }
+            println!("머리+손목1 스냅숏(무작위 영상, 최악) {}", summarize_us(&t));
+            Ok(())
+        }
         _ => {
             println!("{HELP}");
             Ok(())

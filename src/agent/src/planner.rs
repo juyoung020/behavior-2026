@@ -92,6 +92,9 @@ pub struct BoundaryEvent {
     pub stage_budget: u64,
     pub moved_in_stage: f64,
     pub base_speed: f64,
+    /// base 가 연달아 멈춰 있던 스텝 수(이동 끝·막힘 증거)
+    #[serde(default)]
+    pub still_steps: u32,
     pub grippers: [f64; 2],
     /// (카메라 이름, JPEG). 기록에는 파일 이름만.
     #[serde(skip)]
@@ -206,6 +209,8 @@ pub struct Core {
     /// 결정 중에만 채워짐(도구가 참고)
     pub ev: Option<BoundaryEvent>,
     pub extra_msgs: Vec<Msg>,
+    /// 이번 경계에서 자동 증거와 다른 판단에 한 번 되물었나
+    pub pushback: bool,
 }
 
 pub fn tool_err(msg: impl Into<String>) -> Value {
@@ -232,6 +237,7 @@ impl Core {
             stats: PlannerStats::default(),
             ev: None,
             extra_msgs: vec![],
+            pushback: false,
         }
     }
 
@@ -286,7 +292,18 @@ impl Core {
     }
 
     pub fn ctx<'a>(&'a self, ev: &'a BoundaryEvent) -> context::Ctx<'a> {
-        context::Ctx { cfg: &self.cfg, task: &self.task, mem: &self.mem, plan: &self.plan, objects: &self.objects, holding: &self.holding, ev, finished: self.finished, shrink: 0 }
+        context::Ctx {
+            cfg: &self.cfg,
+            task: &self.task,
+            mem: &self.mem,
+            plan: &self.plan,
+            objects: &self.objects,
+            holding: &self.holding,
+            ev,
+            finished: self.finished,
+            shrink: 0,
+            evidence: self.evidence(ev),
+        }
     }
 
     /// 경계 시작: 그래프 새로 읽기, 물체 기억 갱신, 기록.
@@ -304,8 +321,79 @@ impl Core {
             self.holding.clear();
         }
         self.ev = Some(ev.clone());
+        self.pushback = false;
         let input = self.decision_input(ev);
-        self.trace("boundary", json!({"event": ev, "nodes": nodes, "holding": self.holding, "input": input}));
+        let (verdict, why) = self.evidence(ev);
+        self.trace("boundary", json!({"event": ev, "nodes": nodes, "holding": self.holding, "input": input, "evidence": {"verdict": verdict, "why": why}}));
+    }
+
+    /// 지금 단계가 끝났는지에 대한 자동 증거(감시 신호 + 그래프). LLM 에 힌트로 보여 주고, 대체 결정에도 쓴다.
+    /// 반환: (판정, 근거 글). 판정은 "done" / "failed" / "running" / "unknown".
+    pub fn evidence(&self, ev: &BoundaryEvent) -> (&'static str, String) {
+        let Some(cur) = self.mem.current() else { return ("unknown", "nothing is running".into()) };
+        let ins = &cur.instruction;
+        let skill = ins.skill.as_str();
+        // 지시할 때 그래프에 없던 물체(이름으로 보냄)는 지금 그래프에서 이름으로 다시 찾는다
+        let target = ins.objects.first().and_then(|o| {
+            self.objects.known.get(o).or_else(|| {
+                let name = ins.names.first().cloned().unwrap_or_else(|| o.clone());
+                self.objects.resolve(&name, &ev.pose).and_then(|r| self.objects.known.get(&r.id))
+            })
+        });
+        let closed_on = ev.grippers.iter().any(|&w| w > 0.005 && w < 0.07);
+        let closed_empty = ev.grippers.iter().any(|&w| w <= 0.005);
+        let all_open = ev.grippers.iter().all(|&w| w > 0.09);
+        match skill {
+            "move to" => {
+                if let Some(k) = target {
+                    let d = (k.last_center[0] - ev.pose.x).hypot(k.last_center[1] - ev.pose.y);
+                    if d <= 1.2 && ev.base_speed < 0.05 {
+                        return ("done", format!("robot stopped {d:.1} m from {}", k.id));
+                    }
+                    if ev.base_speed >= 0.05 {
+                        return ("running", format!("base still moving ({:.2} m/s), {d:.1} m to {}", ev.base_speed, k.id));
+                    }
+                    if ev.still_steps >= 60 && ev.moved_in_stage < 0.1 {
+                        return ("failed", format!("base has not moved for {} steps and is {d:.1} m from {}", ev.still_steps, k.id));
+                    }
+                    return ("unknown", format!("{d:.1} m from {}", k.id));
+                }
+                if ev.moved_in_stage > 0.3 && ev.still_steps >= 20 {
+                    return ("unknown", "stopped after travelling; target not in the scene graph yet".into());
+                }
+                ("unknown", "target not in the scene graph yet".into())
+            }
+            "pick up from" | "hold" | "lift" => {
+                let lifted = target.map(|k| k.last_center[2] - k.first_center[2]).unwrap_or(0.0);
+                let moved = target.map(|k| k.moved()).unwrap_or(0.0);
+                if closed_on && (lifted > 0.1 || moved > 0.15 || target.is_none()) {
+                    return ("done", format!("a gripper is closed on an object; target lifted {lifted:.2} m, moved {moved:.2} m"));
+                }
+                if closed_on {
+                    return ("unknown", "a gripper is closed on something but the target has not moved".into());
+                }
+                if closed_empty {
+                    return ("failed", "a gripper closed on nothing (grasp missed)".into());
+                }
+                ("running", "grippers still open".into())
+            }
+            "place on" | "place in" | "place on next to" | "place in next to" | "place under" | "release" | "hang" | "insert" | "attach" => {
+                let sup = ins.objects.get(1).and_then(|o| self.objects.known.get(o));
+                let near_sup = match (target, sup) {
+                    (Some(t), Some(s)) => ((t.last_center[0] - s.last_center[0]).hypot(t.last_center[1] - s.last_center[1])) < 0.6,
+                    _ => true,
+                };
+                let opened = all_open || ev.trigger == Trigger::GripperChange;
+                if opened && near_sup {
+                    return ("done", "a gripper opened and the object is at the destination".into());
+                }
+                if all_open {
+                    return ("failed", "grippers opened but the object is not at the destination".into());
+                }
+                ("running", "still holding".into())
+            }
+            _ => ("unknown", "not measurable from proprioception; judge from the image".into()),
+        }
     }
 
     pub fn decision_input(&self, ev: &BoundaryEvent) -> DecisionInput {
@@ -358,12 +446,14 @@ impl Core {
             let grasp = matches!(skill, "pick up from" | "hold" | "lift");
             let place = matches!(skill, "place on" | "place in" | "place on next to" | "place in next to" | "place under" | "release" | "hang" | "insert" | "attach");
             let holds_something = ev.grippers.iter().any(|&w| w > 0.005 && w < 0.07);
-            let done = match ev.trigger {
-                Trigger::Settled => nav,
-                Trigger::GripperChange => (grasp && holds_something) || place || (!grasp && !nav),
-                Trigger::BudgetExhausted => nav && ev.moved_in_stage > 0.3,
-                _ => false,
-            };
+            let verdict = self.evidence(ev).0;
+            let done = verdict == "done"
+                || match ev.trigger {
+                    Trigger::Settled => nav,
+                    Trigger::GripperChange => (grasp && holds_something) || place || (!grasp && !nav),
+                    Trigger::BudgetExhausted => nav && ev.moved_in_stage > 0.3,
+                    _ => false,
+                };
             if !done {
                 if matches!(ev.trigger, Trigger::CheckDue | Trigger::Settled | Trigger::GripperChange) && self.continues < self.cfg.max_continues {
                     return Decision::Continue { extra: 0, check_every: 0, reason: "keep executing the current step".into(), source: src };
@@ -649,7 +739,7 @@ impl Decider for LlmDecider {
 
     fn decide(&mut self, core: &mut Core, ev: &BoundaryEvent) -> Decision {
         let t0 = Instant::now();
-        let tools = crate::tools::definitions();
+        let tools = crate::tools::definitions(core.cfg.send_images && ev.images.len() > 1);
         let mut turn: Vec<Msg> = vec![Self::event_message(core, ev)];
         let mut decision: Option<Decision> = None;
         let mut nudges = 0;

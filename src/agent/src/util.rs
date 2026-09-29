@@ -116,6 +116,12 @@ pub fn estimate_tokens(s: &str) -> usize {
     n
 }
 
+/// 예산 비교용: 추정에 10% + 1 여유. 과제 8개·형식 4가지 556문장 실측에서 추정이 실제보다 모자란 경우가 39개(최대 2토큰) 있어서.
+pub fn tokens_with_margin(s: &str) -> usize {
+    let e = estimate_tokens(s);
+    e + e / 10 + 1
+}
+
 /// 아주 작은 명령줄 인자 해석기: `--key value`, `--flag`, 나머지는 위치 인자.
 #[derive(Debug, Default, Clone)]
 pub struct Args {

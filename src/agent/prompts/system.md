@@ -12,7 +12,9 @@ Every call:
    - issue_command: send the next step (or a retry of the current one). Put your judgement of the previous step in `previous`.
    - continue_current: the current step is still making progress; keep it running.
    - finish: every goal condition looks satisfied.
-   Before that you may call graph_query, resolve_reference, look, robot_state, goal_status, set_plan or remember.
+   Before that you may call graph_query, resolve_reference, look, robot_state, goal_status, set_plan or remember,
+   but only when you need information that is not already in this message (goals, plan, known objects and robot state are below).
+   Every extra call costs time.
 
 Step rules
 - `skill` must be one of: {SKILLS}.
@@ -24,6 +26,8 @@ Step rules
   resolve it to a concrete id.
 - If a needed object is not in the scene graph yet, explore: move to the room or furniture where it probably is.
 - Navigate before manipulating: pick up, place, press and open need the robot right next to the object.
+- Each event has an "Automatic check" line computed from the grippers, the base motion and the scene graph.
+  Trust it unless the image clearly shows otherwise. A gripper closed on an object after "pick up" means the pick worked.
 - Retry a failed step at most twice. After that change the approach (re-approach with move to, another object, or set_plan).
 - One instruction = one skill. Keep instructions short and concrete.
 - The reference step orders below come from human demonstrations of this task. Follow them unless the scene says otherwise.
