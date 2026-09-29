@@ -17,68 +17,18 @@
 #define PX_MAX_REAL 3.402823466e+38F
 #define PX_MAX_F32 3.4028234663852885981170418348452e+38F
 
+#include "px_foundation.h"
+
 namespace eng {
-
-typedef float PxF32;
-typedef double PxF64;
-typedef int32_t PxI32;
-typedef uint32_t PxU32;
-typedef int16_t PxI16;
-typedef uint16_t PxU16;
-typedef int8_t PxI8;
-typedef uint8_t PxU8;
+// Px 값 형·스칼라 수학은 eng::px 한 벌 (px_foundation.h, contact 번역본을 common 으로 올림 — 문서 12.7, 09-30 결정).
+// 생성물 aos.h 는 eng 이름 공간에서 이름을 찾으므로 여기서 이어 준다 (별칭일 뿐, 형은 하나).
+using px::PxF32; using px::PxF64; using px::PxI32; using px::PxU32; using px::PxI16; using px::PxU16; using px::PxI8; using px::PxU8;
+using px::PxI64; using px::PxU64;
 typedef int PxIntBool;
-
-// PhysX 값 형과 같은 배치 (x,y,z / x,y,z,w / 열 우선 3x3 / q 다음 p)
-// PhysX 값 형: 같은 배치, 원본 aos 코드가 쓰는 생성자만. eng::V3/Q/Tf 와 서로 바뀐다.
-struct PxVec3 {
-  float x, y, z;
-  EHD PxVec3() {}
-  EHD PxVec3(float a, float b, float c) : x(a), y(b), z(c) {}
-  EHD PxVec3(const V3& v) : x(v.x), y(v.y), z(v.z) {}
-  EHD operator V3() const { return V3{x, y, z}; }
-};
-struct PxVec4 {
-  float x, y, z, w;
-  EHD PxVec4() {}
-  EHD PxVec4(float a, float b, float c, float d) : x(a), y(b), z(c), w(d) {}
-};
-struct PxQuat {
-  float x, y, z, w;
-  EHD PxQuat() {}
-  EHD PxQuat(float a, float b, float c, float d) : x(a), y(b), z(c), w(d) {}
-  EHD PxQuat(const Q& q) : x(q.x), y(q.y), z(q.z), w(q.w) {}
-  EHD operator Q() const { return Q{x, y, z, w}; }
-};
-struct PxMat33 {
-  PxVec3 column0, column1, column2;
-  EHD PxMat33() {}
-  EHD PxMat33(const PxVec3& a, const PxVec3& b, const PxVec3& c) : column0(a), column1(b), column2(c) {}
-};
-struct PxTransform {
-  PxQuat q;
-  PxVec3 p;
-  EHD PxTransform() {}
-  EHD PxTransform(const PxVec3& p_, const PxQuat& q_) : q(q_), p(p_) {}  // PhysX 생성자 순서 (p, q)
-  EHD PxTransform(const Tf& t) : q(t.q), p(t.p) {}
-  EHD operator Tf() const { return Tf{Q(q), V3(p)}; }
-};
-
-static constexpr float PxPi = 3.141592653589793f;
-static constexpr float PxHalfPi = 1.57079632679489661923f;
-static constexpr float PxTwoPi = 6.28318530717958647692f;
-static constexpr float PxInvPi = 0.31830988618379067154f;
-static constexpr float PxInvTwoPi = 0.15915494309189533577f;
-
-template <class A, class B> EHD A PxUnionCast(B b) { A a; static_assert(sizeof(A) == sizeof(B), ""); memcpy(&a, &b, sizeof(A)); return a; }
-EHD float PxAbs(float a) { return a < 0.0f ? -a : a; }  // PxMath.h: ::fabsf -> 부호 비트만 지움과 같음(NaN 제외)
-EHD float PxClamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }  // PxMath.h:98 PxMin(hi, PxMax(lo, v))
-EHD float PxFloor(float a) { return floorf(a); }
-EHD float PxCeil(float a) { return ceilf(a); }
-EHD bool PxIsFinite(float a) {
-  const uint32_t u = sse::fb(a);
-  return (u & 0x7f800000u) != 0x7f800000u;
-}
+using px::PxVec3; using px::PxVec4; using px::PxQuat; using px::PxMat33; using px::PxTransform;
+using px::PxPi; using px::PxHalfPi; using px::PxTwoPi; using px::PxInvPi; using px::PxInvTwoPi;
+using px::PxUnionCast; using px::PxAbs; using px::PxClamp; using px::PxFloor; using px::PxCeil; using px::PxIsFinite;
+using px::PxMax; using px::PxMin; using px::PxSqrt; using px::PxRecipSqrt;
 
 // 전역 상수: 생성물이 호스트판(이름_h)과 장치판(이름_d) 두 벌을 만들고, 쓰는 곳은 ENG_G(이름) 으로 고른다
 union ENG_U4F { uint32_t u[4]; float f[4]; };  // 비트 무늬 상수(마스크)용: 정수 칸으로 초기화

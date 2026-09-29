@@ -121,6 +121,7 @@ EHD m128 _mm_xor_ps(m128 a, m128 b) { ENG_BITS4(x ^ y); }
 #define ENG_CMP4(c) m128 r; for (int k = 0; k < 4; ++k) r.f[k] = bf((c) ? 0xffffffffu : 0u); return r
 EHD m128 _mm_cmpeq_ps(m128 a, m128 b) { ENG_CMP4(a.f[k] == b.f[k]); }
 EHD m128 _mm_cmpgt_ps(m128 a, m128 b) { ENG_CMP4(a.f[k] > b.f[k]); }
+EHD m128 _mm_cmpngt_ps(m128 a, m128 b) { ENG_CMP4(!(a.f[k] > b.f[k])); }  // cmpnltps 계열: NaN 이면 참 (SSE CMPNLEPS 인자 바꿈)
 EHD m128 _mm_cmpge_ps(m128 a, m128 b) { ENG_CMP4(a.f[k] >= b.f[k]); }
 EHD m128 _mm_cmplt_ps(m128 a, m128 b) { ENG_CMP4(a.f[k] < b.f[k]); }
 EHD m128 _mm_cmple_ps(m128 a, m128 b) { ENG_CMP4(a.f[k] <= b.f[k]); }
