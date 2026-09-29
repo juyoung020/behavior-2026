@@ -1,6 +1,6 @@
 // 렌더 시험 — 공식 기록 장면 (render_capture.py -> convert_scene.py 결과).
 //   test_render_scene <폴더(scene.rsc, frame_*.rfr)> [--gpu 0|1] [--envs E] [--check K] [--reps R] [--res N(모든 카메라 N×N)]
-//                     [--spp S] [--bounces B] [--exposure X] [--ambient a] [--tonemap T] [--lights 0|1] [--out 폴더 [--ppm]] [--frames 0,10]
+//                     [--spp S] [--bounces B] [--exposure X] [--ambient a] [--ao 거리] [--tonemap T] [--white W] [--lights 0|1] [--out 폴더 [--ppm]] [--official 0(공식 비교 건너뜀)] [--frames 0,10]
 // 1) 층 1 vs 공식 RTX: depth 는 픽셀마다 차이 분포(공식 depth_linear), RGB 는 채널 평균·히스토그램·SSIM 을 공식 자신의
 //    잡음(같은 상태에서 다시 그린 장)과 나란히.
 // 2) 층 1 = 층 2: 판 e 가 프레임 (e mod 프레임 수) 를 그린다. 판 0..K-1 을 층 1 로 그려 depth 비트·RGB 바이트 전부 비교.
@@ -109,8 +109,8 @@ static void write_ppm(const std::string& fn, const uint8_t* rgb, int stride, int
 int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "사용: test_render_scene <폴더> ...\n"); return 2; }
   const std::string dir = argv[1];
-  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0;
-  float exposure = -1, ambient = -1;
+  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1;
+  float exposure = -1, ambient = -1, ao = -1, white = -1;
   std::string out;
   std::vector<int> only_frames;
   for (int i = 2; i < argc; ++i) {
@@ -126,8 +126,11 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--exposure") && i + 1 < argc) exposure = float(atof(nx()));
     else if (!strcmp(argv[i], "--ambient") && i + 1 < argc) ambient = float(atof(nx()));
     else if (!strcmp(argv[i], "--lights") && i + 1 < argc) lights = atoi(nx());
+    else if (!strcmp(argv[i], "--ao") && i + 1 < argc) ao = float(atof(nx()));
+    else if (!strcmp(argv[i], "--white") && i + 1 < argc) white = float(atof(nx()));
     else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = nx();
     else if (!strcmp(argv[i], "--ppm")) ppm = 1;
+    else if (!strcmp(argv[i], "--official") && i + 1 < argc) official = atoi(nx());
     else if (!strcmp(argv[i], "--frames") && i + 1 < argc) {
       char* s = nx();
       for (char* t = strtok(s, ","); t; t = strtok(nullptr, ",")) only_frames.push_back(atoi(t));
@@ -141,6 +144,8 @@ int main(int argc, char** argv) {
   if (tonemap >= 0) H.sp.tonemap = tonemap;
   if (exposure >= 0) H.sp.exposure = exposure;
   if (ambient >= 0) H.sp.ambient[0] = H.sp.ambient[1] = H.sp.ambient[2] = ambient;
+  if (ao >= 0) H.sp.ao_range = ao;
+  if (white >= 0) H.sp.white_scale = white;
   if (!lights) H.lights.clear();
   const double t_load = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   const SceneView SV = H.view();
@@ -148,8 +153,8 @@ int main(int argc, char** argv) {
          "읽기+BLAS 굽기 %.2f s\n",
          SV.n_inst, H.geoms.size(), H.tris.size(), H.blas_nodes.size(), SV.n_anchor, H.mats.size(), H.texs.size(),
          H.texels.size() * 4.0 / 1048576.0, H.lights.size(), t_load);
-  printf("음영: spp %d, 튕김 %d, 그림자 광선 %d, 노출 %g, 주변광 %g, 톤매핑 %d\n", H.sp.spp, H.sp.bounces, H.sp.shadow_lights,
-         H.sp.exposure, H.sp.ambient[0], H.sp.tonemap);
+  printf("음영: spp %d, 튕김 %d, 그림자 광선 %d, 노출 %g, 주변광 %g, AO %g m, 톤매핑 %d (흰색 %g)\n", H.sp.spp, H.sp.bounces,
+         H.sp.shadow_lights, H.sp.exposure, H.sp.ambient[0], H.sp.ao_range, H.sp.tonemap, H.sp.white_scale);
   // 프레임
   std::vector<std::string> fnames;
   if (DIR* dp = opendir(dir.c_str())) {
@@ -177,6 +182,7 @@ int main(int argc, char** argv) {
   double sum_t1 = 0;
   uint64_t n_pix_t1 = 0;
   for (auto& F : frames) {
+    if (!official) break;
     HostEnv HE;
     HE.resize(SV);
     for (int a = 0; a < SV.n_anchor && a < int(F.anchor.size()); ++a) HE.anchor[a] = F.anchor[a];

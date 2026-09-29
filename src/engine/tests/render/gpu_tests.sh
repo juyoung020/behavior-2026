@@ -8,9 +8,11 @@ D=/mnt/c/behavior-2026/src/engine/dumps/render_radio_rgbd
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader
 echo "== 합성"
 timeout 120 $B/test_render_synth --envs 64 --check 4 | grep -v "probe\["
+echo "== 합성 (AO 0.5 m, ACES 맞춤, spp 2, 튕김 2)"
+timeout 120 $B/test_render_synth --envs 16 --check 2 --ao 0.5 --tonemap 3 --spp 2 --bounces 2 | grep -v "probe\["
 if [ -f "$D/scene.rsc" ]; then
   echo "== 장면 (원 해상도)"
-  timeout 200 $B/test_render_scene "$D" --envs 32 --check 3 --frames 0,100,300 2>&1 | sed -n '/== 층 2/,$p'
+  timeout 200 $B/test_render_scene "$D" --envs 32 --check 3 --frames 0,100,300 --official 0 2>&1 | sed -n '/== 층 2/,$p'
   echo "== 장면 (224)"
-  timeout 200 $B/test_render_scene "$D" --envs 256 --check 3 --res 224 --frames 0,100,300 2>&1 | sed -n '/== 층 2/,$p'
+  timeout 200 $B/test_render_scene "$D" --envs 256 --check 3 --res 224 --frames 0,100,300 --official 0 2>&1 | sed -n '/== 층 2/,$p'
 fi

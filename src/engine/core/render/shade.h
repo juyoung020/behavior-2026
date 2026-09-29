@@ -255,6 +255,8 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
     return;
   }
   const int spp = S.sp.spp > 0 ? S.sp.spp : 1;
+  const V3 amb{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
+  const bool ao = S.sp.ao_range > 0.0f;
   V3 acc{0.0f, 0.0f, 0.0f};
   for (int k = 0; k < spp; ++k) {
     uint32_t rs = pcg(seed ^ pcg(uint32_t(k) * 0x9E3779B9u));
@@ -265,34 +267,34 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
       const Surf s = surface(S, E, r, h);
       acc = acc + mulc(thr, s.emissive);
       const V3 po = s.p + s.ng * 1e-4f;
-      // 주변광 (/rtx/sceneDb/ambientLightIntensity 와 돔 조명을 한 값으로)
-      V3 lsum = V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
-      // 조명: 몇 개를 뽑아 평균 × 개수 (균등 선택)
+      // 직접광: 조명 몇 개를 균등하게 뽑아 그림자 광선 (평균 × 개수)
+      V3 lsum{0.0f, 0.0f, 0.0f};
       if (S.n_lights > 0) {
         const int ns = S.sp.shadow_lights > 0 ? S.sp.shadow_lights : 1;
         V3 ls{0.0f, 0.0f, 0.0f};
         for (int j = 0; j < ns; ++j) {
           int li = int(rnd01(rs) * float(S.n_lights));
           li = li >= S.n_lights ? S.n_lights - 1 : li;
-          const float u1 = rnd01(rs), u2 = rnd01(rs);
+          const float u1 = rnd01(rs);
+          const float u2 = rnd01(rs);
           if (S.lights[li].visible) ls = ls + light_direct(S, E, li, po, s.ns, u1, u2);
         }
         const float w = float(S.n_lights) / float(ns);
-        lsum = lsum + ls * w;
+        lsum = ls * w;
       }
+      if (!ao) lsum = lsum + amb;  // 가림 없는 주변광
       acc = acc + mulc(thr, mulc(s.albedo, lsum));
-      if (b == S.sp.bounces) break;
-      thr = mulc(thr, s.albedo);
+      // 코사인 광선 하나: 주변광 가림(AO) 과 다음 튕김을 같이 한다.
       // 주의: 함수 인자 계산 순서는 C++ 에서 정해져 있지 않다(g++ 는 오른쪽부터, nvcc 는 왼쪽부터) -> 난수는 따로 꺼낸다
+      if (b == S.sp.bounces && !ao) break;
       const float b1 = rnd01(rs);
       const float b2 = rnd01(rs);
       const V3 nd = cosine_dir(s.ns, b1, b2);
       r = make_ray(po, nd);
       h = trace(S, E, r, 1e-4f, 1e30f);
-      if (h.inst < 0) {
-        acc = acc + mulc(thr, V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]});
-        break;
-      }
+      if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
+      if (b == S.sp.bounces || h.inst < 0) break;
+      thr = mulc(thr, s.albedo);
     }
   }
   const float inv = 1.0f / float(spp);
@@ -303,12 +305,33 @@ EHD uint8_t to_u8(float x) {
   const float c = fmn(fmx(x, 0.0f), 1.0f) * 255.0f + 0.5f;
   return uint8_t(int(c));
 }
-// 톤매핑: 노출 곱 -> (선택) ACES 근사(Narkowicz 2015) -> sRGB 부호화
+// 톤매핑: 노출 곱 -> 연산자 -> sRGB 부호화 -> 8 비트
+//  2: ACES 근사 (Narkowicz 2015)   3: ACES 맞춤 (S. Hill, RRT+ODT 근사, 입력·출력 행렬 포함)
+//  4: Reinhard 확장 (흰색 = white_scale)   5: Hable/Uncharted2 (흰색 = white_scale)
+EHD float hable(float x) {
+  return ((x * (0.15f * x + 0.05f) + 0.004f) / (x * (0.15f * x + 0.5f) + 0.06f)) - 0.0666666667f;
+}
 EHD void tonemap(const ShadeParams& sp, const V3& L, uint8_t* rgb) {
   float c[3] = {L.x * sp.exposure, L.y * sp.exposure, L.z * sp.exposure};
+  if (sp.tonemap == 3) {
+    const float a0 = 0.59719f * c[0] + 0.35458f * c[1] + 0.04823f * c[2];
+    const float a1 = 0.07600f * c[0] + 0.90834f * c[1] + 0.01566f * c[2];
+    const float a2 = 0.02840f * c[0] + 0.13383f * c[1] + 0.83777f * c[2];
+    float v[3] = {a0, a1, a2};
+    for (int k = 0; k < 3; ++k) {
+      const float x = v[k];
+      v[k] = (x * (x + 0.0245786f) - 0.000090537f) / (x * (0.983729f * x + 0.4329510f) + 0.238081f);
+    }
+    c[0] = 1.60475f * v[0] - 0.53108f * v[1] - 0.07367f * v[2];
+    c[1] = -0.10208f * v[0] + 1.10813f * v[1] - 0.00605f * v[2];
+    c[2] = -0.00327f * v[0] - 0.07276f * v[1] + 1.07602f * v[2];
+  }
+  const float ws = sp.white_scale > 0.0f ? sp.white_scale : 11.2f;
   for (int k = 0; k < 3; ++k) {
     float x = c[k];
     if (sp.tonemap == 2) x = (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f);
+    else if (sp.tonemap == 4) x = x * (1.0f + x / (ws * ws)) / (1.0f + x);
+    else if (sp.tonemap == 5) x = hable(x * 2.0f) / hable(ws);
     if (sp.tonemap >= 1) x = lin_to_srgb(fmn(fmx(x, 0.0f), 1.0f));
     rgb[k] = to_u8(x);
   }

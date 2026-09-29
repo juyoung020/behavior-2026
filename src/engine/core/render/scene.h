@@ -58,9 +58,11 @@ struct ShadeParams {
   float exposure;        // 휘도 -> 표시값 배율
   int32_t spp;           // 픽셀당 표본 (결정적 난수)
   int32_t shadow_lights; // 표본마다 그림자 광선 수
-  int32_t tonemap;       // 0 = 선형 클램프, 1 = sRGB 감마만, 2 = ACES 근사 + sRGB
+  int32_t tonemap;       // 0 = 선형 클램프, 1 = sRGB 감마만, 2 = ACES(Narkowicz), 3 = ACES(Hill 맞춤, 입출력 행렬), 4 = Reinhard, 5 = Hable(Uncharted2)
   int32_t bounces;       // 간접광 튕김 수 (0 = 직접광 + 주변광만)
-  float white_scale, pad0, pad1, pad2;
+  float white_scale;     // Hable/Reinhard 흰색 기준 (선형)
+  float ao_range;        // 주변광 가림 거리 (m). 코사인 광선이 이 거리 안에서 막히면 주변광 없음. 0 이하 = 가림 없음
+  float pad1, pad2;
 };
 
 // 정적 장면 (판 공유). 포인터는 호스트 또는 장치 메모리.

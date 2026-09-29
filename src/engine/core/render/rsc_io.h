@@ -7,7 +7,7 @@
 //              insts   n_inst × {i32 geom, anchor, slot_base, flags, f32 rel[12]}
 //              slot_mat n_slot × i32 | mats n_mat × f32[24] | lights n_light × f32[32]
 //              texs    n_tex × {int64 w, h, offset} | texels n_texel × u32 (RGBA8)
-//              shade   f32[16] (ShadeParams 기본값)
+//              shade   f32[16] (ShadeParams 기본값: ambient rgb, exposure, spp, shadow_lights, tonemap, bounces, white_scale, ao_range)
 // frame.rfr  : "RFRAME01", int64 hdr[8] = {step, n_anchor, n_inst, n_cam, n_img, ...}
 //              anchor n_anchor × f32[12] | vis ((n_inst+31)/32) × u32 | cams n_cam × f32[20]
 //              imgs   n_img × {char name[48], i64 h, w, c, dtype(0=u8, 1=f32), offset(파일 안 바이트)} 뒤에 자료
@@ -195,6 +195,7 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.ambient[0] = sp[0]; S.sp.ambient[1] = sp[1]; S.sp.ambient[2] = sp[2];
   S.sp.exposure = sp[3]; S.sp.spp = int32_t(sp[4]); S.sp.shadow_lights = int32_t(sp[5]);
   S.sp.tonemap = int32_t(sp[6]); S.sp.bounces = int32_t(sp[7]); S.sp.white_scale = sp[8];
+  S.sp.ao_range = sp[9];
   S.n_anchor = int32_t(na);
   // BLAS 굽기 (기하마다), 삼각형 속성을 굽힌 순서로
   for (int64_t g = 0; g < ng; ++g) {

@@ -1,5 +1,5 @@
 // 렌더 층 1(C++) = 층 2(CUDA) 비트 시험 — 합성 장면 (에셋 없이, 공식 기록 없이 도구 자체를 검증).
-//   test_render_synth [--envs E] [--inst N] [--spp S] [--bounces B] [--check K] [--reps R] [--res 720,480,480]
+//   test_render_synth [--envs E] [--inst N] [--spp S] [--bounces B] [--check K] [--reps R] [--res 720,480,480] [--ao 거리] [--tonemap 0..5] [--gpu 0 --dump 폴더]
 // 장면: 상자·판·구 삼각형 묶음 인스턴스 N 개, 기준 prim(강체 흉내) 16 개, 조명(구·사각·원판·먼 조명), 체크무늬 텍스처.
 // 판 e 는 기준 prim 을 e 에 따라 조금씩 옮겨(움직이는 물체 흉내) 판마다 다른 TLAS 가 된다.
 // 비교: 판 0..K-1 을 층 1 로 그려 층 2 의 depth(f32 비트)·RGB(u8) 와 전부 비교. 처리량: GPU 커널 시간.
@@ -142,8 +142,10 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
   if (h.inst < 0) return;
   uint32_t rs = pcg(pixel_seed(e, c, px, py, 0) ^ pcg(0u * 0x9E3779B9u));
   Ray r = r0;
+  const V3 amb{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
+  const bool ao = S.sp.ao_range > 0.0f;
   V3 thr{1.0f, 1.0f, 1.0f}, acc{0.0f, 0.0f, 0.0f};
-  for (int b = 0; b <= S.sp.bounces && b < 3; ++b) {
+  for (int b = 0; b <= S.sp.bounces && b < 3; ++b) {  // shade_pixel 과 같은 순서 (shadow_lights = 1 가정)
     float* q = o + 32 * b;
     const Surf s = surface(S, E, r, h);
     q[0] = h.t; q[1] = float(h.inst); q[2] = float(h.tri); q[3] = h.u; q[4] = h.v;
@@ -151,30 +153,33 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
     acc = acc + mulc(thr, s.emissive);
     const V3 po = s.p + s.ng * 1e-4f;
     q[29] = po.x; q[30] = po.y; q[31] = po.z;
-    V3 lsum = V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
+    V3 lsum{0.0f, 0.0f, 0.0f};
     if (S.n_lights > 0) {
       V3 ls{0.0f, 0.0f, 0.0f};
       int li = int(rnd01(rs) * float(S.n_lights));
       li = li >= S.n_lights ? S.n_lights - 1 : li;
-      const float u1 = rnd01(rs), u2 = rnd01(rs);
+      const float u1 = rnd01(rs);
+      const float u2 = rnd01(rs);
       q[11] = float(li); q[12] = u1; q[13] = u2;
       if (S.lights[li].visible) ls = ls + light_direct(S, E, li, po, s.ns, u1, u2);
       q[14] = ls.x; q[15] = ls.y; q[16] = ls.z;
-      lsum = lsum + ls * float(S.n_lights);
+      lsum = ls * float(S.n_lights);
     }
+    if (!ao) lsum = lsum + amb;
     q[17] = lsum.x; q[18] = lsum.y; q[19] = lsum.z;
     acc = acc + mulc(thr, mulc(s.albedo, lsum));
     q[20] = acc.x; q[21] = acc.y; q[22] = acc.z;
-    if (b == S.sp.bounces) break;
-    thr = mulc(thr, s.albedo);
-    q[23] = thr.x; q[24] = thr.y; q[25] = thr.z;
+    if (b == S.sp.bounces && !ao) break;
     const float b1 = rnd01(rs);
     const float b2 = rnd01(rs);
     const V3 nd = cosine_dir(s.ns, b1, b2);
     q[26] = nd.x; q[27] = nd.y; q[28] = nd.z;
     r = make_ray(po, nd);
     h = trace(S, E, r, 1e-4f, 1e30f);
-    if (h.inst < 0) break;
+    if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
+    if (b == S.sp.bounces || h.inst < 0) break;
+    thr = mulc(thr, s.albedo);
+    q[23] = thr.x; q[24] = thr.y; q[25] = thr.z;
   }
 }
 __global__ void kProbe(SceneView S, gpu::Batch B, const Camera* cams, int ncam, int e, int c, int px, int py, float* o) {
@@ -185,7 +190,8 @@ __global__ void kProbeTrace(SceneView S, gpu::Batch B, const Camera* cams, int n
 }
 
 int main(int argc, char** argv) {
-  int envs = 64, ninst = 2000, spp = 1, bounces = 1, check = 4, reps = 5, use_gpu = 1;
+  int envs = 64, ninst = 2000, spp = 1, bounces = 1, check = 4, reps = 5, use_gpu = 1, tonemap = 2;
+  float ao = 0.0f;
   const char* dump = nullptr;
   int res[3] = {720, 480, 480};
   for (int i = 1; i < argc; ++i) {
@@ -196,6 +202,8 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--check") && i + 1 < argc) check = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--reps") && i + 1 < argc) reps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--gpu") && i + 1 < argc) use_gpu = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--ao") && i + 1 < argc) ao = float(atof(argv[++i]));
+    else if (!strcmp(argv[i], "--tonemap") && i + 1 < argc) tonemap = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
     else if (!strcmp(argv[i], "--res") && i + 1 < argc) sscanf(argv[++i], "%d,%d,%d", &res[0], &res[1], &res[2]);
   }
@@ -251,7 +259,8 @@ int main(int argc, char** argv) {
   add_light(kLightDisk, 50, 40, 30, aff_trs(-4, 2, 4, 0, 1), 0.4f, 0, 0, 0);
   add_light(kLightDistant, 5000, 5000, 5000, Aff{{1, 0, 0, 0, 0, 0.8f, -0.6f, 0, 0, 0.6f, 0.8f, 0}}, 0, 0, 0, 0.53f);
   H.sp.ambient[0] = 0.05f; H.sp.ambient[1] = 0.05f; H.sp.ambient[2] = 0.06f;
-  H.sp.exposure = 1.0f; H.sp.spp = spp; H.sp.shadow_lights = 1; H.sp.tonemap = 2; H.sp.bounces = bounces;
+  H.sp.exposure = 1.0f; H.sp.spp = spp; H.sp.shadow_lights = 1; H.sp.tonemap = tonemap; H.sp.bounces = bounces;
+  H.sp.ao_range = ao; H.sp.white_scale = 8.0f;
   const SceneView SV = H.view();
   printf("합성 장면: 인스턴스 %d, 기하 %zu, 삼각형 %zu, BLAS 노드 %zu, 조명 %zu | 판 %d, 해상도 %d,%d,%d, spp %d, 튕김 %d\n",
          SV.n_inst, H.geoms.size(), H.tris.size(), H.blas_nodes.size(), H.lights.size(), envs, res[0], res[1], res[2],
