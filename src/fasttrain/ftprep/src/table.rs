@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use arrow_array::cast::AsArray;
 use arrow_array::types::{Float32Type, Float64Type, Int64Type};
-use arrow_array::{Array, RecordBatch};
+use arrow_array::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 use serde::Deserialize;
