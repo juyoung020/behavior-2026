@@ -166,7 +166,8 @@ class Replayer {
   bool verbose = false;
   int verbose_max = 12;
   bool diag_no_self_collision = false;
-  bool contact_report_all = false;  // --contact-report-all: omni 접촉 보고 쌍 처리(알림 플래그 + 정적/키네마틱 쌍 풀이 끔)를 모든 쌍에  // --diag-no-self-collision: 모든 관절체 자기 충돌 끔 (원인 가르기 진단용, 결과 비교용 아님)
+  bool contact_report_all = false;
+  bool dbg_drive = getenv("OVD_DBG_DRIVE") != nullptr;  // --contact-report-all: omni 접촉 보고 쌍 처리(알림 플래그 + 정적/키네마틱 쌍 풀이 끔)를 모든 쌍에  // --diag-no-self-collision: 모든 관절체 자기 충돌 끔 (원인 가르기 진단용, 결과 비교용 아님)
   FILE* csv = nullptr;
   double frame_max = 0;
   uint64_t frame_bitdiff = 0, frame_cmp = 0;
@@ -310,6 +311,19 @@ class Replayer {
     fprintf(f, "art_flags 0 %u\n", uint32_t(PxU8(art->getArticulationFlags())));
     std::vector<PxArticulationLink*> links(art->getNbLinks());
     art->getLinks(links.data(), PxU32(links.size()));
+    // 관절값은 캐시로 읽는다 (텐서 API 와 같은 길; applyCache 직후 getJointPosition 은 다음 simulate 전까지 옛 값일 수 있다).
+    // 캐시 dof 번호 = 링크 low-level 번호 순서로 관절 dof 수를 더한 것 (PxArticulationReducedCoordinate.h:230)
+    PxArticulationCache* kc = art->createCache();
+    art->copyInternalStateToCache(*kc, PxArticulationCacheFlag::eALL);
+    std::vector<PxU32> dof_off(links.size() + 1, 0);
+    {
+      std::vector<PxU32> ndof(links.size(), 0);
+      for (auto* l : links) ndof[l->getLinkIndex()] = l->getInboundJointDof();
+      for (size_t k = 0; k < links.size(); ++k) dof_off[k + 1] = dof_off[k] + ndof[k];
+    }
+    fprintf(f, "root_cache 0 %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", kc->rootLinkData->transform.p.x, kc->rootLinkData->transform.p.y,
+            kc->rootLinkData->transform.p.z, kc->rootLinkData->transform.q.x, kc->rootLinkData->transform.q.y, kc->rootLinkData->transform.q.z,
+            kc->rootLinkData->transform.q.w);
     int dof = 0, shp = 0;
     for (size_t i = 0; i < links.size(); ++i) {
       PxArticulationLink* l = links[i];
@@ -325,17 +339,20 @@ class Replayer {
       fprintf(f, "actor_flags %zu 0x%x %u\n", i, uint32_t(PxU8(l->getActorFlags())), uint32_t(l->getDominanceGroup()));
       if (auto* j = l->getInboundJoint()) {
         fprintf(f, "joint %zu type %d friction %.9g maxvel %.9g\n", i, int(j->getJointType()), j->getFrictionCoefficient(), j->getMaxJointVelocity());
+        int kd = 0;  // 이 관절 안에서 몇 번째 풀린 축
         for (int a = 0; a < 6; ++a) {
           auto ax = PxArticulationAxis::Enum(a);
           if (j->getMotion(ax) == PxArticulationMotion::eLOCKED) continue;
+          const PxU32 ci = dof_off[l->getLinkIndex()] + kd++;
+          const float cpos = kc->jointPosition[ci], cvel = kc->jointVelocity[ci];
           const PxArticulationLimit L = j->getLimitParams(ax);
           const PxArticulationDrive D = j->getDriveParams(ax);
           const PxJointFrictionParams FP = j->getFrictionParams(ax);
           fprintf(f, "dof %d link %zu axis %d motion %d lim %.9g %.9g k %.9g c %.9g maxf %.9g dtype %d env %.9g %.9g %.9g %.9g arm %.9g maxdofvel %.9g fr %.9g %.9g %.9g pos %.9g vel %.9g tgt %.9g tvel %.9g\n",
                   dof, i, a, int(j->getMotion(ax)), L.low, L.high, D.stiffness, D.damping, D.maxForce, int(D.driveType), D.envelope.maxEffort,
                   D.envelope.maxActuatorVelocity, D.envelope.velocityDependentResistance, D.envelope.speedEffortGradient, j->getArmature(ax),
-                  j->getMaxJointVelocity(ax), FP.staticFrictionEffort, FP.dynamicFrictionEffort, FP.viscousFrictionCoefficient, j->getJointPosition(ax),
-                  j->getJointVelocity(ax), j->getDriveTarget(ax), j->getDriveVelocity(ax));
+                  j->getMaxJointVelocity(ax), FP.staticFrictionEffort, FP.dynamicFrictionEffort, FP.viscousFrictionCoefficient, cpos,
+                  cvel, j->getDriveTarget(ax), j->getDriveVelocity(ax));
           dof++;
         }
       }
@@ -355,6 +372,7 @@ class Replayer {
         shp++;
       }
     }
+    kc->release();
     fclose(f);
     printf("dump-art: %s -> %s (링크 %zu, dof %d, 모양 %d)\n", dump_art_name.c_str(), dump_art_file.c_str(), links.size(), dof, shp);
   }
@@ -1325,6 +1343,12 @@ class Replayer {
                         !same(c.envelope.velocityDependentResistance, w.envelope.velocityDependentResistance) ||
                         !same(c.envelope.speedEffortGradient, w.envelope.speedEffortGradient) || c.driveType != w.driveType;
         if (ch) { j->setDriveParams(AX(i), w); any = true; }
+        if (dbg_drive && i == 0) {
+          const char* cn = j->getChildArticulationLink().getName();
+          if (cn && strstr(cn, "torso_link1"))
+            fprintf(stderr, "[drv] sim %llu torso_link1 has_k %d 받은 k %.9g 적용 전 %.9g 후 %.9g j=%p\n", (unsigned long long)sims, int(has("driveStiffness")),
+                    has("driveStiffness") ? fa("driveStiffness", 0) : -1.0f, c.stiffness, j->getDriveParams(AX(0)).stiffness, (void*)j);
+        }
       }
       if (!any) j->setDriveParams(AX(0), j->getDriveParams(AX(0)));
       applied["group:driveParams"]++;
@@ -1549,6 +1573,9 @@ class Replayer {
         }
         a->applyCache(*ca, m == "set_dof_positions" ? PxArticulationCacheFlag::ePOSITION
                                                    : (m == "set_dof_velocities" ? PxArticulationCacheFlag::eVELOCITY : PxArticulationCacheFlag::eFORCE));
+        if (dbg_drive && c.after >= 40 && c.after <= 44 && v.prims[i].find("r1pro") != std::string::npos)
+          fprintf(stderr, "[side] after %llu %s 값0 %.9g 값1 %.9g (dof %u, 뷰 max_dofs %u)\n", (unsigned long long)c.after, m.c_str(), c.data[size_t(i) * v.max_dofs],
+                  c.data[size_t(i) * v.max_dofs + 1], nd, v.max_dofs);
         applied["side:" + m]++;
       } else if (m == "set_root_transforms" || (m == "set_transforms" && v.kind == 1)) {
         const float* s = &c.data[size_t(i) * 7];
