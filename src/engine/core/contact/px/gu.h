@@ -17,4 +17,5 @@
 namespace eng {
 #include "core/contact/px/gu_support.inc"
 #include "core/contact/px/gen_gu_convex.inc"
+#include "core/contact/px/gu_bounds.inc"
 }  // namespace eng

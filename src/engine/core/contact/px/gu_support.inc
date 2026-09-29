@@ -47,10 +47,17 @@ EHD float PxAcos(float f) { return eng::glibcx::acosf(PxClamp(f, -1.0f, 1.0f)); 
 #endif
 #define E_GTABLE_DECL(T, name) EHD const T* name##_p()
 
-// 할당기 달린 컨테이너(동적 PriorityQueue·IDPool) 는 접촉 경로에서 안 쓴다: 템플릿이 파싱만 되게 이름만 둔다
+// 할당기 달린 컨테이너(PxSort 의 스택·해시 표 등)의 기본 할당기 (foundation/PxAllocator.h PxAllocatorTraits).
+// 호스트는 힙, GPU 는 접촉 경로에서 안 쓰므로 nullptr (넘치면 드러나게).
 struct PxDummyAlloc {
+  EHD PxDummyAlloc(const char* = nullptr) {}
+#if defined(__CUDA_ARCH__)
   EHD void* allocate(size_t, const char*, int) { return nullptr; }
   EHD void deallocate(void*) {}
+#else
+  EHD void* allocate(size_t n, const char*, int) { return n ? malloc(n) : nullptr; }
+  EHD void deallocate(void* p) { free(p); }
+#endif
 };
 template <class T> struct PxAllocatorTraits { typedef PxDummyAlloc Type; };
 // foundation/PxArray.h 의 쓰이는 부분 (호스트용 동적 배열; 늘리는 규칙은 결과에 영향 없음 — 크기·순서만 같으면 됨)

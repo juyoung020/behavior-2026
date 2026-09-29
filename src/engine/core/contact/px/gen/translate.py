@@ -148,6 +148,7 @@ def preprocess(text, path):
 
 
 INLINE_INCLUDES = set()
+STATIC_SEEN = set()
 FILE_INDEX = {}
 
 
@@ -543,6 +544,14 @@ def main():
             p = root / s
             seen.add(p.name)
             t = translate_text(p.read_text(), s, root, seen)
+            # 여러 .cpp 에 똑같이 있는 파일 범위 static 상수(예: gUseRegularBPKernel)는 한 이름공간에 모이므로 두 번째부터 뺀다
+            def dedup(m):
+                key = m.group(0).strip()
+                if key in STATIC_SEEN:
+                    return '// (앞 조각과 같은 정의라 뺌) ' + key
+                STATIC_SEEN.add(key)
+                return m.group(0)
+            t = re.sub(r'^[ \t]*static const bool \w+ = \w+;', dedup, t, flags=re.M)
             body.append(f'// ===== 원본: physx/{s}\n' + t.strip('\n') + '\n')
         text = '\n'.join(body)
         if annotate:
