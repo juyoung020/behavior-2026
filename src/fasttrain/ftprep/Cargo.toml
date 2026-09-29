@@ -1,0 +1,10 @@
+[package]
+name = "ftprep"
+version = "0.1.0"
+edition = "2021"
+description = "학습 데이터 가속용 준비 도구: mp4 패킷 색인(.ftidx), 색 변환 표용 합성 YUV"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
