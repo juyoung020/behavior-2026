@@ -107,6 +107,37 @@ __global__ void kRun(DevMem M, Caps C, const uint8_t* stream, const uint64_t* st
   errs[b] = B.error;
 }
 
+// 판 하나 = 블록 하나, 판 안 스레드 blockDim.x 개 (분할 안 제약·몸체 적분을 나눠 푼다. 준비·되쓰기는 스레드 0)
+__global__ void kRunPar(DevMem M, Caps C, const uint8_t* stream, const uint64_t* stepOff, const uint64_t* c1dOff, uint32_t steps, sv::SolverParams prm,
+                        float* res0, eng::jnt::Writeback* wb0, float* resFinal, uint32_t* errs) {
+  __shared__ sv::SolverBoard B;
+  const uint32_t b = blockIdx.x, tid = threadIdx.x, nt = blockDim.x;
+  if (tid == 0) B = makeBoard(M, C, b);
+  __syncthreads();
+  for (uint32_t s = 0; s < steps; ++s) {
+    const uint8_t* base = stream + stepOff[s];
+    const svs::StepCounts c = *reinterpret_cast<const svs::StepCounts*>(base);
+    const svs::StepView v = svs::makeView(base, c, C.nb);
+    if (tid == 0) svs::applyStep(B, v);
+    __syncthreads();
+    sv::solverStepPar(B, prm, tid, nt);
+    __syncthreads();
+    if (tid == 0) {
+      sv::afterIntegration(B);
+      sv::deactivateBodies(B, v.deact, v.c.nDeact);
+      if (b == 0 && res0)
+        for (uint32_t i = 0; i < C.nb; ++i) svs::bodyResult(B.bodies[i], res0 + (size_t(s) * C.nb + i) * svs::RES_FLOATS);
+      if (b == 0 && wb0)
+        for (uint32_t k = 0; k < c.nC1D; ++k) wb0[c1dOff[s] + k] = B.writebacks[v.c1d[k].writeback];
+    }
+    __syncthreads();
+  }
+  if (tid == 0) {
+    for (uint32_t i = 0; i < C.nb; ++i) svs::bodyResult(B.bodies[i], resFinal + (size_t(b) * C.nb + i) * svs::RES_FLOATS);
+    errs[b] = B.error;
+  }
+}
+
 template <class T>
 static T* dalloc(size_t n) {
   T* p = nullptr;
@@ -119,9 +150,11 @@ int main(int argc, char** argv) {
     fprintf(stderr, "사용: %s <file.svs> [--envs E]\n", argv[0]);
     return 2;
   }
-  int envs = 256;
-  for (int i = 2; i < argc; ++i)
+  int envs = 256, threads = 1;
+  for (int i = 2; i < argc; ++i) {
     if (!strcmp(argv[i], "--envs") && i + 1 < argc) envs = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
+  }
   svs::Stream S;
   if (!svs::readStream(argv[1], S)) {
     fprintf(stderr, "입력 흐름 읽기 실패: %s\n", argv[1]);
@@ -256,7 +289,10 @@ int main(int argc, char** argv) {
   CK(cudaEventCreate(&e0));
   CK(cudaEventCreate(&e1));
   CK(cudaEventRecord(e0));
-  kRun<<<envs, 32>>>(D, C, dStream, dOff, dC1dOff, steps, prm, dRes0, dWb0, dFinal, dErr);
+  if (threads <= 1)
+    kRun<<<envs, 1>>>(D, C, dStream, dOff, dC1dOff, steps, prm, dRes0, dWb0, dFinal, dErr);
+  else
+    kRunPar<<<envs, threads>>>(D, C, dStream, dOff, dC1dOff, steps, prm, dRes0, dWb0, dFinal, dErr);
   CK(cudaEventRecord(e1));
   CK(cudaGetLastError());
   CK(cudaEventSynchronize(e1));
@@ -296,6 +332,7 @@ int main(int argc, char** argv) {
   printf("층 2 GPU 판 %d 개 마지막 상태 = 층 1: 비교 %" PRIu64 ", 비트 다름 %" PRIu64 ", 엔진 오류 0x%x\n", envs, gfCmp, gfBad, anyErr);
   printf("층 2 1D 제약 되쓰기: 판 0 스텝마다 = 층 1 비교 %" PRIu64 " 다름 %" PRIu64 ", 판 전부 마지막 되쓰기 표 = 층 1 다른 판 %" PRIu64 "\n", nWb, gwBad, gwfBad);
   const double sec = ms / 1000.0;
+  printf("  GPU 판 안 스레드 %d\n", threads);
   printf("  GPU: 판 %d x %u 스텝 %.3f s -> 판·스텝/초 %.0f, 몸체·스텝/초 %.3g (CPU 단일 스레드 대비 %.1f 배)\n", envs, steps, sec, envs * double(steps) / sec,
          envs * double(steps) * nb / sec, (envs * double(steps) / sec) / (steps / cpuSec));
   const bool ok = !pxBad && !g0Bad && !gfBad && !anyErr && !HB.error && !wbBad && !gwBad && !gwfBad;

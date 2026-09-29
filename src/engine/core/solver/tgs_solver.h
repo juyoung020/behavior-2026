@@ -27,6 +27,15 @@
 namespace eng {
 namespace sv {
 
+// 판 안 여러 스레드(GPU 블록 하나 = 판 하나)용: 장치에서는 블록 동기화, 호스트(스레드 하나)에서는 아무것도 안 함
+#if defined(__CUDA_ARCH__)
+#define SV_SYNC() __syncthreads()
+SV_HD void svAtomicOr(uint32_t& dst, uint32_t v) { atomicOr(&dst, v); }
+#else
+#define SV_SYNC() ((void)0)
+SV_HD void svAtomicOr(uint32_t& dst, uint32_t v) { dst |= v; }
+#endif
+
 // ---------------- 분할 (DyConstraintPartition.cpp, RigidBodyClassification)
 struct PartitionView {
   SBodyVel* vels;
@@ -398,10 +407,11 @@ SV_HDN void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBody
   }
 }
 
-SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange& R, uint32_t kinematicCount) {
+// 준비 (차례로): 기술자·분할·묶음 머리·제약 준비·길이 0 제약 빼기까지. 반복 계획을 B.plan 에 남긴다.
+SV_HDN void solveBatchPrep(SolverBoard& B, const SolverParams& prm, const BatchRange& R, uint32_t kinematicCount) {
   (void)kinematicCount;
+  B.plan.ok = 0;
   const float mDt = prm.dt;
-  const float mInvDt = 1.0f / prm.dt;
   const uint32_t bodyOffset = R.solverBodyOffset;
   SBodyVel* vels = B.vels;
   if (bodyOffset + R.nbBodies + 1 > B.poolCap) {
@@ -639,27 +649,77 @@ SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange
   B.statBatches++;
   if (numContactConstraintBatches == 0) B.statFreeBatches++;
   if (totalPartitions > B.statMaxPartitions) B.statMaxPartitions = totalPartitions;
-  // iterativeSolveIsland
-  const uint32_t nb = R.nbBodies;
-  if (numContactConstraintBatches == 0) {
-    for (uint32_t k = 0; k < nb; k++) integrateCoreStep(vels[bodyOffset + k + 1], B.txI[bodyOffset + k + 1], mDt);
+  BatchPlan& pl = B.plan;
+  pl.numBatches = numContactConstraintBatches;
+  pl.totalPartitions = totalPartitions;
+  // 넘침 제약은 첫 분할 앞에 들어간다(outputOverflowConstraints). 첫 분할이 비면 PhysX 도 넘침 없음으로 본다(위 hasOverflowPartitions).
+  pl.firstSequential = (hasOverflowPartitions0 && totalPartitions && acc[0]) ? 1u : 0u;
+  pl.bodyOffset = bodyOffset;
+  pl.nbBodies = R.nbBodies;
+  pl.posIters = posIters;
+  pl.velIters = velIters;
+  pl.dt = mDt;
+  pl.invDt = 1.0f / prm.dt;
+  pl.stepDt = stepDt;
+  pl.ok = 1;
+}
+
+// 반복 한 번의 제약 풀기: 분할 순서대로, 분할 안 머리는 서로 몸체를 나누지 않으므로(세계 몸체 제외: 정적 쪽은 질량 0 이라 같은 값만 쓴다)
+// 스레드 nt 개가 나눠 푼다. nt = 1 이면 PhysX 단일 스레드 순서 그대로.
+SV_HD void solvePartitions(SolverBoard& B, const BatchPlan& pl, float minPen, float elapsed, bool conclude, uint32_t tid, uint32_t nt,
+                           uint32_t& err) {
+  uint32_t h0 = 0;
+  for (uint32_t p = 0; p < pl.totalPartitions; ++p) {
+    const uint32_t h1 = h0 + B.partitionCounts[p];
+    if (nt == 1 || (p == 0 && pl.firstSequential)) {
+      if (tid == 0)
+        for (uint32_t h = h0; h < h1; ++h) solveContactHeader(B.headers[h], B.ordered, B.vels, B.txI, B.constraints, minPen, elapsed, conclude, err);
+    } else {
+      for (uint32_t h = h0 + tid; h < h1; h += nt) solveContactHeader(B.headers[h], B.ordered, B.vels, B.txI, B.constraints, minPen, elapsed, conclude, err);
+    }
+    SV_SYNC();
+    h0 = h1;
+  }
+}
+SV_HD void integrateBodies(SolverBoard& B, const BatchPlan& pl, float dt, uint32_t tid, uint32_t nt) {
+  for (uint32_t k = tid; k < pl.nbBodies; k += nt) integrateCoreStep(B.vels[pl.bodyOffset + k + 1], B.txI[pl.bodyOffset + k + 1], dt);
+  SV_SYNC();
+}
+
+// iterativeSolveIsland 의 반복 부분 (DyTGSDynamics.cpp:2515-2793). 판 안 스레드 전부가 부른다(nt = 1 이면 호스트 순서 그대로).
+SV_HDN void solveBatchIterate(SolverBoard& B, uint32_t tid, uint32_t nt) {
+  const BatchPlan pl = B.plan;
+  if (!pl.ok) return;
+  uint32_t err = 0;
+  if (pl.numBatches == 0) {
+    integrateBodies(B, pl, pl.dt, tid, nt);
   } else {
     float elapsedTime = 0.0f;
-    for (uint32_t a = 1; a < posIters; a++) {
-      for (uint32_t h = 0; h < numContactConstraintBatches; ++h)
-        solveContactHeader(B.headers[h], cdb, vels, B.txI, B.constraints, -kMaxReal, elapsedTime, false, B.error);
-      for (uint32_t k = 0; k < nb; k++) integrateCoreStep(vels[bodyOffset + k + 1], B.txI[bodyOffset + k + 1], stepDt);
-      elapsedTime += stepDt;
+    for (uint32_t a = 1; a < pl.posIters; a++) {
+      solvePartitions(B, pl, -kMaxReal, elapsedTime, false, tid, nt, err);
+      integrateBodies(B, pl, pl.stepDt, tid, nt);
+      elapsedTime += pl.stepDt;
     }
     {  // 마지막 위치 반복 (solveConclude: 접촉의 conclude 는 빈 함수, 1D 는 conclude1DStep)
-      for (uint32_t h = 0; h < numContactConstraintBatches; ++h)
-        solveContactHeader(B.headers[h], cdb, vels, B.txI, B.constraints, -kMaxReal, elapsedTime, true, B.error);
-      elapsedTime += stepDt;
-      for (uint32_t k = 0; k < nb; k++) integrateCoreStep(vels[bodyOffset + k + 1], B.txI[bodyOffset + k + 1], stepDt);
+      solvePartitions(B, pl, -kMaxReal, elapsedTime, true, tid, nt, err);
+      elapsedTime += pl.stepDt;
+      integrateBodies(B, pl, pl.stepDt, tid, nt);
     }
-    for (uint32_t a = 0; a < velIters; ++a)
-      for (uint32_t h = 0; h < numContactConstraintBatches; ++h)
-        solveContactHeader(B.headers[h], cdb, vels, B.txI, B.constraints, 0.f, elapsedTime, false, B.error);
+    for (uint32_t a = 0; a < pl.velIters; ++a) solvePartitions(B, pl, 0.f, elapsedTime, false, tid, nt, err);
+  }
+  if (err) svAtomicOr(B.error, err);
+}
+
+// 마무리 (차례로): 되쓰기, copyBackBodies
+SV_HDN void solveBatchFinish(SolverBoard& B, const SolverParams& prm, const BatchRange& R) {
+  const BatchPlan& pl = B.plan;
+  if (!pl.ok) return;
+  const uint32_t bodyOffset = pl.bodyOffset;
+  const float mDt = pl.dt, mInvDt = pl.invDt;
+  SBodyVel* vels = B.vels;
+  SDesc* cdb = B.ordered;
+  const uint32_t numContactConstraintBatches = pl.numBatches;
+  if (numContactConstraintBatches != 0) {
     FrictionArena& fcur = B.friction[B.frictionCurIdx];
     for (uint32_t h = 0; h < numContactConstraintBatches; ++h) {
       const BatchHeader& hd = B.headers[h];
@@ -687,8 +747,8 @@ SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange
   }
 }
 
-// DynamicsTGSContext::update + updatePostKinematic: 이번 스텝 모든 활성 섬을 묶음으로 나눠 푼다.
-SV_HDN void solverStep(SolverBoard& B, const SolverParams& prm) {
+// 스텝 시작 (차례로, 판마다 한 번): 마찰 arena 교대, 마찰 수 0 되돌리기, 세계 몸체
+SV_HDN void solverStepBegin(SolverBoard& B) {
   // 마찰 arena 교대: 지난 스텝 패치는 이제 prev
   B.frictionCurIdx ^= 1u;
   B.friction[B.frictionCurIdx].size = 0;
@@ -719,6 +779,10 @@ SV_HDN void solverStep(SolverBoard& B, const SolverParams& prm) {
     d.originalLinearVelocity = V3{0, 0, 0};
     d.originalAngularVelocity = V3{0, 0, 0};
   }
+}
+
+// 섬 묶음 나누기와 묶음별 준비·반복·마무리. 판 안 스레드 전부가 같은 순서로 부른다(묶음 나누기는 읽기만 해서 모두 같은 값을 얻는다).
+SV_HDN void solverIslands(SolverBoard& B, const SolverParams& prm, uint32_t tid, uint32_t nt) {
   const uint32_t kinematicCount = 0;  // 운동학 몸체: 아직
   uint32_t currentIsland = 0, currentBodyIndex = 0, currentContact = 0;
   while (currentIsland < B.nbIslands) {
@@ -736,11 +800,28 @@ SV_HDN void solverStep(SolverBoard& B, const SolverParams& prm) {
     R.nbBodies = nbBodies;
     R.nbCMs = nbCMs;
     R.solverBodyOffset = kinematicCount + currentBodyIndex;
-    solveBatch(B, prm, R, kinematicCount);
+    if (tid == 0) solveBatchPrep(B, prm, R, kinematicCount);
+    SV_SYNC();
+    solveBatchIterate(B, tid, nt);
+    if (tid == 0) solveBatchFinish(B, prm, R);
+    SV_SYNC();
     currentBodyIndex += nbBodies;
     currentContact += nbCMs;
   }
   (void)currentContact;
+}
+
+// DynamicsTGSContext::update + updatePostKinematic (호스트·GPU 한 스레드)
+SV_HDN void solverStep(SolverBoard& B, const SolverParams& prm) {
+  solverStepBegin(B);
+  if (B.nbIslands) solverIslands(B, prm, 0, 1);
+}
+
+// 같은 스텝을 판 안 스레드 nt 개로 (GPU: B 는 공유 메모리의 판 하나, 스레드 전부가 부른다). 결과는 solverStep 과 비트 같다.
+SV_HDN void solverStepPar(SolverBoard& B, const SolverParams& prm, uint32_t tid, uint32_t nt) {
+  if (tid == 0) solverStepBegin(B);
+  SV_SYNC();
+  if (B.nbIslands) solverIslands(B, prm, tid, nt);
 }
 
 // Sc::Scene::afterIntegration (ScPipeline.cpp:2640-2690): 이번 스텝 섬 관리자가 재운 몸체는 풀이에서 적분됐더라도

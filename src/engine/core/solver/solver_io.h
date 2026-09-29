@@ -256,6 +256,16 @@ struct Constraint1DIn {
   float linBreakForce, angBreakForce, minResponseThreshold;
 };
 
+// 한 풀이 묶음의 반복 계획 (준비가 만들고 반복·마무리가 읽는다. GPU 판 안 여러 스레드가 공유)
+struct BatchPlan {
+  uint32_t ok;                     // 0 이면 준비 실패(오류) 또는 몸체 없음 -> 반복·마무리 건너뜀
+  uint32_t numBatches;             // 길이 0 제약을 뺀 묶음 머리 수 (numContactConstraintBatches)
+  uint32_t totalPartitions;        // 머리가 있는 분할 수. 분할별 머리 수는 SolverBoard.partitionCounts[0..totalPartitions)
+  uint32_t firstSequential;        // 1 = 첫 분할에 넘침 제약(몸체를 나눌 수 있음)이 있어 차례로 풀어야 함
+  uint32_t bodyOffset, nbBodies, posIters, velIters;
+  float dt, invDt, stepDt;
+};
+
 struct SolverBoard {
   // 상태
   Body* bodies;
@@ -302,6 +312,7 @@ struct SolverBoard {
   CorrelationBuffer* corr;
   ContactPoint* contactBuffer;
   uint32_t error;  // 넘침 등 (0 = 정상)
+  BatchPlan plan;  // 지금 푸는 묶음 (작업 공간)
   // 통계 (시험·보고용, 결과에 영향 없음)
   uint64_t statBatches, statBlock4, statSingle, statHeaders, statMaxPartitions, statFreeBatches;
   uint64_t stat1DBlock4, stat1DSingle, stat1DZeroRows;

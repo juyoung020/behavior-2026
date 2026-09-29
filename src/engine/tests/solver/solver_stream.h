@@ -106,8 +106,8 @@ SV_HD StepView makeView(const uint8_t* base, const StepCounts& c, uint32_t nb) {
   return v;
 }
 
-// 스텝 입력을 판에 적용하고 한 스텝 푼다 (호스트·장치 공용)
-SV_HD void runStep(sv::SolverBoard& B, const sv::SolverParams& prm, const StepView& v) {
+// 스텝 입력을 판에 적용한다 (호스트·장치 공용)
+SV_HD void applyStep(sv::SolverBoard& B, const StepView& v) {
   for (uint32_t k = 0; k < v.c.nWake; ++k) {  // Sc 층 internalWakeUpBase: 올리기만 (ScBodySim.cpp:541)
     eng::Body& b = B.bodies[v.wake[k].body];
     if (b.wakeCounter < v.wake[k].value) b.wakeCounter = v.wake[k].value;
@@ -135,6 +135,11 @@ SV_HD void runStep(sv::SolverBoard& B, const sv::SolverParams& prm, const StepVi
   B.nbC1D = v.c.nC1D;
   B.islandC1Ds = v.ic1d;
   B.jointData = v.jd;
+}
+
+// 스텝 입력을 판에 적용하고 한 스텝 푼다 (호스트·장치 공용, 판 하나를 스레드 하나가)
+SV_HD void runStep(sv::SolverBoard& B, const sv::SolverParams& prm, const StepView& v) {
+  applyStep(B, v);
 #if defined(SVS_HOST_API)
   sv::solverStepHost(B, prm);
   sv::afterIntegrationHost(B);
