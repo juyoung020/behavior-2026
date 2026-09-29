@@ -21,6 +21,17 @@ void solve1DStep(uint8_t* blk, TgsBodyVel& b0, TgsBodyVel& b1, const TgsTxInerti
                  bool isPositionIteration);
 void conclude1DStep(uint8_t* blk);
 void writeBack1DStep(const uint8_t* blk, Writeback* wb);
+// 4개 묶음 경로 (tgs_1d4.h). 머리 pad0[1..3] 은 원본이 안 쓰는 바이트
+uint32_t blockLength4(uint32_t maxRows);
+uint32_t setupSolverConstraintStep4(PrepIn* p, uint8_t* blk, float stepDt, float simDt, float recipStepDt, float recipSimDt, uint32_t maxRows,
+                                    float lengthScale, float biasCoefficient);
+uint32_t prepareD6Step4(const D6Data* const data[4], const uint16_t flags[4], const float linBreak[4], const float angBreak[4], const float minResp[4],
+                        const eng::Tf* frame0[4], const eng::Tf* frame1[4], const TgsBodyVel* b0[4], const TgsBodyVel* b1[4], const TgsTxInertia* t0[4],
+                        const TgsTxInertia* t1[4], const TgsBodyData* d0[4], const TgsBodyData* d1[4], Row* rows, uint8_t* blk, float stepDt,
+                        float simDt, float recipStepDt, float recipSimDt, float lengthScale, float biasCoefficient);
+void solve1DStep4(uint8_t* blk, TgsBodyVel* const b[4][2], const TgsTxInertia* const t[4][2], float elapsed);
+void conclude1DStep4(uint8_t* blk);
+void writeBack1D4(const uint8_t* blk, Writeback* const wb[4]);
 // 시험 틀 (tgs_harness.h)
 void bodyCoreComputeUnconstrainedVelocity(const eng::V3& gravity, float dt, float linearDamping, float angularDamping, float accelScale,
                                           float maxLinearVelocitySq, float maxAngularVelocitySq, eng::V3& lin, eng::V3& ang, bool disableGravity);

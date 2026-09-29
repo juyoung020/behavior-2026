@@ -226,11 +226,18 @@ EHD void raiseInternalFlagsTGS(uint16_t externalFlags, uint16_t hint, uint32_t& 
 // Art 가 줘야 하는 것 (PhysX FeatherstoneArticulation 과 같은 의미·같은 연산):
 //   float getCfm(uint32_t link)
 //   void getImpulseResponse(uint32_t link, const V3& impLin, const V3& impAng, V3& dvLin, V3& dvAng)   // 입력은 이미 dom 배율 적용됨
-//   void getLinkVelocity(uint32_t link, aos::Vec3V& lin, aos::Vec3V& ang)                             // Cm::SpatialVectorV
+//   void getLinkVelocity(uint32_t link, V3& lin, V3& ang)                                             // Cm::SpatialVectorV (w=0 적재)
+//   (풀기용 함수들은 아래 solveExt1DStep 머리말)
 struct NoArt {
   EHD float getCfm(uint32_t) const { return 0.0f; }
   EHD void getImpulseResponse(uint32_t, const V3&, const V3&, V3& a, V3& b) const { a = V3{0, 0, 0}; b = V3{0, 0, 0}; }
-  EHD void getLinkVelocity(uint32_t, aos::Vec3V& a, aos::Vec3V& b) const { a = aos::V3Zero(); b = aos::V3Zero(); }
+  EHD void getLinkVelocity(uint32_t, V3& a, V3& b) const { a = V3{0, 0, 0}; b = V3{0, 0, 0}; }
+  EHD void getVelocity(uint32_t, V3& a, V3& b) const { a = V3{0, 0, 0}; b = V3{0, 0, 0}; }
+  EHD void getVelocities(uint32_t, uint32_t, V3& a, V3& b, V3& c, V3& d) const { a = b = c = d = V3{0, 0, 0}; }
+  EHD void getMotionVector(uint32_t, V3& a, V3& b) const { a = V3{0, 0, 0}; b = V3{0, 0, 0}; }
+  EHD Q getDeltaQ(uint32_t) const { return qid(); }
+  EHD void applyImpulse(uint32_t, const V3&, const V3&) {}
+  EHD void applyImpulses(uint32_t, const V3&, const V3&, uint32_t, const V3&, const V3&) {}
 };
 
 // ---- setupSolverConstraintStep (DyTGSContactPrep.cpp:1939). blk 는 blockLength(numRows, isExtended) 바이트 이상.
@@ -359,8 +366,9 @@ EHD uint32_t setupSolverConstraintStep(PrepIn& p, uint8_t* blk, float stepDt, fl
       // SolverExtBodyStep::projectVelocity (DyTGSContactPrep.cpp:305)
       auto proj = [&](uint32_t link, const TgsBodyData* d, const Art& art, const V3& lin, const V3& ang) -> float {
         if (link == RIGID_BODY) return dot(d->originalLinearVelocity, lin) + dot(d->originalAngularVelocity, ang);
-        aos::Vec3V vl, va;
-        art.getLinkVelocity(link, vl, va);
+        V3 vl3, va3;
+        art.getLinkVelocity(link, vl3, va3);
+        const aos::Vec3V vl = aos::V3LoadA(PxVec3(vl3)), va = aos::V3LoadA(PxVec3(va3));
         float f;  // SpatialVectorV::dot(SpatialVectorV(SpatialVector)) = V3SumElems(lin*lin' + ang*ang')
         aos::FStore(aos::V3SumElems(aos::V3Add(aos::V3Mul(vl, aos::V3LoadA(PxVec3(lin))), aos::V3Mul(va, aos::V3LoadA(PxVec3(ang))))), &f);
         return f;
@@ -583,6 +591,153 @@ EHD void solve1DStep(uint8_t* blk, TgsBodyVel& b0, TgsBodyVel& b1, const TgsTxIn
   V3StoreA(angState0, t); b0.angularVelocity = t;
   V3StoreA(linVel1, t); b1.linearVelocity = t;
   V3StoreA(angState1, t); b1.angularVelocity = t;
+}
+
+// ---- 관절체 쪽 1D 풀기 (DyTGSContactPrep.cpp:2211 solveExt1D, :2309 solveExt1DStep)
+// Art(관절체 접근) 이 줘야 하는 것 — PhysX FeatherstoneArticulation 의 같은 이름 함수와 같은 뜻 (articulation 모듈 art_step.h 에 있음):
+//   void getVelocity(uint32_t link, V3& lin, V3& ang)                     // pxcFsGetVelocity(link) (Cm::SpatialVector -> w=0 으로 적재)
+//   void getVelocities(uint32_t l0, uint32_t l1, V3& lin0, V3& ang0, V3& lin1, V3& ang1)  // pxcFsGetVelocities
+//   void getMotionVector(uint32_t link, V3& lin, V3& ang)                 // getLinkMotionVector
+//   Q getDeltaQ(uint32_t link)
+//   void applyImpulse(uint32_t link, const V3& lin, const V3& ang)        // pxcFsApplyImpulse(link, lin, ang, NULL)
+//   void applyImpulses(uint32_t l0, const V3& lin0, const V3& ang0, uint32_t l1, const V3& lin1, const V3& ang1)  // pxcFsApplyImpulses
+// artA/artB: 링크가 속한 관절체 (강체 쪽은 nullptr). 같은 관절체면 같은 포인터.
+EHD void solveExt1D(uint8_t* blk, aos::Vec3V& linVel0, aos::Vec3V& linVel1, aos::Vec3V& angVel0, aos::Vec3V& angVel1, const aos::Vec3V& linMotion0,
+                    const aos::Vec3V& linMotion1, const aos::Vec3V& angMotion0, const aos::Vec3V& angMotion1, const aos::QuatV& rotA,
+                    const aos::QuatV& rotB, float elapsedTimeF32, aos::Vec3V& linImpulse0, aos::Vec3V& linImpulse1, aos::Vec3V& angImpulse0,
+                    aos::Vec3V& angImpulse1, bool isPositionIteration) {
+  using namespace aos;
+  const Sc1DHeader* header = reinterpret_cast<const Sc1DHeader*>(blk);
+  Sc1DRowExt* base = reinterpret_cast<Sc1DRowExt*>(blk + sizeof(Sc1DHeader));
+  const FloatV elapsedTime = FLoad(elapsedTimeF32);
+  const Vec3V raPrev = V3LoadA(PxVec3(header->rAWorld));
+  const Vec3V rbPrev = V3LoadA(PxVec3(header->rBWorld));
+  const Vec3V ra = QuatRotate(rotA, V3LoadA(PxVec3(header->rAWorld)));
+  const Vec3V rb = QuatRotate(rotB, V3LoadA(PxVec3(header->rBWorld)));
+  const Vec3V raMotion = V3Sub(V3Add(ra, linMotion0), raPrev);
+  const Vec3V rbMotion = V3Sub(V3Add(rb, linMotion1), rbPrev);
+  Vec3V li0 = V3Zero(), li1 = V3Zero(), ai0 = V3Zero(), ai1 = V3Zero();
+  const VecU32V springFlagMask = U4Load(SC_SPRING);
+  const uint32_t count = header->count;
+  for (uint32_t i = 0; i < count; ++i, base++) {
+    Sc1DRowExt& c = *base;
+    const Vec3V clinVel0 = V3LoadA(PxVec3(c.lin0));
+    const Vec3V clinVel1 = V3LoadA(PxVec3(c.lin1));
+    const Vec3V cangVel0 = V3LoadA(PxVec3(c.ang0));
+    const Vec3V cangVel1 = V3LoadA(PxVec3(c.ang1));
+    const FloatV recipResponse = FLoad(c.recipResponse);
+    const FloatV targetVel = FLoad(c.velTarget);
+    const BoolV isSpringConstraint = V4IsEqU32(V4U32and(U4Load(c.flags), springFlagMask), springFlagMask);
+    // computeResolvedGeometricErrorTGS (deltaLin0=raMotion, deltaLin1=rbMotion, cLinVel0/1, deltaAngInertia0/1 = angMotion0/1,
+    //   cAngVelInertia0/1 = cangVel0/1)
+    const FloatV angErrScale = FLoad(getUseAngularError(c));
+    const FloatV deltaAng = FMul(angErrScale, FSub(V3Dot(cangVel0, angMotion0), V3Dot(cangVel1, angMotion1)));
+    const FloatV deltaLin = FSub(V3Dot(clinVel0, raMotion), V3Dot(clinVel1, rbMotion));
+    const FloatV motion = FAdd(deltaLin, deltaAng);
+    const FloatV errorChange = FSel(isSpringConstraint, motion, FNegScaleSub(targetVel, elapsedTime, motion));
+    const FloatV biasScale = FLoad(c.biasScale);
+    const FloatV maxBias = FLoad(c.maxBias);
+    const FloatV vMul = FSel(isSpringConstraint, FLoad(c.velMultiplier), FMul(recipResponse, FLoad(c.velMultiplier)));
+    const FloatV appliedForce = FLoad(c.appliedForce);
+    const FloatV unclampedBias = FScaleAdd(errorChange, biasScale, FLoad(c.error));
+    const FloatV minBias = FNeg((c.flags & SC_INEQUALITY) ? FMax() : maxBias);
+    const FloatV bias = FClamp(unclampedBias, minBias, maxBias);
+    const FloatV constant = FSel(isSpringConstraint, FAdd(bias, targetVel), FMul(recipResponse, FAdd(bias, targetVel)));
+    const FloatV maxImpulse = FLoad(c.maxImpulse);
+    const FloatV minImpulse = FLoad(c.minImpulse);
+    const Vec3V v0 = V3MulAdd(linVel0, clinVel0, V3Mul(angVel0, cangVel0));
+    const Vec3V v1 = V3MulAdd(linVel1, clinVel1, V3Mul(angVel1, cangVel1));
+    const FloatV normalVel = V3SumElems(V3Sub(v0, v1));
+    const FloatV unclampedForce = FAdd(appliedForce, FScaleAdd(vMul, normalVel, constant));
+    const FloatV clampedForce = FMin(maxImpulse, (FMax(minImpulse, unclampedForce)));
+    const FloatV deltaF = FSub(clampedForce, appliedForce);
+    FStore(clampedForce, &c.appliedForce);
+    float residual;  // Dy::calculateResidual (DyResidualAccumulator.h:45) — 관절체 쪽은 늘 저장
+    FStore(FSel(FIsEq(vMul, FZero()), FZero(), FDivFast(deltaF, vMul)), &residual);
+    if (isPositionIteration) setPositionIterationResidual(c, residual);
+    else c.residualVelIter = residual;
+    FStore(clampedForce, &base->appliedForce);
+    li0 = V3ScaleAdd(clinVel0, deltaF, li0);
+    ai0 = V3ScaleAdd(cangVel0, deltaF, ai0);
+    li1 = V3ScaleAdd(clinVel1, deltaF, li1);
+    ai1 = V3ScaleAdd(cangVel1, deltaF, ai1);
+    linVel0 = V3ScaleAdd(V3LoadA(c.deltaVA.lin), deltaF, linVel0);
+    angVel0 = V3ScaleAdd(V3LoadA(c.deltaVA.ang), deltaF, angVel0);
+    linVel1 = V3ScaleAdd(V3LoadA(c.deltaVB.lin), deltaF, linVel1);
+    angVel1 = V3ScaleAdd(V3LoadA(c.deltaVB.ang), deltaF, angVel1);
+  }
+  linImpulse0 = V3Scale(li0, FLoad(header->linearInvMassScale0));
+  linImpulse1 = V3Scale(li1, FLoad(header->linearInvMassScale1));
+  angImpulse0 = V3Scale(ai0, FLoad(header->angularInvMassScale0));
+  angImpulse1 = V3Scale(ai1, FLoad(header->angularInvMassScale1));
+}
+
+template <class Art>
+EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, Art* artA, Art* artB, TgsBodyVel* bodyA, TgsBodyVel* bodyB,
+                        const TgsTxInertia* txIA, const TgsTxInertia* txIB, float elapsedTimeF32, bool isPositionIteration) {
+  using namespace aos;
+  if (blk == nullptr) return;
+  Vec3V linVel0, angVel0, linVel1, angVel1, linMotion0, angMotion0, linMotion1, angMotion1;
+  QuatV rotA, rotB;
+  auto ld = [](const V3& v) { return V3LoadA(PxVec3(v)); };
+  auto ldq = [](const Q& q) { const float f[4] = {q.x, q.y, q.z, q.w}; return QuatVLoadU(f); };
+  if (artA == artB) {
+    V3 l0, a0, l1, a1;
+    artA->getVelocities(linkIndexA, linkIndexB, l0, a0, l1, a1);
+    linVel0 = ld(l0); angVel0 = ld(a0); linVel1 = ld(l1); angVel1 = ld(a1);
+    V3 m0l, m0a, m1l, m1a;
+    artA->getMotionVector(linkIndexA, m0l, m0a);
+    artB->getMotionVector(linkIndexB, m1l, m1a);
+    linMotion0 = ld(m0l); angMotion0 = ld(m0a); linMotion1 = ld(m1l); angMotion1 = ld(m1a);
+    rotA = ldq(artA->getDeltaQ(linkIndexA));
+    rotB = ldq(artB->getDeltaQ(linkIndexB));
+  } else {
+    if (linkIndexA == RIGID_BODY) {
+      linVel0 = ld(bodyA->linearVelocity); angVel0 = ld(bodyA->angularVelocity);
+      linMotion0 = ld(bodyA->deltaLinDt); angMotion0 = ld(bodyA->deltaAngDt);
+      rotA = QuatVLoadA(&txIA->deltaBody2WorldQ.x);
+    } else {
+      V3 l, a, ml, ma;
+      artA->getVelocity(linkIndexA, l, a);
+      rotA = ldq(artA->getDeltaQ(linkIndexA));
+      artA->getMotionVector(linkIndexA, ml, ma);
+      linVel0 = ld(l); angVel0 = ld(a); linMotion0 = ld(ml); angMotion0 = ld(ma);
+    }
+    if (linkIndexB == RIGID_BODY) {
+      linVel1 = ld(bodyB->linearVelocity); angVel1 = ld(bodyB->angularVelocity);
+      linMotion1 = ld(bodyB->deltaLinDt); angMotion1 = ld(bodyB->deltaAngDt);
+      rotB = QuatVLoadA(&txIB->deltaBody2WorldQ.x);
+    } else {
+      V3 l, a, ml, ma;
+      artB->getVelocity(linkIndexB, l, a);
+      rotB = ldq(artB->getDeltaQ(linkIndexB));
+      artB->getMotionVector(linkIndexB, ml, ma);
+      linVel1 = ld(l); angVel1 = ld(a); linMotion1 = ld(ml); angMotion1 = ld(ma);
+    }
+  }
+  Vec3V li0, li1, ai0, ai1;
+  solveExt1D(blk, linVel0, linVel1, angVel0, angVel1, linMotion0, linMotion1, angMotion0, angMotion1, rotA, rotB, elapsedTimeF32, li0, li1, ai0,
+             ai1, isPositionIteration);
+  PxVec3 t, t2, t3, t4;
+  if (artA == artB) {
+    V3StoreA(li0, t); V3StoreA(ai0, t2); V3StoreA(li1, t3); V3StoreA(ai1, t4);
+    artA->applyImpulses(linkIndexA, t, t2, linkIndexB, t3, t4);
+  } else {
+    if (linkIndexA == RIGID_BODY) {
+      V3StoreA(linVel0, t); bodyA->linearVelocity = t;
+      V3StoreA(angVel0, t); bodyA->angularVelocity = t;
+    } else {
+      V3StoreA(li0, t); V3StoreA(ai0, t2);
+      artA->applyImpulse(linkIndexA, t, t2);
+    }
+    if (linkIndexB == RIGID_BODY) {
+      V3StoreA(linVel1, t); bodyB->linearVelocity = t;
+      V3StoreA(angVel1, t); bodyB->angularVelocity = t;
+    } else {
+      V3StoreA(li1, t); V3StoreA(ai1, t2);
+      artB->applyImpulse(linkIndexB, t, t2);
+    }
+  }
 }
 
 // ---- conclude1DStep (DyTGSContactPrep.cpp:2750): 마지막 위치 반복 뒤, 속도 반복 전에

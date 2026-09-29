@@ -117,7 +117,13 @@ EHD float atan2f(float y, float x) {
   k = (iy - ix) >> 23;
   if (k > 60) z = pi_o_2 + (float)0.5 * pi_lo;
   else if (hx < 0 && k < -60) z = 0.0f;
-  else z = atanf(fabsf_(y / x));
+  else {
+    const float q = y / x;
+    // 둘 다 비정규면 DAZ(CPU)·-ftz(GPU) 로 0/0 = NaN. SSE 는 기본 NaN 0xffc00000 을 내고(fabsf 뒤 0x7fc00000, 뒤 산술은 그 NaN 을
+    // 그대로 전함), GPU 는 0x7fffffff 를 낸다 -> x86 결과를 비트로 만든다 (GPU 무작위 쌍 시험에서 131715 건 찾음)
+    if (q != q) return m == 1 ? uf(0xffc00000u) : uf(0x7fc00000u);
+    z = atanf(fabsf_(q));
+  }
   switch (m) {
     case 0: return z;
     case 1: return uf(fu(z) ^ 0x80000000u);
