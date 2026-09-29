@@ -2,6 +2,7 @@
 
 판정: "비트 동일" / "허용오차 안 (최대 |오차|)" / "다름". 기준은 원래 파이프라인이 같은 인덱스에서 낸 텐서다.
 
+    bash tools/ft_run.sh tools/ft_verify.py index                 # Rust mp4 색인 == libavformat(PyAV) 패킷 (GPU 안 씀)
     bash tools/ft_run.sh tools/ft_verify.py stage                 # 구간별: NVDEC+색표 == torchcodec RGB, 커널 == JAX 크기 조정
     bash tools/ft_run.sh tools/ft_verify.py ref --tag a           # 원래 파이프라인 기준 저장 (고정 인덱스)
     bash tools/ft_run.sh tools/ft_verify.py ref --tag b           # 다른 프로세스에서 한 번 더
@@ -69,6 +70,38 @@ def fixed_indices(lds, n_random: int, seed: int = 1234):
         s, L = starts[e]
         idx += [s, s + 1, s + 7, s + 8, s + L - 33, s + L - 32, s + L - 2, s + L - 1]
     return [int(i) for i in idx]
+
+
+# ------------------------------------------------------------------ Rust 색인
+def cmd_index(a):
+    """Rust ftprep 가 mp4 에서 읽은 패킷(위치·크기·키프레임·표시 시각)이 libavformat 이 읽은 것과 같은지. GPU 안 씀."""
+    import glob
+
+    import av
+    from fasttrain import fast
+
+    root = os.path.expanduser("~/data/2026-challenge-demos/videos")
+    bad_total, n_total = 0, 0
+    for v in sorted(glob.glob(f"{root}/observation.rgb.*/chunk-*/*.mp4")):
+        b = np.fromfile(fast.ensure_index(v), np.uint8)
+        _, _, _, _, plen, _ = np.frombuffer(b[8:32].tobytes(), "<u4")
+        n = int(np.frombuffer(b[32 + plen: 40 + plen].tobytes(), "<u8")[0])
+        rec = np.frombuffer(b[40 + plen: 40 + plen + 24 * n].tobytes(), fast._IDX_REC)
+        cols = {"pos": [], "size": [], "key": [], "pts": []}
+        with av.open(v) as c:
+            for p in c.demux(c.streams.video[0]):
+                if p.size:
+                    cols["pos"].append(p.pos), cols["size"].append(p.size)
+                    cols["key"].append(int(p.is_keyframe)), cols["pts"].append(p.pts)
+        cols = {k: np.asarray(x) for k, x in cols.items()}
+        same_n = len(cols["pos"]) == n
+        bad = {k: int((cols[k] != rec[f]).sum()) if same_n else -1
+               for k, f in (("pos", "off"), ("size", "size"), ("key", "key"), ("pts", "pts"))}
+        bad_total += (not same_n) + sum(max(0, x) for x in bad.values())
+        n_total += n
+        print(f"  {v.split('videos/')[1]:<62} 패킷 {n:>7} (PyAV {len(cols['pos']):>7})  다른 것 {bad}")
+    print(f"패킷 {n_total} 개: " + ("통과" if bad_total == 0 else f"실패 {bad_total}"))
+    return 1 if bad_total else 0
 
 
 # ------------------------------------------------------------------ 구간별
@@ -247,6 +280,7 @@ def cmd_loader(a):
 def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
+    sp.add_parser("index")
     s = sp.add_parser("stage")
     s.add_argument("--n", type=int, default=16)
     s.add_argument("--seed", type=int, default=0)
@@ -264,7 +298,7 @@ def main():
     s.add_argument("--batch", type=int, default=32)
     s.add_argument("--workers", type=int, default=2)
     a = ap.parse_args()
-    sys.exit({"stage": cmd_stage, "ref": cmd_ref, "same": cmd_same, "check": cmd_check,
+    sys.exit({"index": cmd_index, "stage": cmd_stage, "ref": cmd_ref, "same": cmd_same, "check": cmd_check,
               "loader": cmd_loader}[a.cmd](a) or 0)
 
 
