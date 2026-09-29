@@ -6,12 +6,13 @@
 //   quat_distance(q1=child, q0=parent): d = 벡터 줄이기 (p0c0+p2c2)+(p1c1+p3c3), n = 같은 순서 제곱합, inv = conj / n,
 //   q1 = d<0 ? -q1 : q1, quat_multiply 는 식 그대로 왼쪽부터; quat2axisangle: w 자르기 [-1,1], den = sqrt(1 - w*w),
 //   den != 0 이면 (q_i * 2 * acos(w)) / den (acos = glibc acosf, std::acos(float)), norm = sqrt(0 + ((a²+c²)+b²))
-// 붙인 뒤(관절 만들기·자세 맞춤 _attach:393)는 아직 안 옮김 — 문서 17 절.
+// 붙일 때 자식 뿌리 자세 맞춤(_attach:393, 고정 관절)도 아래 attach_root_pose. 관절 만들기 자체는 joints 모듈 요청.
 #pragma once
 #include <cmath>
 #include <cstdint>
 
 #include "core/common/glibc_trig.h"
+#include "core/omni/agframe.h"
 #include "core/omni/assisted_grasp.h"
 #include "core/omni/warp_f32.h"
 
@@ -48,6 +49,23 @@ OEHD float pos_diff(const float c[3], const float p[3]) { return ag::torch_norm3
 OEHD bool aligned(const float cpos[3], const float corn[4], const float ppos[3], const float porn[4], float pos_thresh = 0.05f,
                   float orn_thresh = 0.2617993950843811f) {
   return pos_diff(cpos, ppos) < pos_thresh && orientation_diff(corn, porn) < orn_thresh;
+}
+
+// _attach (attached_to.py:393) 고정 관절: 자식 물체 뿌리를 옮겨 자식 링크 틀을 부모 링크 틀에 맞춘다.
+//   rel = mat2pose(pose2mat(parent) @ pose_inv(pose2mat(child))), new_root = mat2pose(pose2mat(rel) @ pose2mat(root))
+//   (파이썬 @ = aten.mm, agframe.h 의 mm 순서 1 과 같음)
+OEHD void attach_root_pose(const float pp[3], const float pq[4], const float cp[3], const float cq[4], const float rp[3],
+                           const float rq[4], float npos[3], float nq[4]) {
+  float mp[16], mc[16], ic[16], h[16], rel_p[3], rel_q[4], mr[16], mrel[16], h2[16];
+  agf::pose2mat(pp, pq, mp);
+  agf::pose2mat(cp, cq, mc);
+  agf::pose_inv(mc, ic);
+  agf::mm4(mp, ic, h, 1);
+  agf::mat2pose(h, rel_p, rel_q);
+  agf::pose2mat(rel_p, rel_q, mrel);
+  agf::pose2mat(rp, rq, mr);
+  agf::mm4(mrel, mr, h2, 1);
+  agf::mat2pose(h2, npos, nq);
 }
 
 }  // namespace att

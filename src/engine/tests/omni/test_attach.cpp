@@ -34,5 +34,25 @@ int main(int argc, char** argv) {
   }
   printf("행 %d: pos_diff 다름 %lld (첫 %d), orn_diff 다름 %lld (첫 %d), 붙음 판정 다름 %lld (double 문턱으로 하면 %lld, 두 방식이 갈리는 행 %lld)\n",
          N, bp, fp, bo, fo, bd, bd64, near);
-  return (bp || bo || bd) ? 1 : 0;
+  // _attach 자세 맞춤
+  std::ifstream h(std::string(argv[1]) + "/attach_pose.bin", std::ios::binary | std::ios::ate);
+  long long bpose = 0, cpose = 0;
+  if (h) {
+    const size_t nh = (size_t)h.tellg();
+    h.seekg(0);
+    std::vector<float> u(nh / 4);
+    h.read((char*)u.data(), nh);
+    for (size_t r = 0; r + 28 <= u.size(); r += 28) {
+      const float* x = &u[r];
+      float np[3], nq[4];
+      att::attach_root_pose(x, x + 3, x + 7, x + 10, x + 14, x + 17, np, nq);
+      for (int k = 0; k < 7; ++k) {
+        const float o = k < 3 ? np[k] : nq[k - 3];
+        ++cpose;
+        bpose += memcmp(&o, &x[21 + k], 4) != 0;
+      }
+    }
+    printf("붙일 때 뿌리 자세: 비교 %lld 다름 %lld\n", cpose, bpose);
+  }
+  return (bp || bo || bd || bpose) ? 1 : 0;
 }
