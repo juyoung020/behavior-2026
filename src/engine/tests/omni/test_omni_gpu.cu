@@ -231,7 +231,7 @@ int main(int argc, char** argv) {
   if (parts.find('C') != std::string::npos) {
     std::ifstream idx(root + "/states/index.txt");
     std::string fr;
-    long long cmp_m = 0, bad_m = 0, cmp_a = 0, bad_a = 0;
+    long long cmp_m = 0, bad_m = 0, cmp_a = 0, bad_a = 0, cmp_s = 0, bad_s = 0;
     double t_adj = 0;
     long long rays = 0;
     while (std::getline(idx, fr)) {
@@ -293,13 +293,103 @@ int main(int argc, char** argv) {
         ++cmp_a;
         bad_a += adj[e] != aref[e];
       }
+      // AABB (공식 행렬 입력)
+      {
+        const auto ls = L_("link_scene").vec<int32_t>(), lo = L_("link_obj").vec<int32_t>();
+        std::vector<int32_t> lrow(L);
+        for (int l = 0; l < L; ++l) lrow[l] = ls[l] * O + lo[l];
+        const auto bl = L_("aabb_base_link").vec<int32_t>();
+        auto* d_lrow = dput(lrow);
+        auto* d_bl = dput(bl);
+        float* d_ab;
+        CK(cudaMalloc(&d_ab, (size_t)S * O * 6 * 4));
+        gpu::k_aabb<<<(S * O + 63) / 64, 64>>>(d_mo, d_poses, d_lrow, d_hm, d_pts, d_poff, L, d_bl, (int)bl.size(), S * O, d_ab);
+        CK(cudaDeviceSynchronize());
+        const auto ab = dget(d_ab, (size_t)S * O * 6);
+        const auto abref = L_("aabb").vec<float>();
+        for (size_t e = 0; e < ab.size(); ++e) {
+          ++cmp_s;
+          bad_s += memcmp(&ab[e], &abref[e], 4) != 0;
+        }
+        cudaFree(d_lrow), cudaFree(d_bl), cudaFree(d_ab);
+      }
+      // Inside (공식 AABB·행렬 입력)
+      {
+        const int Mn = L_("in_M").vec<int32_t>()[0];
+        std::vector<int32_t> mcont, mscene, mpar, fstart(1, 0);
+        std::vector<wf::M44> minv;
+        std::vector<float> fc, fn;
+        if (Mn > 0) {
+          mcont = L_("in_mesh_container").vec<int32_t>(), mscene = L_("in_mesh_scene").vec<int32_t>();
+          mpar = L_("in_mesh_parent").vec<int32_t>();
+          const auto mi = L_("in_mesh_inv").vec<float>();
+          minv.resize(Mn);
+          for (int m = 0; m < Mn; ++m) memcpy(minv[m].m, &mi[m * 16], 64);
+          const auto f2m = L_("in_f2m").vec<int32_t>();
+          fc = L_("in_fc").vec<float>(), fn = L_("in_fn").vec<float>();
+          for (int m = 0; m < Mn; ++m) {
+            int e = fstart.back();
+            while (e < (int)f2m.size() && f2m[e] == m) ++e;
+            fstart.push_back(e);
+          }
+        }
+        auto *d_mc = dput(mcont), *d_ms = dput(mscene), *d_mp = dput(mpar), *d_fs = dput(fstart);
+        auto* d_mi = dput(minv);
+        auto *d_fc = dput(fc), *d_fn = dput(fn);
+        uint8_t* d_in;
+        CK(cudaMalloc(&d_in, (size_t)S * N * N));
+        gpu::k_inside<<<(S * N * N + 63) / 64, 64>>>(d_aabb, O, d_aidx, N, S, d_mo, Mn, d_mc, d_ms, d_mp, d_mi, d_fs, d_fc, d_fn, d_in);
+        CK(cudaDeviceSynchronize());
+        const auto in = dget(d_in, (size_t)S * N * N);
+        const auto inref = L_("inside").vec<uint8_t>();
+        for (size_t e = 0; e < in.size(); ++e) {
+          ++cmp_s;
+          bad_s += in[e] != inref[e];
+        }
+        cudaFree(d_mc), cudaFree(d_ms), cudaFree(d_mp), cudaFree(d_fs), cudaFree(d_mi), cudaFree(d_fc), cudaFree(d_fn), cudaFree(d_in);
+      }
+      // ToggledOn 표식 겹침 (겹침 앞 표시는 층 1 로: 접촉·requires_closed 는 불 연산)
+      {
+        const auto RC = L_("tg_R").vec<int32_t>();
+        const int Rt = RC[0], Ct = RC[1];
+        std::vector<int32_t> mask(S * O, 0);
+        for (int s = 0; s < S; ++s) {
+          const std::string ss = std::to_string(s);
+          const auto q = L_(("tg_q_" + ss).c_str()).vec<uint8_t>(), cmx = L_(("tg_cm_" + ss).c_str()).vec<uint8_t>(),
+                     wm = L_(("tg_with_" + ss).c_str()).vec<uint8_t>();
+          for (int o = 0; o < O; ++o) mask[s * O + o] = st::toggle_contact(q.data(), cmx.data(), Rt, Ct, &wm[(size_t)o * Ct]);
+        }
+        const auto rc_this = L_("tg_rc_this").vec<int32_t>(), rc_open = L_("tg_rc_open").vec<int32_t>();
+        const auto openf = L_("tg_open").vec<uint8_t>();
+        for (size_t i = 0; i < rc_this.size(); ++i)
+          if (openf[rc_open[i]]) mask[rc_this[i]] = 0;
+        const auto pairs = L_("tg_pairs").vec<int32_t>();
+        auto* d_mask = dput(mask);
+        auto* d_pairs = dput(pairs);
+        auto* d_mkp = dput(L_("tg_mk_parent").vec<int32_t>());
+        auto* d_mko = dput(L_("tg_mk_off").vec<float>());
+        auto* d_mkr = dput(L_("tg_mk_rad").vec<float>());
+        const int np = (int)pairs.size() / 2;
+        if (np > 0) {
+          gpu::k_toggle_overlap<<<(np + 63) / 64, 64>>>(d_mo, d_hm, d_pts, d_tri, d_poff, d_toff, d_mkp, d_mko, d_mkr, d_pairs, np, d_mask);
+          CK(cudaDeviceSynchronize());
+        }
+        const auto mk = dget(d_mask, (size_t)S * O);
+        const auto mref = L_("tg_mask_set").vec<int32_t>();
+        for (int k = 0; k < S * O; ++k) {
+          ++cmp_s;
+          bad_s += mk[k] != mref[k];
+        }
+        cudaFree(d_mask), cudaFree(d_pairs), cudaFree(d_mkp), cudaFree(d_mko), cudaFree(d_mkr);
+      }
       cudaFree(d_poses), cudaFree(d_m), cudaFree(d_mo), cudaFree(d_aabb), cudaFree(d_aidx), cudaFree(d_hm), cudaFree(d_l2o);
       cudaFree(d_l2s), cudaFree(d_dirs), cudaFree(d_maxd), cudaFree(d_pts), cudaFree(d_tri), cudaFree(d_poff), cudaFree(d_toff);
       cudaFree(d_adj);
     }
     printf("C. 자세→행렬 GPU=warp    비교 %lld, 다름 %lld\n", cmp_m, bad_m);
     printf("C. Adjacency GPU=warp    비교 %lld, 다름 %lld | 광선 스레드 %.1f 백만/초 (삼각형 전수)\n", cmp_a, bad_a, rays / t_adj / 1e6);
-    total_bad += bad_m + bad_a;
+    printf("C. AABB·Inside·Toggle 겹침 GPU=warp  비교 %lld, 다름 %lld\n", cmp_s, bad_s);
+    total_bad += bad_m + bad_a + bad_s;
   }
   return total_bad ? 1 : 0;
 }

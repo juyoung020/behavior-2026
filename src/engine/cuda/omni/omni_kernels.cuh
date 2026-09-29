@@ -106,6 +106,63 @@ __global__ void k_adjacency(const float* aabb, int O, const int32_t* aidx, int N
     adj[(((size_t)s * N + a) * N + b) * K + k] = 1;  // OR (여러 스레드가 1 만 씀)
 }
 
+// AABB: 스레드 = 물체 행 (링크·꼭짓점을 차례로, min/max 는 순서와 무관 — 부호 있는 0 동률만 예외)
+__global__ void k_aabb(const wf::M44* mats, const float* poses, const int32_t* link_row, const uint8_t* has_mesh,
+                       const float* pts, const int32_t* poff, int L, const int32_t* base_link, int n_base, int n_rows,
+                       float* aabb) {
+  const int row = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row >= n_rows) return;
+  float* a = aabb + (size_t)row * 6;
+  st::aabb_init(a);
+  for (int l = 0; l < L; ++l) {
+    if (link_row[l] != row || !has_mesh[l]) continue;
+    for (int v = poff[l]; v < poff[l + 1]; ++v) {
+      float w[3];
+      st::aabb_vertex_world(mats[l], pts + (size_t)v * 3, w);
+      st::aabb_accumulate(a, w);
+    }
+  }
+  for (int i = 0; i < n_base; ++i)
+    if (link_row[base_link[i]] == row) st::aabb_fallback(a, poses + (size_t)base_link[i] * 7);
+}
+
+// Inside: 스레드 = (s, i, j) 판정 한 칸. 메시·면을 차례로 (공식은 면마다 스레드 + 원자 OR — 결과 같음)
+__global__ void k_inside(const float* aabb, int O, const int32_t* aidx, int N, int S, const wf::M44* mats, int M,
+                         const int32_t* mcont, const int32_t* mscene, const int32_t* mpar, const wf::M44* minv,
+                         const int32_t* fstart, const float* fc, const float* fn, uint8_t* out) {
+  const int t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= S * N * N) return;
+  const int j = t % N, i = (t / N) % N, s = t / (N * N);
+  const float* aabb_s = aabb + (size_t)s * O * 6;
+  uint8_t v = 0;
+  if (i != j && st::inside_prefilter(aabb_s, aidx, i, j)) {
+    float c[3];
+    st::aabb_center(aabb_s + aidx[i] * 6, c);
+    for (int m = 0; m < M && !v; ++m) {
+      if (mcont[m] != j || mscene[m] != s) continue;
+      const wf::M44 iw = st::inside_inv_world(mats[mpar[m]], minv[m]);
+      bool outside = false;
+      for (int f = fstart[m]; f < fstart[m + 1] && !outside; ++f) outside = st::inside_face_outside(iw, c, fc + f * 3, fn + f * 3);
+      if (!outside) v = 1;
+    }
+  }
+  out[t] = v;
+}
+
+// ToggledOn 표식 겹침: 스레드 = (표식, 손가락) 쌍. mask 가 1 인 물체만, 겹치면 2 (원자 max 대신 1→2 쓰기: 같은 값만 씀)
+__global__ void k_toggle_overlap(const wf::M44* mats, const uint8_t* has_mesh, const float* pts, const int32_t* tri,
+                                 const int32_t* poff, const int32_t* toff, const int32_t* mk_parent, const float* mk_off, const float* mk_rad,
+                                 const int32_t* pairs, int n_pairs, int32_t* mask) {
+  const int p = blockIdx.x * blockDim.x + threadIdx.x;
+  if (p >= n_pairs) return;
+  const int k = pairs[p * 2], fg = pairs[p * 2 + 1];
+  if (mask[k] != 1 || !has_mesh[fg]) return;  // (공식도 같은 경쟁: 1 을 본 스레드만 2 를 쓴다)
+  if (st::toggle_marker_overlap(mats[mk_parent[k]], mk_off + k * 3, mk_rad[k], mats[fg], pts + (size_t)poff[fg] * 3,
+                                tri + (size_t)toff[fg] * 3,
+                                toff[fg + 1] - toff[fg]))
+    atomicMax(&mask[k], 2);
+}
+
 }  // namespace gpu
 }  // namespace omni
 }  // namespace eng

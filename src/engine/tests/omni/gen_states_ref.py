@@ -23,6 +23,7 @@ import omnigibson.object_states.next_to as NXT
 import omnigibson.object_states.on_top as ONT
 import omnigibson.object_states.open_state as OPN
 import omnigibson.object_states.touching as TCH
+import omnigibson.object_states.toggle as TOG
 import omnigibson.object_states.under as UND
 import omnigibson.utils.usd_utils as UU
 
@@ -379,6 +380,73 @@ def frame(rng, out):
     wp.launch(UND._under_kernel, dim=(S, N, N), inputs=[adj_vals, wpa(jdx), un], device=D)
     wp.launch(NXT._next_to_kernel, dim=(S, N, N), inputs=[aabb3, adj_vals, aidx_wp, wpa(jdx), nt], device=D)
     save(out, st_tidx=tidx, st_jdx=jdx, on_top=ot.numpy(), under=un.numpy(), next_to=nt.numpy())
+
+    # ---- 8. ToggledOn (toggle.py ToggledOn._update_values 순서 그대로)
+    Rt = int(rng.integers(2, 12))
+    Ct = int(rng.integers(2, 12))
+    tg_cm = [(rng.random((Rt, Ct)) < 0.3).astype(np.uint8) for _ in range(S)]
+    tg_q = [(rng.random((1, Rt)) < 0.4).astype(np.uint8) for _ in range(S)]
+    tg_with = [(rng.random((O, Ct)) < 0.3).astype(np.uint8) for _ in range(S)]
+    tvals0 = (rng.random((S, O)) < 0.5).astype(np.uint8)
+    ttime0 = f32(rng.choice([0.0, 0.03333334, 0.06666667, 0.1, 0.13333334, 0.14999999], (S, O)))
+    tvals_wp = wpa(tvals0)
+    ttime_wp = wpa(ttime0)
+    mask = wp.zeros((S, O), dtype=wp.int32, device=D)
+    mask_flat = mask.reshape((S * O,))
+    for s in range(S):
+        wp.launch(UU._is_in_contact_batch_kernel, dim=(O, Rt, Ct),
+                  inputs=[wpa(tg_q[s]), wpa(tg_cm[s]), wpa(tg_with[s]), wp.int32(0), mask[s]], device=D)
+    mask_after_contact = mask.numpy().copy()
+    # requires_closed: 일부 물체, Open 값 (S*O)
+    rc_this = [int(k) for k in range(S * O) if rng.random() < 0.3]
+    open_flat = (rng.random(S * O) < 0.4).astype(np.uint8)
+    rc_open = [int(rng.integers(0, S * O)) for _ in rc_this]
+    if rc_this:
+        wp.launch(TOG._check_requires_closed_kernel, dim=len(rc_this),
+                  inputs=[wpa(np.array(rc_this, np.int32)), wpa(np.array(rc_open, np.int32)), wpa(open_flat),
+                          tvals_wp.reshape((S * O,)), ttime_wp.reshape((S * O,)), mask_flat], device=D)
+    # 표식: 물체마다 (판 s, 물체 o) 부모 링크 = 첫 링크, 손가락 링크 = 메시 있는 링크 무작위 2~4 개 (판 s 안)
+    mk_parent = np.zeros(S * O, np.int32)
+    mk_off = np.zeros((S * O, 3), np.float32)
+    mk_rad = np.zeros(S * O, np.float32)
+    pairs = []
+    matsn = mats.numpy()
+    for s in range(S):
+        fl = [l for l in range(L) if link_scene[l] == s and mesh_ids[l] != 0]
+        fingers = list(rng.choice(fl, min(len(fl), int(rng.integers(2, 5))), replace=False)) if fl else []
+        for o in range(O):
+            k = s * O + o
+            par = first_link[(s, o)]
+            mk_parent[k] = par
+            mk_rad[k] = np.float32(rng.uniform(0.01, 0.1))
+            if fingers and rng.random() < 0.8:
+                # 표식 중심을 손가락 메시 꼭짓점 근처(반지름 안팎)에 둔다: 세계 → 부모 링크 좌표 offset
+                fg = int(rng.choice(fingers))
+                v = link_mesh[fg][0][rng.integers(0, len(link_mesh[fg][0]))].astype(np.float64)
+                Mf = matsn[fg].astype(np.float64)
+                wpt = Mf[:3, :3] @ v + Mf[:3, 3]
+                wpt = wpt + rng.standard_normal(3) / np.sqrt(3) * mk_rad[k] * rng.uniform(0.5, 1.5)
+                Mp = matsn[par].astype(np.float64)
+                mk_off[k] = f32(Mp[:3, :3].T @ (wpt - Mp[:3, 3]))
+            else:
+                mk_off[k] = f32(rng.uniform(-0.3, 0.3, 3))
+            for fg in fingers:
+                pairs.append((k, int(fg)))
+    if pairs:
+        wp.launch(TOG._check_overlap_kernel, dim=len(pairs),
+                  inputs=[mats, link_mesh_ids, wpa(mk_parent), wp.array(mk_off, dtype=wp.vec3, device=D), wpa(mk_rad),
+                          wp.array(np.array(pairs, np.int32), dtype=wp.vec2i, device=D),
+                          wpa(np.arange(S * O, dtype=np.int32)), mask_flat], device=D)
+    mask_before_set = mask.numpy().copy()
+    dt = wp.array(np.array([np.float32(1.0 / 30.0)], np.float32), dtype=wp.float32, device=D)
+    wp.launch(TOG._set_toggle_value_kernel, dim=(S, O),
+              inputs=[tvals_wp, mask_flat, ttime_wp, wp.int32(O), wp.float32(TOG.m.CAN_TOGGLE_SECONDS), dt], device=D)
+    save(out, tg_R=np.array([Rt, Ct], np.int32), tg_vals0=tvals0, tg_time0=ttime0, tg_rc_this=np.array(rc_this, np.int32),
+         tg_rc_open=np.array(rc_open, np.int32), tg_open=open_flat, tg_mk_parent=mk_parent, tg_mk_off=mk_off, tg_mk_rad=mk_rad,
+         tg_pairs=np.array(pairs, np.int32).reshape(-1, 2), tg_mask_contact=mask_after_contact, tg_mask_set=mask_before_set,
+         tg_vals=tvals_wp.numpy(), tg_time=ttime_wp.numpy(), tg_mask_end=mask.numpy())
+    for s in range(S):
+        save(out, **{f"tg_cm_{s}": tg_cm[s], f"tg_q_{s}": tg_q[s], f"tg_with_{s}": tg_with[s]})
     wp.synchronize()
     del meshes
 

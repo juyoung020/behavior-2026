@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
   std::ifstream idx(root + "/index.txt");
   std::string fr;
   Tally t_mat, t_aabb, t_open, t_cm, t_ccm, t_btf, t_touch, t_pre, t_invw, t_out, t_inside, t_adj, t_ontop, t_under,
-      t_nextto;
+      t_nextto, t_tg_contact, t_tg_overlap, t_tg_val, t_tg_time;
   int frames = 0;
   while (std::getline(idx, fr)) {
     if (fr.empty()) continue;
@@ -258,8 +258,56 @@ int main(int argc, char** argv) {
                        fr + " next_to");
           }
     }
+    // 9. ToggledOn (단계마다 공식 입력)
+    if (has("tg_R")) {
+      const auto RC = L_("tg_R").vec<int32_t>();
+      const int Rt = RC[0], Ct = RC[1];
+      const auto mref_c = L_("tg_mask_contact").vec<int32_t>();
+      for (int s = 0; s < S; ++s) {
+        const std::string ss = std::to_string(s);
+        const auto q = L_(("tg_q_" + ss).c_str()).vec<uint8_t>(), cm = L_(("tg_cm_" + ss).c_str()).vec<uint8_t>(),
+                   wm = L_(("tg_with_" + ss).c_str()).vec<uint8_t>();
+        for (int o = 0; o < O; ++o)
+          t_tg_contact.u(st::toggle_contact(q.data(), cm.data(), Rt, Ct, &wm[(size_t)o * Ct]), mref_c[s * O + o], fr + " tg_contact");
+      }
+      auto vals = L_("tg_vals0").vec<uint8_t>();
+      auto time = L_("tg_time0").vec<float>();
+      auto mask = mref_c;
+      const auto rc_this = L_("tg_rc_this").vec<int32_t>(), rc_open = L_("tg_rc_open").vec<int32_t>();
+      const auto openf = L_("tg_open").vec<uint8_t>();
+      for (size_t i = 0; i < rc_this.size(); ++i)
+        if (openf[rc_open[i]]) {
+          vals[rc_this[i]] = 0;
+          time[rc_this[i]] = 0.0f;
+          mask[rc_this[i]] = 0;
+        }
+      const auto mkp = L_("tg_mk_parent").vec<int32_t>();
+      const auto mko = L_("tg_mk_off").vec<float>();
+      const auto mkr = L_("tg_mk_rad").vec<float>();
+      const auto pairs = L_("tg_pairs").vec<int32_t>();
+      for (size_t p = 0; p * 2 + 1 < pairs.size(); ++p) {
+        const int k = pairs[p * 2], fg = pairs[p * 2 + 1];
+        if (mask[k] != 1 || !has_mesh[fg]) continue;
+        if (st::toggle_marker_overlap(M[mkp[k]], &mko[k * 3], mkr[k], M[fg], &mpts[poff[fg] * 3], &mtri[toff[fg] * 3],
+                                      toff[fg + 1] - toff[fg]))
+          mask[k] = 2;
+      }
+      const auto mref_s = L_("tg_mask_set").vec<int32_t>();
+      for (int k = 0; k < S * O; ++k) t_tg_overlap.u(mask[k], mref_s[k], fr + " tg_overlap " + std::to_string(k));
+      for (int k = 0; k < S * O; ++k) st::toggle_set_value(&vals[k], &mask[k], &time[k], 0.15f, (float)(1.0 / 30.0));
+      const auto vref = L_("tg_vals").vec<uint8_t>();
+      const auto tref = L_("tg_time").vec<float>();
+      for (int k = 0; k < S * O; ++k) {
+        t_tg_val.u(vals[k], vref[k], fr + " tg_val");
+        t_tg_time.f(time[k], tref[k], fr + " tg_time");
+      }
+    }
   }
   printf("장면 %d 개\n", frames);
+  t_tg_contact.print("Toggle 손가락 접촉 표시");
+  t_tg_overlap.print("Toggle 표식 겹침 표시");
+  t_tg_val.print("ToggledOn 값");
+  t_tg_time.print("ToggledOn 누적 시간 (float)");
   t_mat.print("자세→행렬 (float)");
   t_aabb.print("AABB (float)");
   t_open.print("Open");
@@ -276,6 +324,7 @@ int main(int argc, char** argv) {
   t_under.print("Under");
   t_nextto.print("NextTo");
   const long long bad = t_mat.bad + t_aabb.bad + t_open.bad + t_cm.bad + t_ccm.bad + t_btf.bad + t_touch.bad + t_pre.bad +
-                        t_invw.bad + t_out.bad + t_inside.bad + t_adj.bad + t_ontop.bad + t_under.bad + t_nextto.bad;
+                        t_invw.bad + t_out.bad + t_inside.bad + t_adj.bad + t_ontop.bad + t_under.bad + t_nextto.bad +
+                        t_tg_contact.bad + t_tg_overlap.bad + t_tg_val.bad + t_tg_time.bad;
   return bad ? 1 : 0;
 }

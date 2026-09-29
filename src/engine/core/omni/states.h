@@ -263,6 +263,116 @@ OEHD bool mesh_anyhit_bruteforce(const float* pts, const int32_t* tri, int n_tri
   return false;
 }
 
+// ---------------- ToggledOn (object_states/toggle.py) ----------------
+// 1) 손가락이 물체에 닿았나: usd_utils.py:74 _is_in_contact_batch_kernel (with-mask 방식, 질의 행 마스크 하나를 모든 물체가 공유)
+OEHD int32_t toggle_contact(const uint8_t* query_row_mask, const uint8_t* cm, int R, int C, const uint8_t* with_mask_o) {
+  for (int r = 0; r < R; ++r) {
+    if (!query_row_mask[r]) continue;
+    for (int c = 0; c < C; ++c)
+      if (with_mask_o[c] && cm[(size_t)r * C + c]) return 1;
+  }
+  return 0;
+}
+// 2) warp intersect.h:58 closest_point_to_triangle → (u, v). ptxas 축약(SASS): 두 곱의 차는 앞 곱을 묶음
+//    vc = fma(d1,d4,-(d3*d2)), vb = fma(d5,d2,-(d1*d6)), va = fma(d3,d6,-(d5*d4)), 안쪽 u = fma(-vc, denom, 1-v)
+OEHD void closest_point_uv(const float a[3], const float b[3], const float c[3], const float p[3], float* uo, float* vo) {
+  const float ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+  const float ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+  const float ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
+  const float d1 = wf::dot3(ab, ap), d2 = wf::dot3(ac, ap);
+  if (d1 <= 0.0f && d2 <= 0.0f) { *uo = 1.0f; *vo = 0.0f; return; }
+  const float bp[3] = {p[0] - b[0], p[1] - b[1], p[2] - b[2]};
+  const float d3 = wf::dot3(ab, bp), d4 = wf::dot3(ac, bp);
+  if (d3 >= 0.0f && d4 <= d3) { *uo = 0.0f; *vo = 1.0f; return; }
+  const float vc = wf::fma_(d1, d4, -(d3 * d2));
+  if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+    const float v = wf::div_rn(d1, d1 - d3);
+    *uo = 1.0f - v;
+    *vo = v;
+    return;
+  }
+  const float cp[3] = {p[0] - c[0], p[1] - c[1], p[2] - c[2]};
+  const float d5 = wf::dot3(ab, cp), d6 = wf::dot3(ac, cp);
+  if (d6 >= 0.0f && d5 <= d6) { *uo = 0.0f; *vo = 0.0f; return; }
+  const float vb = wf::fma_(d5, d2, -(d1 * d6));
+  if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+    const float w = wf::div_rn(d2, d2 - d6);
+    *uo = 1.0f - w;
+    *vo = 0.0f;
+    return;
+  }
+  const float va = wf::fma_(d3, d6, -(d5 * d4));
+  if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+    const float w = wf::div_rn(d4 - d3, (d4 - d3) + (d5 - d6));
+    const float v = 1.0f - w;
+    *uo = (1.0f - v) - w;
+    *vo = v;
+    return;
+  }
+  const float denom = wf::rcp_rn((va + vb) + vc);
+  const float v = vb * denom;
+  *uo = wf::fma_(-vc, denom, 1.0f - v);
+  *vo = v;
+}
+OEHD void cross3(const float a[3], const float b[3], float o[3]) {  // 앞 곱을 묶음 (SASS)
+  o[0] = wf::fma_(a[1], b[2], -(a[2] * b[1]));
+  o[1] = wf::fma_(a[2], b[0], -(a[0] * b[2]));
+  o[2] = wf::fma_(a[0], b[1], -(a[1] * b[0]));
+}
+// 3) warp mesh.h:512 mesh_query_point_no_sign 의 참/거짓 = 가늘지 않은 삼각형 중 거리² < max_dist² 가 하나라도 있나 (삼각형 전수)
+OEHD bool mesh_point_within(const float* pts, const int32_t* tri, int n_tri, const float x[3], float max_dist) {
+  float min_d2 = max_dist * max_dist;
+  const float lim = min_d2;
+  for (int f = 0; f < n_tri; ++f) {
+    const float* p = pts + tri[f * 3 + 0] * 3;
+    const float* q = pts + tri[f * 3 + 1] * 3;
+    const float* r = pts + tri[f * 3 + 2] * 3;
+    const float e0[3] = {q[0] - p[0], q[1] - p[1], q[2] - p[2]};
+    const float e1[3] = {r[0] - p[0], r[1] - p[1], r[2] - p[2]};
+    const float e2[3] = {r[0] - q[0], r[1] - q[1], r[2] - q[2]};
+    float n[3];
+    cross3(e0, e1, n);
+    const float len = wf::sqrt_rn(wf::dot3(n, n));
+    const float den = (wf::dot3(e0, e0) + wf::dot3(e1, e1)) + wf::dot3(e2, e2);
+    if (wf::div_rn(len, den) < 1.e-6f) continue;  // 가는 삼각형 건너뜀
+    float u, v;
+    closest_point_uv(p, q, r, x, &u, &v);
+    const float w = (1.0f - u) - v;
+    float d[3];
+    for (int k = 0; k < 3; ++k) {
+      const float ck = wf::fma_(w, r[k], wf::fma_(u, p[k], v * q[k]));
+      d[k] = ck - x[k];
+    }
+    const float d2 = wf::dot3(d, d);
+    if (d2 < min_d2) min_d2 = d2;
+  }
+  return min_d2 < lim;
+}
+// 4) _check_overlap_kernel 한 쌍 (표식, 손가락 링크): 표식 중심 = P_부모 * (offset,1), 손가락 좌표 = R_f^T x - s
+OEHD bool toggle_marker_overlap(const M44& P_parent, const float offset[3], float radius, const M44& P_finger,
+                                const float* pts, const int32_t* tri, int n_tri) {
+  float w[3];
+  wf::transform_point(P_parent, offset, w);
+  float s[3], xl[3];
+  wf::rigid_inverse_s(P_finger, s);
+  for (int i = 0; i < 3; ++i) {
+    const float col[3] = {P_finger(0, i), P_finger(1, i), P_finger(2, i)};
+    xl[i] = wf::fma_(-s[i], 1.0f, wf::dot3(col, w));  // SASS: FFMA(-s, w4=1, dot)
+  }
+  return mesh_point_within(pts, tri, n_tri, xl, radius);
+}
+// 5) _set_toggle_value_kernel: mask==2 인 동안 dt 를 더하고, 처음 문턱을 넘는 스텝에 값을 뒤집는다 (float32)
+OEHD void toggle_set_value(uint8_t* value, int32_t* mask, float* time, float threshold, float dt) {
+  const int eligible = (*mask == 2) ? 1 : 0;
+  const float prev = *time;
+  *time = eligible ? prev + dt : 0.0f;
+  const float now = *time;
+  int flip = 0;
+  if (prev < threshold && now >= threshold) flip = eligible;
+  *mask = 0;
+  if (flip) *value = (uint8_t)(1 - *value);
+}
+
 // ---------------- OnTop / Under / NextTo (칸 하나) ----------------
 // adj: 판 하나 (Na,Na,K), touch: 판 하나 (Nt,Nt)
 OEHD uint8_t on_top_value(const uint8_t* touch, int Nt, const uint8_t* adj, int Na, int K, const int32_t* tidx,
