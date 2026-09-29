@@ -48,6 +48,8 @@ deps() {  # isaacsim 휠 없이 되는 부분 (휠 받는 동안 먼저)
   python -m pip install "numpy<2"
   python -m pip install -e BEHAVIOR-1K/bddl3
   python -m pip install -e "BEHAVIOR-1K/OmniGibson[eval]" --no-build-isolation
+  python -m pip install -e BEHAVIOR-1K/joylo      # 평가기가 gello(joylo) 를 import 한다 (eval/evaluator.py:18)
+  python -m pip install warp-lang==1.12.0          # 윈도 환경과 같은 판 (fix_behavior_env.sh)
 }
 
 isaac() {
@@ -60,7 +62,7 @@ isaac() {
   fi
   python -m pip install --force-reinstall cffi==1.17.1
   python -m pip install --force-reinstall "websockets>=15.0.1"
-  python -c "import isaacsim, omnigibson; print('import OK')"
+  OMNIGIBSON_DATA_PATH=$SRC/datasets python -c "import isaacsim, omnigibson; print('import OK')"
 }
 
 case "$STEP" in
