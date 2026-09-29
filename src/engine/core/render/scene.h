@@ -129,6 +129,7 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
   int32_t cur = 0;
   for (;;) {
     if (cur >= 0) {
+      RSTAT(tlas_nodes);
       const Node2& n = E.tlas[cur];
       const float ta = n.c0 != kEmpty ? box_t(n.lo0, n.hi0, r, tmin, h.t) : kInf;
       const float tb = n.c1 != kEmpty ? box_t(n.lo1, n.hi1, r, tmin, h.t) : kInf;
@@ -148,6 +149,7 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
       if (hb) { cur = n.c1; continue; }
     } else {
       const int32_t id = E.order[leaf_first(cur)];
+      RSTAT(inst_leaves);
       if (inst_visible(E, id) && !(S.insts[id].flags & skip)) {
         const InstInfo& in = S.insts[id];
         const GeomInfo& g = S.geoms[in.geom];

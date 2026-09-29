@@ -243,7 +243,10 @@ __global__ void __launch_bounds__(kBuildThreads) kBuild(SceneView S, Batch B) {
 //  kShade  : 스레드 = 픽셀, blockIdx.z = 판. shade_gbuf -> depth, G 버퍼, 조도(6)
 //  kAtrous : à-trous 한 번 (간격 step), 조도 핑퐁
 //  kCompose: 알베도 × 조도 + 반사·방출 -> 톤매핑 -> rgb
-__global__ void kShade(SceneView S, Batch B, const Camera* cams, int ncam, int cam, int frame, float* depth, GPix* G,
+#ifndef RENDER_SHADE_MINB
+#define RENDER_SHADE_MINB 1
+#endif
+__global__ void __launch_bounds__(128, RENDER_SHADE_MINB) kShade(SceneView S, Batch B, const Camera* cams, int ncam, int cam, int frame, float* depth, GPix* G,
                        float* irr) {
   const int e = blockIdx.z;
   const Camera& c = cams[e * ncam + cam];

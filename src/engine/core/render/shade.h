@@ -363,9 +363,34 @@ EHD float light_weight(const SceneView& S, const EnvView& E, int32_t li, const V
 EHD V3 direct_light(const SceneView& S, const EnvView& E, const V3& po, const V3& n, uint32_t& rs) {
   V3 ls{0.0f, 0.0f, 0.0f};
   if (S.n_lights <= 0) return ls;
+  const int ns = S.sp.shadow_lights > 0 ? S.sp.shadow_lights : 1;
+  if (ns == 1) {
+    // 한 번 훑기(흐르는 가중 선택): 조명마다 p = w / 지금까지 합, 균등수 u < p 면 고르고 u 를 [0,1) 로 다시 편다.
+    // 결과 분포는 두 번 훑기(합 -> 누적 찾기)와 같고 가중치 계산은 절반.
+    const float pick = rnd01(rs);
+    const float u1 = rnd01(rs);
+    const float u2 = rnd01(rs);
+    float u = pick, wsum = 0.0f, wl = 0.0f;
+    int32_t li = -1;
+    for (int32_t k = 0; k < S.n_lights; ++k) {
+      const float w = light_weight(S, E, k, po, n);
+      if (!(w > 0.0f)) continue;
+      wsum = wsum + w;
+      const float p = w / wsum;
+      if (u < p || !(p < 1.0f)) {
+        li = k;
+        wl = w;
+        u = u / p;
+      } else {
+        u = (u - p) / (1.0f - p);
+      }
+    }
+    if (li < 0) return ls;
+    const V3 c = light_direct(S, E, li, po, n, u1, u2);
+    return c * (wsum / wl);
+  }
   float wsum = 0.0f;
   for (int32_t li = 0; li < S.n_lights; ++li) wsum = wsum + light_weight(S, E, li, po, n);
-  const int ns = S.sp.shadow_lights > 0 ? S.sp.shadow_lights : 1;
   for (int j = 0; j < ns; ++j) {
     const float pick = rnd01(rs);
     const float u1 = rnd01(rs);

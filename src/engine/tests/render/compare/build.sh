@@ -8,3 +8,5 @@ clang++ -std=c++17 -O2 -I"$SRC" -o "$OUT/render_compare" "$SRC/tests/render/comp
 echo "built $OUT/render_compare"
 clang++ -std=c++17 -O2 -I"$SRC" -o "$OUT/rsc_check" "$SRC/tests/render/io/rsc_check.cpp"
 echo "built $OUT/rsc_check"
+clang++ -std=c++17 -O2 -DRENDER_STATS -I"$SRC" -o "$OUT/render_stats" "$SRC/tests/render/io/render_stats.cpp" -lpthread
+echo "built $OUT/render_stats"

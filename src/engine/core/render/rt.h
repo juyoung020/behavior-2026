@@ -134,7 +134,19 @@ struct Hit {
   int32_t tri;   // 그 기하의 굽힌(재배열된) 삼각형 번호 (전역 번호)
 };
 
-constexpr int kStack = 64;
+#ifndef RENDER_STACK
+#define RENDER_STACK 64
+#endif
+constexpr int kStack = RENDER_STACK;  // 순회 스택 (BLAS 굽기 깊이 한계도 이것으로)
+
+// 순회 통계 (호스트 진단 도구 tests/render/render_stats.cpp 만 -DRENDER_STATS 로 켬). 켜지 않으면 코드 없음.
+#ifdef RENDER_STATS
+struct RStats { uint64_t tlas_nodes, inst_leaves, blas_nodes, tri_tests; };
+inline thread_local RStats g_rstats{};
+#define RSTAT(x) (g_rstats.x++)
+#else
+#define RSTAT(x) ((void)0)
+#endif
 
 // BLAS 순회 (지역 좌표 광선). nodes/tris 는 이 기하의 시작을 가리킨다. 전역 삼각형 번호 = tri_base + 지역 번호.
 // any = true: 그림자·가림 광선 — 처음 맞으면 바로 끝(결과는 "맞은 것이 있나" 하나라 순서와 무관). 반환 = 끝냄 여부.
@@ -146,6 +158,7 @@ EHD bool blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, cons
   int32_t cur = 0;
   for (;;) {
     if (cur >= 0) {
+      RSTAT(blas_nodes);
       const Node2& n = nodes[cur];
       const float ta = n.c0 != kEmpty ? box_t(n.lo0, n.hi0, r, tmin, h.t) : kInf;
       const float tb = n.c1 != kEmpty ? box_t(n.lo1, n.hi1, r, tmin, h.t) : kInf;
@@ -167,6 +180,7 @@ EHD bool blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, cons
       const uint32_t f = leaf_first(cur), c = leaf_count(cur);
       for (uint32_t k = 0; k < c; ++k) {
         float t, u, v;
+        RSTAT(tri_tests);
         if (tri_hit(tris[f + k], r, tmin, h.t, t, u, v)) {
           h.t = t;
           h.u = u;

@@ -465,6 +465,46 @@ int main(int argc, char** argv) {
   }
   printf("층 1 = 층 2 (판 %d 개 × 카메라 3): depth %" PRIu64 " 개 중 비트 다름 %" PRIu64 ", RGB %" PRIu64 " 개 중 다름 %" PRIu64
          " | 첫 다름 판 %d 카메라 %d 픽셀 %d\n", check, n_dep, bad_dep, n_rgb, bad_rgb, fe, fc, fp);
+  if (bad_rgb > 0 && fe >= 0) {
+    // 탐침: 다름이 난 판·카메라의 1 단계(G 버퍼·조도) 만 두 층에서 다시 계산해 첫 다른 픽셀·칸을 찍는다
+    const Camera& cm = frames[fe % nf].cams[fc];
+    const size_t hw = size_t(cm.w) * cm.h;
+    const dim3 bs(16, 8), gs((cm.w + 15) / 16, (cm.h + 7) / 8, envs);
+    gpu::kShade<<<gs, bs>>>(DS.view, B, dcams, 3, fc, 0, ddep[fc], work.G, work.A);
+    RCK(cudaDeviceSynchronize());
+    std::vector<GPix> gG(hw);
+    std::vector<float> gA(hw * 6);
+    RCK(cudaMemcpy(gG.data(), work.G + fe * hw, hw * sizeof(GPix), cudaMemcpyDeviceToHost));
+    RCK(cudaMemcpy(gA.data(), work.A + fe * hw * 6, hw * 24, cudaMemcpyDeviceToHost));
+    const HostFrame& F = frames[fe % nf];
+    HostEnv HE;
+    HE.resize(SV);
+    for (int a = 0; a < SV.n_anchor && a < int(F.anchor.size()); ++a) HE.anchor[a] = F.anchor[a];
+    for (size_t w = 0; w < HE.vis.size() && w < F.vis.size(); ++w) HE.vis[w] = F.vis[w];
+    HE.build(SV);
+    const EnvView ev = HE.view();
+    const unsigned old = _mm_getcsr();
+    _mm_setcsr(old | 0x8040u);
+    int shown = 0, nbad = 0;
+    for (int py = 0; py < cm.h; ++py)
+      for (int px = 0; px < cm.w; ++px) {
+        const int i = py * cm.w + px;
+        GPix g;
+        float d, a[6];
+        shade_gbuf(SV, ev, cm, px, py, pixel_seed(fe, fc, px, py, 0), d, g, a);
+        const bool bg = memcmp(&g, &gG[i], sizeof g) != 0, ba = memcmp(a, &gA[6 * size_t(i)], 24) != 0;
+        if (bg || ba) {
+          ++nbad;
+          if (shown++ < 4)
+            printf("  탐침 1 단계 픽셀 %d (%d,%d): G %s 조도 %s | 층1 a %.9g %.9g %.9g 조도 %.9g %.9g %.9g %.9g %.9g %.9g | 층2 a %.9g %.9g %.9g "
+                   "조도 %.9g %.9g %.9g %.9g %.9g %.9g\n", i, px, py, bg ? "다름" : "같음", ba ? "다름" : "같음", g.a[0], g.a[1], g.a[2], a[0], a[1],
+                   a[2], a[3], a[4], a[5], gG[i].a[0], gG[i].a[1], gG[i].a[2], gA[6 * i], gA[6 * i + 1], gA[6 * i + 2], gA[6 * i + 3],
+                   gA[6 * i + 4], gA[6 * i + 5]);
+        }
+      }
+    _mm_setcsr(old);
+    printf("  탐침: 1 단계 다른 픽셀 %d / %zu (0 이면 다름은 잡음 제거·합치기 단계)\n", nbad, hw);
+  }
   gpu::free_batch(B);
   for (int c = 0; c < 3; ++c) { cudaFree(ddep[c]); cudaFree(drgb[c]); }
   cudaFree(dcams);
