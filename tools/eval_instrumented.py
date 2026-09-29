@@ -34,6 +34,7 @@ from time import perf_counter
 
 import numpy as np
 
+IMAGE_STEPS = {0, 1, 2, 10, 50, 100, 101, 150, 200, 300, 400, 500}  # --trace 가 영상 원본을 남기는 스텝
 WRAPPER_COST_S = 1.0e-6  # 겉싸개 한 번의 대략 비용 (보고용 추정, --report 가 따로 잰다)
 
 
@@ -240,6 +241,7 @@ class TraceRecorder:
         self.full = full
         self.rows = []  # 스텝마다 {key: [N 개 값]}
         self.static = {}
+        self.images = {}  # 몇 스텝만 영상 원본 (렌더 잡음 크기 확인용): "스텝|env|key" -> uint8
 
     def on_apply(self, ev, actions, active, ret):
         terminated, truncated, info = ret
@@ -259,6 +261,8 @@ class TraceRecorder:
                     a = _np(v)
                     if a.dtype == np.uint8 or a.size > 4096:
                         row.setdefault(f"obs_hash::{k}", [None] * n)[i] = _digest(a)
+                        if len(self.rows) in IMAGE_STEPS:
+                            self.images[f"{len(self.rows)}|{i}|{k}"] = a.copy()
                         ch = a.reshape(-1, a.shape[-1]) if a.ndim >= 2 else a.reshape(-1, 1)
                         row.setdefault(f"obs_mean::{k}", [None] * n)[i] = ch.astype(np.float64).mean(axis=0)
                     else:
@@ -327,6 +331,8 @@ class TraceRecorder:
                 out[k] = arr
         out.update({f"static::{k}": v for k, v in self.static.items()})
         np.savez_compressed(path, **out)
+        if self.images:
+            np.savez_compressed(path.replace(".npz", "_images.npz"), **self.images)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -367,6 +373,63 @@ def install_deep_hooks(og, Sim, Robot, VisionSensor):
             wrap(cls, m, f"{_owner(cls, m).__name__}.{m}")
         except AttributeError:
             pass
+
+
+class BlackFrameDiag:
+    """--black-diag / --black-guard: 정책에 들어가는 카메라 영상이 검은지(RGBA 전부 0) 스텝마다 본다.
+
+    - 공식 경로는 annotator.get_data(device="cpu") (호스트 복사본, sensors/vision_sensor.py:308).
+      --black-diag 는 같은 annotator 의 GPU 버퍼(device="cuda")도 읽어, 두 경로의 검정 여부와 픽셀 차이를 적는다
+      (어느 단계에서 검어지는지 가르기용 -- GPU 버퍼 읽기가 렌더 그래프를 건드릴 수 있어 진단 전용).
+    - --black-guard warn|abort: 정책에 들어간 프레임이 검으면 경고(warn) 또는 그 자리에서 중단(abort).
+    """
+
+    def __init__(self, diag: bool, guard: str):
+        self.diag, self.guard = diag, guard
+        self.rows = defaultdict(list)  # 센서 -> [(스텝, host 검정, cuda 검정, 둘 다 안 검을 때 최대|차|)]
+        self.n_black = defaultdict(int)
+        self.n_total = defaultdict(int)
+
+    def after_get_obs(self, sensor, obs):
+        if "rgb" not in obs:
+            return
+        host = obs["rgb"]
+        hb = bool(host.max() == 0)
+        name = sensor.name
+        self.n_total[name] += 1
+        self.n_black[name] += hb
+        step = len(T.steps)
+        if self.diag:
+            try:
+                import warp as wp
+
+                raw = sensor._annotators["rgb"].get_data(device="cuda")
+                raw = raw["data"] if isinstance(raw, dict) else raw
+                dev = wp.to_torch(raw).cpu()
+                cb = bool(dev.max() == 0)
+                d = -1 if (hb or cb) else int((dev.to(dtype=host.dtype) - host.cpu()).abs().max())
+            except Exception as e:  # 진단 실패는 기록만
+                cb, d = None, f"{type(e).__name__}: {e}"[:80]
+            self.rows[name].append((step, hb, cb, d))
+        if hb and self.guard:
+            msg = f"[black-guard] 스텝 {step} 카메라 {name}: 정책에 들어갈 RGB 가 전부 0 (누적 {self.n_black[name]}/{self.n_total[name]})"
+            print(msg, flush=True)
+            if self.guard == "abort":
+                raise RuntimeError(msg)
+
+    def summary(self):
+        out = {"black": dict(self.n_black), "total": dict(self.n_total), "settings": getattr(self, "settings", {})}
+        if self.diag:
+            out["diag"] = {k: v for k, v in self.rows.items()}
+        return out
+
+
+BLACK = None
+SET_SETTINGS = []  # --set KEY=VALUE (진단용)
+WATCH_SETTINGS = ["/rtx-transient/dlssg/enabled", "/rtx/post/dlss/execMode", "/rtx/post/aa/op", "/rtx/rendermode",
+                  "/app/asyncRendering", "/app/asyncRenderingLowLatency", "/omni/replicator/asyncRendering",
+                  "/app/hydraEngine/waitIdle", "/app/renderer/waitIdle", "/rtx/pathtracing/dlss/enabled",
+                  "/rtx-transient/dlssg/mode", "/rtx/dlssg/enabled"]
 
 
 def install(timing: bool, trace: TraceRecorder, out_dir: str, gpu: GpuMonitor, deep: bool = False):
@@ -438,7 +501,40 @@ def install(timing: bool, trace: TraceRecorder, out_dir: str, gpu: GpuMonitor, d
     @functools.wraps(orig_run)
     def run(self, *a, **kw):  # 경로(stack)에 넣지 않는다 -- 스텝 경로가 'step/...' 로 시작하게
         install_sim_hooks()
+        install_black_hook()
         return orig_run(self, *a, **kw)
+
+    def install_black_hook():
+        if BLACK is None or state.get("black_hook"):
+            return
+        state["black_hook"] = True
+        import carb
+
+        cs = carb.settings.get_settings()
+        for k, v in SET_SETTINGS:  # 진단 실험용 --set (공식 실행에는 쓰지 않는다)
+            cur = cs.get(k)
+            val = {"true": True, "false": False}.get(v.lower(), v)
+            if not isinstance(val, bool):
+                try:
+                    val = int(val)
+                except ValueError:
+                    pass
+            cs.set(k, val)
+            print(f"[black] 설정 {k}: {cur!r} -> {cs.get(k)!r}", flush=True)
+        BLACK.settings = {k: repr(cs.get(k)) for k in WATCH_SETTINGS}
+        print(f"[black] 렌더 설정: {BLACK.settings}", flush=True)
+        from omnigibson.sensors.vision_sensor import VisionSensor
+
+        inner = VisionSensor._get_obs  # 시간 계측 겉싸개가 있으면 그것까지 포함해 한 겹 더
+
+        @functools.wraps(inner)
+        def get_obs_black(self, *a, **kw):
+            ret = inner(self, *a, **kw)
+            if T.active:
+                BLACK.after_get_obs(self, ret[0])
+            return ret
+
+        VisionSensor._get_obs = get_obs_black
 
     Ev.run = run
 
@@ -523,6 +619,10 @@ def install(timing: bool, trace: TraceRecorder, out_dir: str, gpu: GpuMonitor, d
         T.close_step()
         T.active = False
         trace.save(os.path.join(out_dir, "trace.npz"), os.path.join(out_dir, "actions.npz"))
+        if BLACK is not None:
+            with open(os.path.join(out_dir, "black_frames.json"), "w", encoding="utf-8") as f:
+                json.dump(BLACK.summary(), f)
+            print(f"[black] 검은 프레임/전체: {dict(BLACK.n_black)} / {dict(BLACK.n_total)}", flush=True)
         if timing:
             if gpu is not None:
                 gpu.stop()
@@ -631,8 +731,69 @@ def report(path, skip=20):
     return "\n".join(lines)
 
 
+# 설계 문서의 병목 항목 <- 호출 경로. (이름, 맨 끝 구간 이름들, 경로 어디든 들어 있으면 되는 말들) 을 위에서부터 처음 맞는 것.
+GROUPS = [
+    ("통신: 웹소켓 왕복(서버 계산 뺌)", ("ws.recv", "ws.send", "pack", "unpack", "client.act"), ()),
+    ("통신: 관측 묶기·정책 겉층", ("batch_obs", "policy"), ()),
+    ("GPU 대기(렌더 끝나길 기다림)", ("wp.synchronize_stream",), ()),
+    ("물리 PhysX", ("physx",), ()),
+    ("보조 잡기(robot.post_step)", ("robot.post_step(grasp)",), ()),
+    ("컨트롤러(pre-physics 콜백)", (), ("pre_physics(controllers)",)),
+    ("접촉 읽기(post-physics 콜백)", (), ("post_physics(contacts)",)),
+    ("렌더 제출·Kit 갱신(app.update 자기 시간)", ("app.update",), ()),
+    ("물체 상태 캐시(warp, CPU 쪽)", (), ("state_caches(warp)",)),
+    ("물체 상태 update·시스템·전이 규칙", ("object_state.update", "systems.update", "transition_rules"), ()),
+    ("update_visuals(물체마다)", ("update_visuals",), ()),
+    ("sim.step 나머지(non_physics 자기 시간 등)", ("non_physics", "sim.step", "sim.render"), ()),
+    ("카메라 읽기 GPU->CPU", ("camera_read",), ()),
+    ("proprio 계산", (), ("/proprio",)),
+    ("BDDL 목표 판정(종료+보상)", ("bddl_goal(termination)", "bddl_goal(reward)"), ()),
+    ("task.step 나머지(info 복사 등)", ("task.step",), ()),
+    ("관측 전처리(카메라 상대 pose)", (), ("preprocess_obs",)),
+    ("지표(metric)", (), ("metric.",)),
+    ("행동 적용(컨트롤러 목표 설정)", ("apply_action",), ("/apply_action/",)),
+    ("영상 저장(크기조정+x264)", (), ("video",)),
+    ("조명 동기화(조명 과제만)", ("light_sync",), ()),
+    ("그 밖의 평가기 파이썬(env.step·루프)", (), ("",)),
+]
+
+
+def _group(p):
+    leaf = p.rsplit("/", 1)[-1]
+    for name, leaves, subs in GROUPS:
+        if leaf in leaves or any(x in p for x in subs):
+            return name
+    return GROUPS[-1][0]
+
+
+def summarize(path, skip=20):
+    """호출 경로를 설계 문서의 병목 항목으로 묶어 스텝당 ms·비중을 낸다. 서버 추론 시간은 통신에서 빼서 따로."""
+    d = json.load(open(path, encoding="utf-8"))
+    steps = d["steps"][skip:]
+    n = len(steps)
+    wall = np.array([s["wall"] for s in steps])
+    tot = defaultdict(float)
+    for s in steps:
+        for p, v in s["excl"].items():
+            tot[_group(p)] += v
+    infer = sum(sum(s.get("server_infer_ms", []) or []) for s in steps) / 1e3
+    tot["통신: 웹소켓 왕복(서버 계산 뺌)"] -= infer
+    tot["정책 추론(서버 계산)"] = infer
+    tot["어디에도 안 잡힘(루프·기록)"] = wall.sum() - sum(v for k, v in tot.items())
+    rows = sorted(((v / n * 1e3, k) for k, v in tot.items()), reverse=True)
+    out = [f"# {os.path.basename(os.path.dirname(os.path.abspath(path)))}: 스텝 {n}, 평균 {wall.mean() * 1e3:.1f} ms/스텝 "
+           f"({1 / wall.mean():.2f} 스텝/초, 환경 {d['oneoff'].get('num_envs')})", "",
+           "| 병목 항목 | ms/스텝 | 비중 |", "|---|---:|---:|"]
+    out += [f"| {k} | {v:.2f} | {v / (wall.mean() * 1e3) * 100:.1f}% |" for v, k in rows if abs(v) >= 0.005]
+    return "\n".join(out)
+
+
 def main():
     argv = sys.argv[1:]
+    if argv and argv[0] == "--summary":
+        for f in argv[1:]:
+            print(summarize(f))
+        return
     if argv and argv[0] == "--report":
         skip = 20
         files = [a for a in argv[1:] if not a.startswith("--")]
@@ -644,6 +805,17 @@ def main():
         return
     ours, eval_args = (argv[: argv.index("--")], argv[argv.index("--") + 1:]) if "--" in argv else ([], argv)
     timing, full_trace = "--timing" in ours, "--trace" in ours
+    global BLACK
+    guard = ""
+    for g in ("warn", "abort"):
+        if f"--black-guard={g}" in ours:
+            guard = g
+    for o in ours:
+        if o.startswith("--set="):
+            k, v = o[len("--set="):].split("=", 1)
+            SET_SETTINGS.append((k, v))
+    if "--black-diag" in ours or guard or SET_SETTINGS:
+        BLACK = BlackFrameDiag(diag="--black-diag" in ours, guard=guard)
     out_dir = eval_args[eval_args.index("--output-dir") + 1] if "--output-dir" in eval_args else "/tmp/b1k_eval"
     os.makedirs(out_dir, exist_ok=True)
     gpu = None

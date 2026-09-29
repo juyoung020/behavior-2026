@@ -4,13 +4,18 @@
 #   -Wrapper Default(RGB 224, π0.5 기본) | RGBD(공식 RGB-D 720/480)
 #   -Gui 시뮬레이터 창.  -Port 정책 서버 포트(재생 서버는 8010).  -Tag 결과 폴더 이름 뒤에 붙일 말, -OutDir 결과 폴더 직접 지정
 #   -Timing / -Trace : tools\eval_instrumented.py 로 감싸 구간별 시간(timing.json) / 스텝별 기록(trace.npz)을 결과 폴더에.
+#   -ChunkSize 16    : 공식 인자 --replay-action-chunk-size (서버가 action_chunk 를 줘야 함: src\fasteval\pi05_chunk_server.py)
+#   -BlackGuard warn|abort : 정책에 들어갈 카메라 영상이 전부 0(검은 화면)이면 경고/중단.  -BlackDiag : 호스트/GPU 경로 비교(진단)
+#   -KitSet '/키=값' : 진단 실험용 Kit 설정 바꾸기 (공식 결과에는 쓰지 않는다)
 #   -Deep            : 컨트롤러 콜백·물체 상태 캐시 안쪽까지 잘게 (-Timing 과 같이)
 #                      평가기 코드는 안 바꾼다. (예전 -Profile(cProfile) 은 Kit 이 프로파일 훅을 가져가 쓸모가 없어 없앴다)
 param([string]$Task = 'turning_on_radio', [int]$Instance = 0, [string]$Instances = '', [int]$MaxSteps = 0,
       [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'Default', [int]$Port = 8000, [string]$Tag = '', [string]$OutDir = '',
-      [switch]$Gui, [switch]$Timing, [switch]$Trace, [switch]$Deep)
+      [int]$ChunkSize = 0, [switch]$Gui, [switch]$Timing, [switch]$Trace, [switch]$Deep,
+      [switch]$BlackDiag, [ValidateSet('', 'warn', 'abort')][string]$BlackGuard = '', [string[]]$KitSet = @())
 $headless = if ($Gui) { '--no-headless' } else { '--headless' }
 $stepArgs = if ($MaxSteps -gt 0) { @('--max-steps', $MaxSteps) } else { @() }
+if ($ChunkSize -gt 1) { $stepArgs += @('--replay-action-chunk-size', $ChunkSize) }
 $inst = if ($Instances) { @($Instances -split '[, ]+' | Where-Object { $_ -ne '' }) } else { @("$Instance") }
 $wrapperTarget = @{ Default = 'omnigibson.eval.wrappers.DefaultWrapper'; RGBD = 'omnigibson.eval.wrappers.RGBDFullResWrapper' }[$Wrapper]
 $Host.UI.RawUI.WindowTitle = "BEHAVIOR eval $Task"
@@ -30,11 +35,14 @@ $out = if ($OutDir) { $OutDir } else { "C:\behavior-2026\outputs\$name" }
 $log = "C:\behavior-2026\logs\$name.log"
 Set-Location C:\behavior-2026\BEHAVIOR-1K\OmniGibson
 $runner = @('-m', 'omnigibson.eval.eval')
-if ($Timing -or $Trace) {
+if ($Timing -or $Trace -or $BlackDiag -or $BlackGuard -or $KitSet.Count) {
     $flags = @()
     if ($Timing) { $flags += '--timing' }
     if ($Trace) { $flags += '--trace' }
     if ($Deep) { $flags += '--deep' }
+    if ($BlackDiag) { $flags += '--black-diag' }
+    if ($BlackGuard) { $flags += "--black-guard=$BlackGuard" }
+    foreach ($kv in $KitSet) { $flags += "--set=$kv" }
     $runner = @('C:\behavior-2026\tools\eval_instrumented.py') + $flags + @('--')
 }
 New-Item -ItemType Directory -Force $out | Out-Null

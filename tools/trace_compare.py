@@ -90,6 +90,25 @@ def compare_key(k, a, b, ea, eb, off_a=None, off_b=None):
     return (verdict, m, first_bit, first_over, t)
 
 
+def img_report(da, db, ea, eb):
+    """두 실행 모두 trace_images.npz 가 있으면 같은 스텝·카메라 영상의 픽셀 차이를 적는다 (렌더 잡음 크기)."""
+    pa, pb = os.path.join(da, "trace_images.npz"), os.path.join(db, "trace_images.npz")
+    if not (os.path.exists(pa) and os.path.exists(pb)):
+        return
+    za, zb = np.load(pa), np.load(pb)
+    ka = {k.split("|", 2)[0] + "|" + k.split("|", 2)[2]: k for k in za.files if k.split("|")[1] == str(ea)}
+    kb = {k.split("|", 2)[0] + "|" + k.split("|", 2)[2]: k for k in zb.files if k.split("|")[1] == str(eb)}
+    print("\n영상 원본 비교 (스텝|카메라: 검은 화면 여부 A/B, 다른 픽셀 비율, 평균|차|, 최대|차|, 0~255)")
+    for key in sorted(set(ka) & set(kb), key=lambda s: (int(s.split("|")[0]), s)):
+        x = za[ka[key]].astype(np.int16)[..., :3]
+        y = zb[kb[key]].astype(np.int16)[..., :3]
+        bx, by = x.max() == 0, y.max() == 0
+        d = np.abs(x - y)
+        cam = key.split("|")[1].split("::")[1].split(":")[1] if "::" in key else key
+        print(f"  {key.split('|')[0]:>4}|{cam:<22} 검정 {'O' if bx else '-'}/{'O' if by else '-'}  "
+              f"다른 픽셀 {(d.max(axis=-1) > 0).mean() * 100:5.1f}%  평균 {d.mean():6.3f}  최대 {d.max():3d}")
+
+
 def compare_json(ja, jb):
     rows = []
     for name in sorted(set(ja) | set(jb)):
@@ -170,6 +189,7 @@ def main():
             d = np.abs(x[:t] - y[:t]).reshape(t, -1).max(axis=1)
             idx = sorted({0, 1, 2, 5, 10, 20, 50, 100, 200, 300, 400, t - 1} & set(range(t)))
             print(f"  {k}: " + ", ".join(f"스텝{i} {d[i]:.2e}" for i in idx))
+    img_report(a.a, a.b, a.env_a, a.env_b)
     jrows, jbad = compare_json(ja, jb)
     print("\n결과 JSON")
     for name, key, va, vb, v in jrows:
