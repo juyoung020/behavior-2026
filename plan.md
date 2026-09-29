@@ -87,7 +87,7 @@ GPU 1장이라 시뮬레이터는 한 번에 하나만.
 
 - π0.5 + meridian 은 단계 지시로 연결, 이동도 π0.5 에 지시.
 - meridian 은 Frontend + DA + Graphcore(+ msgs) 만.
-- 계획기 LLM 은 로컬 Qwen3.5-9B 양자화, **GPU 에서**(외부 API 는 규칙상 허용이지만 비용 자부담).
+- 계획기 LLM: **지금은 KAU API**(`qwen3.5-9b`, vLLM, OpenAI 호환, 문맥 16k) — 키는 env 파일(`~/.config/behavior-2026/kau.env`, 저장소 밖)로 관리. 로컬 Qwen3.5-9B(GPU, llama.cpp)는 잠시 멈춤.
 - 지시는 모호하지 않게. 형식은 4.1 비교로 정한다.
 - 가속은 대회 벤치마크 결과가 달라지면 안 된다.
 - **목표는 병목 제로.** 되도록 C++ 로 직접 손으로 짜서 GPU 로 포팅(라이브러리 호출은 뜻밖의 병목 — 뜨거운 경로에선 피한다). GPU 가 아닌 조율 코드는 Rust 가능, 필요하면 더 낮은 수준(PTX·공유 메모리 등). 파이썬은 기존 파이썬 프로세스(OmniGibson·openpi)에 거는 얇은 접착부만.

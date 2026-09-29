@@ -13,3 +13,8 @@ __pycache__/
 *.pyc
 .venv/
 .ipynb_checkpoints/
+
+# 비밀값 (키는 WSL ~/.config/behavior-2026/kau.env 에만, 저장소에는 .env.example 만)
+.env
+*.env
+!.env.example
