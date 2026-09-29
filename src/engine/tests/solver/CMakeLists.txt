@@ -18,10 +18,18 @@ set(PX_INTERNAL_INCS
   ${PHYSX_ROOT}/source/scenequery/include ${PHYSX_ROOT}/source/simulationcontroller/include ${PHYSX_ROOT}/source/simulationcontroller/src
   ${PHYSX_ROOT}/source/omnipvd ${PHYSX_ROOT}/source/immediatemode/include ${PHYSX_ROOT}/source/physxmetadata/core/include)
 
+# 접촉 관리자가 새로 걸리는 호출만 가로챈다(새 관리자 = 마찰 패치 0, 시험 비계용)
+set(CS_WRAPS
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE
+  -Wl,--wrap=_ZN5physx2Dy33createFinalizeSolverContacts4StepEPPNS_23PxsContactManagerOutputERNS0_13ThreadContextEPNS_22PxTGSSolverContactDescEffffffffRNS_21PxConstraintAllocatorE
+  -Wl,--wrap=_ZN5physx2Dy32createFinalizeSolverContactsStepERNS_22PxTGSSolverContactDescERNS_23PxsContactManagerOutputERNS0_13ThreadContextEffffffffRNS_21PxConstraintAllocatorE)
 engine_test(test_contact_solver test_contact_solver.cpp ${CMAKE_SOURCE_DIR}/../core/solver/solver_host.cpp PHYSX)
 target_include_directories(test_contact_solver PRIVATE ${PX_INTERNAL_INCS})
 target_compile_definitions(test_contact_solver PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
 target_compile_options(test_contact_solver PRIVATE -Wno-everything)
+target_link_options(test_contact_solver PRIVATE ${CS_WRAPS})
 
 # 층 2: 입력 흐름 파일(test_contact_solver --dump)로 판 N 개를 GPU 에서 (PhysX 링크 없음)
 engine_test(test_contact_solver_gpu test_contact_solver_gpu.cu)
@@ -66,5 +74,6 @@ target_include_directories(test_contact_solver_1lane PRIVATE ${PX_INTERNAL_INCS}
 target_compile_definitions(test_contact_solver_1lane PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
 target_compile_options(test_contact_solver_1lane PRIVATE -Wno-everything)
 target_compile_definitions(test_contact_solver_1lane PRIVATE ENG_AOS_FLOATV_ONE_LANE)
+target_link_options(test_contact_solver_1lane PRIVATE ${CS_WRAPS})
 engine_test(test_contact_solver_gpu_1lane test_contact_solver_gpu.cu)
 target_compile_definitions(test_contact_solver_gpu_1lane PRIVATE ENG_AOS_FLOATV_ONE_LANE)

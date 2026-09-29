@@ -4,13 +4,16 @@
 //   활성 섬 순서, 섬마다 몸체 사슬·접촉 간선 사슬, 접촉 관리자 출력(패치·점), 작업 단위 값, 활성화된 간선, 섬 정적 닿음 수.
 // 우리 엔진은 같은 입력(섬 순서 + 접촉)으로 자기 몸체 상태·자기 마찰 패치 상태를 써서 풀고, fetchResults 뒤 PhysX 와 비트 비교한다.
 // 섬 관리(섬 순서 만들기)와 접촉 생성은 이 시험 범위 밖(각각 islands 시험·contact 모듈).
-//   test_contact_solver [--scene boxes|pile] [--n N] [--steps S] [--seed K] [--stab 0|1] [--verbose 0|1]
+// 1D 제약(D6 조인트): 섬의 제약 간선 사슬(Dy::Constraint: 몸체·index·플래그·끊김 힘·D6 상수 블록)도 스냅샷해 넣고,
+// 스텝 뒤 PhysX 되쓰기 칸(Dy::ConstraintWriteback: 선·각 충격, 끊김)과 비교한다.
+//   test_contact_solver [--scene boxes|pile|joints] [--n N] [--steps S] [--seed K] [--stab 0|1] [--verbose 0|1] [--dump file]
 #include <xmmintrin.h>
 
 #include <cinttypes>
 #include <cmath>
 #include <cstdlib>
 #include <random>
+#include <unordered_set>
 
 #include "px_internal.h"
 #define SVS_HOST_API  // 풀이 본체(aos)는 core/solver/solver_host.cpp 번역 단위에 (PhysX 헤더와 분리)
@@ -39,15 +42,25 @@ struct SnapCM {
   std::vector<sv::FrictionPatch> pxFriction;
   bool bad;
 };
+struct SnapC1D {  // Dy::Constraint (DyConstraint.h)
+  int body0, body1;  // -1 = 정적
+  uint32_t index;
+  uint16_t flags;
+  float linBreak, angBreak, minResp;
+  eng::jnt::D6Data data;
+  bool bad;
+};
 struct SnapIsland {
   std::vector<int> bodies;
   std::vector<int> cms;
+  std::vector<int> c1ds;  // Snapshot::c1d 번호 (섬 제약 사슬 순서)
   uint32_t staticTouch;
 };
 struct Snapshot {
   bool valid = false;
   std::vector<SnapIsland> islands;
   std::vector<SnapCM> cms;
+  std::vector<SnapC1D> c1d;
   std::vector<const void*> activated;
   std::vector<uint32_t> numCounted;  // 몸체별 PxsBodyCore::numCountedInteractions (Sc 층 입력)
   std::vector<float> wakeCounter;    // 몸체별 풀이 직전 깸 카운터 (Sc 층 internalWakeUp 이 올린 값 포함)
@@ -59,6 +72,68 @@ struct Snapshot {
 static std::unordered_map<const PxsBodyCore*, int> gCoreToBody;
 static NpScene* gNpScene = nullptr;
 static Snapshot gSnap;
+
+// 새로 만들어진(또는 같은 주소에 다시 만들어진) 접촉 관리자: PhysX 는 새 관리자의 마찰 패치 수를 0 으로 시작한다(PxcNpWorkUnit::clear,
+// PxcNpWorkUnit.h:204). 관리자를 만들고 없애는 일은 contact 몫이라, 시험은 섬 관리자에 관리자를 거는 호출을 가로채 "새 관리자" 표시만 받는다.
+// 같은 주소가 재사용되면(풀) 포인터만으로는 모르므로 이 표시로 우리 쪽 관리자 칸을 새로 잡는다.
+static std::unordered_set<const void*> gFreshCM;
+using SIM = IG::SimpleIslandManager;
+extern "C" {
+PxU32 __real__ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE(
+    SIM*, PxsContactManager*, PxNodeIndex, PxNodeIndex, Sc::Interaction*, IG::Edge::EdgeType);
+PxU32 __wrap__ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE(
+    SIM* s, PxsContactManager* cm, PxNodeIndex n1, PxNodeIndex n2, Sc::Interaction* it, IG::Edge::EdgeType t) {
+  if (cm) gFreshCM.insert(cm);
+  return __real__ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE(
+      s, cm, n1, n2, it, t);
+}
+bool __real__ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE(
+    SIM*, PxU32, PxsContactManager*, PxNodeIndex, PxNodeIndex, Sc::Interaction*, IG::Edge::EdgeType);
+bool __wrap__ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE(
+    SIM* s, PxU32 h, PxsContactManager* cm, PxNodeIndex n1, PxNodeIndex n2, Sc::Interaction* it, IG::Edge::EdgeType t) {
+  if (cm) gFreshCM.insert(cm);
+  return __real__ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE(
+      s, h, cm, n1, n2, it, t);
+}
+void __real__ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE(SIM*, PxU32, PxsContactManager*);
+void __wrap__ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE(SIM* s, PxU32 e, PxsContactManager* cm) {
+  if (cm) gFreshCM.insert(cm);
+  __real__ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE(s, e, cm);
+}
+}
+
+// ---- 진단(SV_DBG_STEP 스텝에서만): PhysX 접촉 준비가 마찰 패치 수를 어떻게 바꾸는지
+namespace physx { namespace Dy { class ThreadContext; } }
+static int gDbgStep = -1, gCurStep = 0;
+static void* gDbgCM = nullptr;
+extern "C" {
+int __real__ZN5physx2Dy33createFinalizeSolverContacts4StepEPPNS_23PxsContactManagerOutputERNS0_13ThreadContextEPNS_22PxTGSSolverContactDescEffffffffRNS_21PxConstraintAllocatorE(
+    PxsContactManagerOutput**, Dy::ThreadContext&, PxTGSSolverContactDesc*, float, float, float, float, float, float, float, float, PxConstraintAllocator&);
+int __wrap__ZN5physx2Dy33createFinalizeSolverContacts4StepEPPNS_23PxsContactManagerOutputERNS0_13ThreadContextEPNS_22PxTGSSolverContactDescEffffffffRNS_21PxConstraintAllocatorE(
+    PxsContactManagerOutput** o, Dy::ThreadContext& t, PxTGSSolverContactDesc* d, float a0, float a1, float a2, float a3, float a4, float a5, float a6,
+    float a7, PxConstraintAllocator& al) {
+  PxU8 in[4];
+  for (int k = 0; k < 4; ++k) in[k] = d[k].frictionCount;
+  const int r = __real__ZN5physx2Dy33createFinalizeSolverContacts4StepEPPNS_23PxsContactManagerOutputERNS0_13ThreadContextEPNS_22PxTGSSolverContactDescEffffffffRNS_21PxConstraintAllocatorE(
+      o, t, d, a0, a1, a2, a3, a4, a5, a6, a7, al);
+  if (gCurStep == gDbgStep)
+    for (int k = 0; k < 4; ++k)
+      if (getenv("SV_DBG_ALL") || (in[k] && !d[k].frictionCount))
+        printf("[진단] 4개 묶음 준비 반환 %d 칸 %d 마찰 수 %u -> %u 점 %u\n", r, k, in[k], d[k].frictionCount, d[k].numContacts);
+  return r;
+}
+bool __real__ZN5physx2Dy32createFinalizeSolverContactsStepERNS_22PxTGSSolverContactDescERNS_23PxsContactManagerOutputERNS0_13ThreadContextEffffffffRNS_21PxConstraintAllocatorE(
+    PxTGSSolverContactDesc&, PxsContactManagerOutput&, Dy::ThreadContext&, float, float, float, float, float, float, float, float, PxConstraintAllocator&);
+bool __wrap__ZN5physx2Dy32createFinalizeSolverContactsStepERNS_22PxTGSSolverContactDescERNS_23PxsContactManagerOutputERNS0_13ThreadContextEffffffffRNS_21PxConstraintAllocatorE(
+    PxTGSSolverContactDesc& d, PxsContactManagerOutput& o, Dy::ThreadContext& t, float a0, float a1, float a2, float a3, float a4, float a5, float a6,
+    float a7, PxConstraintAllocator& al) {
+  const PxU8 in = d.frictionCount;
+  const bool r = __real__ZN5physx2Dy32createFinalizeSolverContactsStepERNS_22PxTGSSolverContactDescERNS_23PxsContactManagerOutputERNS0_13ThreadContextEffffffffRNS_21PxConstraintAllocatorE(
+      d, o, t, a0, a1, a2, a3, a4, a5, a6, a7, al);
+  if (gCurStep == gDbgStep && (getenv("SV_DBG_ALL") || (in && !d.frictionCount))) printf("[진단] 단일 준비 반환 %d 마찰 수 %u -> %u 점 %u\n", int(r), in, d.frictionCount, d.numContacts);
+  return r;
+}
+}
 
 static eng::V3 toV(const PxVec3& v) { return eng::V3{v.x, v.y, v.z}; }
 static eng::Tf toE(const PxTransform& t) { return eng::Tf{{t.q.x, t.q.y, t.q.z, t.q.w}, {t.p.x, t.p.y, t.p.z}}; }
@@ -176,6 +251,38 @@ static void takeSnapshot() {
       }
       e = edge.mNextIslandEdge;
     }
+    IG::EdgeIndex ce = island.mFirstEdge[IG::Edge::eCONSTRAINT];
+    while (ce != IG_INVALID_EDGE) {
+      const IG::Edge& edge = is.getEdge(ce);
+      const Dy::Constraint* c = im.getConstraint(ce);
+      SnapC1D x{};
+      if (!c) {
+        S.errors++;
+      } else {
+        auto bodyOf = [&](const PxsRigidBody* rb) {
+          if (!rb) return -1;
+          auto it = gCoreToBody.find(&rb->getCore());
+          return it == gCoreToBody.end() ? -2 : it->second;
+        };
+        x.body0 = bodyOf(c->body0);
+        x.body1 = bodyOf(c->body1);
+        if (x.body0 == -2 || x.body1 == -2) x.bad = true;
+        // 섬 간선 node1/node2 와 constraint body0/body1 이 같은 쪽인지 (정적 = 무효 노드)
+        if (is.mCpuData.getNodeIndex1(ce).isStaticBody() != (c->body0 == nullptr)) x.bad = true;
+        if (is.mCpuData.getNodeIndex2(ce).isStaticBody() != (c->body1 == nullptr)) x.bad = true;
+        x.index = c->index;
+        x.flags = c->flags;
+        x.linBreak = c->linBreakForce;
+        x.angBreak = c->angBreakForce;
+        x.minResp = c->minResponseThreshold;
+        if (c->constantBlockSize != sizeof(eng::jnt::D6Data)) x.bad = true;
+        else memcpy(&x.data, c->constantBlock, sizeof(eng::jnt::D6Data));
+        if (x.bad) S.errors++;
+        si.c1ds.push_back(int(S.c1d.size()));
+        S.c1d.push_back(x);
+      }
+      ce = edge.mNextIslandEdge;
+    }
     S.islands.push_back(std::move(si));
   }
   const PxU32 nbAct = is.getNbActivatedEdges(IG::Edge::eCONTACT_MANAGER);
@@ -226,7 +333,12 @@ class HookDispatcher : public PxCpuDispatcher {
         mQ.pop_front();
       }
       if (!strcmp(t->getName(), "UpdateContinuationTask")) takeSnapshot();
+      const int before = gDbgCM && gCurStep >= gDbgStep ? int(static_cast<PxsContactManager*>(gDbgCM)->getWorkUnit().mFrictionPatchCount) : -1;
       t->run();
+      if (before >= 0) {
+        const int after = int(static_cast<PxsContactManager*>(gDbgCM)->getWorkUnit().mFrictionPatchCount);
+        if (after != before) printf("[진단] step %d 작업 %s: 마찰 수 %d -> %d\n", gCurStep, t->getName(), before, after);
+      }
       t->release();
     }
   }
@@ -244,6 +356,7 @@ int main(int argc, char** argv) {
   std::string scene = "boxes";
   int n = 64, steps = 600, seed = 1, stab = 0, verbose = 1, trace = -1, t0 = 0, t1 = 0;
   const char* dumpPath = nullptr;
+  int jointsPer = 5;  // joints 장면: 사슬 하나의 고리 수
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--scene") && i + 1 < argc) scene = argv[++i];
     else if (!strcmp(argv[i], "--n") && i + 1 < argc) n = atoi(argv[++i]);
@@ -252,11 +365,13 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--stab") && i + 1 < argc) stab = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--verbose") && i + 1 < argc) verbose = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dumpPath = argv[++i];
+    else if (!strcmp(argv[i], "--joints") && i + 1 < argc) jointsPer = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--trace") && i + 3 < argc) { trace = atoi(argv[++i]); t0 = atoi(argv[++i]); t1 = atoi(argv[++i]); }
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
   PxPhysics* phys = PxCreatePhysics(PX_PHYSICS_VERSION, *fnd, tol);
+  PxInitExtensions(*phys, nullptr);
   HookDispatcher disp;
   PxSceneDesc sd(tol);
   sd.gravity = PxVec3(0.0f, 0.0f, -9.81f);
@@ -330,6 +445,84 @@ int main(int argc, char** argv) {
         }
       }
     }
+  } else if (scene == "joints") {
+    // D6 조인트 사슬 n 개: 첫 고리는 세계(정적)에 매달고, 고리끼리 여러 종류의 D6 로 잇는다. 사슬이 흔들리다 바닥·옆 사슬에 닿고, 일부는 끊어진다.
+    const int side = int(std::ceil(std::sqrt(double(n))));
+    std::vector<PxD6Joint*> joints;
+    auto configure = [&](PxD6Joint* j, int kind) {
+      switch (kind % 7) {
+        case 0:  // 고정 (전부 잠금)
+          break;
+        case 1:  // 회전 (twist 자유)
+          j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eFREE);
+          break;
+        case 2:  // 회전 (twist 한계, 단단함)
+          j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eLIMITED);
+          j->setTwistLimit(PxJointAngularLimitPair(-0.6f, 0.5f));
+          break;
+        case 3:  // 구 (swing 원뿔 한계, twist 자유)
+          j->setMotion(PxD6Axis::eSWING1, PxD6Motion::eLIMITED);
+          j->setMotion(PxD6Axis::eSWING2, PxD6Motion::eLIMITED);
+          j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eFREE);
+          j->setSwingLimit(PxJointLimitCone(0.5f, 0.4f));
+          break;
+        case 4: {  // 직선 (X 부드러운 한계)
+          j->setMotion(PxD6Axis::eX, PxD6Motion::eLIMITED);
+          PxJointLinearLimitPair l(-0.05f, 0.1f, PxSpring(800.0f, 20.0f));
+          j->setLinearLimit(PxD6Axis::eX, l);
+          break;
+        }
+        case 5:  // 각 자유 + slerp 드라이브(목표 자세)
+          j->setMotion(PxD6Axis::eTWIST, PxD6Motion::eFREE);
+          j->setMotion(PxD6Axis::eSWING1, PxD6Motion::eFREE);
+          j->setMotion(PxD6Axis::eSWING2, PxD6Motion::eFREE);
+          j->setDrive(PxD6Drive::eSLERP, PxD6JointDrive(60.0f, 4.0f, PX_MAX_F32, true));
+          j->setDrivePosition(PxTransform(PxQuat(0.4f, PxVec3(0, 1, 0))));
+          break;
+        case 6:  // 거리 한계 (선 자유 + 거리)
+          j->setMotion(PxD6Axis::eX, PxD6Motion::eLIMITED);
+          j->setMotion(PxD6Axis::eY, PxD6Motion::eLIMITED);
+          j->setMotion(PxD6Axis::eZ, PxD6Motion::eLIMITED);
+          j->setMotion(PxD6Axis::eSWING1, PxD6Motion::eFREE);
+          j->setDistanceLimit(PxJointLinearLimit(0.08f));
+          j->setDrive(PxD6Drive::eX, PxD6JointDrive(200.0f, 10.0f, 50.0f, false));
+          j->setDrivePosition(PxTransform(PxVec3(0.03f, 0, 0)));
+          break;
+      }
+    };
+    for (int c = 0; c < n; ++c) {
+      const float x = float(c % side) * 0.9f, y = float(c / side) * 0.9f;
+      const float top = 1.4f + 0.3f * P(rng);
+      const PxVec3 he(0.12f, 0.05f, 0.05f);
+      PxRigidActor* prev = nullptr;
+      PxVec3 prevAnchorWorld(x, y, top);
+      const float tilt = 0.8f * U(rng);
+      for (int k = 0; k < jointsPer; ++k) {
+        // 고리 중심: 앞 고리 끝에서 기울어진 방향으로 he.x 만큼
+        const PxVec3 dir(std::cos(tilt), 0.3f * U(rng), -std::sin(std::fabs(tilt)) - 0.2f);
+        const PxVec3 d = dir.getNormalized();
+        const PxQuat q = PxShortestRotation(PxVec3(1, 0, 0), d);
+        const PxVec3 center = prevAnchorWorld + d * he.x;
+        const bool capsule = ((c + k) % 3) == 2;
+        if (capsule)
+          addBody(PxTransform(center, q), PxCapsuleGeometry(0.05f, 0.07f), mats[(c + k) % mats.size()], 700.0f, PxVec3(0), PxVec3(0));
+        else
+          addBody(PxTransform(center, q), PxBoxGeometry(he), mats[(c + k) % mats.size()], 500.0f + 300.0f * P(rng), PxVec3(0.2f * U(rng), 0, 0), PxVec3(0));
+        PxRigidDynamic* cur = px.back();
+        const PxTransform localA = prev ? PxTransform(PxVec3(he.x, 0, 0)) : PxTransform(prevAnchorWorld, q);  // 정적 쪽은 세계 틀
+        PxD6Joint* j = PxD6JointCreate(*phys, prev, localA, cur, PxTransform(PxVec3(-he.x, 0, 0)));
+        configure(j, c + k);
+        if ((c + k) % 5 == 4) j->setBreakForce(250.0f + 200.0f * P(rng), 60.0f + 40.0f * P(rng));  // 끊어질 수 있는 조인트
+        if ((c + k) % 11 == 3) j->setConstraintFlag(PxConstraintFlag::eENABLE_EXTENDED_LIMITS, true);
+        joints.push_back(j);
+        prev = cur;
+        prevAnchorWorld = center + d * he.x;
+      }
+    }
+    // 사슬 사이에 떨어지는 자유 상자 몇 개 (접촉과 조인트가 같은 섬에)
+    for (int i = 0; i < n / 2; ++i)
+      addBody(PxTransform(PxVec3(float(i % side) * 0.9f + 0.3f, float(i / side) * 0.9f, 2.2f + 0.3f * P(rng)), rq()), PxBoxGeometry(0.08f, 0.08f, 0.08f),
+              mats[i % mats.size()], 600.0f, PxVec3(0), PxVec3(0));
   } else {  // pile: 볼록 더미를 한 곳에 떨어뜨림
     PxConvexMeshDesc cd;
     std::vector<PxVec3> verts;
@@ -384,6 +577,15 @@ int main(int argc, char** argv) {
   B.frictionCurIdx = 0;
   B.corr = corr.get();
   B.contactBuffer = cbuf.data();
+  const uint32_t C1D_CAP = 1u << 16;
+  std::vector<eng::jnt::Writeback> wbs(C1D_CAP);
+  memset(wbs.data(), 0, wbs.size() * sizeof(eng::jnt::Writeback));  // Dy::ConstraintWriteback::initialize
+  std::vector<eng::jnt::Row> rowScratch(eng::jnt::MAX_CONSTRAINT_ROWS * 4);
+  B.writebacks = wbs.data();
+  B.rowScratch = rowScratch.data();
+  uint32_t maxC1D = 0;
+  uint64_t c1dCmp = 0, c1dBad = 0, c1dTot = 0, brokenSeen = 0;
+  int64_t c1dFirst = -1;
 
   const float dt = 1.0f / 120.0f;
   uint64_t cmp = 0, bad[4] = {0, 0, 0, 0};
@@ -394,33 +596,71 @@ int main(int argc, char** argv) {
   int64_t fricFirst = -1;
   uint64_t totContacts = 0, totCMs = 0, maxIslands = 0;
   int shown = 0;
+  uint64_t freshCMs = 0, resetEvents = 0;
+  // PhysX 풀이가 끝난 뒤 관리자별 마찰 패치 수. 다음 스냅샷에서 활성화도 새 관리자도 아닌데 0 이 되어 있으면 Sc 층이 캐시 상태를 지운 것
+  // (clearCachedState 말고는 풀이 밖에서 이 값을 바꾸는 곳이 없다: PxcNpWorkUnit.h:201, PxsContactManager.h:120, DyTGSDynamics.cpp:552,1178)
+  std::unordered_map<const void*, uint32_t> pxPostCount;
   std::vector<uint8_t> wasActive(nb, 1), isActive(nb, 0);
   std::vector<uint8_t> dumpBody;  // 스텝 블록들 (--dump)
   const std::vector<eng::Body> bodies0 = eb;
   for (int s = 1; s <= steps; ++s) {
     gSnap.valid = false;
+    gCurStep = s;
+    if (getenv("SV_DBG_STEP")) gDbgStep = atoi(getenv("SV_DBG_STEP"));
     pscene->simulate(dt);
     pscene->fetchResults(true);
     Snapshot& S = gSnap;
     std::fill(isActive.begin(), isActive.end(), 0);
     std::vector<sv::IslandIn> islands;
-    std::vector<uint32_t> ib, icm, act;
+    std::vector<uint32_t> ib, icm, act, resetList;
+    std::unordered_set<const void*> actKeys(S.activated.begin(), S.activated.end());
     std::vector<sv::ContactPatchIn> patches;
     std::vector<sv::ContactIn> contacts;
     std::vector<sv::SolverCM> cmIn;
     std::vector<svs::Wake> wakes;
+    std::vector<sv::Constraint1DIn> c1dIn;
+    std::vector<uint32_t> ic1d;
+    std::vector<eng::jnt::D6Data> jd;
     std::vector<uint32_t> numCounted(nb, 0);
     for (int i = 0; i < nb; ++i) numCounted[i] = eb[i].numCountedInteractions;
     if (S.valid) {
       snapErr += S.errors;
       for (auto& si : S.islands) {
-        sv::IslandIn I{uint32_t(ib.size()), uint32_t(si.bodies.size()), uint32_t(icm.size()), uint32_t(si.cms.size()), si.staticTouch};
+        sv::IslandIn I{uint32_t(ib.size()), uint32_t(si.bodies.size()), uint32_t(icm.size()), uint32_t(si.cms.size()), si.staticTouch,
+                       uint32_t(ic1d.size()), uint32_t(si.c1ds.size())};
+        for (int k : si.c1ds) {
+          const SnapC1D& x = S.c1d[k];
+          sv::Constraint1DIn c{};
+          c.body0 = x.body0 < 0 ? sv::NONE : uint32_t(x.body0);
+          c.body1 = x.body1 < 0 ? sv::NONE : uint32_t(x.body1);
+          c.index = x.index;
+          c.data = uint32_t(jd.size());
+          c.writeback = x.index;
+          c.flags = x.flags;
+          c.linBreakForce = x.linBreak;
+          c.angBreakForce = x.angBreak;
+          c.minResponseThreshold = x.minResp;
+          if (x.index >= C1D_CAP) snapErr++;
+          maxC1D = std::max(maxC1D, x.index + 1);
+          ic1d.push_back(uint32_t(c1dIn.size()));
+          c1dIn.push_back(c);
+          jd.push_back(x.data);
+        }
         for (int b : si.bodies) {
           ib.push_back(uint32_t(b));
           isActive[b] = 1;
         }
         for (int ci : si.cms) {
           const SnapCM& c = S.cms[ci];
+          bool resetNow = false;
+          if (gFreshCM.erase(c.key)) {
+            cmMap.erase(c.key);  // 새 관리자: 마찰 패치 수 0 에서 시작
+            pxPostCount.erase(c.key);
+            freshCMs++;
+          } else {
+            auto pc = pxPostCount.find(c.key);
+            if (pc != pxPostCount.end() && pc->second != 0 && c.pxFrictionCount == 0 && !actKeys.count(c.key)) resetNow = true;
+          }
           auto it = cmMap.find(c.key);
           uint32_t idx;
           if (it == cmMap.end()) {
@@ -432,6 +672,9 @@ int main(int argc, char** argv) {
           } else
             idx = it->second;
           sv::SolverCM& m = cms[idx];
+          if (getenv("SV_DBG_B0") && c.body0 == atoi(getenv("SV_DBG_B0")) && c.body1 == atoi(getenv("SV_DBG_B1")))
+            gDbgCM = const_cast<void*>(c.key), printf("[추적] step %d 관리자 %u (%p) 패치 %zu 점 %zu 우리 지난 수 %u PhysX 수 %u flags %x\n", s, idx, c.key, c.patches.size(), c.contacts.size(), m.frictionCount,
+                   c.pxFrictionCount, c.flags);
           m.body0 = uint32_t(c.body0);
           m.body1 = c.body1 < 0 ? sv::NONE : uint32_t(c.body1);
           m.staticPose1 = toE(c.static1);
@@ -446,6 +689,10 @@ int main(int argc, char** argv) {
           m.nbContacts = uint32_t(c.contacts.size());
           patches.insert(patches.end(), c.patches.begin(), c.patches.end());
           contacts.insert(contacts.end(), c.contacts.begin(), c.contacts.end());
+          if (resetNow) {
+            resetList.push_back(idx);
+            resetEvents++;
+          }
           icm.push_back(idx);
           cmIn.push_back(m);
           totContacts += c.contacts.size();
@@ -485,6 +732,7 @@ int main(int argc, char** argv) {
       const sv::FrictionArena& prevArena = B.friction[B.frictionCurIdx];  // 이번 스텝에서 prev 가 될 쪽
       std::vector<uint8_t> activated(cms.size(), 0);
       for (uint32_t a : act) activated[a] = 1;
+      for (uint32_t a : resetList) activated[a] = 1;  // Sc 층 캐시 지움도 마찰 수 0
       for (auto& si : S.islands)
         for (int ci : si.cms) {
           const SnapCM& c = S.cms[ci];
@@ -504,6 +752,11 @@ int main(int argc, char** argv) {
           if (!same) {
             fricBad++;
             if (fricFirst < 0) fricFirst = s;
+            if (verbose && shown < 8) {
+              shown++;
+              printf("[다름] step %d 마찰 패치: 관리자 %u (몸체 %d-%d) 활성화 %d, 우리 수 %u (지난 스텝 수 %u) PhysX 수 %u\n", s, cmMap[c.key], m.body0 == sv::NONE ? -1 : int(m.body0),
+                     m.body1 == sv::NONE ? -1 : int(m.body1), int(activated[cmMap[c.key]]), myCount, m.frictionCount, c.pxFrictionCount);
+            }
           }
         }
     }
@@ -516,6 +769,7 @@ int main(int argc, char** argv) {
     prm.correlationDistance = S.correlation;
     prm.solverBatchSize = S.batchSize ? S.batchSize : 128;
     prm.solverArticBatchSize = S.articBatchSize ? S.articBatchSize : 16;
+    prm.lengthScale = tol.length;
     // 이번 스텝 섬 관리자가 재운 몸체 (fetchResults 뒤에도 accurate IslandSim 에 남아 있다, 다음 스텝 3차 섬 생성에서 지움)
     std::vector<uint32_t> deact;
     {
@@ -542,25 +796,51 @@ int main(int argc, char** argv) {
     v.numCounted = numCounted.data();
     v.patches = patches.data();
     v.contacts = contacts.data();
+    v.c.nC1D = uint32_t(c1dIn.size());
+    v.c1d = c1dIn.data();
+    v.ic1d = ic1d.data();
+    v.jd = jd.data();
+    v.pxWb = nullptr;
+    v.c.nReset = uint32_t(resetList.size());
+    v.reset = resetList.data();
     B.cms = cms.data();
     B.nbCMs = uint32_t(cms.size());
     {
       FtzScope f;
       svs::runStep(B, prm, v);
     }
+    if (S.valid)  // PhysX 풀이 뒤 마찰 패치 수 기록 (이번 스텝 섬의 관리자는 fetchResults 뒤에도 살아 있다)
+      for (const SnapCM& c : S.cms) pxPostCount[c.key] = static_cast<const PxsContactManager*>(c.key)->getWorkUnit().mFrictionPatchCount;
+    // 1D 제약 되쓰기 대조 (PhysX Dy::ConstraintWriteback 칸 = 우리 칸, 이번 스텝 섬에 있던 제약)
+    std::vector<eng::jnt::Writeback> pxWb(c1dIn.size());
+    if (S.valid) {
+      Dy::Context* ctx = static_cast<Dy::Context*>(gNpScene->getScScene().getDynamicsContext());
+      const auto& pool = ctx->getConstraintWriteBackPool();
+      for (size_t k = 0; k < c1dIn.size(); ++k) {
+        const uint32_t idx = c1dIn[k].index;
+        memcpy(&pxWb[k], &pool[idx], sizeof(eng::jnt::Writeback));
+        c1dCmp++;
+        c1dTot++;
+        if (pxWb[k].broken_residualPosIter & 0x80000000u) brokenSeen++;
+        if (memcmp(&pxWb[k], &wbs[idx], sizeof(eng::jnt::Writeback))) {
+          c1dBad++;
+          if (c1dFirst < 0) c1dFirst = s;
+          if (verbose && shown < 8) {
+            shown++;
+            printf("[다름] step %d 조인트 %u 되쓰기: PhysX lin (%.9g %.9g %.9g) ang (%.9g %.9g %.9g) %08x | 엔진 lin (%.9g %.9g %.9g) ang (%.9g %.9g %.9g) %08x\n", s,
+                   idx, pxWb[k].linearImpulse.x, pxWb[k].linearImpulse.y, pxWb[k].linearImpulse.z, pxWb[k].angularImpulse.x, pxWb[k].angularImpulse.y,
+                   pxWb[k].angularImpulse.z, pxWb[k].broken_residualPosIter, wbs[idx].linearImpulse.x, wbs[idx].linearImpulse.y, wbs[idx].linearImpulse.z,
+                   wbs[idx].angularImpulse.x, wbs[idx].angularImpulse.y, wbs[idx].angularImpulse.z, wbs[idx].broken_residualPosIter);
+          }
+        }
+      }
+    }
     if (dumpPath) {
       auto put = [&](const void* p, size_t n) { const uint8_t* b = static_cast<const uint8_t*>(p); dumpBody.insert(dumpBody.end(), b, b + n); };
-      put(&v.c, sizeof(v.c));
-      put(islands.data(), islands.size() * sizeof(sv::IslandIn));
-      put(ib.data(), ib.size() * 4);
-      put(icm.data(), icm.size() * 4);
-      put(cmIn.data(), cmIn.size() * sizeof(sv::SolverCM));
-      put(act.data(), act.size() * 4);
-      put(deact.data(), deact.size() * 4);
-      put(wakes.data(), wakes.size() * sizeof(svs::Wake));
-      put(numCounted.data(), size_t(nb) * 4);
-      put(patches.data(), patches.size() * sizeof(sv::ContactPatchIn));
-      put(contacts.data(), contacts.size() * sizeof(sv::ContactIn));
+      svs::StepArrays A{v.c, islands.data(), ib.data(), icm.data(), cmIn.data(), act.data(), deact.data(), wakes.data(), numCounted.data(),
+                        patches.data(), contacts.data(), c1dIn.data(), ic1d.data(), jd.data(), pxWb.data(), resetList.data()};
+      const std::vector<uint8_t> blk = svs::packStep(A, uint32_t(nb));
+      put(blk.data(), blk.size());
       for (int i = 0; i < nb; ++i) {  // PhysX 결과
         const PxTransform tp = px[i]->getGlobalPose();
         const PxVec3 lp = px[i]->getLinearVelocity(), ap = px[i]->getAngularVelocity();
@@ -619,13 +899,21 @@ int main(int argc, char** argv) {
   printf("풀이 묶음 %" PRIu64 " (제약 없는 묶음 %" PRIu64 "), 묶음 머리 %" PRIu64 ", 4개 묶음 준비 성공 %" PRIu64 ", 단일 준비 %" PRIu64 ", 최대 분할 수 %" PRIu64 "\n",
          B.statBatches, B.statFreeBatches, B.statHeaders, B.statBlock4, B.statSingle, B.statMaxPartitions);
   printf("Sc 층 깨움 입력 %" PRIu64 " 회, 풀이 직전 우리 깸 카운터가 PhysX 보다 큼(오류) %" PRIu64 "\n", wakeEvents, wakeBad);
+  printf("새로 만들어진 접촉 관리자(섬 간선에 건 것) %" PRIu64 ", Sc 층 캐시 지움(조인트 끊김 뒤 등) %" PRIu64 "\n", freshCMs, resetEvents);
   printf("스냅샷 오류 %" PRIu64 ", 엔진 오류 0x%x\n", snapErr, B.error);
+  printf("1D 제약(D6 조인트) 되쓰기 비교 %" PRIu64 " (제약·스텝), 다름 %" PRIu64 ", 첫 다름 스텝 %" PRId64 ", 끊김 표시 %" PRIu64
+         " | 4개 묶음 준비 %" PRIu64 ", 하나씩 %" PRIu64 " (행 0 %" PRIu64 ")\n",
+         c1dCmp, c1dBad, c1dFirst, brokenSeen, B.stat1DBlock4, B.stat1DSingle, B.stat1DZeroRows);
   printf("작업 공간 최대: 제약 자료 %u B/묶음, 마찰 패치 %u 개/스텝, 제약 %u 개/묶음, 접촉 관리자 %zu 개\n", B.statMaxArena, B.statMaxFriction,
          B.statMaxDescs, cms.size());
   if (dumpPath) {
     svs::Header h{};
-    memcpy(h.magic, "SVSTRM1", 8);
-    h.version = 1;
+    memcpy(h.magic, "SVSTRM2", 8);
+    h.version = 2;
+    h.lengthScale = tol.length;
+    h.maxC1D = maxC1D;
+    h.c1dSize = sizeof(sv::Constraint1DIn);
+    h.d6Size = sizeof(eng::jnt::D6Data);
     h.nb = uint32_t(nb);
     h.steps = uint32_t(steps);
     h.stab = uint32_t(stab);
@@ -652,7 +940,7 @@ int main(int argc, char** argv) {
     fclose(f);
     printf("입력 흐름 저장: %s (%.1f MB)\n", dumpPath, double(dumpBody.size()) / 1e6);
   }
-  const bool ok = !bad[0] && !bad[1] && !bad[2] && !bad[3] && !fricBad && !snapErr && !B.error && !wakeBad;
+  const bool ok = !bad[0] && !bad[1] && !bad[2] && !bad[3] && !fricBad && !snapErr && !B.error && !wakeBad && !c1dBad;
   printf("%s\n", ok ? "결과: 전부 비트 동일" : "결과: 불일치 있음");
   pscene->release();
   phys->release();

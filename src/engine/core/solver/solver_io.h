@@ -7,6 +7,7 @@
 
 #include "../common/body.h"
 #include "../common/pmath.h"
+#include "../joints/joint_types.h"  // D6Data·Writeback·Row (PhysX 배치, joints 모듈 소유, aos 없음)
 #include "sv_hd.h"
 
 namespace eng {
@@ -222,6 +223,7 @@ struct SolverParams {
   float correlationDistance;      // desc.frictionCorrelationDistance
   uint32_t solverBatchSize;       // desc.solverBatchSize (기본 128)
   uint32_t solverArticBatchSize;  // desc.solverArticulationBatchSize (기본 16)
+  float lengthScale;              // PxTolerancesScale::length (1D 제약 준비, DynamicsTGSContext::mLengthScale)
 };
 
 // 접촉 관리자 (PxsContactManager + PxcNpWorkUnit 에서 풀이가 쓰는 것)
@@ -239,6 +241,19 @@ struct IslandIn {
   uint32_t bodyStart, bodyCount;  // SolverBoard.islandBodies 안 범위
   uint32_t cmStart, cmCount;      // SolverBoard.islandCMs 안 범위
   uint32_t staticTouchCount;      // IslandSim::getIslandStaticTouchCount (잠 판정의 hasStaticTouch)
+  uint32_t c1dStart, c1dCount;    // SolverBoard.islandC1Ds 안 범위 (섬의 제약 간선 사슬 순서, island.mFirstEdge[eCONSTRAINT])
+};
+
+// 1D 제약 (조인트) — Dy::Constraint (DyConstraint.h) 에서 풀이가 쓰는 것. 준비·풀이 식은 joints 모듈(core/joints/tgs_1d*.h).
+// BEHAVIOR 의 조인트는 전부 D6 이라(12.3) 셰이더는 D6 하나다.
+struct Constraint1DIn {
+  uint32_t body0, body1;  // Body 번호, NONE = 정적(세계). 섬 간선의 node1/node2 와 같은 쪽
+  uint32_t index;         // Dy::Constraint::index — 묶음 안 정렬 키(내림차순, DyTGSDynamics.cpp:916-922)
+  uint32_t data;          // SolverBoard.jointData 번호 (D6 상수 블록 = Ext::D6JointData 바이트 그대로)
+  uint32_t writeback;     // SolverBoard.writebacks 번호 (Dy::ConstraintWriteback, 풀린 스텝에만 쓴다)
+  uint16_t flags;         // PxConstraintFlags (Dy::Constraint::flags)
+  uint16_t pad;
+  float linBreakForce, angBreakForce, minResponseThreshold;
 };
 
 struct SolverBoard {
@@ -256,6 +271,18 @@ struct SolverBoard {
   const uint32_t* islandCMs;
   const uint32_t* activatedCMs;  // 이번 스텝 활성화된 접촉 간선 -> 마찰 패치 수 0 (DyTGSDynamics.cpp:548)
   uint32_t nbActivatedCMs;
+  // Sc 층이 캐시 상태를 지운 접촉 관리자(PxcNpWorkUnit::clearCachedState, PxcNpWorkUnit.h:201) -> 마찰 패치 수 0.
+  // 조인트가 끊기면 두 행위자 중 상호작용이 적은 쪽의 접촉 상호작용 전부가 거르기 상태 더러움 표시를 받고(ScConstraintBreakage.cpp:96-101),
+  // 다음 스텝 Sc 층 갱신(ShapeInteraction::updateState -> resetManagerCachedState, ScShapeInteraction.cpp:872,194)에서 지워진다.
+  const uint32_t* resetCMs;
+  uint32_t nbResetCMs;
+  // 1D 제약 (조인트)
+  const Constraint1DIn* c1d;
+  uint32_t nbC1D;
+  const uint32_t* islandC1Ds;
+  const jnt::D6Data* jointData;
+  jnt::Writeback* writebacks;
+  jnt::Row* rowScratch;  // jnt::MAX_CONSTRAINT_ROWS * 4 칸 (셰이더 행)
   // 작업 공간 (용량 고정)
   SBodyVel* vels;
   SBodyTxI* txI;
@@ -277,6 +304,7 @@ struct SolverBoard {
   uint32_t error;  // 넘침 등 (0 = 정상)
   // 통계 (시험·보고용, 결과에 영향 없음)
   uint64_t statBatches, statBlock4, statSingle, statHeaders, statMaxPartitions, statFreeBatches;
+  uint64_t stat1DBlock4, stat1DSingle, stat1DZeroRows;
   uint32_t statMaxArena, statMaxFriction, statMaxDescs;
 };
 

@@ -3,6 +3,7 @@
 //   test_contact_solver_gpu <file.svs> [--envs E] [--threads T]
 // 판 하나 = CUDA 블록 하나(판 안 순서는 PhysX 와 같게 한 스레드가 차례로 — v1). 모든 판은 같은 장면·같은 입력 흐름을 받는다.
 // 비교: (1) 층 1 CPU 재생 = PhysX (스텝마다), (2) GPU 판 0 = 층 1 (스텝마다), (3) GPU 판 전부의 마지막 상태 = 층 1.
+// 1D 제약(D6 조인트) 되쓰기(Dy::ConstraintWriteback)도 같은 세 가지로 비교한다(흐름 v2).
 #include <cuda_runtime.h>
 #include <xmmintrin.h>
 
@@ -36,7 +37,7 @@ struct FtzScope {
 
 // 판별 작업 공간 용량
 struct Caps {
-  uint32_t nb, maxCMs, pool, desc, part, arena, fric;
+  uint32_t nb, maxCMs, pool, desc, part, arena, fric, c1d;
 };
 // 판 b 의 조각 = base + b * cap
 struct DevMem {
@@ -53,6 +54,8 @@ struct DevMem {
   sv::FrictionPatch *fr0, *fr1;
   sv::CorrelationBuffer* corr;
   sv::ContactPoint* cbuf;
+  eng::jnt::Writeback* wb;  // 판마다 c1d 칸 (제약 번호 = Dy::Constraint::index)
+  eng::jnt::Row* rows;      // 판마다 MAX_CONSTRAINT_ROWS * 4
 };
 
 // 호스트·장치 공용: 판 하나 조립
@@ -80,11 +83,13 @@ __host__ __device__ inline sv::SolverBoard makeBoard(const DevMem& M, const Caps
   B.frictionCurIdx = 0;
   B.corr = M.corr + b;
   B.contactBuffer = M.cbuf + size_t(b) * sv::MAX_CONTACTS;
+  B.writebacks = M.wb + size_t(b) * C.c1d;
+  B.rowScratch = M.rows + size_t(b) * eng::jnt::MAX_CONSTRAINT_ROWS * 4;
   return B;
 }
 
-__global__ void kRun(DevMem M, Caps C, const uint8_t* stream, const uint64_t* stepOff, uint32_t steps, sv::SolverParams prm, float* res0,
-                     float* resFinal, uint32_t* errs) {
+__global__ void kRun(DevMem M, Caps C, const uint8_t* stream, const uint64_t* stepOff, const uint64_t* c1dOff, uint32_t steps, sv::SolverParams prm,
+                     float* res0, eng::jnt::Writeback* wb0, float* resFinal, uint32_t* errs) {
   const uint32_t b = blockIdx.x;
   if (threadIdx.x != 0) return;
   sv::SolverBoard B = makeBoard(M, C, b);
@@ -95,6 +100,8 @@ __global__ void kRun(DevMem M, Caps C, const uint8_t* stream, const uint64_t* st
     svs::runStep(B, prm, v);
     if (b == 0 && res0)
       for (uint32_t i = 0; i < C.nb; ++i) svs::bodyResult(B.bodies[i], res0 + (size_t(s) * C.nb + i) * svs::RES_FLOATS);
+    if (b == 0 && wb0)
+      for (uint32_t k = 0; k < c.nC1D; ++k) wb0[c1dOff[s] + k] = B.writebacks[v.c1d[k].writeback];
   }
   for (uint32_t i = 0; i < C.nb; ++i) svs::bodyResult(B.bodies[i], resFinal + (size_t(b) * C.nb + i) * svs::RES_FLOATS);
   errs[b] = B.error;
@@ -130,6 +137,7 @@ int main(int argc, char** argv) {
   prm.correlationDistance = S.h.correlation;
   prm.solverBatchSize = S.h.batchSize;
   prm.solverArticBatchSize = S.h.articBatchSize;
+  prm.lengthScale = S.h.lengthScale;
   Caps C;
   C.nb = nb;
   C.maxCMs = S.h.maxCMs;
@@ -138,6 +146,11 @@ int main(int argc, char** argv) {
   C.part = 1024;
   C.arena = ((S.h.maxArena * 2 + 4096) + 15) & ~15u;
   C.fric = S.h.maxFriction * 2 + 64;
+  C.c1d = S.h.maxC1D ? S.h.maxC1D : 1;
+  std::vector<uint64_t> c1dOff(steps + 1, 0);  // 스텝별 1D 제약 되쓰기 비교 칸 시작
+  for (uint32_t s = 0; s < steps; ++s)
+    c1dOff[s + 1] = c1dOff[s] + reinterpret_cast<const svs::StepCounts*>(S.data.data() + S.stepOffset[s])->nC1D;
+  const uint64_t nWb = c1dOff[steps];
 
   // ---- 층 1 CPU 재생 (판 하나) = PhysX ?
   std::vector<eng::Body> cb = S.bodies0;
@@ -156,20 +169,32 @@ int main(int argc, char** argv) {
   std::vector<sv::FrictionPatch> cf0(C.fric), cf1(C.fric);
   std::unique_ptr<sv::CorrelationBuffer> ccorr(new sv::CorrelationBuffer());
   std::vector<sv::ContactPoint> ccbuf(sv::MAX_CONTACTS);
+  std::vector<eng::jnt::Writeback> cwb(C.c1d);
+  memset(cwb.data(), 0, cwb.size() * sizeof(eng::jnt::Writeback));  // Dy::ConstraintWriteback::initialize
+  std::vector<eng::jnt::Row> crows(eng::jnt::MAX_CONSTRAINT_ROWS * 4);
   DevMem HM{cb.data(), ccms.data(), cv.data(), ct.data(), cd.data(), cds.data(), cor.data(), ctm.data(), ch.data(), cpart.data(), cbsi.data(),
-            carena.data(), cf0.data(), cf1.data(), ccorr.get(), ccbuf.data()};
+            carena.data(), cf0.data(), cf1.data(), ccorr.get(), ccbuf.data(), cwb.data(), crows.data()};
   sv::SolverBoard HB = makeBoard(HM, C, 0);
   std::vector<float> cpuRes(size_t(steps) * nb * svs::RES_FLOATS);
-  uint64_t pxCmp = 0, pxBad = 0;
-  int64_t pxFirst = -1;
+  std::vector<eng::jnt::Writeback> cpuWb(nWb);
+  uint64_t pxCmp = 0, pxBad = 0, wbBad = 0;
+  int64_t pxFirst = -1, wbFirst = -1;
   const auto tc0 = std::chrono::steady_clock::now();
   {
     FtzScope f;
     for (uint32_t s = 0; s < steps; ++s) {
       const uint8_t* base = S.data.data() + S.stepOffset[s];
       const svs::StepCounts c = *reinterpret_cast<const svs::StepCounts*>(base);
-      svs::runStep(HB, prm, svs::makeView(base, c, nb));
+      const svs::StepView v = svs::makeView(base, c, nb);
+      svs::runStep(HB, prm, v);
       for (uint32_t i = 0; i < nb; ++i) svs::bodyResult(HB.bodies[i], cpuRes.data() + (size_t(s) * nb + i) * svs::RES_FLOATS);
+      for (uint32_t k = 0; k < c.nC1D; ++k) {
+        cpuWb[c1dOff[s] + k] = HB.writebacks[v.c1d[k].writeback];
+        if (memcmp(&cpuWb[c1dOff[s] + k], &v.pxWb[k], sizeof(eng::jnt::Writeback))) {
+          wbBad++;
+          if (wbFirst < 0) wbFirst = s;
+        }
+      }
     }
   }
   const double cpuSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - tc0).count();
@@ -181,6 +206,7 @@ int main(int argc, char** argv) {
     }
   }
   printf("층 1 CPU 재생 = PhysX: 몸체·스텝 %" PRIu64 " 비교, 비트 다름 %" PRIu64 " (첫 스텝 %" PRId64 "), 엔진 오류 0x%x\n", pxCmp, pxBad, pxFirst, HB.error);
+  printf("  1D 제약 되쓰기 = PhysX: 비교 %" PRIu64 ", 비트 다름 %" PRIu64 " (첫 스텝 %" PRId64 ")\n", nWb, wbBad, wbFirst);
   printf("  CPU 단일 스레드: %u 스텝 %.3f s (%.0f 스텝/초, 몸체 %u)\n", steps, cpuSec, steps / cpuSec, nb);
 
   // ---- 층 2 GPU 판 envs 개
@@ -202,6 +228,9 @@ int main(int argc, char** argv) {
   D.fr1 = dalloc<sv::FrictionPatch>(size_t(envs) * C.fric);
   D.corr = dalloc<sv::CorrelationBuffer>(envs);
   D.cbuf = dalloc<sv::ContactPoint>(size_t(envs) * sv::MAX_CONTACTS);
+  D.wb = dalloc<eng::jnt::Writeback>(size_t(envs) * C.c1d);
+  CK(cudaMemset(D.wb, 0, size_t(envs) * C.c1d * sizeof(eng::jnt::Writeback)));
+  D.rows = dalloc<eng::jnt::Row>(size_t(envs) * eng::jnt::MAX_CONSTRAINT_ROWS * 4);
   {  // 판마다 같은 초기 상태
     std::vector<eng::Body> rb(size_t(envs) * nb);
     for (int e = 0; e < envs; ++e) memcpy(&rb[size_t(e) * nb], S.bodies0.data(), nb * sizeof(eng::Body));
@@ -219,12 +248,15 @@ int main(int argc, char** argv) {
   CK(cudaMemcpy(dOff, S.stepOffset.data(), steps * sizeof(uint64_t), cudaMemcpyHostToDevice));
   float* dRes0 = dalloc<float>(size_t(steps) * nb * svs::RES_FLOATS);
   float* dFinal = dalloc<float>(size_t(envs) * nb * svs::RES_FLOATS);
+  uint64_t* dC1dOff = dalloc<uint64_t>(steps + 1);
+  CK(cudaMemcpy(dC1dOff, c1dOff.data(), (steps + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice));
+  eng::jnt::Writeback* dWb0 = dalloc<eng::jnt::Writeback>(nWb ? nWb : 1);
   uint32_t* dErr = dalloc<uint32_t>(envs);
   cudaEvent_t e0, e1;
   CK(cudaEventCreate(&e0));
   CK(cudaEventCreate(&e1));
   CK(cudaEventRecord(e0));
-  kRun<<<envs, 32>>>(D, C, dStream, dOff, steps, prm, dRes0, dFinal, dErr);
+  kRun<<<envs, 32>>>(D, C, dStream, dOff, dC1dOff, steps, prm, dRes0, dWb0, dFinal, dErr);
   CK(cudaEventRecord(e1));
   CK(cudaGetLastError());
   CK(cudaEventSynchronize(e1));
@@ -235,6 +267,12 @@ int main(int argc, char** argv) {
   CK(cudaMemcpy(res0.data(), dRes0, res0.size() * 4, cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(fin.data(), dFinal, fin.size() * 4, cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(errs.data(), dErr, envs * 4, cudaMemcpyDeviceToHost));
+  std::vector<eng::jnt::Writeback> wb0(nWb), wbAll(size_t(envs) * C.c1d);
+  if (nWb) CK(cudaMemcpy(wb0.data(), dWb0, nWb * sizeof(eng::jnt::Writeback), cudaMemcpyDeviceToHost));
+  CK(cudaMemcpy(wbAll.data(), D.wb, wbAll.size() * sizeof(eng::jnt::Writeback), cudaMemcpyDeviceToHost));
+  uint64_t gwBad = 0, gwfBad = 0;
+  for (uint64_t k = 0; k < nWb; ++k) gwBad += memcmp(&wb0[k], &cpuWb[k], sizeof(eng::jnt::Writeback)) != 0;
+  for (int e = 0; e < envs; ++e) gwfBad += memcmp(&wbAll[size_t(e) * C.c1d], cwb.data(), C.c1d * sizeof(eng::jnt::Writeback)) != 0;
   uint64_t g0Cmp = 0, g0Bad = 0, gfCmp = 0, gfBad = 0;
   int64_t g0First = -1;
   double maxd = 0;
@@ -256,10 +294,11 @@ int main(int argc, char** argv) {
   for (uint32_t x : errs) anyErr |= x;
   printf("층 2 GPU 판 0 = 층 1 (스텝마다): 비교 %" PRIu64 ", 비트 다름 %" PRIu64 " (첫 스텝 %" PRId64 ", 최대|차| %.3e)\n", g0Cmp, g0Bad, g0First, maxd);
   printf("층 2 GPU 판 %d 개 마지막 상태 = 층 1: 비교 %" PRIu64 ", 비트 다름 %" PRIu64 ", 엔진 오류 0x%x\n", envs, gfCmp, gfBad, anyErr);
+  printf("층 2 1D 제약 되쓰기: 판 0 스텝마다 = 층 1 비교 %" PRIu64 " 다름 %" PRIu64 ", 판 전부 마지막 되쓰기 표 = 층 1 다른 판 %" PRIu64 "\n", nWb, gwBad, gwfBad);
   const double sec = ms / 1000.0;
   printf("  GPU: 판 %d x %u 스텝 %.3f s -> 판·스텝/초 %.0f, 몸체·스텝/초 %.3g (CPU 단일 스레드 대비 %.1f 배)\n", envs, steps, sec, envs * double(steps) / sec,
          envs * double(steps) * nb / sec, (envs * double(steps) / sec) / (steps / cpuSec));
-  const bool ok = !pxBad && !g0Bad && !gfBad && !anyErr && !HB.error;
+  const bool ok = !pxBad && !g0Bad && !gfBad && !anyErr && !HB.error && !wbBad && !gwBad && !gwfBad;
   printf("%s\n", ok ? "결과: PhysX = 층 1 = 층 2 비트 동일" : "결과: 불일치 있음");
   return ok ? 0 : 3;
 }

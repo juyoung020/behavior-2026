@@ -11,9 +11,15 @@
 //   DyTGSDynamics.cpp:2515-2793  iterativeSolveIsland (단일 스레드 경로; PhysX 는 스레드 수와 무관하게 같은 결과)
 //   DyTGSDynamics.cpp:3610,1549  finishSolveIsland / copyBackBodies
 //   DyConstraintPartition.cpp    partitionContactConstraints (관절체 없는 RigidBodyClassification)
-// 아직 안 옮김: 관절체(articulation 모듈 함수 표로 붙일 자리 표시), 1D 제약 풀이(joints 모듈 함수), 운동학 몸체, CCD,
+//   DyTGSDynamics.cpp:916-966,1181-1259  1D 제약(조인트) 기술자·정렬·준비, :1262-1316 풀이·마무리·되쓰기 함수 표
+// 1D 제약 준비·풀이 식은 joints 모듈(core/joints/tgs_1d.h, tgs_1d4.h)을 부른다(docs 12.3 경계). 어느 순서로 부를지는 여기.
+// 아직 안 옮김: 관절체(articulation 모듈 함수 표로 붙일 자리 표시), 운동학 몸체, CCD,
 //              externalForcesEveryTgsIteration(기본 꺼짐), 잔차 보고.
 #pragma once
+#include <cstring>
+
+#include "../joints/tgs_1d.h"
+#include "../joints/tgs_1d4.h"
 #include "contact_prep4.h"
 #include "contact_solve.h"
 #include "tgs_body.h"
@@ -222,6 +228,148 @@ SV_HDN uint32_t partitionContactConstraints(const PartitionView& pv, const SDesc
   return maxPartition;
 }
 
+// ---------------- 1D 제약 (조인트): joints 모듈 함수에 넘길 때 풀이 몸체는 바이트 복사로 건넨다
+// (SBodyVel/SBodyTxI/SBodyData 와 jnt::TgsBodyVel/TgsTxInertia/TgsBodyData 는 둘 다 PhysX 배치 — 형이 달라 포인터로 섞지 않는다)
+static_assert(sizeof(SBodyVel) == sizeof(jnt::TgsBodyVel), "PxTGSSolverBodyVel 배치");
+static_assert(sizeof(SBodyTxI) == sizeof(jnt::TgsTxInertia), "PxTGSSolverBodyTxInertia 배치");
+static_assert(sizeof(SBodyData) == sizeof(jnt::TgsBodyData), "PxTGSSolverBodyData 배치");
+template <class D, class S>
+SV_HD D bitCopy(const S& s) {
+  static_assert(sizeof(D) == sizeof(S), "");
+  D d;
+  memcpy(&d, &s, sizeof(D));
+  return d;
+}
+
+// solve1DBlock / solveConclude1DBlock / solve1D4 / solveConclude1D4 (DyTGSContactPrep.cpp:3320,3361, DyTGSContactPrepBlock.cpp:3410,3628)
+SV_HDN void solve1DHeader(const BatchHeader& h, const SDesc* ordered, SBodyVel* vels, const SBodyTxI* txI, ByteArena& arena, float elapsed,
+                          bool conclude) {
+  if (h.constraintType == SC_TYPE_RB_1D) {
+    for (uint32_t i = h.startIndex, e = h.startIndex + h.stride; i < e; ++i) {
+      const SDesc& d = ordered[i];
+      if (d.constraint == NONE) continue;  // solve1DStep: bPtr == NULL 이면 끝
+      uint8_t* blk = arenaPtr<uint8_t>(arena, d.constraint);
+      jnt::TgsBodyVel b0 = bitCopy<jnt::TgsBodyVel>(vels[d.bodyA]);
+      jnt::TgsBodyVel b1 = bitCopy<jnt::TgsBodyVel>(vels[d.bodyB]);
+      const jnt::TgsTxInertia t0 = bitCopy<jnt::TgsTxInertia>(txI[d.bodyADataIndex]);
+      const jnt::TgsTxInertia t1 = bitCopy<jnt::TgsTxInertia>(txI[d.bodyBDataIndex]);
+      jnt::solve1DStep(blk, b0, b1, t0, t1, elapsed);
+      vels[d.bodyA] = bitCopy<SBodyVel>(b0);  // 원본 저장 순서: b0 다음 b1
+      vels[d.bodyB] = bitCopy<SBodyVel>(b1);
+      if (conclude) jnt::conclude1DStep(blk);
+    }
+  } else {  // SC_TYPE_BLOCK_1D
+    const SDesc* d = ordered + h.startIndex;
+    uint8_t* blk = arenaPtr<uint8_t>(arena, d[0].constraint);
+    jnt::TgsBodyVel bv[4][2];
+    jnt::TgsTxInertia tv[4][2];
+    jnt::TgsBodyVel* bp[4][2];
+    const jnt::TgsTxInertia* tp[4][2];
+    for (int a = 0; a < 4; ++a) {
+      bv[a][0] = bitCopy<jnt::TgsBodyVel>(vels[d[a].bodyA]);
+      bv[a][1] = bitCopy<jnt::TgsBodyVel>(vels[d[a].bodyB]);
+      tv[a][0] = bitCopy<jnt::TgsTxInertia>(txI[d[a].bodyADataIndex]);
+      tv[a][1] = bitCopy<jnt::TgsTxInertia>(txI[d[a].bodyBDataIndex]);
+      bp[a][0] = &bv[a][0];
+      bp[a][1] = &bv[a][1];
+      tp[a][0] = &tv[a][0];
+      tp[a][1] = &tv[a][1];
+    }
+    jnt::solve1DStep4(blk, bp, tp, elapsed, false, true);
+    for (int a = 0; a < 4; ++a) vels[d[a].bodyA] = bitCopy<SBodyVel>(bv[a][0]);  // 원본 저장 순서: 네 칸의 몸체 0 다음 몸체 1
+    for (int a = 0; a < 4; ++a) vels[d[a].bodyB] = bitCopy<SBodyVel>(bv[a][1]);
+    if (conclude) jnt::conclude1DStep4(blk, false);
+  }
+}
+
+// createSolverConstraints 의 1D 갈래 (DyTGSDynamics.cpp:1181-1259): 머리에 4개면 4개 묶음 준비(setupSolverConstraintStep4)를 먼저 해 보고,
+// 안 되면(행 0 인 조인트가 있으면) 하나씩 SetupSolverConstraintStep. 셰이더 = D6 (joints 모듈 prepareD6Step*).
+// 제약 자료는 원본처럼 길이 + 16 바이트를 잡는다(DyTGSContactPrep.cpp:1965, DyTGSContactPrepBlock.cpp:1760).
+SV_HDN void prepare1DHeader(SolverBoard& B, const SolverParams& prm, const BatchHeader& hdr, float stepDt, float totalDt, float invStepDt,
+                            float invTotalDt, float biasCoefficient) {
+  const uint32_t startIdx = hdr.startIndex, endIdx = startIdx + hdr.stride;
+  const Tf ident{qid(), V3{0.0f, 0.0f, 0.0f}};  // PxTransform(PxIdentity): 정적 쪽 몸체 틀
+  const jnt::D6Data* data[4];
+  uint16_t flags[4];
+  float linBreak[4], angBreak[4], minResp[4];
+  Tf frame0[4], frame1[4];
+  jnt::TgsBodyVel bv0[4], bv1[4];
+  jnt::TgsTxInertia t0[4], t1[4];
+  jnt::TgsBodyData d0[4], d1[4];
+  for (uint32_t a = startIdx, i = 0; a < endIdx; ++a, ++i) {
+    const SDesc& desc = B.ordered[a];
+    const Constraint1DIn& c = B.c1d[desc.source];
+    data[i] = &B.jointData[c.data];
+    flags[i] = c.flags;
+    linBreak[i] = c.linBreakForce;
+    angBreak[i] = c.angBreakForce;
+    minResp[i] = c.minResponseThreshold;
+    frame0[i] = c.body0 == NONE ? ident : B.bodies[c.body0].body2World;  // constraint->body0->getPose()
+    frame1[i] = c.body1 == NONE ? ident : B.bodies[c.body1].body2World;
+    bv0[i] = bitCopy<jnt::TgsBodyVel>(B.vels[desc.bodyA]);
+    bv1[i] = bitCopy<jnt::TgsBodyVel>(B.vels[desc.bodyB]);
+    t0[i] = bitCopy<jnt::TgsTxInertia>(B.txI[desc.bodyADataIndex]);
+    t1[i] = bitCopy<jnt::TgsTxInertia>(B.txI[desc.bodyBDataIndex]);
+    d0[i] = bitCopy<jnt::TgsBodyData>(B.datas[desc.bodyADataIndex]);
+    d1[i] = bitCopy<jnt::TgsBodyData>(B.datas[desc.bodyBDataIndex]);
+  }
+  if (hdr.stride == 4) {  // PX_USE_BLOCK_1D
+    const uint32_t prev = B.constraints.size;
+    const uint32_t off = arenaAlloc(B.constraints, jnt::blockLength4(jnt::MAX_CONSTRAINT_ROWS, false) + 16u);
+    if (off == NONE) {
+      B.error |= SV_ERR_ARENA;
+      return;
+    }
+    const Tf* f0p[4] = {&frame0[0], &frame0[1], &frame0[2], &frame0[3]};
+    const Tf* f1p[4] = {&frame1[0], &frame1[1], &frame1[2], &frame1[3]};
+    const jnt::TgsBodyVel* b0p[4] = {&bv0[0], &bv0[1], &bv0[2], &bv0[3]};
+    const jnt::TgsBodyVel* b1p[4] = {&bv1[0], &bv1[1], &bv1[2], &bv1[3]};
+    const jnt::TgsTxInertia* t0p[4] = {&t0[0], &t0[1], &t0[2], &t0[3]};
+    const jnt::TgsTxInertia* t1p[4] = {&t1[0], &t1[1], &t1[2], &t1[3]};
+    const jnt::TgsBodyData* d0p[4] = {&d0[0], &d0[1], &d0[2], &d0[3]};
+    const jnt::TgsBodyData* d1p[4] = {&d1[0], &d1[1], &d1[2], &d1[3]};
+    const uint32_t len = jnt::prepareD6Step4(data, flags, linBreak, angBreak, minResp, f0p, f1p, b0p, b1p, t0p, t1p, d0p, d1p, B.rowScratch,
+                                             arenaPtr<uint8_t>(B.constraints, off), stepDt, totalDt, invStepDt, invTotalDt, prm.lengthScale,
+                                             biasCoefficient, false);
+    if (len) {
+      for (uint32_t a = startIdx; a < endIdx; ++a) {
+        B.ordered[a].constraint = off;
+        B.ordered[a].constraintLengthOver16 = uint16_t(len / 16);
+      }
+      B.constraints.size = off + len + 16u;
+      B.stat1DBlock4++;
+      return;
+    }
+    B.constraints.size = prev;  // eUNBATCHABLE: 하나씩
+  }
+  const jnt::NoArt na;
+  for (uint32_t a = startIdx, i = 0; a < endIdx; ++a, ++i) {
+    SDesc& desc = B.ordered[a];
+    const uint32_t prev = B.constraints.size;
+    const uint32_t off = arenaAlloc(B.constraints, jnt::blockLength(jnt::MAX_CONSTRAINT_ROWS, false) + 16u);
+    if (off == NONE) {
+      B.error |= SV_ERR_ARENA;
+      return;
+    }
+    uint32_t len = 0;
+    const uint32_t n = jnt::prepareD6Step(*data[i], flags[i], linBreak[i], angBreak[i], minResp[i], frame0[i], frame1[i], bv0[i], bv1[i], t0[i],
+                                          t1[i], d0[i], d1[i], jnt::RIGID_BODY, jnt::RIGID_BODY, B.rowScratch,
+                                          arenaPtr<uint8_t>(B.constraints, off), stepDt, totalDt, invStepDt, invTotalDt, prm.lengthScale,
+                                          biasCoefficient, na, na, &len);
+    B.stat1DSingle++;
+    if (n == 0) {  // 행 없음: constraint = NULL, 길이 0 -> SolveIslandTask 가 뺀다
+      desc.constraint = NONE;
+      desc.constraintLengthOver16 = 0;
+      B.constraints.size = prev;
+      B.stat1DZeroRows++;
+    } else {
+      desc.constraint = off;
+      desc.constraintLengthOver16 = uint16_t(len / 16);
+      B.constraints.size = off + len + 16u;
+    }
+  }
+}
+
 // ---------------- 한 풀이 묶음 (DyTGSDynamics.cpp:3646 solveIsland 의 작업 사슬을 차례로)
 struct BatchRange {
   uint32_t islandStart, islandEnd;
@@ -230,8 +378,13 @@ struct BatchRange {
   uint32_t solverBodyOffset;     // 운동학 수 + 앞 묶음 몸체 수
 };
 
-SV_HDN void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBodyVel* vels, ByteArena& arena, float minPen, float elapsed, uint32_t& err) {
+SV_HDN void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBodyVel* vels, const SBodyTxI* txI, ByteArena& arena, float minPen,
+                               float elapsed, bool conclude, uint32_t& err) {
   switch (h.constraintType) {
+    case SC_TYPE_RB_1D:
+    case SC_TYPE_BLOCK_1D:
+      solve1DHeader(h, ordered, vels, txI, arena, elapsed, conclude);
+      break;
     case SC_TYPE_RB_CONTACT:
     case SC_TYPE_STATIC_CONTACT:
       for (uint32_t i = h.startIndex, e = h.startIndex + h.stride; i < e; ++i) solveContact(ordered[i], vels, arena, true, minPen, elapsed);
@@ -241,7 +394,7 @@ SV_HDN void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBody
       solveContact4_Block(ordered + h.startIndex, vels, arena, minPen, elapsed);
       break;
     default:
-      err |= SV_ERR_UNSUPPORTED;  // 1D 제약(joints)·관절체 접촉은 아직
+      err |= SV_ERR_UNSUPPORTED;  // 관절체 접촉·1D 는 아직
   }
 }
 
@@ -257,11 +410,40 @@ SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange
   }
   // prepareBodiesAndConstraints: 몸체 풀 번호
   for (uint32_t k = 0; k < R.nbBodies; ++k) B.bodySolverIndex[B.islandBodies[R.bodyStart + k]] = bodyOffset + k + 1;
-  // setupDescs: (1D 제약 먼저 — 아직 없음) 접촉
+  // setupDescs: 1D 제약 먼저(섬 순서대로 모아 Dy::Constraint::index 내림차순 정렬, DyTGSDynamics.cpp:916-966), 다음 접촉
   uint32_t nbDescs = 0;
-  if (R.nbCMs > B.descCap) {
+  uint32_t nbC1D = 0;
+  for (uint32_t isl = R.islandStart; isl < R.islandEnd; ++isl) nbC1D += B.islands[isl].c1dCount;
+  if (R.nbCMs + nbC1D > B.descCap) {
     B.error |= SV_ERR_DESC;
     return;
+  }
+  for (uint32_t isl = R.islandStart; isl < R.islandEnd; ++isl) {
+    const IslandIn& I = B.islands[isl];
+    for (uint32_t k = 0; k < I.c1dCount; ++k) {
+      const uint32_t ci = B.islandC1Ds[I.c1dStart + k];
+      const Constraint1DIn& c = B.c1d[ci];
+      SDesc& d = B.descs[nbDescs++];
+      d.bodyA = d.bodyADataIndex = c.body0 == NONE ? 0u : B.bodySolverIndex[c.body0];
+      d.bodyB = d.bodyBDataIndex = c.body1 == NONE ? 0u : B.bodySolverIndex[c.body1];
+      d.linkIndexA = d.linkIndexB = RIGID_BODY;
+      d.constraint = NONE;
+      d.constraintLengthOver16 = 0;
+      d.constraintType = SC_TYPE_RB_1D;
+      d.source = ci;
+      d.sortKey = c.index;
+      d.progressA = d.progressB = 0;
+    }
+  }
+  // PxSort(ConstraintLess): index 는 제약마다 달라 정렬 결과가 하나뿐이다 -> 삽입 정렬로 같은 순서
+  for (uint32_t i = 1; i < nbDescs; ++i) {
+    const SDesc t = B.descs[i];
+    uint32_t j = i;
+    while (j > 0 && B.descs[j - 1].sortKey < t.sortKey) {
+      B.descs[j] = B.descs[j - 1];
+      --j;
+    }
+    B.descs[j] = t;
   }
   for (uint32_t a = 0; a < R.nbCMs; ++a) {
     const uint32_t cmi = B.islandCMs[R.cmStart + a];
@@ -341,6 +523,10 @@ SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange
   for (uint32_t h = 0; h < numHeaders; ++h) {
     BatchHeader& hdr = B.headers[h];
     const uint32_t startIdx = hdr.startIndex, endIdx = startIdx + hdr.stride;
+    if (B.ordered[startIdx].constraintType == SC_TYPE_RB_1D) {
+      prepare1DHeader(B, prm, hdr, stepDt, totalDt, invStepDt, invTotalDt, biasCoefficient);
+      continue;
+    }
     if (B.ordered[startIdx].constraintType != SC_TYPE_RB_CONTACT) {
       B.error |= SV_ERR_UNSUPPORTED;
       continue;
@@ -461,25 +647,32 @@ SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange
     float elapsedTime = 0.0f;
     for (uint32_t a = 1; a < posIters; a++) {
       for (uint32_t h = 0; h < numContactConstraintBatches; ++h)
-        solveContactHeader(B.headers[h], cdb, vels, B.constraints, -kMaxReal, elapsedTime, B.error);
+        solveContactHeader(B.headers[h], cdb, vels, B.txI, B.constraints, -kMaxReal, elapsedTime, false, B.error);
       for (uint32_t k = 0; k < nb; k++) integrateCoreStep(vels[bodyOffset + k + 1], B.txI[bodyOffset + k + 1], stepDt);
       elapsedTime += stepDt;
     }
-    {  // 마지막 위치 반복 (solveConclude: 접촉의 conclude 는 빈 함수)
+    {  // 마지막 위치 반복 (solveConclude: 접촉의 conclude 는 빈 함수, 1D 는 conclude1DStep)
       for (uint32_t h = 0; h < numContactConstraintBatches; ++h)
-        solveContactHeader(B.headers[h], cdb, vels, B.constraints, -kMaxReal, elapsedTime, B.error);
+        solveContactHeader(B.headers[h], cdb, vels, B.txI, B.constraints, -kMaxReal, elapsedTime, true, B.error);
       elapsedTime += stepDt;
       for (uint32_t k = 0; k < nb; k++) integrateCoreStep(vels[bodyOffset + k + 1], B.txI[bodyOffset + k + 1], stepDt);
     }
     for (uint32_t a = 0; a < velIters; ++a)
       for (uint32_t h = 0; h < numContactConstraintBatches; ++h)
-        solveContactHeader(B.headers[h], cdb, vels, B.constraints, 0.f, elapsedTime, B.error);
+        solveContactHeader(B.headers[h], cdb, vels, B.txI, B.constraints, 0.f, elapsedTime, false, B.error);
     FrictionArena& fcur = B.friction[B.frictionCurIdx];
     for (uint32_t h = 0; h < numContactConstraintBatches; ++h) {
       const BatchHeader& hd = B.headers[h];
       if (hd.constraintType == SC_TYPE_BLOCK_RB_CONTACT || hd.constraintType == SC_TYPE_BLOCK_STATIC_RB_CONTACT)
         writeBackContact4_Block(cdb + hd.startIndex, B.constraints, fcur);
-      else
+      else if (hd.constraintType == SC_TYPE_RB_1D)  // writeBack1D (DyTGSContactPrep.cpp:3353)
+        for (uint32_t i = hd.startIndex, e = hd.startIndex + hd.stride; i < e; ++i)
+          jnt::writeBack1DStep(arenaPtr<uint8_t>(B.constraints, cdb[i].constraint), &B.writebacks[B.c1d[cdb[i].source].writeback]);
+      else if (hd.constraintType == SC_TYPE_BLOCK_1D) {  // writeBack1D4 (DyTGSContactPrepBlock.cpp:3418)
+        jnt::Writeback* wb[4];
+        for (int a = 0; a < 4; ++a) wb[a] = &B.writebacks[B.c1d[cdb[hd.startIndex + a].source].writeback];
+        jnt::writeBack1D4(arenaPtr<uint8_t>(B.constraints, cdb[hd.startIndex].constraint), wb, false);
+      } else
         for (uint32_t i = hd.startIndex, e = hd.startIndex + hd.stride; i < e; ++i) writeBackContact(cdb[i], B.constraints, fcur);
     }
   }
@@ -501,6 +694,7 @@ SV_HDN void solverStep(SolverBoard& B, const SolverParams& prm) {
   B.friction[B.frictionCurIdx].size = 0;
   B.friction[B.frictionCurIdx].overflow = 0;
   B.constraints.overflow = 0;
+  for (uint32_t a = 0; a < B.nbResetCMs; ++a) B.cms[B.resetCMs[a]].frictionCount = 0;          // Sc 층 clearCachedState (풀이 전)
   for (uint32_t a = 0; a < B.nbActivatedCMs; ++a) B.cms[B.activatedCMs[a]].frictionCount = 0;  // resetFrictionPatchCount
   if (!B.nbIslands) return;
   // 세계 몸체 (풀 0): mWorldSolverBodyVel / TxInertia / Data2 (DyTGSDynamics.cpp:299-312, 596)

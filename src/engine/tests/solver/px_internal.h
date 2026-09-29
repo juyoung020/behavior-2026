@@ -35,5 +35,8 @@
 #include "ScScene.h"
 #include "DyDynamicsBase.h"
 #include "DyFrictionPatch.h"
+#include "DyConstraint.h"
+#include "DyConstraintWriteBack.h"
+#include "DyContext.h"
 #undef private
 #undef protected
