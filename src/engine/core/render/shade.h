@@ -290,8 +290,9 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
   const Hit h0 = trace(S, E, r0, cam.znear, cam.zfar);
   depth = h0.inst >= 0 ? h0.t : 0.0f;
   radiance = V3{0.0f, 0.0f, 0.0f};
-  if (h0.inst < 0) {
-    radiance = V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
+  const V3 dome{S.sp.dome[0], S.sp.dome[1], S.sp.dome[2]};
+  if (h0.inst < 0) {  // 하늘(돔 조명)이 보임
+    radiance = dome;
     return;
   }
   const int spp = S.sp.spp > 0 ? S.sp.spp : 1;
@@ -299,6 +300,7 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
   const float cone0 = pix_angle * h0.t * mag(r0.d);
   const V3 amb{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
   const bool ao = S.sp.ao_range > 0.0f;
+  const bool has_dome = dome.x > 0.0f || dome.y > 0.0f || dome.z > 0.0f;
   V3 acc{0.0f, 0.0f, 0.0f};
   for (int k = 0; k < spp; ++k) {
     uint32_t rs = pcg(seed ^ pcg(uint32_t(k) * 0x9E3779B9u));
@@ -327,16 +329,20 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
       }
       if (!ao) lsum = lsum + amb;  // 가림 없는 주변광
       acc = acc + mulc(thr, mulc(s.albedo, lsum));
-      // 코사인 광선 하나: 주변광 가림(AO) 과 다음 튕김을 같이 한다.
+      // 코사인 광선 하나: 주변광 가림(AO), 돔(하늘) 빛, 다음 튕김을 같이 한다.
       // 주의: 함수 인자 계산 순서는 C++ 에서 정해져 있지 않다(g++ 는 오른쪽부터, nvcc 는 왼쪽부터) -> 난수는 따로 꺼낸다
-      if (b == S.sp.bounces && !ao) break;
+      if (b == S.sp.bounces && !ao && !has_dome) break;
       const float b1 = rnd01(rs);
       const float b2 = rnd01(rs);
       const V3 nd = cosine_dir(s.ns, b1, b2);
       r = make_ray(po, nd);
       h = trace(S, E, r, 1e-4f, 1e30f);
       if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
-      if (b == S.sp.bounces || h.inst < 0) break;
+      if (h.inst < 0) {  // 빠져나간 광선 = 돔 휘도 (코사인 표본이라 알베도만 곱함)
+        acc = acc + mulc(thr, mulc(s.albedo, dome));
+        break;
+      }
+      if (b == S.sp.bounces) break;
       cone = cone + 0.5f * h.t;  // 확산 튕김: 원뿔이 넓게 퍼진다(대략)
       thr = mulc(thr, s.albedo);
     }

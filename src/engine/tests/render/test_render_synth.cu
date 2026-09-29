@@ -170,7 +170,8 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
     q[17] = lsum.x; q[18] = lsum.y; q[19] = lsum.z;
     acc = acc + mulc(thr, mulc(s.albedo, lsum));
     q[20] = acc.x; q[21] = acc.y; q[22] = acc.z;
-    if (b == S.sp.bounces && !ao) break;
+    const V3 dome{S.sp.dome[0], S.sp.dome[1], S.sp.dome[2]};
+    if (b == S.sp.bounces && !ao && !(dome.x > 0.0f || dome.y > 0.0f || dome.z > 0.0f)) break;
     const float b1 = rnd01(rs);
     const float b2 = rnd01(rs);
     const V3 nd = cosine_dir(s.ns, b1, b2);
@@ -178,7 +179,11 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
     r = make_ray(po, nd);
     h = trace(S, E, r, 1e-4f, 1e30f);
     if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
-    if (b == S.sp.bounces || h.inst < 0) break;
+    if (h.inst < 0) {
+      acc = acc + mulc(thr, mulc(s.albedo, dome));
+      break;
+    }
+    if (b == S.sp.bounces) break;
     cone = cone + 0.5f * h.t;
     thr = mulc(thr, s.albedo);
     q[23] = thr.x; q[24] = thr.y; q[25] = thr.z;

@@ -64,7 +64,8 @@ struct ShadeParams {
   int32_t bounces;       // 간접광 튕김 수 (0 = 직접광 + 주변광만)
   float white_scale;     // Hable/Reinhard 흰색 기준 (선형)
   float ao_range;        // 주변광 가림 거리 (m). 코사인 광선이 이 거리 안에서 막히면 주변광 없음. 0 이하 = 가림 없음
-  float pad1, pad2;
+  float dome[3];         // 돔(하늘) 휘도: 아무것도 안 맞은 광선이 받는 빛. 불러올 때 DomeLight 들의 radiance 합(텍스처는 평균 1 로 봄)
+  float pad1;
 };
 
 // 정적 장면 (판 공유). 포인터는 호스트 또는 장치 메모리.

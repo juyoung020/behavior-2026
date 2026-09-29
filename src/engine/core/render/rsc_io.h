@@ -247,6 +247,10 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.tonemap = int32_t(sp[6]); S.sp.bounces = int32_t(sp[7]); S.sp.white_scale = sp[8];
   S.sp.ao_range = sp[9];
   S.n_anchor = int32_t(na);
+  for (int k = 0; k < 3; ++k) S.sp.dome[k] = 0.0f;
+  for (const auto& L : S.lights)
+    if (L.type == kLightDome && L.visible)
+      for (int k = 0; k < 3; ++k) S.sp.dome[k] += L.radiance[k];
   build_mips(S);
   // BLAS 굽기: 기하끼리 독립이라 스레드로 나눠 굽고(결과는 스레드 수와 무관), 붙이기는 기하 순서대로
   std::vector<BlasOut> blas(ng);
