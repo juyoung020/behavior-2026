@@ -32,7 +32,7 @@ take_lock() {  # take_lock <목적> <예상 분>
     sleep 45
   done
 }
-drop_lock() { [ -f "$LOCK/owner.txt" ] && grep -q fasttrain "$LOCK/owner.txt" && rm -rf "$LOCK"; }
+drop_lock() { [ -f "$LOCK/owner.txt" ] && grep -q '^agent: fasttrain' "$LOCK/owner.txt" && rm -rf "$LOCK"; return 0; }
 trap drop_lock EXIT INT TERM
 
 wait_gpu() {
