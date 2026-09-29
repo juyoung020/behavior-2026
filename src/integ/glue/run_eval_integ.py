@@ -48,6 +48,9 @@ def main():
     ap.add_argument("--stage-count", type=int, default=-1, help="-1 = 엔진이 알려 준 값, 없으면 2025 표")
     ap.add_argument("--no-apply-stage", action="store_true")
     ap.add_argument("--no-apply-prompt", action="store_true")
+    ap.add_argument("--kit-arg", action="append", default=None,
+                    help="Kit 시작 인자(여러 번). 기본: 검은 화면 (B) 대응 후보 --/app/settings/fabricDefaultStageFrameHistoryCount=4")
+    ap.add_argument("--no-kit-args", action="store_true")
     args = ap.parse_args(argv[:split])
     eval_args = argv[split + 1:]
     if "--policy" in eval_args:
@@ -92,6 +95,31 @@ def main():
         holder["p"] = self.policy
 
     P.LocalPolicy.__init__ = init
+    kit = [] if args.no_kit_args else (args.kit_arg or ["--/app/settings/fabricDefaultStageFrameHistoryCount=4"])
+    if kit:
+        # tools/eval_instrumented.py 와 같은 방법: Kit 을 띄우는 순간 SimulationApp 설정의 extra_args 에 덧붙인다(BEHAVIOR-1K 무수정)
+        import omnigibson.simulator as S
+
+        orig_launch = S._launch_app
+
+        def launch_with_args(*a, **kw):
+            import isaacsim
+
+            orig_app_init = isaacsim.SimulationApp.__init__
+
+            def app_init(self, launch_config=None, *ia, **ikw):
+                cfg = dict(launch_config or {})
+                cfg["extra_args"] = list(cfg.get("extra_args", [])) + kit
+                print(f"[integ] Kit extra_args={cfg['extra_args']}", flush=True)
+                return orig_app_init(self, cfg, *ia, **ikw)
+
+            isaacsim.SimulationApp.__init__ = app_init
+            try:
+                return orig_launch(*a, **kw)
+            finally:
+                isaacsim.SimulationApp.__init__ = orig_app_init
+
+        S._launch_app = launch_with_args
     wrapper = {"rgbd": "omnigibson.eval.wrappers.RGBDFullResWrapper", "default": "omnigibson.eval.wrappers.DefaultWrapper"}
     if "--env-wrapper" in eval_args:
         i = eval_args.index("--env-wrapper")

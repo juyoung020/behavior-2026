@@ -14,6 +14,7 @@ pub mod catalog;
 pub mod codec;
 pub mod context;
 pub mod fakes;
+pub mod fk;
 pub mod graph;
 pub mod http;
 pub mod image;

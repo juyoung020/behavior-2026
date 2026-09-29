@@ -12,19 +12,20 @@ exec > >(tee -a "$LOG") 2>&1
 echo "[stack] $(date '+%F %T') out=$OUT meridian=$MER llm=$LLM args=$*"
 source /opt/ros/humble/setup.bash
 source ~/meridian_ws/install/setup.bash
-export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-37}
+# 통합 판은 자기 ROS 도메인(38)을 쓴다 — 다른 에이전트의 meridian 시험(37)과 토픽이 섞이지 않게
+export ROS_DOMAIN_ID=${INTEG_ROS_DOMAIN_ID:-38}
 export TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-$HOME/.cache/meridian_inductor}
 export FASTRTPS_DEFAULT_PROFILES_FILE=$(ros2 pkg prefix meridian_scene)/share/meridian_scene/config/fastdds_shm.xml
 SIMLINK=${SIMLINK:-$HOME/cargo-target/simlink/release/simlink}
 HERE=/mnt/c/behavior-2026/src
 rm -f "$OUT/wsl_ready" "$OUT/wsl_done"
-if pgrep -f "simlink --listen" >/dev/null; then echo "[stack] 다른 simlink 가 돌고 있다 — 끝"; exit 1; fi
+if pgrep -x simlink >/dev/null; then echo "[stack] 다른 simlink 가 돌고 있다(pid $(pgrep -x simlink | tr '\n' ' ')) — 끝"; exit 1; fi
 gpu() { nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1; }
 echo "gpu_used_mib_before=$(gpu)" > "$OUT/vram.txt"
 
 LAUNCH=; REC=
 if [ "$MER" = "1" ]; then
-  if pgrep -f meridian_pipeline.launch >/dev/null; then echo "[stack] meridian 이 이미 돌고 있다(ROS_DOMAIN_ID 충돌) — 끝"; exit 1; fi
+  pgrep -f meridian_pipeline.launch >/dev/null && echo "[stack] 참고: 다른 meridian launch 가 돌고 있다(도메인이 달라 토픽은 안 섞임, GPU 는 잠금이 가른다)"
   ros2 launch meridian_scene meridian_pipeline.launch.py frontend_venv:=$HOME/meridian_venv ${MERIDIAN_ARGS} \
       > "$OUT/meridian_launch.log" 2>&1 &
   LAUNCH=$!
@@ -48,6 +49,7 @@ PLAN=(--llm "$LLM")
 GRAPH=none; [ "$MER" = "1" ] && GRAPH=meridian
 "$SIMLINK" --listen 0.0.0.0:7801 "${PLAN[@]}" --graph $GRAPH --trace-dir "$OUT/trace" --once "$@" &
 SL=$!
+echo "LAUNCH=$LAUNCH REC=$REC SL=$SL STACK=$$" > "$OUT/wsl_pids"
 for i in $(seq 1 50); do (echo > /dev/tcp/127.0.0.1/7801) 2>/dev/null && break; sleep 0.2; done
 # nvidia-smi 표본(1 s) — 판 전체 VRAM
 ( while kill -0 $SL 2>/dev/null; do echo "$(date +%T),$(gpu)"; sleep 1; done ) > "$OUT/vram_timeline.csv" &
@@ -62,7 +64,6 @@ if [ "$MER" = "1" ]; then
   python3 "$HERE/meridian/graph_summary.py" "$OUT/graph.sparkdsg" > "$OUT/graph_summary.txt" 2>&1
   kill -TERM $REC 2>/dev/null; timeout 10 tail --pid=$REC -f /dev/null
   kill -TERM $LAUNCH 2>/dev/null; timeout 30 tail --pid=$LAUNCH -f /dev/null || kill -KILL $LAUNCH 2>/dev/null
-  pkill -f "meridian_frontend" 2>/dev/null
 fi
 echo "gpu_used_mib_after=$(gpu)" >> "$OUT/vram.txt"
 touch "$OUT/wsl_done"

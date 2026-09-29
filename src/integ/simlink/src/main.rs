@@ -3,10 +3,14 @@
 //! 한 프로세스에서 두 일을 한다(docs/통합_실시간.md):
 //! 1. **계획기 호스트**: `bagent::link`(전송층) + Core·Decider(그대로). 평가기 안 파이썬 접착부가 TCP 하나로 붙는다.
 //! 2. **관측 → meridian**: link 가 넘기는 [`ObsPacket`] 을 ROS 2 토픽으로 낸다(r2r, Fast DDS 공유메모리 프로필).
-//!    - `/camera/rgb` rgb8 640x480, `/camera/depth` 16UC1 mm, `/camera/info`, `/camera/pose`(광학 프레임 map 자세), `/base_pose`
-//!      — frontend 입력 계약(obs_player 와 같은 변환: 가운데 4:3 자르기·면적 축소·깊이 mm·K 옮기기)
+//!    - `/camera/rgb` rgb8 640x480, `/camera/depth` 16UC1 mm, `/camera/info` — frontend 입력 계약(meridian 문서 2.1, obs_player 와
+//!      같은 변환: 가운데 4:3 자르기·면적 축소·깊이 mm·K 옮기기)
+//!    - 매 스텝 `/base_qvel`(TwistStamped, 로봇 기준 원값)·`/camera/extrinsic`(PoseStamped, 베이스 기준 머리 카메라 = robot2cam,
+//!      proprio 순기구학) — 영상이 있는 스텝이면 영상과 같은 stamp. meridian_odom(깊이 보정 위치 추정기)의 입력
+//!    - `--pose-source simlink`(지금 기본): link 의 추정기(적분)로 `/camera/pose`(광학 프레임 map 자세)·`/base_pose` 도 낸다.
+//!      `--pose-source meridian`: 그 둘은 meridian_odom 이 내고, simlink 는 `/base_pose` 를 받아 계획기 추정기에 고정점으로 넣는다
 //!    - 손목: `/camera_left/*`, `/camera_right/*`(원래 크기 480x480) — 영상이 온 스텝만
-//!    - 받기: `/graph_update_event`(graphcore) → 관측 → 그래프 반영 지연, 경계 settle; `/meridian/map_odom`(보정 자리)
+//!    - 받기: `/graph_update_event`(graphcore) → 관측 → 그래프 반영 지연, 경계 settle
 //!    - scene_server `status` 를 주기적으로 물어 노드 수 기록
 //!
 //! ROS 발행은 따로 스레드(링크 스레드를 막지 않음). 경계 스텝 패킷은 절대 버리지 않고, 평소 패킷은 줄이 차면 영상만 버린다.
@@ -22,7 +26,7 @@ use bagent::util::Args;
 use convert::CamConv;
 use futures::stream::StreamExt;
 use r2r::builtin_interfaces::msg::Time;
-use r2r::geometry_msgs::msg::{Point, Pose as RPose, PoseStamped, Quaternion};
+use r2r::geometry_msgs::msg::{Point, Pose as RPose, PoseStamped, Quaternion, Twist, TwistStamped, Vector3};
 use r2r::sensor_msgs::msg::{CameraInfo, Image};
 use r2r::std_msgs::msg::Header;
 use serde_json::{json, Value};
@@ -45,18 +49,20 @@ struct GraphState {
     last_event_stamp: i128,
     events: u64,
     heartbeats: u64,
-    /// 발행한 머리 영상 stamp → 발행 순간
-    published: HashMap<i128, Instant>,
+    /// 발행한 머리 영상 stamp → (발행 끝 순간, link 가 그 스텝을 받은 순간)
+    published: HashMap<i128, (Instant, Instant)>,
     pub_order: VecDeque<i128>,
     /// 관측(발행) → graphcore commit 이벤트 수신 [ms]
     lat_ms: Vec<f64>,
-    /// link 가 받은 순간(stamp) → 이벤트 [ms] (같은 벽시계)
+    /// link 가 그 영상을 받은 순간 → 이벤트 [ms]
     age_ms: Vec<f64>,
     /// link 수신 → 머리 영상 발행 끝 [ms] (변환 포함)
     pub_ms: Vec<f64>,
     conv_ms: Vec<f64>,
-    correction: Option<Pose>,
-    correction_new: bool,
+    /// meridian_odom `/base_pose` 최신값 (stamp, 자세), 새 값인가
+    ext_fix: Option<(i128, Pose)>,
+    ext_new: bool,
+    ext_count: u64,
     /// (link 시작 뒤 s, 노드 수, events_applied)
     nodes: Vec<(f64, u64, u64)>,
     dropped_frames: u64,
@@ -99,7 +105,8 @@ impl ObsSink for RosSink {
     }
     fn push(&mut self, pkt: ObsPacket) {
         if pkt.boundary {
-            self.boundary_stamp.insert(pkt.env, pkt.stamp_ns);
+            // 그래프 이벤트 stamp = 영상 stamp(last_seen) → 경계 영상의 stamp 로 기다린다
+            self.boundary_stamp.insert(pkt.env, pkt.img_stamp_ns);
             let _ = self.tx.send(Msg::Pkt(pkt)); // 경계는 기다려서라도 보낸다
             return;
         }
@@ -131,14 +138,14 @@ impl ObsSink for RosSink {
         }
         Some(t0.elapsed().as_secs_f64() * 1e3)
     }
-    fn correction(&mut self, env: usize) -> Option<Pose> {
+    fn external_fix(&mut self, env: usize) -> Option<(i128, Pose)> {
         if env != 0 {
             return None;
         }
         let mut g = self.sh.g.lock().unwrap();
-        if g.correction_new {
-            g.correction_new = false;
-            return g.correction;
+        if g.ext_new {
+            g.ext_new = false;
+            return g.ext_fix;
         }
         None
     }
@@ -146,7 +153,7 @@ impl ObsSink for RosSink {
         let g = self.sh.g.lock().unwrap();
         json!({"graph_events": g.events, "heartbeats": g.heartbeats, "obs_to_graph_ms": pct(&g.lat_ms), "recv_to_graph_ms": pct(&g.age_ms),
                "recv_to_publish_ms": pct(&g.pub_ms), "convert_ms": pct(&g.conv_ms), "head_published": g.head_published,
-               "wrist_published": g.wrist_published, "dropped_frames": g.dropped_frames, "nodes_last": g.last_nodes, "nodes_max": g.max_nodes,
+               "wrist_published": g.wrist_published, "dropped_frames": g.dropped_frames, "external_poses": g.ext_count, "nodes_last": g.last_nodes, "nodes_max": g.max_nodes,
                "scene_ok": g.scene_ok, "nodes_timeline": g.nodes.iter().map(|(t, n, e)| json!([(t * 10.0).round() / 10.0, n, e])).collect::<Vec<_>>()})
     }
 }
@@ -211,11 +218,15 @@ fn ros_thread(rx: Receiver<Msg>, sh: Arc<Shared>, stop: Arc<AtomicBool>, a: Args
         mk(&mut node, "/camera_left", "left_wrist_camera_optical")?,
         mk(&mut node, "/camera_right", "right_wrist_camera_optical")?,
     ];
-    let p_base = node.create_publisher::<PoseStamped>("/base_pose", qos.clone().keep_last(100)).map_err(e)?;
+    let own_pose = a.str_or("pose-source", "simlink") == "simlink";
+    // simlink 가 자세를 낼 때만 /base_pose 발행(meridian 이면 meridian_odom 이 낸다 — 발행자 둘이 안 되게)
+    let p_base = if own_pose { Some(node.create_publisher::<PoseStamped>("/base_pose", qos.clone().keep_last(100)).map_err(e)?) } else { None };
+    let p_qvel = node.create_publisher::<TwistStamped>("/base_qvel", qos.clone().keep_last(100)).map_err(e)?;
+    let p_ext = node.create_publisher::<PoseStamped>("/camera/extrinsic", qos.clone().keep_last(100)).map_err(e)?;
     let ev_sub = node
         .subscribe::<r2r::meridian_msgs::msg::GraphUpdateEventDev>("/graph_update_event", r2r::QosProfile::default().keep_last(64))
         .map_err(e)?;
-    let corr_sub = node.subscribe::<PoseStamped>(&a.str_or("correction-topic", "/meridian/map_odom"), r2r::QosProfile::default()).map_err(e)?;
+    let ext_sub = if own_pose { None } else { Some(node.subscribe::<PoseStamped>("/base_pose", r2r::QosProfile::default().keep_last(100)).map_err(e)?) };
     let mut pool = futures::executor::LocalPool::new();
     use futures::task::LocalSpawnExt;
     let sp = pool.spawner();
@@ -228,11 +239,10 @@ fn ros_thread(rx: Receiver<Msg>, sh: Arc<Shared>, stop: Arc<AtomicBool>, a: Args
         } else {
             g.events += 1;
             let s = stamp_ns(&m.header.stamp);
-            if let Some(tp) = g.published.get(&s).copied() {
+            if let Some((tp, tr)) = g.published.get(&s).copied() {
                 g.lat_ms.push((now - tp).as_secs_f64() * 1e3);
+                g.age_ms.push((now - tr).as_secs_f64() * 1e3);
             }
-            let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i128).unwrap_or(0);
-            g.age_ms.push((wall - s) as f64 / 1e6);
             if s > g.last_event_stamp {
                 g.last_event_stamp = s;
             }
@@ -242,17 +252,25 @@ fn ros_thread(rx: Receiver<Msg>, sh: Arc<Shared>, stop: Arc<AtomicBool>, a: Args
         futures::future::ready(())
     }))
     .map_err(|x| x.to_string())?;
-    let sh2 = sh.clone();
-    sp.spawn_local(corr_sub.for_each(move |m| {
-        let q = &m.pose.orientation;
-        let yaw = (2.0 * (q.w * q.z + q.x * q.y)).atan2(1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-        let mut g = sh2.g.lock().unwrap();
-        g.correction = Some(Pose { x: m.pose.position.x, y: m.pose.position.y, yaw });
-        g.correction_new = true;
-        futures::future::ready(())
-    }))
-    .map_err(|x| x.to_string())?;
-    eprintln!("[simlink] ROS 노드 준비: /camera/* /camera_left/* /camera_right/* /base_pose, 받기 /graph_update_event");
+    if let Some(sub) = ext_sub {
+        let sh2 = sh.clone();
+        sp.spawn_local(sub.for_each(move |m| {
+            let q = &m.pose.orientation;
+            let yaw = (2.0 * (q.w * q.z + q.x * q.y)).atan2(1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+            let mut g = sh2.g.lock().unwrap();
+            g.ext_fix = Some((stamp_ns(&m.header.stamp), Pose { x: m.pose.position.x, y: m.pose.position.y, yaw }));
+            g.ext_new = true;
+            g.ext_count += 1;
+            futures::future::ready(())
+        }))
+        .map_err(|x| x.to_string())?;
+    }
+    eprintln!(
+        "[simlink] ROS 노드 준비: /camera/* /camera_left/* /camera_right/* /base_qvel /camera/extrinsic{}, 받기 /graph_update_event{}",
+        if own_pose { " /camera/pose /base_pose" } else { "" },
+        if own_pose { "" } else { " /base_pose(meridian_odom)" }
+    );
+    let pubs = Pubs { base: p_base, qvel: p_qvel, ext: p_ext, own_pose };
 
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(Duration::from_millis(2)) {
@@ -268,7 +286,7 @@ fn ros_thread(rx: Receiver<Msg>, sh: Arc<Shared>, stop: Arc<AtomicBool>, a: Args
                 }
             }
             Ok(Msg::Reset(ep)) => eprintln!("[simlink] 새 판 {ep}"),
-            Ok(Msg::Pkt(p)) => publish(&mut cams, &p_base, &p, &sh).map_err(e)?,
+            Ok(Msg::Pkt(p)) => publish(&mut cams, &pubs, &p, &sh).map_err(e)?,
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -282,18 +300,48 @@ fn image(t: &Time, frame: &str, w: usize, h: usize, enc: &str, bpp: usize, data:
     Image { header: Header { stamp: t.clone(), frame_id: frame.into() }, height: h as u32, width: w as u32, encoding: enc.into(), is_bigendian: 0, step: (w * bpp) as u32, data }
 }
 
-fn publish(cams: &mut [CamPub; 3], p_base: &r2r::Publisher<PoseStamped>, p: &ObsPacket, sh: &Shared) -> Result<(), r2r::Error> {
+struct Pubs {
+    base: Option<r2r::Publisher<PoseStamped>>,
+    qvel: r2r::Publisher<TwistStamped>,
+    ext: r2r::Publisher<PoseStamped>,
+    own_pose: bool,
+}
+
+fn publish(cams: &mut [CamPub; 3], pb: &Pubs, p: &ObsPacket, sh: &Shared) -> Result<(), r2r::Error> {
     let t = stamp(p.stamp_ns);
-    let (rwb, twb) = pose::base_rt(&p.base);
-    p_base.publish(&pose_msg(&t, "map", &rwb, &twb))?;
+    // meridian_odom 입력(매 스텝, 영상과 같은 stamp): base_qvel 원값, 머리 카메라 robot2cam(proprio 순기구학)
+    pb.qvel.publish(&TwistStamped {
+        header: Header { stamp: t.clone(), frame_id: "base_link".into() },
+        twist: Twist { linear: Vector3 { x: p.qvel[0], y: p.qvel[1], z: 0.0 }, angular: Vector3 { x: 0.0, y: 0.0, z: p.qvel[2] } },
+    })?;
+    if let Some(rel) = &p.cam_rel[CAM_HEAD as usize] {
+        pb.ext.publish(&PoseStamped {
+            header: Header { stamp: t.clone(), frame_id: "base_link".into() },
+            pose: RPose { position: Point { x: rel[0], y: rel[1], z: rel[2] }, orientation: Quaternion { x: rel[3], y: rel[4], z: rel[5], w: rel[6] } },
+        })?;
+    }
     let has = |cam: u8| p.frames.iter().any(|f| f.cam == cam);
-    // 머리 자세는 매 스텝(frontend 는 영상 stamp 이하 최신 자세를 쓴다), 손목은 영상이 올 때만. 영상보다 먼저.
-    for cam in 0..3u8 {
-        if let Some(rel) = &p.cam_rel[cam as usize] {
-            if cam == CAM_HEAD || has(cam) {
-                let (r, tr) = pose::cam_optical(&p.base, rel);
-                cams[cam as usize].pose.publish(&pose_msg(&t, "map", &r, &tr))?;
-            }
+    if let Some(b) = &pb.base {
+        let (rwb, twb) = pose::base_rt(&p.base);
+        b.publish(&pose_msg(&t, "map", &rwb, &twb))?;
+    }
+    // 머리 /camera/pose 는 매 스텝 이 스텝 상태의 stamp 로(frontend 는 영상 stamp 이하 최신 자세를 쓴다 → 영상(k)의 stamp 는
+    // k-1 이므로 k-1 에 낸 자세와 맞물린다). meridian_odom 이 낼 때(pose-source meridian)는 내지 않는다.
+    if pb.own_pose {
+        if let Some(rel) = &p.cam_rel[CAM_HEAD as usize] {
+            let (r, tr) = pose::cam_optical(&p.base, rel);
+            cams[CAM_HEAD as usize].pose.publish(&pose_msg(&t, "map", &r, &tr))?;
+        }
+    }
+    // 영상 stamp = 직전 스텝(장면 시각 k-1). 손목 자세도 그 시각 값으로 영상과 같은 stamp.
+    let ti = stamp(p.img_stamp_ns);
+    for cam in [1u8, 2u8] {
+        if !has(cam) {
+            continue;
+        }
+        if let Some(rel) = &p.img_cam_rel[cam as usize] {
+            let (r, tr) = pose::cam_optical(&p.img_base, rel);
+            cams[cam as usize].pose.publish(&pose_msg(&ti, "map", &r, &tr))?;
         }
     }
     if p.frames.is_empty() {
@@ -321,15 +369,15 @@ fn publish(cams: &mut [CamPub; 3], p_base: &r2r::Publisher<PoseStamped>, p: &Obs
             let m = match f.kind {
                 KIND_RGBA8 | KIND_RGB8 => {
                     let ch = if f.kind == KIND_RGBA8 { 4 } else { 3 };
-                    (true, image(&t, &cp.frame, c.out_w, c.out_h, "rgb8", 3, c.rgb(&f.data, ch)))
+                    (true, image(&ti, &cp.frame, c.out_w, c.out_h, "rgb8", 3, c.rgb(&f.data, ch)))
                 }
-                KIND_DEPTH_F32 => (false, image(&t, &cp.frame, c.out_w, c.out_h, "16UC1", 2, c.depth_mm(&f.data))),
+                KIND_DEPTH_F32 => (false, image(&ti, &cp.frame, c.out_w, c.out_h, "16UC1", 2, c.depth_mm(&f.data))),
                 _ => continue,
             };
             conv_ms += t1.elapsed().as_secs_f64() * 1e3;
             msgs.push(m);
         }
-        cp.info.publish(&info_msg(&t, &cp.frame, c))?;
+        cp.info.publish(&info_msg(&ti, &cp.frame, c))?;
         // RGB 먼저, 깊이 다음(obs_player 와 같은 순서)
         for (_, m) in msgs.iter().filter(|m| m.0) {
             cp.rgb.publish(m)?;
@@ -344,8 +392,8 @@ fn publish(cams: &mut [CamPub; 3], p_base: &r2r::Publisher<PoseStamped>, p: &Obs
     let mut g = sh.g.lock().unwrap();
     if head {
         g.head_published += 1;
-        g.published.insert(p.stamp_ns, Instant::now());
-        g.pub_order.push_back(p.stamp_ns);
+        g.published.insert(p.img_stamp_ns, (Instant::now(), p.recv));
+        g.pub_order.push_back(p.img_stamp_ns);
         while g.pub_order.len() > 4000 {
             let k = g.pub_order.pop_front().unwrap();
             g.published.remove(&k);
@@ -399,7 +447,7 @@ fn scene_poller(addr: String, every: Duration, sh: Arc<Shared>, stop: Arc<Atomic
 fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.iter().any(|s| s == "--help" || s == "-h") {
-        println!("simlink — 평가기 ↔ 계획기 + meridian 관측 발행. 인자는 `bagent link` 와 같고 더해서 --scene 127.0.0.1:7791 --scene-every-ms 500 --queue 6 --head-prefix /camera --correction-topic /meridian/map_odom");
+        println!("simlink — 평가기 ↔ 계획기 + meridian 관측 발행. 인자는 `bagent link` 와 같고 더해서 --scene 127.0.0.1:7791 --scene-every-ms 500 --queue 6 --head-prefix /camera --pose-source simlink|meridian");
         return;
     }
     let a = Args::parse(raw);
@@ -411,7 +459,12 @@ fn main() {
         }
     };
     let cfg = match link::cfg_from_args(&a, catalog) {
-        Ok(c) => c,
+        Ok(mut c) => {
+            if a.str_or("pose-source", "simlink") == "meridian" {
+                c.pose = "corrected".into(); // meridian_odom /base_pose 를 고정점으로 받는 추정기
+            }
+            c
+        }
         Err(e) => {
             eprintln!("설정: {e}");
             std::process::exit(1);

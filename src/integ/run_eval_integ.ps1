@@ -7,7 +7,7 @@
 param([string]$Task = 'turning_on_radio', [int]$Instance = 0, [int]$MaxSteps = 600,
       [string]$Weights = 'C:\behavior-2026\data\pi05_native\pi05_radio.pi05w', [int]$Replan = 16,
       [string]$Llm = 'kau', [int]$Meridian = 1, [string]$Wrapper = 'rgbd', [string]$SimlinkArgs = '',
-      [switch]$Video, [string]$Tag = '', [switch]$NoLock, [int]$VramWarnMiB = 3500, [int]$LockMinutes = 30,
+      [switch]$Video, [string]$Tag = '', [switch]$NoLock, [int]$VramWarnMiB = 3500, [int]$LockMinutes = 30, [int]$MaxWaitMin = 360,
       [string]$RobotConfig = 'C:\behavior-2026\src\configs\r1pro_openpi.yaml')
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
@@ -27,7 +27,7 @@ function Gpu-Used { [int](nvidia-smi --query-gpu=memory.used --format=csv,nohead
 
 if (-not $NoLock) {
     while ($true) {
-        if (-not (Enter-GpuLock 'integ' "통합 한 판: 평가기+네이티브 pi0.5+meridian ($Task, $MaxSteps 스텝)" $LockMinutes '14')) { throw 'no GPU lock' }
+        if (-not (Enter-GpuLock 'integ' "통합 한 판: 평가기+네이티브 pi0.5+meridian ($Task, $MaxSteps 스텝)" $LockMinutes '14' $MaxWaitMin)) { throw 'no GPU lock' }
         $sims = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
                   Where-Object { $_.CommandLine -match 'omnigibson|og_black_repro|isaac_black_repro' })
         $used = Gpu-Used
@@ -78,7 +78,7 @@ try {
     if ($sampler -and -not $sampler.HasExited) { Stop-Process -Id $sampler.Id -Force -ErrorAction SilentlyContinue }
     if ($wsl -and -not $wsl.HasExited) {
         # 평가기가 비정상으로 끝났으면 WSL 쪽 정리(simlink 가 연결 끝을 못 봤을 수 있음)
-        & wsl.exe -d Ubuntu-22.04 -u juyoung -- bash -c "pkill -f 'simlink --listen'; sleep 5; pkill -f meridian_pipeline.launch; pkill -f meridian_frontend; true" | Out-Null
+        & wsl.exe -d Ubuntu-22.04 -u juyoung -- bash /mnt/c/behavior-2026/src/integ/wsl_cleanup.sh $wout | Out-Null
     }
     if (-not $NoLock) { [void](Exit-GpuLock 'integ') }
 }

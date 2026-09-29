@@ -10,8 +10,9 @@
 //!   받는 자리다. 적분만으로는 10 m 이동에 중앙 1.16 m 틀어진다(원본 HDF5 GT 13판 실측, meridian 에이전트) —
 //!   기록된 각속도가 실제 회전보다 3~12% 크다.
 //!
-//! 카메라 외부 자세 `cam_rel_poses`(베이스 기준 xyz + xyzw, 카메라 prim = OpenGL 축)는 정확하므로 그대로 쓴다.
-//! 광학 프레임 = prim · Rx(π) (OmniGibson `obs_utils.depth_to_pcd` 와 같은 보정).
+//! 카메라 외부 자세(베이스 기준 xyz + xyzw, 카메라 prim = OpenGL 축)는 proprio 관절값 + 순기구학([`crate::fk`])으로 만든다
+//! (평가기 `cam_rel_poses` 는 쓰지 않음). 광학 프레임 = prim · Rx(π) (OmniGibson `obs_utils.depth_to_pcd` 와 같은 보정).
+//! 바깥 추정기(meridian_odom 의 `/base_pose`)는 [`correction_from_fix`] 로 한 시점의 절대 자세를 보정으로 바꿔 넣는다.
 
 use crate::odom::{Odom, Pose};
 
@@ -27,6 +28,10 @@ pub trait PoseEstimator: Send {
     fn pose(&self) -> Pose;
     /// 바깥 보정 `T_map_odom`(평면). 보정을 모르는 추정기는 무시한다.
     fn set_correction(&mut self, _c: Pose) {}
+    /// 보정 전 자세(바깥 추정기의 한 시점 자세 → 보정 계산에 씀)
+    fn raw_pose(&self) -> Pose {
+        self.pose()
+    }
 }
 
 /// base_qvel 적분(기본).
@@ -84,12 +89,26 @@ impl<E: PoseEstimator> PoseEstimator for Corrected<E> {
     fn set_correction(&mut self, c: Pose) {
         self.correction = c;
     }
+    fn raw_pose(&self) -> Pose {
+        self.inner.pose()
+    }
 }
 
 /// 평면 자세 합성 a ∘ b.
 pub fn compose(a: &Pose, b: &Pose) -> Pose {
     let (s, c) = a.yaw.sin_cos();
     Pose { x: a.x + c * b.x - s * b.y, y: a.y + s * b.x + c * b.y, yaw: a.yaw + b.yaw }
+}
+
+/// 평면 자세의 역.
+pub fn inverse(p: &Pose) -> Pose {
+    let (s, c) = p.yaw.sin_cos();
+    Pose { x: -(c * p.x + s * p.y), y: -(-s * p.x + c * p.y), yaw: -p.yaw }
+}
+
+/// 바깥 추정기가 시각 t 에 준 절대 자세 `fix` 와, 같은 시각의 보정 전 자세 `raw_t` → 보정 `T_map_odom = fix ∘ raw_t⁻¹`.
+pub fn correction_from_fix(fix: &Pose, raw_t: &Pose) -> Pose {
+    compose(fix, &inverse(raw_t))
 }
 
 /// 이름으로 추정기 만들기(`--pose integrate|corrected`).
@@ -204,6 +223,23 @@ mod tests {
         assert!((p.x - 0.5).abs() < 1e-9 && (p.y - 0.8).abs() < 1e-9 && (p.yaw - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         e.reset();
         assert_eq!(e.pose(), Pose::default());
+        // 바깥 고정점: 시각 t 의 보정 전 자세 raw_t 에서 fix 를 받으면, 그 뒤 적분분을 fix 기준으로 잇는다
+        let mut e = Corrected::new(QvelIntegrator::new(30.0));
+        for _ in 0..31 {
+            e.step([1.0, 0.0, 0.2]);
+        }
+        let raw_t = e.raw_pose();
+        let fix = Pose { x: 5.0, y: 1.0, yaw: 0.3 };
+        for _ in 0..30 {
+            e.step([0.5, 0.1, -0.1]);
+        }
+        let raw_now = e.raw_pose();
+        e.set_correction(correction_from_fix(&fix, &raw_t));
+        let p = e.pose();
+        let want = compose(&fix, &compose(&inverse(&raw_t), &raw_now));
+        assert!((p.x - want.x).abs() < 1e-9 && (p.y - want.y).abs() < 1e-9 && (p.yaw - want.yaw).abs() < 1e-9);
+        let back = compose(&inverse(&fix), &fix);
+        assert!(back.x.abs() < 1e-12 && back.y.abs() < 1e-12 && back.yaw.abs() < 1e-12);
     }
 
     #[test]

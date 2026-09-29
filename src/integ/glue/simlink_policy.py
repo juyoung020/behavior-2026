@@ -6,7 +6,9 @@
 
 스텝 하나(환경 하나):
   1. 전 스텝 ACK 를 읽는다(이미 와 있다) → hold(이번 스텝이 경계일 수 있음), want(보낼 카메라)
-  2. STEP = 요약(proprio 61 · cam_rel_poses 21, f32) + want 가 고른 영상(평가기 텐서 그대로: RGBA u8, 깊이 f32 m)
+  2. STEP = 요약(proprio 61, f32) + want 가 고른 영상(평가기 텐서 그대로: RGBA u8, 깊이 f32 m).
+     평가기가 넣어 주는 cam_rel_poses 는 보내지 않는다(시뮬레이터 카메라·전역 자세 API 로 만든 값 — 규칙 해석상 안 씀).
+     카메라 외부 자세는 link 가 proprio 관절값 + R1Pro 순기구학으로 만든다(src/agent/src/fk.rs).
      영상은 미리 잡아 둔 버퍼로 복사(memcpy)만 하고 보내기는 뒤 스레드가 한다 → 시뮬레이터 스레드는 안 막힌다
   3. hold 면 결정 ACK 를 기다린다(시뮬레이터 시간 정지, 점수 영향 없음) → 문장·flush·단계 번호를 π0.5 에 넣는다
   4. π0.5 act (Pi05NativePolicy, 코드 무수정)
@@ -154,6 +156,7 @@ class SimLinkClient:
         else:
             for p in parts:
                 self.sock.sendall(p)
+            self.seq_sent = self.seq_queued  # 보내기 스레드 없음: 보낸 즉시 끝
         return self.seq_queued
 
     # ---- 받기 ----
@@ -271,7 +274,8 @@ class IntegPolicy:
 
     CAM_SUFFIX = ("zed_link:Camera:0::rgb", "left_realsense_link:Camera:0::rgb", "right_realsense_link:Camera:0::rgb")
 
-    def __init__(self, inner, link: SimLinkClient | None, native=None, log_path=None, apply_prompt=True, apply_stage=True):
+    def __init__(self, inner, link: SimLinkClient | None, native=None, log_path=None, apply_prompt=True, apply_stage=True,
+                 send_cam_rel_poses=False):
         self.inner = inner
         self.link = link
         self.rgb_keys = self.depth_keys = None
@@ -279,6 +283,7 @@ class IntegPolicy:
         self.N = native
         self.apply_prompt = apply_prompt
         self.apply_stage = apply_stage
+        self.send_crp = send_cam_rel_poses  # 시험·비교용(평가 경로는 False)
         self.stage_warned = False
         self.step = 0
         self.log_path = log_path
@@ -329,7 +334,7 @@ class IntegPolicy:
             prop = obs[self.prop_key]
             batched = prop.ndim == 2
             n_env = prop.shape[0] if batched else 1
-            crp_all = obs.get(self.crp_key) if self.crp_key else None
+            crp_all = obs.get(self.crp_key) if (self.crp_key and self.send_crp) else None
             for b in range(n_env):
                 t0 = time.perf_counter()
                 for e, d in self.link.drain(upto_env=b):

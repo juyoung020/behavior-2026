@@ -247,11 +247,20 @@ pub struct ObsPacket {
     pub step: u64,
     /// link 가 이 스텝을 다 받은 순간
     pub recv: Instant,
-    /// 같은 순간의 벽시계(유닉스 ns) — ROS 메시지 stamp 로 쓴다
+    /// 같은 순간의 벽시계(유닉스 ns) — 이 스텝 **상태**(proprio·자세)의 ROS stamp
     pub stamp_ns: i128,
+    /// 이 스텝 **영상**의 stamp = 직전 스텝의 stamp. 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면으로 그려지고(렌더가 한 스텝
+    /// 늦음, render 에이전트 확인: 깊이 1~2 ulp 일치), proprio 는 스텝 k 뒤 값이다. 그래서 영상은 k-1 의 자세·robot2cam 과
+    /// 짝지어야 한다 — 같은 stamp 로 이미 k-1 에 낸 자세와 맞물린다. 판 첫 스텝은 직전이 없어 자기 stamp.
+    pub img_stamp_ns: i128,
+    /// 영상 시각(k-1)의 베이스 자세·카메라 외부 자세(손목 토픽 자세용)
+    pub img_base: Pose,
+    pub img_cam_rel: [Option<[f64; 7]>; 3],
     /// 추정 베이스 자세(map)
     pub base: Pose,
-    /// 카메라별(0 머리, 1 왼손목, 2 오른손목) 베이스 기준 자세 xyz + xyzw. 모르면 None
+    /// 이 스텝의 base_qvel 원값(로봇 기준 vx, vy, wz) — meridian_odom 입력 `/base_qvel`
+    pub qvel: [f64; 3],
+    /// 카메라별(0 머리, 1 왼손목, 2 오른손목) 베이스 기준 자세 xyz + xyzw(= robot2cam, proprio 순기구학). 모르면 None
     pub cam_rel: [Option<[f64; 7]>; 3],
     pub frames: Vec<Frame>,
     /// 이 스텝에서 계획기가 결정한다(그래프가 이 프레임을 반영하길 기다릴 수 있다)
@@ -267,8 +276,9 @@ pub trait ObsSink: Send {
     fn settle(&mut self, _env: usize, _step: u64, _timeout: Duration) -> Option<f64> {
         None
     }
-    /// 바깥 위치 보정 `T_map_odom`(meridian 깊이 정합 등). 새 값이 있을 때만 Some.
-    fn correction(&mut self, _env: usize) -> Option<Pose> {
+    /// 바깥 위치 추정기(meridian_odom `/base_pose` 등)의 새 절대 자세 (그 stamp, 자세). 새 값이 있을 때만 Some.
+    /// stamp 는 이 link 가 낸 패킷의 `stamp_ns` 와 같은 시계다(같은 스텝이면 같은 값).
+    fn external_fix(&mut self, _env: usize) -> Option<(i128, Pose)> {
         None
     }
     fn stats(&mut self) -> Value {
@@ -477,6 +487,8 @@ pub struct LinkCfg {
     pub monitor: MonitorCfg,
     /// 위치 추정기 이름([`pose::make`])
     pub pose: String,
+    /// 카메라 외부 자세 = proprio 순기구학(기본). None 이면 접착부가 보낸 cam_rel_poses(시험·비교용)
+    pub fk: Option<Arc<crate::fk::CamFk>>,
     pub prompt_mode: PromptMode,
     pub stage: StageMode,
     pub key: KeyCfg,
@@ -503,6 +515,7 @@ impl LinkCfg {
             factory: None,
             monitor: MonitorCfg::default(),
             pose: "integrate".into(),
+            fk: crate::fk::CamFk::load(&crate::fk::CamFk::default_path()).ok().map(Arc::new),
             prompt_mode: PromptMode::Task,
             stage: StageMode::External,
             key: KeyCfg::default(),
@@ -535,6 +548,11 @@ pub fn cfg_from_args(a: &crate::util::Args, catalog: Arc<Catalog>) -> Result<Lin
     }
     c.pose = a.str_or("pose", "integrate");
     pose::make(&c.pose, 30.0)?;
+    c.fk = match a.str_or("cam-pose", "fk").as_str() {
+        "fk" => Some(Arc::new(crate::fk::CamFk::load(&a.get("fk").map(PathBuf::from).unwrap_or_else(crate::fk::CamFk::default_path))?)),
+        "obs" => None,
+        o => return Err(format!("--cam-pose 는 fk|obs: {o}")),
+    };
     c.prompt_mode = match a.str_or("prompt-mode", "task").as_str() {
         "task" => PromptMode::Task,
         "subtask" => PromptMode::Subtask,
@@ -706,6 +724,11 @@ struct EnvState {
     stage_logged: Option<u32>,
     head_now: Option<(Mat3, [f64; 3])>,
     steps_seen: u64,
+    /// 최근 스텝의 (stamp, 보정 전 자세) — 바깥 추정기 고정점을 그 시점 자세와 맞춘다
+    hist: std::collections::VecDeque<(i128, Pose)>,
+    fixes: u64,
+    /// 직전 스텝 (stamp, 자세, 카메라 외부 자세) — 영상 시각 맞추기
+    prev: Option<(i128, Pose, [Option<[f64; 7]>; 3])>,
 }
 
 /// 스텝마다 잰 시간(µs)
@@ -823,6 +846,9 @@ impl<'a> Server<'a> {
                     stage_logged: None,
                     head_now: None,
                     steps_seen: 0,
+                    hist: std::collections::VecDeque::with_capacity(1024),
+                    fixes: 0,
+                    prev: None,
                 }
             })
             .collect();
@@ -832,7 +858,8 @@ impl<'a> Server<'a> {
             0,
             "link_hello",
             json!({"hello": h, "task": self.task.as_ref().map(|t| t.name.clone()), "max_steps": ms, "prompt_mode": self.cfg.prompt_mode,
-                   "stage_mode": self.cfg.stage, "pose": est, "key": self.cfg.key, "planner": self.cfg.factory.is_some()}),
+                   "stage_mode": self.cfg.stage, "pose": est, "cam_pose": if self.cfg.fk.is_some() { "proprio_fk" } else { "obs_cam_rel_poses" },
+                   "key": self.cfg.key, "planner": self.cfg.factory.is_some()}),
         );
         self.hello = h;
         json!({"ok": true, "task": self.task.as_ref().map(|t| t.name.clone()), "planner": self.envs.iter().any(|e| e.owns),
@@ -887,6 +914,8 @@ impl<'a> Server<'a> {
             s.stage_logged = None;
             s.head_now = None;
             s.steps_seen = 0;
+            s.hist.clear();
+            s.prev = None;
             if let Some(a) = s.agent.as_mut() {
                 a.reset_episode(ep);
                 s.track = StageTrack::from_core(&a.core, &cat, 0);
@@ -923,22 +952,42 @@ impl<'a> Server<'a> {
         let p = |i: usize| proprio.get(i).copied().unwrap_or(0.0) as f64;
         let qvel = [p(BASE_QVEL), p(BASE_QVEL + 1), p(BASE_QVEL + 2)];
         let grips = [p(GRIP_LEFT) + p(GRIP_LEFT + 1), p(GRIP_RIGHT) + p(GRIP_RIGHT + 1)];
-        if let Some(c) = self.sink.correction(e) {
-            self.envs[e].est.set_correction(c);
-        }
+        let stamp_ns = unix_ns();
+        let fix = self.sink.external_fix(e);
         // 위치(추정기 하나 → 계획기·meridian 같은 값)
         let st = &mut self.envs[e];
         st.est.step(qvel);
         st.steps_seen += 1;
+        st.hist.push_back((stamp_ns, st.est.raw_pose()));
+        if st.hist.len() > 1024 {
+            st.hist.pop_front();
+        }
+        if let Some((ts, p)) = fix {
+            // 그 stamp 의 보정 전 자세를 찾아 보정으로(없으면 가장 가까운 이전 스텝)
+            if let Some((_, raw_t)) = st.hist.iter().rev().find(|(t, _)| *t <= ts).or(st.hist.front()) {
+                st.est.set_correction(pose::correction_from_fix(&p, raw_t));
+                st.fixes += 1;
+            }
+        }
         let base = st.est.pose();
         let mut cam_rel: [Option<[f64; 7]>; 3] = [None, None, None];
-        for (i, cid) in self.crp_map.iter().enumerate() {
-            if let (Some(c), Some(v)) = (cid, crp.get(i * 7..i * 7 + 7)) {
-                let mut a = [0.0; 7];
-                for (k, x) in v.iter().enumerate() {
-                    a[k] = *x as f64;
+        match &self.cfg.fk {
+            // 카메라 외부 자세 = proprio 관절값 + 순기구학(평가기 cam_rel_poses 는 안 씀)
+            Some(fk) => {
+                for (c, slot) in cam_rel.iter_mut().enumerate() {
+                    *slot = fk.cam_rel(c, proprio);
                 }
-                cam_rel[*c as usize] = Some(a);
+            }
+            None => {
+                for (i, cid) in self.crp_map.iter().enumerate() {
+                    if let (Some(c), Some(v)) = (cid, crp.get(i * 7..i * 7 + 7)) {
+                        let mut a = [0.0; 7];
+                        for (k, x) in v.iter().enumerate() {
+                            a[k] = *x as f64;
+                        }
+                        cam_rel[*c as usize] = Some(a);
+                    }
+                }
             }
         }
         st.head_now = cam_rel[0].as_ref().map(|r| pose::cam_optical(&base, r));
@@ -976,7 +1025,23 @@ impl<'a> Server<'a> {
             self.lat.black_frames += black.len() as u64;
             self.trace(e, "link_black_frame", json!({"step": step, "cams": black}));
         }
-        self.sink.push(ObsPacket { env: e, episode: self.episode, step, recv, stamp_ns: unix_ns(), base, cam_rel, frames, boundary: decide_here });
+        let (img_stamp_ns, img_base, img_cam_rel) = self.envs[e].prev.unwrap_or((stamp_ns, base, cam_rel));
+        self.envs[e].prev = Some((stamp_ns, base, cam_rel));
+        self.sink.push(ObsPacket {
+            env: e,
+            episode: self.episode,
+            step,
+            recv,
+            stamp_ns,
+            img_stamp_ns,
+            img_base,
+            img_cam_rel,
+            base,
+            qvel,
+            cam_rel,
+            frames,
+            boundary: decide_here,
+        });
 
         let mut decision: Option<Value> = None;
         if decide_here {
@@ -1069,7 +1134,8 @@ impl<'a> Server<'a> {
 
     pub fn finish(&mut self) -> Value {
         self.wait_all_agents();
-        let stats = json!({"link": self.lat.summary(), "sink": self.sink.stats()});
+        let fixes: Vec<u64> = self.envs.iter().map(|s| s.fixes).collect();
+        let stats = json!({"link": self.lat.summary(), "sink": self.sink.stats(), "pose_fixes": fixes});
         self.trace(0, "link_end", stats.clone());
         for s in &self.envs {
             if let Some(a) = &s.agent {
