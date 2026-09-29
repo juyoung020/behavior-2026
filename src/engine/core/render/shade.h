@@ -84,8 +84,17 @@ EHD void tex_fetch(const SceneView& S, const TexInfo& T, int x, int y, float* o)
   o[2] = float((p >> 16) & 255u);
   o[3] = float(p >> 24);
 }
-EHD void tex_bilinear(const SceneView& S, int32_t ti, float u, float v, float* rgba) {
-  const TexInfo T = S.texs[ti];
+// 단계 l 의 크기·시작 (단계는 바로 뒤에 이어짐)
+EHD TexInfo tex_level(const TexInfo& T0, int l) {
+  TexInfo T = T0;
+  for (int k = 0; k < l; ++k) {
+    T.offset += int64_t(T.w) * T.h;
+    T.w = T.w > 1 ? T.w >> 1 : 1;
+    T.h = T.h > 1 ? T.h >> 1 : 1;
+  }
+  return T;
+}
+EHD void tex_bilinear(const SceneView& S, const TexInfo& T, float u, float v, float* rgba) {
   const float x = u * float(T.w) - 0.5f, y = (1.0f - v) * float(T.h) - 0.5f;  // USD st: v 위쪽이 1, 영상 0 행이 위
   float xf = float(int(x));
   if (xf > x) xf = xf - 1.0f;
@@ -104,6 +113,26 @@ EHD void tex_bilinear(const SceneView& S, int32_t ti, float u, float v, float* r
     rgba[k] = (top + (bot - top) * fy) * (1.0f / 255.0f);
   }
 }
+// 삼선형 (밉 단계 lod, 실수): 두 단계 겹선형을 섞는다. u,v 가 매우 크면 정수 변환이 넘치지 않게 소수부만 쓴다.
+EHD void tex_sample(const SceneView& S, int32_t ti, float u, float v, float lod, float* rgba) {
+  const TexInfo T0 = S.texs[ti];
+  float uf = float(int(u));
+  if (uf > u) uf = uf - 1.0f;
+  float vf = float(int(v));
+  if (vf > v) vf = vf - 1.0f;
+  u = u - uf;
+  v = v - vf;
+  const float maxl = float(T0.levels - 1);
+  lod = fmn(fmx(lod, 0.0f), maxl);
+  const int l0 = int(lod);
+  const float f = lod - float(l0);
+  tex_bilinear(S, tex_level(T0, l0), u, v, rgba);
+  if (f > 0.0f && l0 + 1 < T0.levels) {
+    float b[4];
+    tex_bilinear(S, tex_level(T0, l0 + 1), u, v, b);
+    for (int k = 0; k < 4; ++k) rgba[k] = rgba[k] + (b[k] - rgba[k]) * f;
+  }
+}
 
 struct Surf {
   V3 p, ng, ns;  // 위치, 기하 법선, 음영 법선 (둘 다 광선 쪽을 보게 뒤집음)
@@ -111,7 +140,8 @@ struct Surf {
   float opacity;
 };
 
-EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& h) {
+// cone: 맞은 점에서 광선 원뿔의 폭(월드 m, 광선에 수직) — 텍스처 밉 단계(광선 원뿔, Akenine-Möller 2019 식 단순판)
+EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& h, float cone) {
   Surf s;
   const InstInfo& in = S.insts[h.inst];
   const GeomInfo& g = S.geoms[in.geom];
@@ -130,7 +160,6 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
   }
   if (dot(ng, r.d) > 0.0f) ng = -ng;
   if (dot(ns, ng) < 0.0f) ns = -ns;
-  (void)W;
   const int32_t slot = S.tri_slot[h.tri];
   const int32_t mi = S.slot_mat[in.slot_base + slot];
   s.albedo = V3{0.5f, 0.5f, 0.5f};
@@ -145,8 +174,19 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
       float v = uv[1] * w0 + uv[3] * h.u + uv[5] * h.v;
       u = u * M.uv_scale[0] + M.uv_offset[0];
       v = v * M.uv_scale[1] + M.uv_offset[1];
+      // 밉 단계: lod = log2(발자국 폭 × 텍셀/m), 텍셀/m = sqrt(텍셀 면적 / 월드 면적) (삼각형마다)
+      const TexInfo& T0 = S.texs[M.tex_albedo];
+      const V3 e1w = xvec(W, V3{T.e1[0], T.e1[1], T.e1[2]}), e2w = xvec(W, V3{T.e2[0], T.e2[1], T.e2[2]});
+      const float wa = mag(cross(e1w, e2w));
+      const float du1 = (uv[2] - uv[0]) * M.uv_scale[0] * float(T0.w), dv1 = (uv[3] - uv[1]) * M.uv_scale[1] * float(T0.h);
+      const float du2 = (uv[4] - uv[0]) * M.uv_scale[0] * float(T0.w), dv2 = (uv[5] - uv[1]) * M.uv_scale[1] * float(T0.h);
+      const float ta = fab(du1 * dv2 - dv1 * du2);
+      const float dl = mag(r.d);
+      const float cs = fmx(fab(dot(ng, r.d)) / dl, 0.05f);
+      const float fp = cone / cs;
+      const float lod = wa > 0.0f ? 0.5f * flog2(fp * fp * ta / wa) : 0.0f;
       float t[4];
-      tex_bilinear(S, M.tex_albedo, u, v, t);
+      tex_sample(S, M.tex_albedo, u, v, lod, t);
       a = V3{a.x * srgb_to_lin(t[0]), a.y * srgb_to_lin(t[1]), a.z * srgb_to_lin(t[2])};
       if (M.flags & 1) s.opacity = t[3];
     }
@@ -255,6 +295,8 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
     return;
   }
   const int spp = S.sp.spp > 0 ? S.sp.spp : 1;
+  const float pix_angle = 2.0f * cam.tanx / float(cam.w);  // 픽셀 하나의 각 (광선 원뿔 퍼짐)
+  const float cone0 = pix_angle * h0.t * mag(r0.d);
   const V3 amb{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
   const bool ao = S.sp.ao_range > 0.0f;
   V3 acc{0.0f, 0.0f, 0.0f};
@@ -262,9 +304,10 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
     uint32_t rs = pcg(seed ^ pcg(uint32_t(k) * 0x9E3779B9u));
     Ray r = r0;
     Hit h = h0;
+    float cone = cone0;
     V3 thr{1.0f, 1.0f, 1.0f};
     for (int b = 0; b <= S.sp.bounces; ++b) {
-      const Surf s = surface(S, E, r, h);
+      const Surf s = surface(S, E, r, h, cone);
       acc = acc + mulc(thr, s.emissive);
       const V3 po = s.p + s.ng * 1e-4f;
       // 직접광: 조명 몇 개를 균등하게 뽑아 그림자 광선 (평균 × 개수)
@@ -294,6 +337,7 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
       h = trace(S, E, r, 1e-4f, 1e30f);
       if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
       if (b == S.sp.bounces || h.inst < 0) break;
+      cone = cone + 0.5f * h.t;  // 확산 튕김: 원뿔이 넓게 퍼진다(대략)
       thr = mulc(thr, s.albedo);
     }
   }

@@ -39,7 +39,9 @@ struct Material {
 
 struct TexInfo {
   int32_t w, h;
-  int64_t offset;  // texels 배열 안 RGBA8 시작 (바이트 / 4)
+  int64_t offset;  // texels 배열 안 RGBA8 시작 (바이트 / 4) — 0 단계. 다음 단계는 바로 뒤에 이어짐(너비·높이 반씩, 최소 1)
+  int32_t levels;  // 밉 단계 수 (1 = 원본만)
+  int32_t pad;
 };
 
 enum LightType : int32_t { kLightSphere = 0, kLightRect = 1, kLightDisk = 2, kLightDistant = 3, kLightDome = 4, kLightCylinder = 5 };

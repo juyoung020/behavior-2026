@@ -108,7 +108,7 @@ EHD void probe(const SceneView& S0, const EnvView& E, const Camera& cm, int e, i
   o[0] = h.t;
   for (int k = 1; k < kProbeN; ++k) o[k] = 0.0f;
   if (h.inst >= 0) {
-    const Surf s = surface(S0, E, r0, h);
+    const Surf s = surface(S0, E, r0, h, 2.0f * cm.tanx / float(cm.w) * h.t * mag(r0.d));
     o[1] = s.p.x; o[2] = s.p.y; o[3] = s.p.z;
     o[4] = s.ns.x; o[5] = s.ns.y; o[6] = s.ns.z;
     o[7] = s.albedo.x; o[8] = s.albedo.y; o[9] = s.albedo.z;
@@ -142,12 +142,13 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
   if (h.inst < 0) return;
   uint32_t rs = pcg(pixel_seed(e, c, px, py, 0) ^ pcg(0u * 0x9E3779B9u));
   Ray r = r0;
+  float cone = 2.0f * cm.tanx / float(cm.w) * h.t * mag(r0.d);
   const V3 amb{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
   const bool ao = S.sp.ao_range > 0.0f;
   V3 thr{1.0f, 1.0f, 1.0f}, acc{0.0f, 0.0f, 0.0f};
   for (int b = 0; b <= S.sp.bounces && b < 3; ++b) {  // shade_pixel 과 같은 순서 (shadow_lights = 1 가정)
     float* q = o + 32 * b;
-    const Surf s = surface(S, E, r, h);
+    const Surf s = surface(S, E, r, h, cone);
     q[0] = h.t; q[1] = float(h.inst); q[2] = float(h.tri); q[3] = h.u; q[4] = h.v;
     q[5] = s.albedo.x; q[6] = s.albedo.y; q[7] = s.albedo.z; q[8] = s.ns.x; q[9] = s.ns.y; q[10] = s.ns.z;
     acc = acc + mulc(thr, s.emissive);
@@ -178,6 +179,7 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
     h = trace(S, E, r, 1e-4f, 1e30f);
     if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
     if (b == S.sp.bounces || h.inst < 0) break;
+    cone = cone + 0.5f * h.t;
     thr = mulc(thr, s.albedo);
     q[23] = thr.x; q[24] = thr.y; q[25] = thr.z;
   }
@@ -211,12 +213,13 @@ int main(int argc, char** argv) {
   HostScene H;
   const int gbox = make_box(H), gsph = make_sphere(H, 24), gpl = make_plane(H);
   // 텍스처: 64x64 체크무늬
-  H.texs.push_back(TexInfo{64, 64, 0});
+  H.texs.push_back(TexInfo{64, 64, 0, 1, 0});
   for (int y = 0; y < 64; ++y)
     for (int x = 0; x < 64; ++x) {
       const bool on = ((x / 8) + (y / 8)) & 1;
       H.texels.push_back(on ? 0xFFE0E0E0u : 0xFF303060u);
     }
+  build_mips(H);
   std::mt19937 rng(7);
   std::uniform_real_distribution<float> U(0.0f, 1.0f);
   for (int m = 0; m < 6; ++m) {

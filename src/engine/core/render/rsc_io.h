@@ -14,6 +14,7 @@
 #pragma once
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -115,6 +116,53 @@ inline Light light_from(const float* f) {
   return L;
 }
 
+// 텍스처 밉 사슬 만들기 (호스트, 한 번): 단계마다 2x2 상자 평균(8 비트 값 그대로 평균, 반올림), 1x1 까지.
+// texs[i].levels == 1 인 원본만 받아 모든 단계를 texels 뒤에 이어 새로 깐다. 두 층이 같은 배열을 읽으므로 비트 비교와 무관.
+inline void build_mips(HostScene& S) {
+  std::vector<uint32_t> out;
+  size_t total = 0;
+  for (auto& T : S.texs) {
+    int w = T.w, h = T.h;
+    for (;;) {
+      total += size_t(w) * h;
+      if (w == 1 && h == 1) break;
+      w = w > 1 ? w >> 1 : 1;
+      h = h > 1 ? h >> 1 : 1;
+    }
+  }
+  out.reserve(total);
+  for (auto& T : S.texs) {
+    std::vector<uint32_t> cur(S.texels.begin() + T.offset, S.texels.begin() + T.offset + int64_t(T.w) * T.h);
+    int w = T.w, h = T.h, levels = 1;
+    T.offset = int64_t(out.size());
+    out.insert(out.end(), cur.begin(), cur.end());
+    while (!(w == 1 && h == 1)) {
+      const int nw = w > 1 ? w >> 1 : 1, nh = h > 1 ? h >> 1 : 1;
+      std::vector<uint32_t> nx(size_t(nw) * nh);
+      for (int y = 0; y < nh; ++y)
+        for (int x = 0; x < nw; ++x) {
+          const int x0 = std::min(2 * x, w - 1), x1 = std::min(2 * x + 1, w - 1);
+          const int y0 = std::min(2 * y, h - 1), y1 = std::min(2 * y + 1, h - 1);
+          const uint32_t p[4] = {cur[size_t(y0) * w + x0], cur[size_t(y0) * w + x1], cur[size_t(y1) * w + x0], cur[size_t(y1) * w + x1]};
+          uint32_t o = 0;
+          for (int c = 0; c < 4; ++c) {
+            uint32_t s = 2;
+            for (int k = 0; k < 4; ++k) s += (p[k] >> (8 * c)) & 255u;
+            o |= (s >> 2) << (8 * c);
+          }
+          nx[size_t(y) * nw + x] = o;
+        }
+      out.insert(out.end(), nx.begin(), nx.end());
+      cur.swap(nx);
+      w = nw;
+      h = nh;
+      ++levels;
+    }
+    T.levels = levels;
+  }
+  S.texels.swap(out);
+}
+
 // 기하 하나를 더한다: BLAS 굽기 + 굽힌 순서로 삼각형·속성 저장. 반환 = 기하 번호
 inline int32_t add_geometry(HostScene& S, const float* tv, const float* tn, const float* tu, const int32_t* ts, uint32_t cnt,
                             int32_t flags, uint32_t max_leaf = 4) {
@@ -186,7 +234,7 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   for (int64_t i = 0; i < nx; ++i) {
     int64_t t[3];
     f.rd(t, 3);
-    S.texs[i] = TexInfo{int32_t(t[0]), int32_t(t[1]), t[2]};
+    S.texs[i] = TexInfo{int32_t(t[0]), int32_t(t[1]), t[2], 1, 0};
   }
   S.texels.resize(ntx);
   f.rd(S.texels.data(), ntx);
@@ -197,6 +245,7 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.tonemap = int32_t(sp[6]); S.sp.bounces = int32_t(sp[7]); S.sp.white_scale = sp[8];
   S.sp.ao_range = sp[9];
   S.n_anchor = int32_t(na);
+  build_mips(S);
   // BLAS 굽기 (기하마다), 삼각형 속성을 굽힌 순서로
   for (int64_t g = 0; g < ng; ++g) {
     const int64_t off = gt[3 * g], cnt = gt[3 * g + 1];
