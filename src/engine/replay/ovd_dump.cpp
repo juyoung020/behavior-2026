@@ -61,12 +61,15 @@ int main(int argc, char** argv) {
   std::string err;
   if (!load(argv[1], f, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
   bool show_attrs = false, show_msgs = false;
-  std::string obj_class, values_class;
+  std::string obj_class, values_class, trace_name;
+  size_t trace_limit = 60;
   for (int i = 2; i < argc; ++i) {
     if (!strcmp(argv[i], "--attrs")) show_attrs = true;
     else if (!strcmp(argv[i], "--messages")) show_msgs = true;
     else if (!strcmp(argv[i], "--objects") && i + 1 < argc) obj_class = argv[++i];
     else if (!strcmp(argv[i], "--values") && i + 1 < argc) values_class = argv[++i];
+    else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace_name = argv[++i];
+    else if (!strcmp(argv[i], "--limit") && i + 1 < argc) trace_limit = strtoull(argv[++i], nullptr, 10);
   }
 
   printf("OVD %u.%u.%u  명령 %zu  데이터 %.1f MB  클래스 %zu  속성 %zu\n", f.ver_major, f.ver_minor, f.ver_patch,
@@ -153,6 +156,43 @@ int main(int argc, char** argv) {
       std::sort(vv.rbegin(), vv.rend());
       printf("  %s (서로 다른 값 %zu)\n", f.attr_name(d.first).c_str(), vv.size());
       for (size_t i = 0; i < vv.size() && i < 8; ++i) printf("      %8" PRIu64 "  %s\n", vv[i].first, vv[i].second.c_str());
+    }
+  }
+
+  // 한 객체(이름 또는 16진 핸들)의 모든 명령을 순서대로: simulate 번호와 함께. "#a-b" 면 명령 번호 구간 전체
+  if (!trace_name.empty()) {
+    uint64_t target = 0;
+    if (trace_name[0] == '#') {
+      size_t a = strtoull(trace_name.c_str() + 1, nullptr, 10), b = a;
+      const char* dash = strchr(trace_name.c_str(), '-');
+      if (dash) b = strtoull(dash + 1, nullptr, 10);
+      for (size_t i = a; i <= b && i < f.events.size(); ++i) {
+        const Event& e = f.events[i];
+        printf("  #%zu %s obj=0x%" PRIx64 " %s", i, cmd_names[e.cmd], e.obj,
+               (e.cmd == kCreate ? f.classes[e.cls].name.c_str() : (e.cmd == kSet || e.cmd == kAddToList || e.cmd == kRemoveFromList) ? f.attr_name(e.attr).c_str() : ""));
+        if (e.cmd == kSet || e.cmd == kAddToList || e.cmd == kRemoveFromList) printf(" %s", fmt_value(f, f.attrs[e.attr], f.data(e), e.data_len).c_str());
+        printf("\n");
+      }
+      return 0;
+    }
+    if (trace_name.rfind("0x", 0) == 0) target = strtoull(trace_name.c_str(), nullptr, 16);
+    const uint32_t a_name = [&] { for (auto& kv : f.attrs) if (kv.second.name == "name") return kv.first; return 0u; }();
+    (void)a_name;
+    uint64_t sims = 0;
+    size_t shown = 0;
+    for (size_t i = 0; i < f.events.size() && shown < trace_limit; ++i) {
+      const Event& e = f.events[i];
+      if (e.cmd == kSet && f.attrs[e.attr].name == "elapsedTime") sims++;
+      if (!target && e.cmd == kSet && f.attrs[e.attr].name == "name" && f.str(e) == trace_name) target = e.obj;
+      if (!target) continue;
+      bool mine = e.obj == target;
+      if (!mine && (e.cmd == kAddToList || e.cmd == kRemoveFromList) && e.data_len == 8) { uint64_t v; memcpy(&v, f.data(e), 8); mine = v == target; }
+      if (!mine) continue;
+      shown++;
+      printf("  #%zu sim=%" PRIu64 " %s %s", i, sims, cmd_names[e.cmd], (e.cmd == kCreate ? f.classes[e.cls].name.c_str() : f.attr_name(e.attr).c_str()));
+      if (e.cmd == kSet) printf(" %s", fmt_value(f, f.attrs[e.attr], f.data(e), e.data_len).c_str());
+      if (e.cmd == kAddToList || e.cmd == kRemoveFromList) printf(" owner=0x%" PRIx64, e.obj);
+      printf("\n");
     }
   }
 

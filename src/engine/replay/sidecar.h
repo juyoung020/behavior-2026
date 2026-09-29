@@ -97,4 +97,94 @@ inline bool write_filters(const std::string& path, const FilterSpec& s) {
   return true;
 }
 
+// ------------------------------------------------------------------------------------------------ 곁기록(sidelog)
+// OVD 에 안 남는 호출 목록. 평가기 쪽은 capture/physx_capture.py -> capture/export_sidecar.py 가, 자체 시험은 ovd_selftest 가 쓴다.
+//   "SLG1" u32 nviews { u32 kind(0 관절체 뷰/1 강체 뷰/2 프림 하나), u32 nprims, [u32 len, chars]*, u32 max_dofs, [u32 nd, i8 sign*nd]* }
+//          u32 ncalls { u64 after, u32 view, u32 len, chars method, u32 nidx, u32 idx*, u32 ndata, f32 data* }
+struct SideView {
+  uint32_t kind = 0;  // 0 관절체 뷰, 1 강체 뷰, 2 psi(프림 하나)
+  std::vector<std::string> prims;
+  uint32_t max_dofs = 0;
+  std::vector<std::vector<int8_t>> signs;  // prim 별 dof 부호 (isDofBody0Parent)
+};
+struct SideCall {
+  uint64_t after = 0;  // 이 번호의 fetchResults 뒤, 다음 simulate 전
+  uint32_t view = 0;
+  std::string method;
+  std::vector<uint32_t> idx;
+  std::vector<float> data;
+};
+inline bool read_sidelog(const std::string& path, std::vector<SideView>& views, std::vector<SideCall>& calls) {
+  FILE* f = fopen(path.c_str(), "rb");
+  if (!f) return false;
+  auto rd = [&](void* p, size_t n) { return fread(p, 1, n, f) == n; };
+  auto rstr = [&](std::string& s) {
+    uint32_t n = 0;
+    if (!rd(&n, 4)) return false;
+    s.resize(n);
+    return n == 0 || rd(&s[0], n);
+  };
+  char magic[4];
+  uint32_t nv = 0;
+  if (!rd(magic, 4) || memcmp(magic, "SLG1", 4) || !rd(&nv, 4)) { fclose(f); return false; }
+  views.resize(nv);
+  for (auto& v : views) {
+    uint32_t np = 0;
+    rd(&v.kind, 4); rd(&np, 4);
+    v.prims.resize(np);
+    for (auto& s : v.prims) rstr(s);
+    rd(&v.max_dofs, 4);
+    v.signs.resize(np);
+    for (auto& s : v.signs) {
+      uint32_t nd = 0;
+      rd(&nd, 4);
+      s.resize(nd);
+      if (nd) rd(s.data(), nd);
+    }
+  }
+  uint32_t nc = 0;
+  rd(&nc, 4);
+  calls.resize(nc);
+  for (auto& c : calls) {
+    uint32_t ni = 0, nd = 0;
+    rd(&c.after, 8); rd(&c.view, 4); rstr(c.method);
+    rd(&ni, 4); c.idx.resize(ni); if (ni) rd(c.idx.data(), 4 * ni);
+    rd(&nd, 4); c.data.resize(nd); if (nd) rd(c.data.data(), 4 * nd);
+  }
+  fclose(f);
+  return true;
+}
+
+
+inline bool write_sidelog(const std::string& path, const std::vector<SideView>& views, const std::vector<SideCall>& calls) {
+  FILE* f = fopen(path.c_str(), "wb");
+  if (!f) return false;
+  auto wr = [&](const void* p, size_t n) { fwrite(p, 1, n, f); };
+  auto wstr = [&](const std::string& s) { uint32_t n = uint32_t(s.size()); wr(&n, 4); wr(s.data(), n); };
+  wr("SLG1", 4);
+  uint32_t nv = uint32_t(views.size());
+  wr(&nv, 4);
+  for (auto& v : views) {
+    uint32_t np = uint32_t(v.prims.size());
+    wr(&v.kind, 4); wr(&np, 4);
+    for (auto& s : v.prims) wstr(s);
+    wr(&v.max_dofs, 4);
+    for (uint32_t i = 0; i < np; ++i) {
+      uint32_t nd = i < v.signs.size() ? uint32_t(v.signs[i].size()) : 0;
+      wr(&nd, 4);
+      if (nd) wr(v.signs[i].data(), nd);
+    }
+  }
+  uint32_t nc = uint32_t(calls.size());
+  wr(&nc, 4);
+  for (auto& c : calls) {
+    uint32_t ni = uint32_t(c.idx.size()), nd = uint32_t(c.data.size());
+    wr(&c.after, 8); wr(&c.view, 4); wstr(c.method);
+    wr(&ni, 4); if (ni) wr(c.idx.data(), 4 * ni);
+    wr(&nd, 4); if (nd) wr(c.data.data(), 4 * nd);
+  }
+  fclose(f);
+  return true;
+}
+
 }  // namespace engine

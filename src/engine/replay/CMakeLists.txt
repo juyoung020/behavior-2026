@@ -25,9 +25,11 @@ target_include_directories(ovd PUBLIC ${PHYSX_ROOT}/pvdruntime/include)
 target_compile_options(ovd PRIVATE ${COMMON_FLAGS})
 target_link_libraries(ovd PUBLIC dl)
 
-add_executable(ovd_dump ovd_dump.cpp)
-target_link_libraries(ovd_dump ovd)
-target_compile_options(ovd_dump PRIVATE ${COMMON_FLAGS})
+foreach(t ovd_dump ovd_diff)
+  add_executable(${t} ${t}.cpp)
+  target_link_libraries(${t} ovd)
+  target_compile_options(${t} PRIVATE ${COMMON_FLAGS})
+endforeach()
 
 set(PHYSX_LIBS
   ${PHYSX_LIB}/libPhysXExtensions_static_64.a
@@ -39,7 +41,7 @@ set(PHYSX_LIBS
   pthread dl)
 
 foreach(t ovd_selftest ovd_replay)
-  add_executable(${t} ${t}.cpp)
+  add_executable(${t} ${t}.cpp px_gpu_stub.cpp)
   target_include_directories(${t} PRIVATE ${PHYSX_ROOT}/include ${PHYSX_ROOT}/pvdruntime/include)
   target_compile_definitions(${t} PRIVATE ${PX_DEFS})
   target_compile_options(${t} PRIVATE ${COMMON_FLAGS})

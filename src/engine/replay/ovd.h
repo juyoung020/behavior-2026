@@ -50,7 +50,13 @@ struct File {
   std::unordered_map<std::string, uint32_t> class_by_name;
 
   const uint8_t* data(const Event& e) const { return blob.data() + e.data_off; }
-  std::string str(const Event& e) const { return std::string(reinterpret_cast<const char*>(data(e)), e.data_len); }
+  // 문자열 속성은 끝의 NUL 까지 길이에 들어 있을 수 있다 -> 떼고 돌려준다
+  std::string str(const Event& e) const {
+    uint32_t n = e.data_len;
+    const char* p = reinterpret_cast<const char*>(data(e));
+    while (n && p[n - 1] == 0) --n;
+    return std::string(p, n);
+  }
   // 클래스 이름으로 찾기 (없으면 0)
   uint32_t cls(const std::string& n) const {
     auto it = class_by_name.find(n);

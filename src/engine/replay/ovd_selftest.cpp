@@ -174,13 +174,38 @@ int main(int argc, char** argv) {
     J(f)->setDriveParams(PxArticulationAxis::eY, PxArticulationDrive(1000.0f, 50.0f, 100.0f));
     J(f)->setFrictionParams(PxArticulationAxis::eY, PxJointFrictionParams(0.1f, 0.05f, 0.01f));
   }
+  art->createMimicJoint(*J(f1), PxArticulationAxis::eY, *J(f2), PxArticulationAxis::eY, 1.0f, 0.0f);  // 장면에 넣기 전에만 가능
   scene->addArticulation(*art);
-  art->createMimicJoint(*J(f1), PxArticulationAxis::eY, *J(f2), PxArticulationAxis::eY, 1.0f, 0.0f);
 
   // 시간 진행: 120 Hz, 서브스텝마다 목표 갱신. 150 에서 고정 조인트 붙이고 350 에서 뗌
   const float dt = 1.0f / 120.0f;
   PxFixedJoint* fj = nullptr;
+  // OVD 에 안 남는 호출(applyCache·addForce·wakeUp/putToSleep)은 capture 와 같은 형식의 sidelog 에 적는다
+  std::vector<engine::SideView> sv(3);
+  sv[0].kind = 0; sv[0].prims = {"/World/robot"}; sv[0].max_dofs = art->getDofs(); sv[0].signs = {std::vector<int8_t>(art->getDofs(), 1)};
+  sv[1].kind = 1; sv[1].prims = {"/World/obj_4"};
+  sv[2].kind = 2; sv[2].prims = {"/World/obj_1"};
+  std::vector<engine::SideCall> sc;
+  PxArticulationCache* cache = art->createCache();
   for (int s = 0; s < substeps; ++s) {
+    if (s == 250) {  // 관절 위치 순간이동 (tensors set_dof_positions 와 같은 방식)
+      art->copyInternalStateToCache(*cache, PxArticulationCacheFlag::ePOSITION);
+      cache->jointPosition[0] += 0.1f;
+      engine::SideCall c; c.after = s; c.view = 0; c.method = "set_dof_positions";
+      c.data.assign(cache->jointPosition, cache->jointPosition + art->getDofs());
+      sc.push_back(c);
+      art->applyCache(*cache, PxArticulationCacheFlag::ePOSITION);
+    }
+    if (s == 300) {  // 뿌리 속도
+      cache->rootLinkData->worldLinVel = PxVec3(0.05f, 0, 0);
+      cache->rootLinkData->worldAngVel = PxVec3(0, 0, 0.1f);
+      engine::SideCall c; c.after = s; c.view = 0; c.method = "set_root_velocities";
+      c.data = {0.05f, 0, 0, 0, 0, 0.1f};
+      sc.push_back(c);
+      art->applyCache(*cache, PxArticulationCacheFlag::eROOT_VELOCITIES);
+    }
+    if (s == 500) { bodies[1]->putToSleep(); engine::SideCall c; c.after = s; c.view = 2; c.method = "put_to_sleep"; sc.push_back(c); }
+    if (s == 510) { bodies[1]->wakeUp(); engine::SideCall c; c.after = s; c.view = 2; c.method = "wake_up"; sc.push_back(c); }
     const float t = s * dt;
     J(l1)->setDriveTarget(PxArticulationAxis::eTWIST, 0.8f * sinf(1.3f * t));
     J(l2)->setDriveVelocity(PxArticulationAxis::eX, 0.2f * cosf(0.9f * t));
@@ -190,11 +215,17 @@ int main(int argc, char** argv) {
       fj->setName("/World/grasp_joint");
     }
     if (s == 350 && fj) { fj->release(); fj = nullptr; }
-    if (s == 420) bodies[4]->addForce(PxVec3(0, 0, 30.0f));
+    if (s == 420) {
+      bodies[4]->addForce(PxVec3(0, 0, 30.0f));
+      engine::SideCall c; c.after = s; c.view = 1; c.method = "add_force"; c.data = {0, 0, 30.0f};
+      sc.push_back(c);
+    }
     scene->simulate(dt);
     scene->fetchResults(true);
   }
 
+  engine::write_sidelog(out + "/sidelog.bin", sv, sc);
+  cache->release();
   // 마지막 상태 (결정성 비교용)
   FILE* f = fopen((out + "/final_state.bin").c_str(), "wb");
   for (PxRigidDynamic* b : bodies) { PxTransform p = b->getGlobalPose(); fwrite(&p, sizeof p, 1, f); }
