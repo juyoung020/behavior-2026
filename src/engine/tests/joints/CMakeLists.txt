@@ -38,3 +38,8 @@ engine_test(test_joint_lifecycle test_joint_lifecycle.cpp PHYSX)
 target_include_directories(test_joint_lifecycle PRIVATE ${JX_INTERNAL_INCS})
 target_compile_definitions(test_joint_lifecycle PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
 target_compile_options(test_joint_lifecycle PRIVATE -Wno-everything)
+# 삼각 메시 광선: 구운 메시 내부(BV4 LocalBounds·geomEpsilon)를 읽는다
+engine_test(test_raycast_mesh test_raycast_mesh.cpp PHYSX)
+target_include_directories(test_raycast_mesh PRIVATE ${JX_INTERNAL_INCS})
+target_compile_definitions(test_raycast_mesh PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_compile_options(test_raycast_mesh PRIVATE -Wno-everything)
