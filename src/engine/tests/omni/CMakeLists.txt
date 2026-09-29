@@ -10,3 +10,4 @@ target_compile_options(test_omni_gpu PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr -Xcompiler=-ffp-contract=off>)
 engine_test(test_ag test_ag.cpp)
 engine_test(test_agframe test_agframe.cpp)
+engine_test(test_attach test_attach.cpp)
