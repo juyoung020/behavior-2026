@@ -29,3 +29,6 @@ build_win/
 *.exp
 *.ilk
 .gpu_queue/
+
+# agent scratch scripts at repo root
+.tmp_*
