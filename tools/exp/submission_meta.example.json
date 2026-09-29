@@ -6,9 +6,10 @@
   "wrapper_file": "C:/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/eval/wrappers/default_wrapper.py",
   "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml",
   "launcher": {
-    "kit_args": ["--/app/settings/fabricDefaultStageFrameHistoryCount=4"],
-    "reason": "Windows 11 + Isaac Sim 5.1 RTX returns empty (all-zero RGBA) camera buffers in a fixed 3-step pattern; a 4-entry Fabric stage frame history avoids it.",
-    "evidence": "<exp_run.ps1 compare 결과 파일 경로(compare.md) — 칸 3 vs 칸 4 물리·판정·JSON 비트 동일>"
+    "black_guard": true,
+    "kit_args": [],
+    "reason": "",
+    "evidence": ""
   },
   "policy": {
     "method": "Docker image",

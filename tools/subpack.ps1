@@ -105,23 +105,33 @@ foreach ($src in $Sources) {
         $e.black_known = (Test-Path -LiteralPath $bf)
         $st = $srcStatus[$run.TrimEnd('\').ToLower()]
         if ($st -and $st.status -eq 'invalid_black') { $e.black = [math]::Max($e.black, 1) }
+        # 실행기 판이면: 제출 수치는 공식 명령 그대로가 원칙 -> 장면 재사용(-Reuse)·포팅 평가기 판은 넣지 않는다
+        if ($st -and [bool](P $st 'reuse' $false)) { Err "장면 재사용(-Reuse, 개발용) 판: $key -- 제출에는 판마다 새 프로세스(공식 명령)로 다시 돌린 판만" }
+        if ($st -and (P $st 'backend' 'original') -ne 'original') { Err "포팅 평가기 판: $key -- 제출은 원본 평가기 판만" }
+        if (Test-Path -LiteralPath (Join-Path $run 'native_steps.csv')) { $e.native = $true }
         if (-not $eps.ContainsKey($key)) { $eps[$key] = [Collections.Generic.List[object]]::new() }
         $eps[$key].Add($e)
     }
 }
 if ($eps.Count -eq 0) { Write-Host "판별 JSON 을 하나도 못 찾았다: $($Sources -join ', ')"; exit 2 }
 
-# ---- 판마다 하나로 (중복: 내용 같으면 하나, 다르면 오류 -- 고르지 않는다) ----
+# ---- 판마다 하나로 ----
+# 검은 프레임 무효 판은 먼저 뺀다(환경 결함이라 다시 돌린 것 -- 골라 내기가 아님). 남은 유효 판이 여럿이고 내용이 다르면 오류(고르지 않는다, "No cherry-picking").
 $chosen = @{}
 foreach ($k in $eps.Keys) {
-    $l = $eps[$k]
-    $shas = @($l | ForEach-Object { $_.sha } | Sort-Object -Unique)
+    $l = @($eps[$k])
+    $valid = @($l | Where-Object { $_.black -eq 0 })
+    $invalid = @($l | Where-Object { $_.black -gt 0 })
+    $pool = @(if ($valid.Count) { $valid } else { $l })  # @() 로 감싼다: 하나면 hashtable 한 개가 되어 .Count 가 키 수가 된다
+    if ($valid.Count -and $invalid.Count) { Warn "검은 프레임 무효 판 $($invalid.Count) 개를 빼고 다시 돌린 유효 판을 씀: $k" }
+    $shas = @($pool | ForEach-Object { $_.sha } | Sort-Object -Unique)
     if ($shas.Count -gt 1) {
-        Err "중복(내용 다름) $k : $(@($l | ForEach-Object { $_.json }) -join ' ; ') -- 규칙상 골라 낼 수 없다. 한 판만 남기고 다시 돌려라."
-    } elseif ($l.Count -gt 1) {
-        Warn "중복(내용 같음, 하나만 씀) $k : $($l.Count) 곳"
+        Err "중복(유효 판끼리 내용 다름) $k : $(@($pool | ForEach-Object { $_.json }) -join ' ; ') -- 규칙상 골라 낼 수 없다. 한 판만 남기고 다시 돌려라."
+    } elseif ($pool.Count -gt 1) {
+        Warn "중복(내용 같음, 하나만 씀) $k : $($pool.Count) 곳"
     }
-    $chosen[$k] = $l[0]
+    # 내용이 같은 중복이면 영상 있는 쪽
+    $chosen[$k] = @($pool | Sort-Object @{ e = { [int](-not $_.video) } })[0]
 }
 
 # ---- 검사 ----
@@ -198,11 +208,15 @@ if (Exists $wrapperFile) { Copy-Item -LiteralPath $wrapperFile "$Out\wrapper\" }
 if (Exists $robotCfg) { Copy-Item -LiteralPath $robotCfg "$Out\robot_config\" }
 $launch = P $m 'launcher' $null
 $kitArgs = @(P $launch 'kit_args' @())
-if ($kitArgs.Count) {
+$guardUsed = [bool](P $launch 'black_guard' $false)   # 결과를 겉싸개(eval_instrumented --black-guard=abort)로 뽑았나
+$useLauncher = ($kitArgs.Count -gt 0) -or $guardUsed
+if ($useLauncher) {
     New-Item -ItemType Directory -Force "$Out\evaluator_launcher" | Out-Null
     Copy-Item "$Root\tools\eval_instrumented.py" "$Out\evaluator_launcher\"
+}
+if ($kitArgs.Count) {
     $ev = P $launch 'evidence' ''
-    if (Exists $ev) { Copy-Item -LiteralPath $ev "$Out\evaluator_launcher\" } elseif ($ev) { Err "비트 동일 증거 파일이 없다: $ev" }
+    if (Exists $ev) { Copy-Item -LiteralPath $ev "$Out\evaluator_launcher\" } elseif ($ev) { Err "비트 동일 증거 파일이 없다: $ev" } else { Err "Kit 인자를 썼는데 비트 동일 증거 파일(launcher.evidence)이 없다" }
 }
 $b1kCommit = (git -C $B1K rev-parse HEAD 2>$null)
 $b1kTag = (git -C $B1K describe --tags 2>$null)
@@ -227,18 +241,23 @@ $readme = @(
     'Full evaluator command (one process per instance index i = 0..9, per task):', '', '```',
     "python -m omnigibson.eval.eval $evalArgs", '```', ''
 )
-if ($kitArgs.Count) {
+if ($useLauncher) {
     $readme += @(
-        '### Local launcher used for these results (rendering workaround, no effect on physics or scoring)', '',
-        'These results were produced on Windows 11 (Isaac Sim 5.1). On this machine the RTX renderer intermittently returns an empty (all-zero RGBA) camera buffer',
-        'in a fixed 3-step pattern. We therefore started Kit with the following start-up argument(s), passed through a thin launcher that calls the unmodified',
-        '``omnigibson.eval.eval`` main (evaluator_launcher/eval_instrumented.py; it only adds the Kit argument and a read-only black-frame check):', '', '```',
+        '### Local launcher used for these results (no effect on physics or scoring)', '',
+        'These results were produced on Windows 11 (Isaac Sim 5.1). On this machine the RTX renderer intermittently returns an empty (all-zero RGBA)',
+        'camera buffer in a fixed 3-step pattern. The evaluator was therefore run through a thin launcher that calls the unmodified ``omnigibson.eval.eval``',
+        'main (evaluator_launcher/eval_instrumented.py) and only adds a read-only check that stops a rollout as soon as an empty camera frame would be given to the policy:', '', '```',
         "python evaluator_launcher/eval_instrumented.py --black-guard=abort $(@($kitArgs | ForEach-Object { "--kit-arg=$_" }) -join ' ') -- $evalArgs", '```', '',
-        "- Reason: $(P $launch 'reason' 'Windows RTX empty-frame workaround')",
-        "- Evidence that physics, BDDL goal evaluation, metrics and result JSON are bit-identical to the default setting: evaluator_launcher/$(if (P $launch 'evidence' '') { Split-Path (P $launch 'evidence' '') -Leaf } else { '<missing>' })",
-        '- On Linux (the organizers'' evaluation machines) this argument is not needed; the plain command above is the reference.',
-        '- Runs in which any camera frame given to the policy was empty were discarded as invalid and re-run from scratch (environment defect, not a policy outcome).', ''
+        '- Rollouts stopped by this check were discarded as invalid (environment defect, not a policy outcome) and re-run from scratch; every rollout in metrics/ ran to completion without an empty frame.',
+        '- On Linux (the organizers'' evaluation machines) this is not needed; the plain command above is the reference.'
     )
+    if ($kitArgs.Count) {
+        $readme += @(
+            "- Kit start-up argument(s): $($kitArgs -join ' '). Reason: $(P $launch 'reason' '<reason>')",
+            "- Evidence that physics, BDDL goal evaluation, metrics and result JSON are bit-identical to the default setting: evaluator_launcher/$(if (P $launch 'evidence' '') { Split-Path (P $launch 'evidence' '') -Leaf } else { '<missing>' })"
+        )
+    }
+    $readme += ''
 }
 $readme += @(
     '## Policy serving', '',

@@ -19,6 +19,7 @@
 #   black_guard(abort|warn|off, 기본 abort), trace(기본 true), write_video(기본 false), gpu_busy_mib(기본 3500),
 #   repeats(같은 판 반복 수, 설정끼리 번갈아), lock_scope(run = 판마다 잠금 | repeat = 반복 한 바퀴를 한 잠금), lock_minutes(최대 30), timeout_min,
 #   reuse_batch(-Reuse 때 한 프로세스의 인스턴스 수), kit_args[](Kit 시작 인자, 설정별로도 줄 수 있음), ported{backend, host, python, scene_root},
+#   stop_on_black(한 판이라도 검은 프레임이면 남은 반복 안 돎), instrument_args[](eval_instrumented 선택지를 그대로, 예: --dump-settings=경로),
 #   settings[]: name, policy(local|replay|websocket|native), robot_config(없으면 공식 기본), wrapper(Default|RGBD|전체 경로), max_steps,
 #               chunk(--replay-action-chunk-size), port, extra_eval_args[],
 #               replay: actions(행동열 npz), quickack(기본 true), server(wsl = WSL 파이썬(기본) | rust = WSL Rust replaysrv | windows), port(기본 8110, 쓰이면 다음 빈 포트)
@@ -140,6 +141,7 @@ function Invoke-Eval($m, $s, [string]$task, [int[]]$idx, [string]$outDir, [strin
     $ours = @()
     if ($guard -ne 'off') { $ours += "--black-guard=$guard" }
     if ([bool](P $m 'trace' $true)) { $ours += '--trace' }
+    foreach ($ia in @(P $m 'instrument_args' @())) { if ($ia) { $ours += "$ia" } }  # 예: --dump-settings=<경로> (진단)
     if ($Reuse) { $ours += "--instances-seq=$($idx -join ',')" }
     # Kit 시작 인자(진단·환경 대응용, 예: 검은 화면 (B) 대응). 공식 파일은 안 바꾸고 이 프로세스의 Kit 시작에만 덧붙는다(eval_instrumented --kit-arg)
     foreach ($ka in @(@(P $m 'kit_args' @()) + @(P $s 'kit_args' @()))) { if ($ka) { $ours += "--kit-arg=$ka" } }
@@ -251,7 +253,11 @@ function Invoke-RunMatrix {
     Say "실험 $name -> $script:Exp (backend $Backend, reuse $([bool]$Reuse), 반복 $R)"
     # lock_scope: run(기본, 판마다 잡고 풂) | repeat(반복 한 바퀴 = 설정 전부를 한 잠금으로, 30 분 이내가 되게 잡는다)
     $lockScope = P $m 'lock_scope' 'run'
+    # stop_on_black: 한 판이라도 검은 프레임(무효)이 나오면 남은 반복을 안 돈다(설정 후보 거르기: 5 판 연속 0 이어야 효과 있음)
+    $stopOnBlack = [bool](P $m 'stop_on_black' $false)
+    $script:stopAll = $false
     foreach ($rep in 1..$R) {
+    if ($script:stopAll) { Say "검은 프레임이 나와 남은 반복을 멈춤(stop_on_black)"; break }
     $repLocked = $false
     if ($lockScope -eq 'repeat' -and -not $DryRun -and $needGpu) {
         $g0 = Enter-EvalGpu $busy "exp_run $name 반복 $rep/$R ($(@($m.settings).Count) 설정)" ([int](P $m 'lock_minutes' 30))
@@ -285,7 +291,8 @@ function Invoke-RunMatrix {
                     $js = @(Get-ChildItem "$d\json\*.json" -ErrorAction SilentlyContinue)
                     $bk = if ($info.Black.ContainsKey($ix)) { $info.Black[$ix] } elseif (-not $Reuse -and $info.Black.ContainsKey(-1)) { $info.Black[-1] } else { $null }
                     $wall = if ($Reuse -and $info.Start.ContainsKey($ix) -and $info.End.ContainsKey($ix)) { $info.End[$ix] - $info.Start[$ix] } elseif (-not $Reuse) { $res.Wall } else { $null }
-                    $rec = @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; rep = $rep; dir = $d; log = $res.Log; exit = $res.Code; wall_s = $wall; gpu_mib_before = $gpu }
+                    $rec = @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; rep = $rep; dir = $d; log = $res.Log; exit = $res.Code; wall_s = $wall; gpu_mib_before = $gpu
+                              reuse = [bool]$Reuse; kit_args = @(@(P $m 'kit_args' @()) + @(P $s 'kit_args' @())); max_steps = [int](P $s 'max_steps' (P $m 'max_steps' 0)) }
                     if ($bk) {
                         $rec.status = 'invalid_black'; $rec.black_step = $bk.Step; $rec.black_cam = $bk.Cam
                     } elseif ($js.Count -gt 0) {
@@ -296,6 +303,7 @@ function Invoke-RunMatrix {
                         $rec.status = 'error'; $rec.note = $info.Tail
                     }
                     Add-Status $rec
+                    if ($stopOnBlack -and $rec.status -eq 'invalid_black') { $script:stopAll = $true }
                     [void]$todo.Remove($ix); $progress = $true
                     Say "$($s.name) / $task / 인덱스 $ix -> $($rec.status)$(if ($bk) { " (스텝 $($bk.Step) $($bk.Cam))" })"
                 }

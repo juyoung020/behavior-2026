@@ -446,6 +446,7 @@ BLACK = None
 SET_SETTINGS = []  # --set KEY=VALUE (진단용)
 RENDER_ITERS = 0  # --render-iters=N (진단용)
 KIT_ARGS = []  # --kit-arg=--/app/vulkan=false 등 Kit 시작 인자 (진단용)
+DUMP_SETTINGS = ""  # --dump-settings=PATH : 판 시작 때 carb 설정 트리 전체를 JSON 으로 (진단용, 읽기만)
 WATCH_SETTINGS = ["/app/vulkan", "/app/gatherRenderResults", "/app/settings/fabricDefaultStageFrameHistoryCount",
                   "/exts/omni.kit.renderer.core/present/enabled", "/renderer/multiGpu/enabled", "/renderer/activeGpu",
                   "/rtx-transient/dlssg/enabled", "/rtx/post/dlss/execMode", "/rtx/post/aa/op", "/rtx/rendermode",
@@ -545,6 +546,24 @@ def install(timing: bool, trace: TraceRecorder, out_dir: str, gpu: GpuMonitor, d
             print(f"[black] 설정 {k}: {cur!r} -> {cs.get(k)!r}", flush=True)
         BLACK.settings = {k: repr(cs.get(k)) for k in WATCH_SETTINGS}
         print(f"[black] 렌더 설정: {BLACK.settings}", flush=True)
+        if DUMP_SETTINGS:
+            # 진단: carb 설정 트리 전체를 평평하게("/a/b": 값) 적는다(읽기만). 판이 시작하는 시점 = Kit·장면·렌더 설정이 다 들어간 뒤
+            flat = {}
+
+            def walk(node, path):
+                if isinstance(node, dict):
+                    for kk, vv in node.items():
+                        walk(vv, f"{path}/{kk}")
+                else:
+                    flat[path or "/"] = node if isinstance(node, (bool, int, float, str, type(None))) else repr(node)
+
+            try:
+                walk(cs.get("/"), "")
+            except Exception as e:  # 진단 실패는 기록만
+                flat = {"__error__": repr(e)}
+            with open(DUMP_SETTINGS, "w", encoding="utf-8") as f:
+                json.dump(flat, f, ensure_ascii=False, indent=0, sort_keys=True, default=repr)
+            print(f"[black] carb 설정 {len(flat)} 개를 {DUMP_SETTINGS} 에 적음", flush=True)
         from omnigibson.sensors.vision_sensor import VisionSensor
 
         inner = VisionSensor._get_obs  # 시간 계측 겉싸개가 있으면 그것까지 포함해 한 겹 더
@@ -948,8 +967,10 @@ def main():
     for g in ("warn", "abort"):
         if f"--black-guard={g}" in ours:
             guard = g
-    global RENDER_ITERS
+    global RENDER_ITERS, DUMP_SETTINGS
     for o in ours:
+        if o.startswith("--dump-settings="):
+            DUMP_SETTINGS = o.split("=", 1)[1]
         if o.startswith("--kit-arg="):
             KIT_ARGS.append(o[len("--kit-arg="):])
         if o.startswith("--render-iters="):
@@ -957,7 +978,7 @@ def main():
         if o.startswith("--set="):
             k, v = o[len("--set="):].split("=", 1)
             SET_SETTINGS.append((k, v))
-    if "--black-diag" in ours or guard or SET_SETTINGS or KIT_ARGS:
+    if "--black-diag" in ours or guard or SET_SETTINGS or KIT_ARGS or DUMP_SETTINGS:
         BLACK = BlackFrameDiag(diag="--black-diag" in ours, guard=guard)
     out_dir = eval_args[eval_args.index("--output-dir") + 1] if "--output-dir" in eval_args else "/tmp/b1k_eval"
     os.makedirs(out_dir, exist_ok=True)

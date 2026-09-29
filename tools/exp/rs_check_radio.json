@@ -1,0 +1,31 @@
+{
+  "name": "rs_check_radio",
+  "comment": "재생 서버 Rust 판(replaysrv) 평가기 확인: reuse_check_radio 의 새 프로세스 판(파이썬 서버)과 같은 설정 이름으로 돌려 compare 로 서버 로그·물리·판정·JSON 을 비교한다. 기본 설정(칸 4 는 (B) 에 효과 없음 — 09-30 00:31).",
+  "mode": "public_test",
+  "tasks": [
+    "turning_on_radio"
+  ],
+  "instances": [
+    0,
+    1
+  ],
+  "max_steps": 150,
+  "black_guard": "warn",
+  "trace": true,
+  "write_video": false,
+  "gpu_busy_mib": 3500,
+  "lock_minutes": 15,
+  "timeout_min": 15,
+  "reuse_batch": 2,
+  "settings": [
+    {
+      "name": "replay",
+      "policy": "replay",
+      "quickack": true,
+      "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+      "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml",
+      "server": "rust"
+    }
+  ],
+  "lock_scope": "repeat"
+}
