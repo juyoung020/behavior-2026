@@ -94,7 +94,7 @@ static IdSnap id_snap_first_sim(File& f, const std::vector<std::string>& skip) {
       creating = e.obj;
       continue;
     }
-    if (e.cmd == kAddToList && f.attr_name(e.attr) == "shapes" && e.data_len >= 8) {
+    if (e.cmd == kAddToList && f.attrs[e.attr].name == "shapes" && e.data_len >= 8) {
       uint64_t s;
       memcpy(&s, f.data(e), 8);
       if (cls[e.obj] != "PxPhysics") shape_owner[s] = {e.obj, nshapes[e.obj]++};

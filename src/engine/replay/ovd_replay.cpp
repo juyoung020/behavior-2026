@@ -225,6 +225,11 @@ class Replayer {
       fprintf(stderr, "[상태]   최대침투속도 %.9g CFM %.9g 최대접촉충격 %.9g 선감쇠 %.9g 각감쇠 %.9g 최대선속 %.9g 최대각속 %.9g 몸체플래그 0x%x\n",
               l->getMaxDepenetrationVelocity(), l->getCfmScale(), l->getMaxContactImpulse(), l->getLinearDamping(), l->getAngularDamping(),
               l->getMaxLinearVelocity(), l->getMaxAngularVelocity(), uint32_t(PxU16(l->getRigidBodyFlags())));
+      {
+        PxAggregate* ag = l->getArticulation().getAggregate();
+        fprintf(stderr, "[상태]   묶음(aggregate) %p 자기충돌 %d 액터 %u / 최대 %u\n", (void*)ag, ag ? int(ag->getSelfCollision()) : -1, ag ? ag->getNbActors() : 0u,
+                ag ? ag->getMaxNbActors() : 0u);
+      }
       fprintf(stderr, "[상태]   관절체 플래그 %u 링크 수 %u 반복 %u\n", uint32_t(PxU8(l->getArticulation().getArticulationFlags())), l->getArticulation().getNbLinks(), 0u);
       if (auto* j = l->getInboundJoint()) {
         PxTransform pp = j->getParentPose(), cp = j->getChildPose();
@@ -1149,6 +1154,8 @@ class Replayer {
   }
 
   // ------------------------------------------------------------------ 목록 add/remove (구조 변경)
+  size_t cur_event = 0;  // run() 이 지금 처리 중인 명령 번호
+  PxAggregate* pending_agg = nullptr;  // 만들었지만 아직 장면에 안 들어간 묶음 (관절체 구성원 복원용)
   void list_op(const ovd::Event& e, bool add) {
     const ovd::AttrInfo& ai = F.attrs[e.attr];
     const std::string key = F.classes[ai.cls].name + "." + ai.name;
@@ -1167,7 +1174,7 @@ class Replayer {
       else if (list == "triangleMeshes") make_trimesh(o);
       else if (list == "shapes") make_shape(o);
       else if (list == "rigidDynamics" || list == "rigidStatics") make_actor(o);
-      else if (list == "aggregates") make_aggregate(o);
+      else if (list == "aggregates") { make_aggregate(o); pending_agg = static_cast<PxAggregate*>(o.px); }
       else if (list == "articulations") make_articulation(o);
       else if (list == "constraints") { return; }  // 조인트가 만든다
       else { unsupported["physics list:" + list]++; }
@@ -1202,19 +1209,31 @@ class Replayer {
     if (key == "PxScene.articulations") {
       auto* a = o.px ? o.px->is<PxArticulationReducedCoordinate>() : nullptr;
       if (!owner.scene || !a) return;
+      // OVD 는 묶음 구성원(addArticulation)을 남기지 않는다. omni.physx 는 관절체마다 묶음 하나를 만들어 관절체를 넣은 뒤 장면에 넣는다
+      // (omni.physx UsdInterface.cpp:5942 addArticulationToScene, selfCollision = physxArticulation:enabledSelfCollisions).
+      // 기록 순서: 묶음 생성 -> PxPhysics.aggregates -> PxScene.articulations(이 관절체) -> PxScene.aggregates.
+      // 그래서 아직 장면에 안 들어간 빈 묶음이 있으면 관절체를 그 묶음에 넣는다(묶음이 장면에 들어갈 때 함께 들어간다).
+      if (add && pending_agg && pending_agg->getNbActors() == 0 && !a->getScene() && !a->getAggregate()) {
+        pending_agg->addArticulation(*a);
+        applied["agg:관절체를 묶음에"]++;
+        return;
+      }
       if (add) { if (!a->getScene() && !a->getAggregate()) owner.scene->addArticulation(*a); }
       else if (a->getScene() && !a->getAggregate()) owner.scene->removeArticulation(*a);
       return;
     }
     if (key == "PxScene.aggregates") {
       auto* g = static_cast<PxAggregate*>(o.px);
-      if (!owner.scene || !g) return;
+      if (!owner.scene || !g) { unsupported["agg:장면/묶음 없음"]++; return; }
       if (add) owner.scene->addAggregate(*g); else owner.scene->removeAggregate(*g);
+      if (add && pending_agg == g) pending_agg = nullptr;
       return;
     }
     if (key == "PxAggregate.actors") {
       auto* g = static_cast<PxAggregate*>(owner.px);
-      if (!g || !o.px) return;
+      if (!g) { unsupported["agg:묶음 객체 없음"]++; return; }
+      if (!o.px) { unsupported["agg:구성원 객체 없음 " + std::string(cname(o.cls))]++; return; }
+      applied[std::string("agg:") + (add ? "넣기 " : "빼기 ") + cname(o.cls)]++;
       if (auto* art = o.px->is<PxArticulationReducedCoordinate>()) { if (add) g->addArticulation(*art); else g->removeArticulation(*art); return; }
       if (auto* l = o.px->is<PxArticulationLink>()) {  // 관절체를 묶음에 넣으면 링크마다 기록된다 -> 첫 링크에서 관절체째로
         PxArticulationReducedCoordinate& art = l->getArticulation();
@@ -1510,6 +1529,7 @@ class Replayer {
         case ovd::kAddToList:
         case ovd::kRemoveFromList:
           if (out_block) break;
+          cur_event = i;
           list_op(e, e.cmd == ovd::kAddToList);
           break;
         case ovd::kSet: {
