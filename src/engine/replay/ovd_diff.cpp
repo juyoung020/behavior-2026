@@ -186,6 +186,7 @@ static void seq_dump(File& f, const std::string& filt, long frames) {
   sims = 0;
   for (const Event& e : f.events) {
     if (e.cmd == kSet && e.attr == a_elapsed) { printf("==== simulate %ld\n", ++sims); if (sims >= frames) break; continue; }
+    if (e.cmd == kStopFrame) { printf("---- 결과 끝 (simulate %ld)\n", sims); continue; }
     if (e.cmd != kSet && e.cmd != kAddToList && e.cmd != kRemoveFromList && e.cmd != kCreate) continue;
     const std::string who = id(e.obj);
     std::string what = e.cmd == kCreate ? f.classes.at(e.cls).name : f.attr_name(e.attr);

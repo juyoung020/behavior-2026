@@ -167,6 +167,7 @@ class Replayer {
   int verbose_max = 12;
   bool diag_no_self_collision = false;
   bool contact_report_all = false;
+  std::set<size_t> side_skip;  // --side-skip i,j,... : 곁기록 번호(sidelog.npz 순서)를 건너뜀 (진단)
   bool dbg_drive = getenv("OVD_DBG_DRIVE") != nullptr;  // --contact-report-all: omni 접촉 보고 쌍 처리(알림 플래그 + 정적/키네마틱 쌍 풀이 끔)를 모든 쌍에  // --diag-no-self-collision: 모든 관절체 자기 충돌 끔 (원인 가르기 진단용, 결과 비교용 아님)
   FILE* csv = nullptr;
   double frame_max = 0;
@@ -1614,7 +1615,10 @@ class Replayer {
   }
 
   void apply_side_until(uint64_t after) {
-    while (scall_next < scalls.size() && scalls[scall_next].after <= after) apply_side(scalls[scall_next++]);
+    while (scall_next < scalls.size() && scalls[scall_next].after <= after) {
+      if (side_skip.count(scall_next)) { scall_next++; applied["side:건너뜀(--side-skip)"]++; continue; }
+      apply_side(scalls[scall_next++]);
+    }
   }
 
   // ------------------------------------------------------------------ 거르개: resetFiltering 따라 하기 + 경로 기반 표 풀기
@@ -1999,6 +2003,7 @@ int main(int argc, char** argv) {
     else if (a == "--trace-obj" && i + 1 < argc) R.trace_sub = argv[++i];
     else if (a == "--diag-no-self-collision") R.diag_no_self_collision = true;
     else if (a == "--contact-report-all") R.contact_report_all = true;
+    else if (a == "--side-skip" && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t; while (std::getline(ss, t, ',')) R.side_skip.insert(size_t(atoll(t.c_str()))); }
     else if (a == "--gravity-off" && i + 1 < argc) { std::ifstream gf(argv[++i]); std::string ln; while (std::getline(gf, ln)) if (!ln.empty()) R.gravity_off.push_back(ln); }
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
     else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }

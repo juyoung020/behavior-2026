@@ -16,7 +16,7 @@ OUT=~/engine-data/linux_official/$TAG
 mkdir -p "$OUT"
 export OMNI_KIT_ACCEPT_EULA=YES
 export OMNIGIBSON_DATA_PATH=/mnt/c/behavior-2026/BEHAVIOR-1K/datasets
-export OMNIGIBSON_APPDATA_PATH=$BASE/appdata
+export OMNIGIBSON_APPDATA_PATH=${OMNIGIBSON_APPDATA_PATH:-$BASE/appdata}  # 결정성 시험: 빈 폴더를 주면 캐시 없는 첫 실행
 export PYTHONUTF8=1
 
 PORT=8011
@@ -29,7 +29,7 @@ source $BASE/.venv/bin/activate
 cd $BASE/BEHAVIOR-1K/OmniGibson
 set +e
 # WSL 에는 RTX 렌더 장치가 없다 -> --no-render (카메라 관측만 0 영상, 물리 무관)
-python /mnt/c/behavior-2026/src/engine/capture/physx_capture.py --dump-dir "$OUT" --no-render "${EXTRA[@]}" -- --trace -- \
+python ${ENGINE_CAPTURE_PY:-/mnt/c/behavior-2026/src/engine/capture/physx_capture.py} --dump-dir "$OUT" --no-render "${EXTRA[@]}" -- --trace -- \
   --task-name turning_on_radio --robot-config /mnt/c/behavior-2026/src/configs/r1pro_openpi.yaml \
   --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode public_test \
   --host 127.0.0.1 --port $PORT --instance-indices 0 --num-envs 1 --max-steps "$MAXSTEPS" \
