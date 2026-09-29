@@ -111,6 +111,11 @@ class Replayer {
   std::unordered_map<std::string, uint32_t> A;  // "Class.attr" -> handle
   std::unordered_map<uint64_t, uint64_t> link_parent;  // link -> parent link (prescan)
   std::unordered_map<uint64_t, uint64_t> joint_child;  // art joint -> child link
+  // D6 드라이브: OVD 는 드라이브 값을 조인트와 따로 된 값 객체(PxD6JointDrive)에 남긴다. 핸들 = 조인트 자료의 drive 배열 주소 + 종류
+  //   (ExtD6Joint.cpp:76 omniPvdCreateDriveObjectHandle, :254 omniPvdSetDriveData 네 값 한 묶음, :512 값 먼저·연결 나중).
+  // 연결(PxD6Joint.driveX..driveSwing2 = 핸들)과 값이 둘 다 모인 순간 setDrive 한 번.
+  struct D6DriveRef { PxD6Joint* joint = nullptr; int type = -1; bool have = false; PxD6JointDrive v; };
+  std::unordered_map<uint64_t, D6DriveRef> d6drive;
   std::map<std::string, uint64_t> unsupported;
   std::map<std::string, uint64_t> applied;
   std::map<std::string, Stat> stats;  // 항목별 비교
@@ -346,7 +351,11 @@ class Replayer {
     if (!pget(o, "PxShape", "geom", gh)) { unsupported["shape:no geom"]++; return; }
     bool ok;
     PxGeometryHolder g = geometry(gh, ok);
-    if (!ok) { unsupported["shape:geom unsupported"]++; return; }
+    if (!ok) {  // 형상 값이 비었거나 메시 객체가 없음 -> 어느 종류인지 남긴다
+      auto ig = objs.find(gh);
+      unsupported[std::string("shape:geom unsupported ") + (ig != objs.end() ? cname(ig->second.cls) : "?")]++;
+      return;
+    }
     auto mv = pv(o, "PxShape", "materials");
     std::vector<PxMaterial*> mats;
     if (mv)
@@ -474,7 +483,21 @@ class Replayer {
       }
       return;
     }
-    if (c == "PxD6JointDrive") { o.done = true; return; }  // 값 객체: 조인트 setter 에서 읽는다
+    if (c == "PxD6JointDrive") {  // 값 객체: 만들 때 값(네 개)을 모아 두고, 조인트 쪽 연결이 오면 setDrive
+      o.done = true;
+      D6DriveRef& r = d6drive[h];
+      float st = r.v.stiffness, dm = r.v.damping, fl = r.v.forceLimit;
+      uint32_t fg = uint32_t(r.v.flags);
+      const bool any = pget(o, "PxD6JointDrive", "stiffness", st) | pget(o, "PxD6JointDrive", "damping", dm) |
+                       pget(o, "PxD6JointDrive", "forceLimit", fl) | pget(o, "PxD6JointDrive", "flags", fg);
+      if (any) {
+        r.v.stiffness = st; r.v.damping = dm; r.v.forceLimit = fl; r.v.flags = PxD6JointDriveFlags(fg);
+        r.have = true;
+        d6_push(h);
+      }
+      o.pend.clear();
+      return;
+    }
   }
 
   void apply_joint_cluster(Obj& o, PxJoint* j) {
@@ -726,6 +749,7 @@ class Replayer {
                                                    "driveMaxActuatorVelocity", "driveVelocityDependentResistance",
                                                    "driveSpeedEffortGradient", "driveType"};
     static const std::vector<std::string> d6vel = {"driveLinVelocity", "driveAngVelocity"};
+    static const std::vector<std::string> d6drv = {"stiffness", "damping", "forceLimit", "flags"};  // setDrive 한 번 (ExtD6Joint.cpp:254)
     const ovd::AttrInfo& ai = F.attrs[ah];
     const std::string& cl = F.classes[ai.cls].name;
     const std::string& an = ai.name;
@@ -734,6 +758,7 @@ class Replayer {
     if (cl == "PxJoint" && in(jlocal)) return &jlocal;
     if (cl == "PxJoint" && in(jbreak)) return &jbreak;
     if (cl == "PxD6Joint" && in(d6vel)) return &d6vel;
+    if (cl == "PxD6JointDrive" && in(d6drv)) return &d6drv;
     if (cl == "PxArticulationJointReducedCoordinate") {
       if (in(ppose)) return &ppose;
       if (in(cpose)) return &cpose;
@@ -750,6 +775,17 @@ class Replayer {
     auto dat = [&](const char* n) { return F.data(*v[n]); };
     auto AX = [](int i) { return PxArticulationAxis::Enum(i); };
     const std::string first = g[0];
+    if (first == "stiffness") {  // PxD6JointDrive 값 객체 (px 없음): 값 갱신 후 연결돼 있으면 setDrive
+      const uint64_t h = v.begin()->second->obj;
+      D6DriveRef& r = d6drive[h];
+      if (has("stiffness")) r.v.stiffness = as<float>(dat("stiffness"));
+      if (has("damping")) r.v.damping = as<float>(dat("damping"));
+      if (has("forceLimit")) r.v.forceLimit = as<float>(dat("forceLimit"));
+      if (has("flags")) r.v.flags = PxD6JointDriveFlags(flagv(dat("flags"), v["flags"]->data_len));
+      r.have = true;
+      d6_push(h);
+      return;
+    }
     PxBase* b = o.px;
     if (!b) { unsupported["group:no object " + first]++; return; }
     if (first == "positionIterations") {
@@ -889,7 +925,21 @@ class Replayer {
       if (an == "driveLinVelocity") { PxVec3 l, a; d->getDriveVelocity(l, a); d->setDriveVelocity(as<PxVec3>(p), a); return true; }
       if (an == "driveAngVelocity") { PxVec3 l, a; d->getDriveVelocity(l, a); d->setDriveVelocity(l, as<PxVec3>(p)); return true; }
       if (an == "twistAngle" || an == "swingYAngle" || an == "swingZAngle") return true;  // 결과값
-      // 한계·드라이브: 첫 버전에서는 기록만 (BEHAVIOR 에서 D6 를 쓰는지 OVD 로 확인 후 채운다)
+      // 드라이브 연결: 속성 이름 순서 = PxD6Drive 번호 (eX..eSWING2, PxD6Joint.h:154)
+      static const char* kDrive[8] = {"driveX", "driveY", "driveZ", "driveSwing", "driveTwist", "driveSlerp", "driveSwing1", "driveSwing2"};
+      for (int t = 0; t < 8; ++t)
+        if (an == kDrive[t]) {
+          uint64_t h = 0;
+          if (n >= 8) memcpy(&h, p, 8);
+          if (h) { D6DriveRef& r = d6drive[h]; r.joint = d; r.type = t; d6_push(h); }
+          return true;  // 0 = 연결 끊음(설정 바꿈 때 omniPvdClearDriveData) — API 호출 아님
+        }
+      if (an == "angularDriveConfig") {
+        const auto c = PxD6AngularDriveConfig::Enum(as<uint32_t>(p));
+        if (d->getAngularDriveConfig() != c) d->setAngularDriveConfig(c);  // 바뀔 때만 (ExtD6Joint.cpp:550 과 같은 조건)
+        return true;
+      }
+      // 한계(선·비틀기·흔들기·거리): BEHAVIOR radio 기록에는 없다(ovd_dump). 나오면 여기서 못 옮김으로 센다
       return false;
     }
     if (cl == "PxRevoluteJoint" || cl == "PxPrismaticJoint" || cl == "PxSphericalJoint") {
@@ -897,6 +947,23 @@ class Replayer {
       return false;
     }
     return false;
+  }
+
+  // 연결과 값이 모였으면 setDrive. 지금 각 구동 설정에서 허용 안 되는 종류는 PhysX checked 빌드처럼 건너뛴다
+  // (ExtD6Joint.cpp:150 isDriveTypeAllowed — 원본에서도 그 호출은 아무 일도 안 한다).
+  void d6_push(uint64_t h) {
+    auto it = d6drive.find(h);
+    if (it == d6drive.end() || !it->second.joint || !it->second.have) return;
+    const D6DriveRef& r = it->second;
+    const int t = r.type;
+    const auto cfg = r.joint->getAngularDriveConfig();
+    bool ok = t <= 2;
+    if (cfg == PxD6AngularDriveConfig::eSWING_TWIST) ok |= (t == 4 || t == 6 || t == 7);
+    else if (cfg == PxD6AngularDriveConfig::eSLERP) ok |= (t == 5);
+    else ok |= (t == 3 || t == 4 || t == 5);
+    if (!ok) { applied["PxD6JointDrive(설정상 불가, 건너뜀)"]++; return; }
+    r.joint->setDrive(PxD6Drive::Enum(t), r.v);
+    applied["PxD6Joint.setDrive"]++;
   }
 
   void register_name(Obj& o, PxActor* a) {
