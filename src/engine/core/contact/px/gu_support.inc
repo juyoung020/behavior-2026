@@ -25,7 +25,7 @@ EHDV PxVec3 PxOptimizeBoundingBox(PxMat33& basis);
 template <class T> EHD void flip(T&) {}  // CmSerialize.h 바이트 순서 뒤집기 (직렬화 전용)
 
 // PxMath.h:265 PxAcos = ::acosf(PxClamp(f,-1,1)) -> glibc 2.35 acosf 이식본
-EHD float PxAcos(float f) { return eng::glibcx::acosf(PxClamp(f, -1.0f, 1.0f)); }
+EHD float PxAcos(float f) { return eng::glibc::acosf(PxClamp(f, -1.0f, 1.0f)); }
 
 // 이름공간 수준 상수 표: 호스트 표 + GPU __constant__ 표, name_p() 가 실행 쪽 표를 돌려준다 (translate.py device_tables)
 #if defined(__CUDACC__)

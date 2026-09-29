@@ -11,7 +11,7 @@
 #include "px_bridge.h"
 #include "core/contact/hull_pack.h"
 #include "core/contact/px/approx.h"
-#include "core/contact/px/glibc_acosf.h"
+#include "core/common/glibc_trig.h"
 #include "contact_gpu_launch.h"
 
 using namespace physx;
@@ -48,7 +48,7 @@ static uint64_t mathSweep() {
         for (uint32_t i = chunk / nt * t; i < chunk / nt * (t + 1); ++i) {
           const float x = ep::em_u2f(uint32_t(lo) + i);
           const uint32_t r = ep::em_f2u(ep::approxRcp(x, tab)), s = ep::em_f2u(ep::approxRsqrt(x, tab)),
-                         a = ep::em_f2u(eng::glibcx::acosf(x));
+                         a = ep::em_f2u(eng::glibc::acosf(x));
           if (r != hR[i]) { if (!b[t][0]) f[t][0] = lo + i; ++b[t][0]; }
           if (s != hS[i]) { if (!b[t][1]) f[t][1] = lo + i; ++b[t][1]; }
           if (a != hA[i]) { if (!b[t][2]) f[t][2] = lo + i; ++b[t][2]; }

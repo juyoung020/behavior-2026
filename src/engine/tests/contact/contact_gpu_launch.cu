@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 
 #include "core/contact/px/approx.h"
-#include "core/contact/px/glibc_acosf.h"
+#include "core/common/glibc_trig.h"
 #include "cuda/contact/pcm_batch.cuh"
 #include "contact_gpu_launch.h"
 
@@ -16,7 +16,7 @@ __global__ void kMathSweep(uint32_t lo, uint32_t n, uint32_t* rcp, uint32_t* rsq
   const float x = eng::px::em_u2f(lo + i);
   rcp[i] = eng::px::em_f2u(eng::px::em_rcp1(x));
   rsq[i] = eng::px::em_f2u(eng::px::em_rsqrt1(x));
-  acs[i] = eng::px::em_f2u(eng::glibcx::acosf(x));
+  acs[i] = eng::px::em_f2u(eng::glibc::acosf(x));
 }
 
 void gpuMathSweep(uint32_t lo, uint32_t n, uint32_t* dRcp, uint32_t* dRsq, uint32_t* dAcos) {

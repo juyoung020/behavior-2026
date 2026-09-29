@@ -18,6 +18,8 @@
 #define EM_HOST_X86 1
 #endif
 
+#undef EHD  // core/common/pmath.h 도 EHD 를 정의한다(호스트는 inline). contact 쪽은 always_inline 으로 (값 영향 없음)
+#undef EHDI
 #if defined(__CUDACC__)
 #define EHD __host__ __device__ __forceinline__
 #define EHDI __host__ __device__ inline
