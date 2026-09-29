@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
   const Gu::NarrowPhaseParams npP(contactDist, meshMargin, tolLen);
   const eng::px::Gu::NarrowPhaseParams npE(contactDist, meshMargin, tolLen);
 
-  CK(cudaDeviceSetLimit(cudaLimitStackSize, 24 * 1024));
+  CK(cudaDeviceSetLimit(cudaLimitStackSize, 32 * 1024));
   const int threads = 64;
 
   // ---- 비교 실행: E 판 × P 쌍 × F 프레임

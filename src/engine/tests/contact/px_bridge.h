@@ -19,6 +19,7 @@
 #include "geomutils/PxContactBuffer.h"
 
 #include "core/contact/px/gu.h"
+#include "core/contact/narrowphase.h"
 
 namespace cxt {
 
@@ -132,6 +133,97 @@ inline eng::px::PxConvexMeshGeometry toE(const physx::PxConvexMeshGeometry& g) {
 }
 inline eng::px::PxTransform toE(const physx::PxTransform& t) {
   return eng::px::PxTransform(eng::px::PxVec3(t.p.x, t.p.y, t.p.z), eng::px::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w));
+}
+
+
+// ---- 모양 만들기 (PhysX 쪽 + 우리 쪽 같은 값) 와 PhysX PCM 함수 부르기 (PxcNpBatch 처럼 모양 번호 순서 맞추고 뒤집으면 법선 반전)
+struct TestShape {
+  physx::PxGeometryHolder p;
+  eng::contact::ShapeGeom e;
+  float radius = 0.0f;  // 대략 크기
+};
+
+inline void makeShape(int type, std::mt19937& rng, const std::vector<physx::PxConvexMesh*>& hulls, TestShape& s) {
+  using namespace physx;
+  std::uniform_real_distribution<float> P(0.0f, 1.0f);
+  s.e = eng::contact::ShapeGeom();
+  s.e.type = type;
+  switch (type) {
+    case 0: { const float r = 0.02f + 0.4f * P(rng); s.p.storeAny(PxSphereGeometry(r)); s.e.sphere = eng::px::PxSphereGeometry(r); s.radius = r; break; }
+    case 1: { s.p.storeAny(PxPlaneGeometry()); s.radius = 0.0f; break; }
+    case 2: {
+      const float r = 0.02f + 0.3f * P(rng), hh = 0.01f + 0.5f * P(rng);
+      s.p.storeAny(PxCapsuleGeometry(r, hh)); s.e.capsule = eng::px::PxCapsuleGeometry(r, hh); s.radius = r + hh; break;
+    }
+    case 3: {
+      const PxVec3 he(0.02f + 0.4f * P(rng), 0.02f + 0.4f * P(rng), 0.02f + 0.4f * P(rng));
+      s.p.storeAny(PxBoxGeometry(he)); s.e.box = eng::px::PxBoxGeometry(he.x, he.y, he.z); s.radius = he.magnitude(); break;
+    }
+    default: {
+      PxConvexMesh* m = hulls[size_t(P(rng) * hulls.size()) % hulls.size()];
+      PxMeshScale sc = (P(rng) < 0.5f) ? PxMeshScale(1.0f) : PxMeshScale(PxVec3(0.5f + P(rng), 0.5f + P(rng), 0.5f + P(rng)));
+      const PxConvexMeshGeometry g(m, sc);
+      s.p.storeAny(g); s.e.convex = toE(g);
+      s.radius = static_cast<Gu::ConvexMesh*>(m)->getLocalBoundsFast().mExtents.magnitude() * sc.scale.maxElement();
+    }
+  }
+}
+
+inline bool physxPcmOrdered(int t0, int t1, const physx::PxGeometry& a, const physx::PxGeometry& b, const physx::PxTransform32& ta,
+                            const physx::PxTransform32& tb, const physx::Gu::NarrowPhaseParams& np, physx::Gu::Cache& c, physx::PxContactBuffer& buf) {
+  using namespace physx;
+  switch (t0 * 16 + t1) {
+    case 0 * 16 + 0: return Gu::pcmContactSphereSphere(a, b, ta, tb, np, c, buf, NULL);
+    case 0 * 16 + 1: return Gu::pcmContactSpherePlane(a, b, ta, tb, np, c, buf, NULL);
+    case 0 * 16 + 2: return Gu::pcmContactSphereCapsule(a, b, ta, tb, np, c, buf, NULL);
+    case 0 * 16 + 3: return Gu::pcmContactSphereBox(a, b, ta, tb, np, c, buf, NULL);
+    case 0 * 16 + 5: return Gu::pcmContactSphereConvex(a, b, ta, tb, np, c, buf, NULL);
+    case 1 * 16 + 2: return Gu::pcmContactPlaneCapsule(a, b, ta, tb, np, c, buf, NULL);
+    case 1 * 16 + 3: return Gu::pcmContactPlaneBox(a, b, ta, tb, np, c, buf, NULL);
+    case 1 * 16 + 5: return Gu::pcmContactPlaneConvex(a, b, ta, tb, np, c, buf, NULL);
+    case 2 * 16 + 2: return Gu::pcmContactCapsuleCapsule(a, b, ta, tb, np, c, buf, NULL);
+    case 2 * 16 + 3: return Gu::pcmContactCapsuleBox(a, b, ta, tb, np, c, buf, NULL);
+    case 2 * 16 + 5: return Gu::pcmContactCapsuleConvex(a, b, ta, tb, np, c, buf, NULL);
+    case 3 * 16 + 3: return Gu::pcmContactBoxBox(a, b, ta, tb, np, c, buf, NULL);
+    case 3 * 16 + 5: return Gu::pcmContactBoxConvex(a, b, ta, tb, np, c, buf, NULL);
+    case 5 * 16 + 5: return Gu::pcmContactConvexConvex(a, b, ta, tb, np, c, buf, NULL);
+  }
+  return false;
+}
+
+// PhysX 쪽 다양체 칸 (PxsContext::createCache 와 같게)
+struct PhysxSlot {
+  alignas(16) physx::Gu::LargePersistentContactManifold large;
+  alignas(16) physx::Gu::SpherePersistentContactManifold sphere;
+  int kind = 0;
+  physx::Gu::PersistentContactManifold* get() { return kind == 1 ? static_cast<physx::Gu::PersistentContactManifold*>(&sphere) : &large; }
+  void init(int t0, int t1) {
+    const int a = t0 < t1 ? t0 : t1, b = t0 < t1 ? t1 : t0;
+    if (eng::contact::pcmCaching(a, b)) {
+      kind = (a == 0 || b == 0) ? 1 : 2;
+      get()->clearManifold();
+    } else {
+      kind = 0;
+    }
+  }
+};
+
+// PxcNpBatch::discreteNarrowPhase 의 뒤집기 규칙대로 PhysX PCM 을 부른다
+inline bool physxPcmPair(const TestShape& s0, const TestShape& s1, const physx::PxTransform& t0, const physx::PxTransform& t1, float contactDist,
+                         PhysxSlot& slot, physx::PxContactBuffer& buf) {
+  using namespace physx;
+  int ty0 = s0.e.type, ty1 = s1.e.type;
+  const bool flip = ty1 < ty0;
+  const TestShape* a = &s0; const TestShape* b = &s1;
+  PxTransform32 ta(t0), tb(t1);
+  if (flip) { std::swap(ty0, ty1); std::swap(a, b); std::swap(ta, tb); }
+  const Gu::NarrowPhaseParams np(contactDist, 0.01f, 1.0f);
+  Gu::Cache c;
+  if (slot.kind) c.setManifold(slot.get());
+  buf.reset();
+  const bool r = physxPcmOrdered(ty0, ty1, a->p.any(), b->p.any(), ta, tb, np, c, buf);
+  if (flip) for (PxU32 i = 0; i < buf.count; ++i) buf.contacts[i].normal = -buf.contacts[i].normal;
+  return r;
 }
 
 }  // namespace cxt

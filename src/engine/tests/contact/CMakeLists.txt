@@ -24,3 +24,18 @@ target_compile_options(test_pcm_convex_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-X
 target_compile_options(test_pcm_convex_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe=--diag_suppress=550>)
 engine_test(test_acosf_exhaustive test_acosf_exhaustive.cpp)
 target_compile_options(test_acosf_exhaustive PRIVATE -fno-builtin)
+engine_test(test_approx_exhaustive test_approx_exhaustive.cpp)
+contact_test(test_contact_gpu test_contact_gpu.cpp contact_gpu_launch.cu PHYSX)
+target_link_libraries(test_contact_gpu CUDA::cudart)
+target_compile_options(test_contact_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-v> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+# 장면 단위 시험: PhysX 장면 내부(NpScene·Sc::Scene·PxsContext)를 읽는다
+set(PX_SCENE_INC
+  ${PHYSX_ROOT}/source/physx/src ${PHYSX_ROOT}/source/physx/src/buffering ${PHYSX_ROOT}/source/physx/src/device
+  ${PHYSX_ROOT}/source/simulationcontroller/include ${PHYSX_ROOT}/source/simulationcontroller/src
+  ${PHYSX_ROOT}/source/lowlevel/common/include/collision ${PHYSX_ROOT}/source/lowleveldynamics/include
+  ${PHYSX_ROOT}/source/lowlevelaabb/include ${PHYSX_ROOT}/source/scenequery/include ${PHYSX_ROOT}/source/physxmetadata/core/include
+  ${PHYSX_ROOT}/source/pvd/include ${PHYSX_ROOT}/source/physxgpu/include ${PHYSX_ROOT}/source/omnipvd ${PHYSX_ROOT}/pvdruntime/include
+  ${PHYSX_ROOT}/source/physxextensions/src ${PHYSX_ROOT}/source/filebuf/include)
+contact_test(test_np_scene test_np_scene.cpp PHYSX)
+target_include_directories(test_np_scene PRIVATE ${PX_SCENE_INC})
+target_compile_definitions(test_np_scene PRIVATE PX_PUBLIC_RELEASE=1 PX_NVTX=0)

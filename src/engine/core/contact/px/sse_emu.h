@@ -5,8 +5,8 @@
 //  - 칸 하나의 +,-,*,/,sqrt 는 IEEE float 한 번 (SSE 의 addps 등과 같음). FMA 축약 금지(-ffp-contract=off, CUDA -fmad=false).
 //  - minps/maxps 는 "a<b ? a : b" / "a>b ? a : b" (NaN·±0 에서 두 번째 인자). comi* 는 NaN 이면 0 (clang 의 COMISS 해석).
 //  - FTZ/DAZ: 호스트는 PhysX 처럼 simulate 구간을 MXCSR FTZ+DAZ 로 두고 돌린다(tests 의 FtzScope). GPU 는 -ftz=true.
-//  - rcpps/rsqrtps(근사)는 CPU 제조사마다 값이 다르다. 호스트는 진짜 명령을 부르고, GPU 는 표(approx 표, 리드 common/approx.h 예정)로.
-//    접촉 모듈 기준으로는 볼록-볼록 경로에서 안 쓰고, 척도 있는 볼록(M33Inverse)·삼각메시(FRsqrtFast)·상자-상자(V3RecipFast)에서 쓴다.
+//  - rcpps/rsqrtps(근사)는 CPU 제조사마다 값이 다르다. 호스트는 진짜 명령, GPU 는 실행 CPU 에서 뜬 표로 (approx.h).
+//    접촉 모듈에서는 상자-상자(V3RecipFast)·삼각메시(FRsqrtFast)가 쓴다. 볼록-볼록 경로는 안 씀.
 // 원본: physx/include/foundation/PxVecMathSSE.h, unix/sse2/PxUnixSse2InlineAoS.h (태그 107.3-omni-and-physx-5.6.1, BSD-3)
 #pragma once
 #include <cstdint>
@@ -63,15 +63,44 @@ EHD float em_div1(float a, float b) {
 #endif
 }
 
-// ---- 근사 역수·역제곱근 (rcpps / rsqrtps). GPU 판은 표가 필요 -> 층 2 에서 이 경로를 쓰면 표를 붙인다.
+// ---- 근사 역수·역제곱근 (rcpps / rsqrtps). CPU 제조사·세대마다 값이 다르다 -> 호스트는 진짜 명령,
+// GPU 는 실행 CPU 에서 뜬 표(approx.h buildApproxTables -> uploadApproxTables)로 같은 값을 만든다 (구조·실측은 approx.h 머리말).
+struct ApproxTables {
+  uint16_t rcp[4096];  // 비트 12 = 결과 지수가 127(아니면 126), 비트 0..11 = 결과 가수 위 12 비트. 입력 지수 127 기준
+  uint16_t rsq[8192];  // [홀짝 << 12 | m>>11], 입력 지수 127(짝)·128(홀) 기준
+};
+
+EHD float approxRcp(float x, const ApproxTables& t) {
+  const uint32_t u = em_f2u(x), s = u & 0x80000000u, e = (u >> 23) & 0xffu, m = u & 0x7fffffu;
+  if (e == 0) return em_u2f(s | 0x7f800000u);
+  if (e == 255) return em_u2f(m ? (u | 0x00400000u) : s);
+  const uint32_t v = t.rcp[m >> 11];
+  const int te = int(126u + ((v >> 12) & 1u)) - (int(e) - 127);
+  if (te <= 0) return em_u2f(s);
+  return em_u2f(s | (uint32_t(te) << 23) | (uint32_t(v & 0xfffu) << 11));
+}
+
+EHD float approxRsqrt(float x, const ApproxTables& t) {
+  const uint32_t u = em_f2u(x), s = u & 0x80000000u, e = (u >> 23) & 0xffu, m = u & 0x7fffffu;
+  if (e == 0) return em_u2f(s | 0x7f800000u);
+  if (e == 255) return em_u2f(m ? (u | 0x00400000u) : (s ? 0xffc00000u : 0u));
+  if (s) return em_u2f(0xffc00000u);
+  const int ee = int(e) - 127;
+  const int par = ee & 1;
+  const int half = (ee - par) / 2;
+  const uint32_t v = t.rsq[(uint32_t(par) << 12) | (m >> 11)];
+  const int te = int(126u + ((v >> 12) & 1u)) - half;
+  if (te <= 0) return em_u2f(0u);
+  if (te >= 255) return em_u2f(0x7f800000u);
+  return em_u2f((uint32_t(te) << 23) | (uint32_t(v & 0xfffu) << 11));
+}
+
 #if defined(__CUDACC__)
-__device__ const float* em_rcp_table_dev();   // (예정) 리드 approx.h
-__device__ const float* em_rsqrt_table_dev();
+static __device__ ApproxTables g_emApproxDev;  // 번역 단위마다 하나 (approx.h uploadApproxTables 로 채움)
 #endif
 EHD float em_rcp1(float x) {
 #if defined(__CUDA_ARCH__)
-  __trap();  // 아직 표 없음: 이 경로가 GPU 에서 불리면 멈춘다(조용히 다른 값을 내지 않게)
-  return 0.0f;
+  return approxRcp(x, g_emApproxDev);
 #elif defined(EM_HOST_X86)
   return _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(x)));
 #else
@@ -80,8 +109,7 @@ EHD float em_rcp1(float x) {
 }
 EHD float em_rsqrt1(float x) {
 #if defined(__CUDA_ARCH__)
-  __trap();
-  return 0.0f;
+  return approxRsqrt(x, g_emApproxDev);
 #elif defined(EM_HOST_X86)
   return _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x)));
 #else
