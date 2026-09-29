@@ -47,3 +47,9 @@ foreach(t ovd_selftest ovd_replay)
   target_compile_options(${t} PRIVATE ${COMMON_FLAGS})
   target_link_libraries(${t} ovd ${PHYSX_LIBS})
 endforeach()
+
+# S1 (문서 15절): 제어기 오프라인 비교 — OVD 만 읽는다 (PhysX 링크 없음), omni 제어기 헤더 사용
+add_executable(s1_ctrl s1_ctrl.cpp)
+target_link_libraries(s1_ctrl ovd)
+target_include_directories(s1_ctrl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_options(s1_ctrl PRIVATE -O2 -ffp-contract=off -fno-fast-math)
