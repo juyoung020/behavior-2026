@@ -12,5 +12,5 @@ else
   cmake $B > $B/cmake.log 2>&1 || { cat $B/cmake.log; exit 1; }  # 새 시험 대상이 생겼을 때 다시 읽기
 fi
 T="$@"
-[ -z "$T" ] && T="test_joints_prep test_joints_block4 test_tanf test_rigid_api test_scene_query test_joint_lifecycle test_raycast_mesh test_joints_gpu test_joints_block4_gpu test_joints_gpu_1lane test_joints_block4_gpu_1lane test_tanf_gpu"
+[ -z "$T" ] && T="test_joints_prep test_joints_block4 test_tanf test_rigid_api test_scene_query test_joint_lifecycle test_raycast_mesh test_scene_raycast test_joints_gpu test_joints_block4_gpu test_joints_gpu_1lane test_joints_block4_gpu_1lane test_tanf_gpu"
 cmake --build $B -j 16 --target $T 2>&1 | grep -E 'error|Error|Built target|FAILED' | head -60

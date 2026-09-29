@@ -591,5 +591,52 @@ EHD uint32_t raycastTriangleMesh(const TriMeshData& m, const MeshScale& scale, b
   return 1;
 }
 
+// ---- 장면 단위 가장 가까운 광선 (PxScene::raycast, 막는 맞음 하나 = omni raycast_closest)
+// 원본: scenequery/src/SqQuery.cpp:836 (multiQuery: 정적 가지치기 나무 -> 동적 나무 -> 묶음 나무 순서, maxDist 를 줄여 가며),
+//       :493 (_invoke: 모양 광선에 "지금까지 줄어든 거리"를 maxDist 로 넘김, 맞음 거리 <= 줄어든 거리면 교체 — 같거나 가까우면 나중 것이 이긴다)
+// 모양의 세계 자세는 PhysX 장면 질의가 쓰는 값 그대로 넣는다: 동적 = 변환 캐시(PxsTransformCache, ScScene.cpp:1905 syncSceneQueryBounds),
+//   정적 = body2World × shape2Actor (ScShapeSimBase.cpp:217). 변환 캐시는 contact 모듈이 만든다(12.3 1 단계).
+// 방문 순서: 결과는 순서와 무관하다 — 단, 두 모양의 맞음 거리가 같거나 볼록 메시끼리 1e-5 안으로 붙어 있으면(볼록 판정이 maxDist - 1e-5 를 씀)
+//   먼저 본 쪽이 결과를 정한다. PhysX 순서는 AABB 나무 방문 순서라 여기서는 호출자가 준 순서(정적 먼저, 그다음 동적)를 쓴다 — 18.5 참고.
+enum SqGeom : uint8_t { SQ_SPHERE = 0, SQ_PLANE = 1, SQ_CAPSULE = 2, SQ_BOX = 3, SQ_CONVEX = 4, SQ_TRIMESH = 5 };  // PxGeometryType 순서
+struct SqShape {
+  uint8_t type;
+  uint8_t doubleSided;      // 삼각 메시 eDOUBLE_SIDED
+  uint32_t id;              // 호출자 번호 (결과에 실어 보냄)
+  Tf pose;                  // 모양 세계 자세
+  float radius, halfHeight; // 구·캡슐
+  V3 halfExtents;           // 상자
+  MeshScale scale;          // 볼록·삼각
+  const float* planes;      // 볼록 다각형 평면
+  uint32_t nPolys;
+  const TriMeshData* mesh;  // 삼각
+};
+EHD uint32_t raycastShape(const SqShape& s, const V3& o, const V3& d, float maxDist, uint32_t hitFlags, RayHit& h) {
+  switch (s.type) {  // GuRaycastTests.cpp gRaycastMap
+    case SQ_SPHERE: return raycastSphere(s.radius, s.pose, o, d, maxDist, hitFlags, h);
+    case SQ_PLANE: return raycastPlane(s.pose, o, d, maxDist, h);
+    case SQ_CAPSULE: return raycastCapsule(s.radius, s.halfHeight, s.pose, o, d, maxDist, hitFlags, h);
+    case SQ_BOX: return raycastBox(s.halfExtents, s.pose, o, d, maxDist, hitFlags, h);
+    case SQ_CONVEX: return raycastConvex(s.planes, s.nPolys, s.scale, s.pose, o, d, maxDist, hitFlags, h);
+    case SQ_TRIMESH: return raycastTriangleMesh(*s.mesh, s.scale, s.doubleSided != 0, s.pose, o, d, maxDist, hitFlags, h);
+  }
+  return 0;
+}
+// 반환: 맞은 모양의 칸 번호 (없으면 -1). unitDir 는 정규화된 방향(omni 가 normalize, PhysXSceneQuery.cpp:344).
+EHD int raycastClosest(const SqShape* shapes, uint32_t n, const V3& origin, const V3& unitDir, float distance, uint32_t hitFlags, RayHit& best) {
+  float shrunk = distance;
+  int bestIdx = -1;
+  for (uint32_t i = 0; i < n; ++i) {
+    RayHit h;
+    if (!raycastShape(shapes[i], origin, unitDir, shrunk, hitFlags, h)) continue;
+    if (h.distance <= shrunk) {
+      shrunk = h.distance;
+      best = h;
+      bestIdx = int(i);
+    }
+  }
+  return bestIdx;
+}
+
 }  // namespace sq
 }  // namespace eng
