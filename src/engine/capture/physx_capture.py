@@ -552,6 +552,16 @@ def install(cap: Capture):
             cap.finish()
         except Exception as e:
             print(f"[capture] 마무리 실패: {e!r}", flush=True)
+        # Kit 종료(og.shutdown)는 렌더 장치 없는 WSL 에서 늘 segfault 하고(139), WSL 이 판마다 약 11 GB 덤프를 %TEMP%\wsl-crashes 에 남긴다
+        # (core_pattern 이 파이프라 ulimit -c 0 이 안 먹는다). 결과(JSON·trace·OVD·곁기록)는 이 시점에 모두 써졌으므로 여기서 바로 끝낸다.
+        # 렌더 있는 장비에서는 원래 종료를 쓴다 (--no-render 일 때만).
+        if getattr(cap, "no_render", False):
+            import sys as _sys
+
+            print("[capture] 결과 저장 끝 — Kit 종료를 건너뛰고 끝냄 (segfault 덤프 방지)", flush=True)
+            _sys.stdout.flush()
+            _sys.stderr.flush()
+            os._exit(0)
         return orig_shutdown(*a, **kw)
 
     og.shutdown = shutdown
