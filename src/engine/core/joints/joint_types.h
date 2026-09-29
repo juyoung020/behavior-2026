@@ -152,6 +152,33 @@ struct ConstraintDesc {
   uint32_t writeback;              // 되쓰기 칸 번호
 };
 
+// 셰이더 출력 (D6JointSolverPrep 의 참조 인자들)
+struct PrepOut {
+  uint32_t numRows;
+  V3 body0WorldOffset;
+  InvMassScale invMassScale;
+  V3 cA2w, cB2w;
+};
+
+// TGS 1D 준비 입력 (PxTGSSolverConstraintPrepDesc 의 필요한 부분)
+struct PrepIn {
+  Row* rows;
+  uint32_t numRows;
+  InvMassScale invMassScales;
+  V3 body0WorldOffset, cA2w, cB2w;
+  Tf bodyFrame0, bodyFrame1;                   // 몸체 질량중심 자세 (정적·세계 = 항등)
+  const TgsBodyVel* body0; const TgsBodyVel* body1;
+  const TgsTxInertia* txI0; const TgsTxInertia* txI1;
+  const TgsBodyData* data0; const TgsBodyData* data1;
+  uint32_t linkIndexA, linkIndexB;             // RIGID_BODY 또는 링크 번호
+  float linBreakForce, angBreakForce, minResponseThreshold;
+  bool disablePreprocessing, improvedSlerp, driveLimitsAreForces, extendedLimits, disableConstraint;
+};
+
+EHD uint32_t blockLength(uint32_t numRows, bool isExtended) {
+  return uint32_t(sizeof(Sc1DHeader)) + (isExtended ? uint32_t(sizeof(Sc1DRowExt)) : uint32_t(sizeof(Sc1DRow))) * numRows;
+}
+
 // 비트 헬퍼
 EHD uint32_t f2u(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
 EHD float u2f(uint32_t u) { union { float f; uint32_t u; } c; c.u = u; return c.f; }
