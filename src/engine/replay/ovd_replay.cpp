@@ -77,6 +77,33 @@ static PxQuat prenorm(const PxQuat& r) {
 static PxTransform prenorm(const PxTransform& t) { return PxTransform(t.p, prenorm(t.q)); }
 
 // ------------------------------------------------------------------------------------------------ 재생기
+// 진단 전용 접촉 보고 (--trace-obj 가 있을 때만): 이름에 trace_sub 가 든 액터가 낀 쌍의 접촉점·분리 거리를 찍는다.
+// 알림 플래그(eNOTIFY_*)만 더하고 풀이 플래그는 건드리지 않는다.
+struct DiagContactCb : physx::PxSimulationEventCallback {
+  std::string sub;
+  const uint64_t* sims = nullptr;
+  int printed = 0;
+  void onContact(const physx::PxContactPairHeader& h, const physx::PxContactPair* pairs, physx::PxU32 n) override {
+    using namespace physx;
+    for (PxU32 i = 0; i < n && printed < 60; ++i) {
+      const PxContactPair& cp = pairs[i];
+      const char* a = h.actors[0] && h.actors[0]->getName() ? h.actors[0]->getName() : "?";
+      const char* b = h.actors[1] && h.actors[1]->getName() ? h.actors[1]->getName() : "?";
+      PxContactPairPoint pts[16];
+      const PxU32 np = cp.extractContacts(pts, 16);
+      float minsep = 1e30f, maximp = 0;
+      for (PxU32 k = 0; k < np; ++k) { minsep = std::min(minsep, pts[k].separation); maximp = std::max(maximp, pts[k].impulse.magnitude()); }
+      fprintf(stderr, "[접촉] sim %llu %s <-> %s 점 %u 최소분리 %.6g 최대충격 %.6g\n", (unsigned long long)(sims ? *sims : 0), a, b, np, minsep, maximp);
+      printed++;
+    }
+  }
+  void onConstraintBreak(physx::PxConstraintInfo*, physx::PxU32) override {}
+  void onWake(physx::PxActor**, physx::PxU32) override {}
+  void onSleep(physx::PxActor**, physx::PxU32) override {}
+  void onTrigger(physx::PxTriggerPair*, physx::PxU32) override {}
+  void onAdvance(const physx::PxRigidBody* const*, const physx::PxTransform*, const physx::PxU32) override {}
+};
+
 struct Obj {
   uint32_t cls = 0;
   std::string name;
@@ -103,14 +130,22 @@ class Replayer {
   engine::FilterSpec spec;
   const engine::FilterSpec* specp = &spec;
   engine::OmniFilterCallback filter_cb;
+  DiagContactCb diag_cb;
   std::unordered_map<uint64_t, engine::ConvexData> convex;
   std::vector<engine::SideView> sviews;
   std::vector<engine::SideCall> scalls;
   size_t scall_next = 0;
   std::unordered_map<uint64_t, Obj> objs;
   std::unordered_map<std::string, uint32_t> A;  // "Class.attr" -> handle
-  std::unordered_map<uint64_t, uint64_t> link_parent;  // link -> parent link (prescan)
-  std::unordered_map<uint64_t, uint64_t> joint_child;  // art joint -> child link
+  // 핸들(메모리 주소)은 지웠다 다시 만든 객체에 재사용된다(09-29 Linux radio: 관절체 조인트 121 개 생성·121 개 삭제).
+  // 그래서 대응표는 (핸들, 몇 번째로 만든 것인가) 로 적는다: gkey. 값도 같은 꼴(당시의 몇 번째).
+  std::unordered_map<uint64_t, uint64_t> link_parent;  // gkey(link) -> gkey(parent link) (prescan)
+  std::unordered_map<uint64_t, uint64_t> joint_child;  // gkey(art joint) -> gkey(child link)
+  std::unordered_map<uint64_t, uint64_t> joint_parent; // gkey(art joint) -> gkey(parent link) (점검용)
+  std::unordered_map<uint64_t, uint32_t> gen_run;      // 재생 중 핸들별로 지금 몇 번째 객체인가
+  static uint64_t gkey(uint64_t h, uint32_t g) { return (uint64_t(g) << 56) | (h & 0x00FFFFFFFFFFFFFFull); }
+  static uint64_t graw(uint64_t k) { return k & 0x00FFFFFFFFFFFFFFull; }
+  uint64_t gnow(uint64_t h) { auto it = gen_run.find(h); return gkey(h, it == gen_run.end() ? 0 : it->second); }
   // D6 드라이브: OVD 는 드라이브 값을 조인트와 따로 된 값 객체(PxD6JointDrive)에 남긴다. 핸들 = 조인트 자료의 drive 배열 주소 + 종류
   //   (ExtD6Joint.cpp:76 omniPvdCreateDriveObjectHandle, :254 omniPvdSetDriveData 네 값 한 묶음, :512 값 먼저·연결 나중).
   // 연결(PxD6Joint.driveX..driveSwing2 = 핸들)과 값이 둘 다 모인 순간 setDrive 한 번.
@@ -120,8 +155,11 @@ class Replayer {
   std::map<std::string, uint64_t> applied;
   std::map<std::string, Stat> stats;  // 항목별 비교
   uint64_t sims = 0;
+  uint64_t side_offset = 0;  // --side-offset: 이 OVD 파일 앞의 simulate 수 (meta.post_step_count - 이 파일의 simulate 수)
   int64_t max_frames = -1;
   bool verbose = false;
+  int verbose_max = 12;
+  bool diag_no_self_collision = false;  // --diag-no-self-collision: 모든 관절체 자기 충돌 끔 (원인 가르기 진단용, 결과 비교용 아님)
   FILE* csv = nullptr;
   double frame_max = 0;
   uint64_t frame_bitdiff = 0, frame_cmp = 0;
@@ -152,6 +190,106 @@ class Replayer {
   bool isa(const Obj& o, const char* c) { return F.is_a(o.cls, F.cls(c)); }
 
   std::string record_path;
+  std::string trace_sub;  // --trace-obj: 이름(관절 조인트는 자식 링크 이름)에 이 글자가 든 객체의 set 을 simulate 전까지 모두 찍는다 (진단용)
+  std::unordered_map<uint64_t, uint64_t> shape_owner;  // 진단: gkey(모양) -> gkey(붙은 액터)
+  std::vector<std::pair<uint64_t, std::string>> trace_buf;  // (gkey, 한 줄) — 이름은 끝에 푼다 (이름은 만든 뒤 set 으로 온다)
+  void trace_event(const ovd::Event& e, const char* tag) {
+    if (trace_sub.empty() || sims > 2) return;
+    const ovd::AttrInfo& ai = F.attrs[e.attr];
+    std::string line = std::string("[추적 sim") + std::to_string(sims) + " " + tag + "] " + F.classes[ai.cls].name + "." + ai.name + " =";
+    const uint8_t* d = F.data(e);
+    char buf[32];
+    if (e.data_len < 4) { for (uint32_t k = 0; k < e.data_len; ++k) { snprintf(buf, sizeof buf, " 0x%02x", d[k]); line += buf; } }
+    for (uint32_t k = 0; k + 4 <= e.data_len && k < 64; k += 4) { float f; memcpy(&f, d + k, 4); snprintf(buf, sizeof buf, " %.9g", f); line += buf; }
+    trace_buf.emplace_back(gnow(e.obj), line);
+  }
+  std::string gname_of(uint64_t k) {  // 지금도 같은 몇 번째 객체면 그 이름
+    const uint64_t raw = graw(k);
+    auto it = objs.find(raw);
+    if (it == objs.end() || gnow(raw) != k) return "";
+    return it->second.name;
+  }
+  void dump_state_before_first_sim() {  // --trace-obj 진단: 첫 simulate 직전 우리 PhysX 상태 (링크·조인트·모양 거르개)
+    for (auto& kv : objs) {
+      const Obj& o = kv.second;
+      if (!o.px) continue;
+      auto* l = o.px->is<PxArticulationLink>();
+      if (!l) continue;
+      const char* nm = l->getName();
+      if (!nm || std::string(nm).find(trace_sub) == std::string::npos) continue;
+      PxTransform g = l->getGlobalPose(), c = l->getCMassLocalPose();
+      PxVec3 I = l->getMassSpaceInertiaTensor();
+      fprintf(stderr, "[상태] 링크 %s 자세 q(%.9g %.9g %.9g %.9g) p(%.9g %.9g %.9g) 질량 %.9g 관성 (%.9g %.9g %.9g) 질량중심 p(%.9g %.9g %.9g) q(%.9g %.9g %.9g %.9g)\n",
+              nm, g.q.x, g.q.y, g.q.z, g.q.w, g.p.x, g.p.y, g.p.z, l->getMass(), I.x, I.y, I.z, c.p.x, c.p.y, c.p.z, c.q.x, c.q.y, c.q.z, c.q.w);
+      fprintf(stderr, "[상태]   최대침투속도 %.9g CFM %.9g 최대접촉충격 %.9g 선감쇠 %.9g 각감쇠 %.9g 최대선속 %.9g 최대각속 %.9g 몸체플래그 0x%x\n",
+              l->getMaxDepenetrationVelocity(), l->getCfmScale(), l->getMaxContactImpulse(), l->getLinearDamping(), l->getAngularDamping(),
+              l->getMaxLinearVelocity(), l->getMaxAngularVelocity(), uint32_t(PxU16(l->getRigidBodyFlags())));
+      fprintf(stderr, "[상태]   관절체 플래그 %u 링크 수 %u 반복 %u\n", uint32_t(PxU8(l->getArticulation().getArticulationFlags())), l->getArticulation().getNbLinks(), 0u);
+      if (auto* j = l->getInboundJoint()) {
+        PxTransform pp = j->getParentPose(), cp = j->getChildPose();
+        fprintf(stderr, "[상태]   부모 링크 %s\n", j->getParentArticulationLink().getName() ? j->getParentArticulationLink().getName() : "(이름 없음)");
+        fprintf(stderr, "[상태]   조인트 종류 %d 부모틀 q(%.9g %.9g %.9g %.9g) p(%.9g %.9g %.9g) 자식틀 q(%.9g %.9g %.9g %.9g) p(%.9g %.9g %.9g) 마찰 %.9g\n",
+                int(j->getJointType()), pp.q.x, pp.q.y, pp.q.z, pp.q.w, pp.p.x, pp.p.y, pp.p.z, cp.q.x, cp.q.y, cp.q.z, cp.q.w, cp.p.x, cp.p.y, cp.p.z,
+                j->getFrictionCoefficient());
+        for (int i = 0; i < 6; ++i) {
+          auto ax = PxArticulationAxis::Enum(i);
+          if (j->getMotion(ax) == PxArticulationMotion::eLOCKED) continue;
+          PxArticulationLimit L = j->getLimitParams(ax);
+          PxArticulationDrive D = j->getDriveParams(ax);
+          fprintf(stderr, "[상태]   축%d 운동 %d 위치 %.9g 속도 %.9g 한계[%.9g, %.9g] k %.9g c %.9g max %.9g 종류 %d 목표 %.9g 아머처 %.9g\n", i,
+                  int(j->getMotion(ax)), j->getJointPosition(ax), j->getJointVelocity(ax), L.low, L.high, D.stiffness, D.damping, D.maxForce,
+                  int(D.driveType), j->getDriveTarget(ax), j->getArmature(ax));
+        }
+      }
+      PxShape* sh[16];
+      PxU32 ns = l->getShapes(sh, 16);
+      {  // 같은 관절체의 다른 링크 모양과 겹침(침투 깊이) — 자기 충돌 진단
+        PxArticulationReducedCoordinate& art = l->getArticulation();
+        std::vector<PxArticulationLink*> links(art.getNbLinks());
+        art.getLinks(links.data(), PxU32(links.size()));
+        for (PxU32 k = 0; k < ns; ++k) {
+          const PxTransform pk = l->getGlobalPose() * sh[k]->getLocalPose();
+          for (PxArticulationLink* o2 : links) {
+            if (o2 == l) continue;
+            PxShape* sh2[32];
+            PxU32 n2 = o2->getShapes(sh2, 32);
+            for (PxU32 m = 0; m < n2; ++m) {
+              const PxTransform pm = o2->getGlobalPose() * sh2[m]->getLocalPose();
+              PxVec3 dir;
+              PxF32 depth = 0;
+              if (PxGeometryQuery::computePenetration(dir, depth, sh[k]->getGeometry(), pk, sh2[m]->getGeometry(), pm))
+                fprintf(stderr, "[상태]   겹침 모양 %u <-> %s 모양 %u 깊이 %.6g 방향 (%.3g %.3g %.3g) 접촉거리 %.4g/%.4g\n", k,
+                        o2->getName() ? o2->getName() : "?", m, depth, dir.x, dir.y, dir.z, sh[k]->getContactOffset(), sh2[m]->getContactOffset());
+            }
+          }
+        }
+      }
+      for (PxU32 k = 0; k < ns; ++k) {
+        PxFilterData f = sh[k]->getSimulationFilterData();
+        fprintf(stderr, "[상태]   모양 %u 종류 %d 거르개 %u %u %u %u 플래그 %u\n", k, int(sh[k]->getGeometry().getType()), f.word0, f.word1, f.word2,
+                f.word3, uint32_t(sh[k]->getFlags()));
+        const PxTransform lp = sh[k]->getLocalPose();
+        fprintf(stderr, "[상태]     국소 q(%.9g %.9g %.9g %.9g) p(%.9g %.9g %.9g) 접촉거리 %.9g 쉼거리 %.9g\n", lp.q.x, lp.q.y, lp.q.z, lp.q.w, lp.p.x, lp.p.y,
+                lp.p.z, sh[k]->getContactOffset(), sh[k]->getRestOffset());
+        if (sh[k]->getGeometry().getType() == PxGeometryType::eCONVEXMESH) {
+          const PxConvexMeshGeometry& g = static_cast<const PxConvexMeshGeometry&>(sh[k]->getGeometry());
+          fprintf(stderr, "[상태]     척도 (%.9g %.9g %.9g) 척도회전 (%.9g %.9g %.9g %.9g) 꼭짓점 %u 면 %u 형상플래그 %u\n", g.scale.scale.x, g.scale.scale.y,
+                  g.scale.scale.z, g.scale.rotation.x, g.scale.rotation.y, g.scale.rotation.z, g.scale.rotation.w, g.convexMesh->getNbVertices(),
+                  g.convexMesh->getNbPolygons(), uint32_t(g.meshFlags));
+        }
+      }
+    }
+  }
+  void trace_flush() {
+    for (auto& t : trace_buf) {
+      std::string nm = gname_of(t.first);
+      auto ic = joint_child.find(t.first);
+      if (ic != joint_child.end()) nm = "joint->" + gname_of(ic->second);
+      auto is = shape_owner.find(t.first);
+      if (is != shape_owner.end()) nm = "shape@" + gname_of(is->second);
+      if (nm.find(trace_sub) != std::string::npos) { fputs(nm.c_str(), stderr); fputc(' ', stderr); fputs(t.second.c_str(), stderr); fputc('\n', stderr); }
+    }
+  }
   PxOmniPvd* rec_pvd = nullptr;
   bool init(int threads) {
     for (auto& kv : F.attrs) A[F.classes[kv.second.cls].name + "." + kv.second.name] = kv.first;
@@ -190,15 +328,19 @@ class Replayer {
     const uint32_t a_parent = attr("PxArticulationJointReducedCoordinate", "parentLink");
     const uint32_t a_child = attr("PxArticulationJointReducedCoordinate", "childLink");
     std::unordered_map<uint64_t, uint64_t> jparent;
+    std::unordered_map<uint64_t, uint32_t> gen;
+    auto gk = [&](uint64_t h) { auto it = gen.find(h); return gkey(h, it == gen.end() ? 0 : it->second); };
     for (auto& e : F.events) {
+      if (e.cmd == ovd::kCreate) { gen[e.obj]++; continue; }
       if (e.cmd != ovd::kSet) continue;
-      if (e.attr == a_child && e.data_len == 8) { uint64_t v; memcpy(&v, F.data(e), 8); if (v && !joint_child.count(e.obj)) joint_child[e.obj] = v; }
-      if (e.attr == a_parent && e.data_len == 8) { uint64_t v; memcpy(&v, F.data(e), 8); if (v && !jparent.count(e.obj)) jparent[e.obj] = v; }
+      if (e.attr == a_child && e.data_len == 8) { uint64_t v; memcpy(&v, F.data(e), 8); const uint64_t k = gk(e.obj); if (v && !joint_child.count(k)) joint_child[k] = gk(v); }
+      if (e.attr == a_parent && e.data_len == 8) { uint64_t v; memcpy(&v, F.data(e), 8); const uint64_t k = gk(e.obj); if (v && !jparent.count(k)) jparent[k] = gk(v); }
     }
     for (auto& kv : joint_child) {
       auto it = jparent.find(kv.first);
       if (it != jparent.end()) link_parent[kv.second] = it->second;
     }
+    joint_parent = jparent;
   }
 
   // ------------------------------------------------------------------ 객체 만들기
@@ -282,6 +424,7 @@ class Replayer {
     sd.filterShaderData = &specp;
     sd.filterShaderDataSize = sizeof(specp);
     sd.filterCallback = &filter_cb;
+    if (!trace_sub.empty()) { diag_cb.sub = trace_sub; diag_cb.sims = &sims; sd.simulationEventCallback = &diag_cb; filter_cb.diag_sub = trace_sub; }
     o.scene = phys->createScene(sd);
     o.px = nullptr;
     if (verbose) fprintf(stderr, "[scene] flags=0x%x solver=%d bp=%d\n", uint32_t(sd.flags), int(sd.solverType), int(sd.broadPhaseType));
@@ -334,6 +477,24 @@ class Replayer {
     d.vertexLimit = 255;
     o.px = PxCreateConvexMesh(*cook, d, phys->getPhysicsInsertionCallback());
     convex_approx++;
+    if (o.px) approx_meshes.insert(o.px);
+  }
+  std::set<const PxBase*> approx_meshes;  // 보조 파일에서 못 찾아 다시 계산한 볼록 메시
+  void report_approx_users() {  // 근사 메시를 쓰는 액터 이름 (원인 가르기용)
+    std::map<std::string, int> users;
+    for (auto& kv : objs) {
+      if (!kv.second.px) continue;
+      auto* a = kv.second.px->is<PxRigidActor>();
+      if (!a) continue;
+      PxShape* sh[64];
+      PxU32 ns = a->getShapes(sh, 64);
+      for (PxU32 k = 0; k < ns; ++k)
+        if (sh[k]->getGeometry().getType() == PxGeometryType::eCONVEXMESH) {
+          const PxConvexMeshGeometry& g = static_cast<const PxConvexMeshGeometry&>(sh[k]->getGeometry());
+          if (approx_meshes.count(g.convexMesh)) users[a->getName() ? a->getName() : "?"]++;
+        }
+    }
+    for (auto& u : users) printf("  근사 볼록 메시 사용: %s (%d 개 모양)\n", u.first.c_str(), u.second);
   }
 
   void make_trimesh(Obj& o) {
@@ -407,9 +568,9 @@ class Replayer {
     if (ia == objs.end() || !ia->second.px) { unsupported["link:no articulation"]++; return; }
     auto* art = static_cast<PxArticulationReducedCoordinate*>(ia->second.px);
     PxArticulationLink* parent = nullptr;
-    auto ip = link_parent.find(link_h);
+    auto ip = link_parent.find(gnow(link_h));
     if (ip != link_parent.end()) {
-      auto ol = objs.find(ip->second);
+      auto ol = objs.find(graw(ip->second));
       if (ol != objs.end()) parent = static_cast<PxArticulationLink*>(ol->second.px);
     }
     l.px = art->createLink(parent, prenorm(pose_of(l)));
@@ -445,12 +606,17 @@ class Replayer {
     Obj& o = it->second;
     std::string c = cname(o.cls);
     if (c == "PxArticulationJointReducedCoordinate") {
-      auto ic = joint_child.find(h);
+      auto ic = joint_child.find(gnow(h));
       if (ic != joint_child.end()) {
-        auto ol = objs.find(ic->second);
+        auto ol = objs.find(graw(ic->second));
         if (ol != objs.end() && ol->second.px) {
           o.px = static_cast<PxArticulationLink*>(ol->second.px)->getInboundJoint();
           o.done = true;
+          if (!trace_sub.empty() && ol->second.name.find(trace_sub) != std::string::npos && o.px) {
+            auto* jj = static_cast<PxArticulationJointReducedCoordinate*>(o.px);
+            PxArticulationLimit L0 = jj->getLimitParams(PxArticulationAxis::eTWIST);
+            fprintf(stderr, "[묶음] %s 조인트 %p 묶음 직후 한계 축0 [%.9g, %.9g] 운동 %d\n", ol->second.name.c_str(), (void*)jj, L0.low, L0.high, int(jj->getMotion(PxArticulationAxis::eTWIST)));
+          }
         }
       }
       return;
@@ -602,7 +768,11 @@ class Replayer {
       else if (an == "sleepThreshold") a->setSleepThreshold(as<float>(p));
       else if (an == "stabilizationThreshold") a->setStabilizationThreshold(as<float>(p));
       else if (an == "wakeCounter") a->setWakeCounter(as<float>(p));
-      else if (an == "articulationFlags") a->setArticulationFlags(PxArticulationFlags(PxU8(flagv(p, n))));
+      else if (an == "articulationFlags") {
+        PxArticulationFlags fl(PxU8(flagv(p, n)));
+        if (diag_no_self_collision) fl |= PxArticulationFlag::eDISABLE_SELF_COLLISION;  // 진단 전용
+        a->setArticulationFlags(fl);
+      }
       else if (an == "isSleeping" || an == "worldBounds" || an == "dofs") {}
       else ok = false;
     } else if (cl == "PxArticulationJointReducedCoordinate") {
@@ -849,6 +1019,13 @@ class Replayer {
     auto fa = [&](const char* n, int i) { return as<float>(dat(n) + 4 * i); };
     auto same = [](float a, float b) { return memcmp(&a, &b, 4) == 0; };
     if (first == "limitLow") {
+      if (!trace_sub.empty()) {
+        const char* cn = j->getChildArticulationLink().getName();
+        if (cn && std::string(cn).find(trace_sub) != std::string::npos) {
+          PxArticulationLimit L0 = j->getLimitParams(AX(0));
+          fprintf(stderr, "[한계] %s sim %llu 전 [%.9g, %.9g] low있음 %d high있음 %d\n", cn, (unsigned long long)sims, L0.low, L0.high, int(has("limitLow")), int(has("limitHigh")));
+        }
+      }
       bool any = false;
       for (int i = 0; i < 6; ++i) {
         PxArticulationLimit l = j->getLimitParams(AX(i));
@@ -1008,6 +1185,7 @@ class Replayer {
       auto* s = o.px ? o.px->is<PxShape>() : nullptr;
       if (!a || !s) { unsupported["attach missing"]++; return; }
       if (add) a->attachShape(*s); else a->detachShape(*s);
+      if (add && !trace_sub.empty()) shape_owner[gnow(item)] = gnow(e.obj);
       filters_dirty = true;
       return;
     }
@@ -1211,7 +1389,7 @@ class Replayer {
   std::string cur_obj;
   void cmp(const std::string& what, const float* ours, const uint8_t* rec, int n) {
     Stat& s = stats[what];
-    if (verbose && shown < 12 && memcmp(ours, rec, 4 * n)) {
+    if (verbose && shown < verbose_max && memcmp(ours, rec, 4 * n)) {
       shown++;
       fprintf(stderr, "[다름] sim %" PRIu64 " %s %s\n   우리:", sims, what.c_str(), cur_obj.c_str());
       for (int i = 0; i < n; ++i) fprintf(stderr, " %.9g", ours[i]);
@@ -1248,6 +1426,24 @@ class Replayer {
       if (auto* rb = b->is<PxRigidBody>()) { PxVec3 v = an == "linearVelocity" ? rb->getLinearVelocity() : rb->getAngularVelocity(); cmp(cl + "." + an, &v.x, F.data(e), 3); }
     } else if ((an == "jointPosition" || an == "jointVelocity") && e.data_len == 24) {
       auto* j = static_cast<PxArticulationJointReducedCoordinate*>(b);
+      cur_obj = std::string("joint->") + (j->getChildArticulationLink().getName() ? j->getChildArticulationLink().getName() : "?");
+      if (verbose && shown < 12) {  // 다를 때 조인트 설정을 함께 본다 (한계·드라이브·운동)
+        static std::set<const void*> dumped;
+        float v0[6];
+        for (int i = 0; i < 6; ++i) v0[i] = an == "jointPosition" ? j->getJointPosition(PxArticulationAxis::Enum(i)) : j->getJointVelocity(PxArticulationAxis::Enum(i));
+        if (memcmp(v0, F.data(e), 24) && dumped.insert(j).second) {
+          fprintf(stderr, "[조인트] %s 종류=%d\n", cur_obj.c_str(), int(j->getJointType()));
+          for (int i = 0; i < 6; ++i) {
+            auto ax = PxArticulationAxis::Enum(i);
+            if (j->getMotion(ax) == PxArticulationMotion::eLOCKED) continue;
+            PxArticulationLimit L = j->getLimitParams(ax);
+            PxArticulationDrive D = j->getDriveParams(ax);
+            fprintf(stderr, "   축%d 운동=%d 한계[%.9g, %.9g] 드라이브 k=%.9g c=%.9g max=%.9g 종류=%d 목표=%.9g 목표속도=%.9g 아머처=%.9g 최대속도=%.9g\n", i,
+                    int(j->getMotion(ax)), L.low, L.high, D.stiffness, D.damping, D.maxForce, int(D.driveType), j->getDriveTarget(ax),
+                    j->getDriveVelocity(ax), j->getArmature(ax), j->getMaxJointVelocity(ax));
+          }
+        }
+      }
       float v[6];
       for (int i = 0; i < 6; ++i) v[i] = an == "jointPosition" ? j->getJointPosition(PxArticulationAxis::Enum(i)) : j->getJointVelocity(PxArticulationAxis::Enum(i));
       cmp("joint." + an, v, F.data(e), 6);
@@ -1281,6 +1477,7 @@ class Replayer {
       const ovd::Event& e = F.events[i];
       // 만든 순간 값 묶음(cluster): create 바로 뒤, 같은 객체의 set 이 이어지는 동안. 같은 속성이 두 번 나오면
       // 두 번째부터는 API 호출이다 (생성 기록은 속성마다 한 번씩만 쓴다: OmniPvdPxSampler::stream*).
+      if (e.cmd == ovd::kSet) trace_event(e, (e.obj == open && !objs[e.obj].done && !objs[e.obj].pend.count(e.attr)) ? "생성값" : "set");
       if (e.cmd == ovd::kSet && e.obj == open && !objs[e.obj].done && !objs[e.obj].pend.count(e.attr)) {
         objs[e.obj].pend[e.attr].assign(F.data(e), F.data(e) + e.data_len);
         continue;
@@ -1288,6 +1485,7 @@ class Replayer {
       if (open) { close_cluster(open); open = 0; }
       switch (e.cmd) {
         case ovd::kCreate: {
+          gen_run[e.obj]++;
           Obj o;
           o.cls = e.cls;
           o.name = F.str(e);
@@ -1307,10 +1505,11 @@ class Replayer {
           if (e.attr == a_elapsed) {
             Obj& so = objs[e.obj];
             if (!so.scene) { unsupported["simulate without scene"]++; break; }
-            apply_side_until(sims);
+            apply_side_until(sims + side_offset);  // 곁기록 번호는 프로세스 전체 simulate 수 (앞선 PxPhysics 의 OVD 파일 몫 = side_offset)
             do_refilter();
             if (filters_dirty) resolve_filters();
             float dt; memcpy(&dt, F.data(e), 4);
+            if (sims == 0 && !trace_sub.empty()) dump_state_before_first_sim();
             so.scene->simulate(dt);
             so.scene->fetchResults(true);
             sims++;
@@ -1357,7 +1556,35 @@ class Replayer {
     }
   }
 
+  // 묶음 점검: OVD 조인트마다 묶인 PhysX 조인트의 자식 링크 이름 = OVD 가 말하는 자식 링크 이름인가 (지금 살아 있는 객체만)
+  void check_joint_binding() {
+    uint64_t n = 0, bad = 0, unbound = 0;
+    for (auto& kv : objs) {
+      const Obj& o = kv.second;
+      if (cname(o.cls) != std::string("PxArticulationJointReducedCoordinate")) continue;
+      auto ic = joint_child.find(gnow(kv.first));
+      if (ic == joint_child.end()) continue;
+      const std::string want = gname_of(ic->second);
+      if (!o.px) { unbound++; continue; }
+      const char* got = static_cast<PxArticulationJointReducedCoordinate*>(o.px)->getChildArticulationLink().getName();
+      n++;
+      auto ip = joint_parent.find(gnow(kv.first));
+      if (ip != joint_parent.end()) {
+        const std::string wantp = gname_of(ip->second);
+        const char* gotp = static_cast<PxArticulationJointReducedCoordinate*>(o.px)->getParentArticulationLink().getName();
+        if (wantp != (gotp ? gotp : "") && bad++ < 5)
+          fprintf(stderr, "[부모 틀림] 자식 %s: OVD 부모 %s <-> 우리 부모 %s\n", want.c_str(), wantp.c_str(), gotp ? gotp : "(없음)");
+      }
+      if (want != (got ? got : "")) {
+        if (bad++ < 5) fprintf(stderr, "[묶음 틀림] OVD 자식 %s <-> 묶인 PhysX 자식 %s\n", want.c_str(), got ? got : "(없음)");
+      }
+    }
+    printf("조인트 묶음 점검: %" PRIu64 " 개 중 틀림 %" PRIu64 ", 안 묶임 %" PRIu64 "\n", n, bad, unbound);
+  }
+
   void report() {
+    check_joint_binding();
+    report_approx_users();
     printf("\n== 재생 결과 ==\nsimulate %" PRIu64 " 번, 볼록 메시 원본 %" PRIu64 " / 근사 %" PRIu64 ", 정규화 원상 %" PRIu64
            " 번 중 못 찾음 %" PRIu64 "\n", sims, convex_exact, convex_approx, g_prenorm_calls, g_prenorm_fail);
     printf("첫 비트 불일치: %s\n", first_div_frame < 0 ? "없음 (전 구간 비트 동일)" : (std::to_string(first_div_frame) + " 번째 simulate, " + first_div_what).c_str());
@@ -1395,15 +1622,25 @@ int main(int argc, char** argv) {
     else if (a == "--csv" && i + 1 < argc) csv = argv[++i];
     else if (a == "--max-frames" && i + 1 < argc) R.max_frames = atoll(argv[++i]);
     else if (a == "--verbose") R.verbose = true;
+    else if (a == "--verbose-max" && i + 1 < argc) R.verbose_max = atoi(argv[++i]);
     else if (a == "--record" && i + 1 < argc) R.record_path = argv[++i];
     else if (a == "--no-refilter") R.refilter_on = false;
+    else if (a == "--trace-obj" && i + 1 < argc) R.trace_sub = argv[++i];
+    else if (a == "--diag-no-self-collision") R.diag_no_self_collision = true;
+    else if (a == "--side-offset" && i + 1 < argc) R.side_offset = strtoull(argv[++i], nullptr, 10);
   }
   if (!convex.empty() && !engine::read_convex_bin(convex, R.convex)) fprintf(stderr, "convex 보조 파일을 못 읽음: %s\n", convex.c_str());
   if (!filters.empty() && !engine::read_filters(filters, R.spec)) fprintf(stderr, "filters 파일을 못 읽음: %s\n", filters.c_str());
   if (!sidelog.empty() && !engine::read_sidelog(sidelog, R.sviews, R.scalls)) fprintf(stderr, "sidelog 를 못 읽음: %s\n", sidelog.c_str());
   if (!csv.empty()) { R.csv = fopen(csv.c_str(), "w"); if (R.csv) fprintf(R.csv, "simulate,compared,bitdiff,maxabs\n"); }
   if (!R.init(threads)) return 1;
+  // 앞선 PhysX 인스턴스(omni.physx 는 stop/play 때 장면을 통째로 다시 만든다) 몫의 곁기록은 버린다:
+  // 그 쓰기의 결과는 USD 에 되쓰여(updateToUsd) 이 OVD 의 생성 값에 이미 들어 있다.
+  size_t side_dropped = 0;
+  while (R.scall_next < R.scalls.size() && R.scalls[R.scall_next].after < R.side_offset) { R.scall_next++; side_dropped++; }
+  if (R.side_offset) printf("곁기록: 앞선 인스턴스 몫 %zu 건 버림 (post < %" PRIu64 ")\n", side_dropped, R.side_offset);
   R.run();
+  if (!R.trace_sub.empty()) R.trace_flush();
   R.report();
   if (R.csv) fclose(R.csv);
   if (R.rec_pvd) {  // 기록 마무리 (파일 닫기)

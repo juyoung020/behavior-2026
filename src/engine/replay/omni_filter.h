@@ -77,8 +77,15 @@ class OmniFilterCallback : public physx::PxSimulationFilterCallback {
       pairFlags = PxPairFlag::eTRIGGER_DEFAULT;
     if ((filterData0.word3 & CONTACT_SOLVE_DISABLE) || (filterData1.word3 & CONTACT_SOLVE_DISABLE))
       pairFlags &= ~PxPairFlag::eSOLVE_CONTACT;
+    if (!diag_sub.empty()) {  // 진단(ovd_replay --trace-obj): 알림 플래그만 더한다
+      const char* n0 = a0->getName();
+      const char* n1 = a1->getName();
+      if ((n0 && std::string(n0).find(diag_sub) != std::string::npos) || (n1 && std::string(n1).find(diag_sub) != std::string::npos))
+        pairFlags |= PxPairFlag::eNOTIFY_TOUCH_FOUND | PxPairFlag::eNOTIFY_TOUCH_PERSISTS | PxPairFlag::eNOTIFY_CONTACT_POINTS;
+    }
     return PxFilterFlags();
   }
+  std::string diag_sub;
   void pairLost(physx::PxU64, physx::PxFilterObjectAttributes, physx::PxFilterData, physx::PxFilterObjectAttributes,
                 physx::PxFilterData, bool) override {}
   bool statusChange(physx::PxU64&, physx::PxPairFlags&, physx::PxFilterFlags&) override { return false; }

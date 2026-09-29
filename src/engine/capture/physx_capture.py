@@ -338,10 +338,21 @@ class Capture:
                 objs[name] = {"cls": type(ent).__name__, "name": getattr(ent, "name", None),
                               "prim_path": getattr(ent, "prim_path", None), "links": links_of(ent)}
             r = acc.robot
+            def lp(attr):
+                try:
+                    return getattr(r, attr).prim_path
+                except Exception:
+                    return None
+
             rob = {"name": r.name, "model": r.model, "prim_path": r.prim_path, "action_dim": int(r.action_dim),
+                   # get_position_orientation = base_footprint_link 자세 (robot.py:3879), get_root_... = root_link 자세
+                   "base_footprint_link": lp("base_footprint_link"), "root_link": lp("root_link"),
                    "arm_names": list(getattr(r, "arm_names", [])),
                    "eef_link_names": plain(getattr(r, "eef_link_names", {})),
-                   "joints": {n: j.prim_path for n, j in r.joints.items()}, "links": links_of(r),
+                   "joints": {n: {"prim_path": j.prim_path, "body0": plain(getattr(j, "body0", None)),
+                                  "body1": plain(getattr(j, "body1", None)), "type": plain(getattr(j, "joint_type", None)),
+                                  "n_dof": plain(getattr(j, "n_dof", None))} for n, j in r.joints.items()},
+                   "links": links_of(r),
                    "sensors": {n: getattr(s, "prim_path", None) for n, s in r.sensors.items()},
                    "controller_order": plain(getattr(r, "controller_order", [])),
                    "controller_action_idx": plain(getattr(r, "controller_action_idx", {})),
