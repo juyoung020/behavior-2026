@@ -1,62 +1,67 @@
-# behavior-2026 — BEHAVIOR Challenge 2026 작업 폴더
+# behavior-2026 — BEHAVIOR Challenge 2026 workspace
 
-우리 아이디어: **동적 3D 씬그래프 + AI 에이전트(또는 강화학습) + VLA 의 결합** ([plan.md](plan.md) 0절).
+**Idea: a dynamic 3D scene graph + an AI agent (or RL planner) + a VLA, combined.**
 
-제출 마감: 10/16 AoE (한국시간 10/17 토 20:59). 대회 요약·규칙은 [docs/](docs/README.md). 구현 계획·결정 기록은 [plan.md](plan.md).
+- The scene graph (meridian) registers and updates every object the robot sees in a live 3D map. This is the robot's memory.
+- The agent uses that graph for long-horizon planning, step tracking and failure recovery.
+- The VLA (π0.5) turns the current step instruction plus the three cameras into actions.
 
-저장소: GitHub 비공개 `juyoung020/behavior-2026`. 외부 저장소(BEHAVIOR-1K, refs/)는 서브모듈이라 `git submodule update --init` 으로 받고,
-데이터·에셋·키·영상은 올리지 않는다(받는 법은 `tools/setup/`). WSL 쪽(`~/meridian_ws`, `~/openpi`, `~/checkpoints`)은 이 저장소에 없다.
+Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C++/CUDA, Rust for orchestration). No PyTorch in our execution paths.
 
-## Windows (`C:\behavior-2026`)
+- Plan and decision log: [plan.md](plan.md)
+- Research notes, rules and run logs (Korean): [docs/](docs/README.md)
+- Deadline: 2026-10-16 AoE (KST 10-17 20:59)
 
-```
-BEHAVIOR-1K\          대회 프레임워크 (StanfordVL, 태그 v3.9.3-post1) — 원본, 고치지 않는다
-  datasets\           시뮬레이터 데이터
-    behavior-1k-assets\              장면·물체 에셋 3.9.0 (34.7 GB, 암호화 USD)
-    omnigibson-robot-assets\         로봇 에셋 3.8.2
-    2026-challenge-task-instances\   대회 과제 인스턴스
-    omnigibson.key                   에셋 복호화 키
-data\
-  2026-challenge-demos\   데모 (LeRobot 형식) — 메타 + 0번 과제 turning_on_radio 만 (전체 3.27 TB)
-meridian_ws\src\      meridian 동적 씬그래프 (연구실 neoul-ro 코드를 우리 사슬에 맞게 포팅 — 원본은 여기 하나)
-  meridian_frontend\    RGB-D → FastSAM·CLIP(TensorRT) → 추적 → episode 출구(/tracklet) + C++ 핵심(meridian_frontend_native)
-  meridian_graphcore\   DA + 물체 그래프(Spark-DSG, third_party\spark_dsg 는 서브모듈 3c40997)
-  meridian_engine\      DA 라이브러리 · meridian_msgs\ 메시지
-  meridian_behavior\    meridian_scene(scene_server: 계획기 질의 TCP JSON, 통합 launch) · obs_player(Rust 관측 재생기)
-src\                  우리 구현 (정책 래퍼, meridian 도구·시험은 src\meridian\ — 설계 docs\meridian_통합설계.md)
-  configs\r1pro_openpi.yaml   평가기 로봇 설정 (공식 r1pro.yaml 에서 로봇 이름만 openpi 에 맞춤)
-tools\                개발 도구 (run_pi05_server.sh = 정책 서버, run_eval_radio.ps1 = 평가기, -Gui 로 뷰어)
-  setup\              설치·다운로드에 한 번 쓴 스크립트 (기록용, 다시 돌려도 이어받기)
-refs\                 참고용 외부 저장소 (2025 상위 팀 코드 등)
-outputs\              평가 결과 (롤아웃 JSON · 영상)
-docs\                 문서 (목차는 docs\README.md, 원문 보관본은 docs\raw\)
-logs\                 설치·다운로드·실행 로그
-```
-
-- conda 환경 `behavior`: Python 3.11, torch 2.7.0 cu128, Isaac Sim 5.1, OmniGibson(eval), BDDL, JoyLo.
-  평가기: `conda activate behavior` → `python -m omnigibson.eval.eval ...`
-
-## WSL (`Ubuntu-22.04`, 사용자 `juyoung`)
+## Repository layout
 
 ```
-/opt/ros/humble          ROS 2 Humble desktop (meridian 용)
-~/openpi                 π0.5 정책 서버 (wensi-ai/openpi, behavior 브랜치, uv 환경)
-~/Isaac-GR00T            GR00T N1.7 (wensi-ai/Isaac-GR00T)
-~/checkpoints/
-  pi05_turning_on_radio        기본 제공 π0.5 체크포인트 (17 GB)
-  groot_n17_turning_on_radio   기본 제공 GR00T 체크포인트 (6.5 GB)
-  behavior_submission          2025 1위 제출 체크포인트 4개 (50.6 GB, 과제 0~49 한 모델)
-  openpi_comet/pi05-b1kpt50-cs32   2025 2위 공개 가중치 (12.4 GB)  ← tools/setup/download_top_ckpts_wsl.sh
-~/.cache/huggingface     토큰(juyoung02) · Cosmos-Reason2-2B (GR00T 백본, 게이트 동의 완료)
-~/meridian_ws/            meridian 빌드 (소스 원본은 Windows 쪽 meridian_ws\src — src/meridian/build_meridian_ws.sh 가 rsync 후 빌드)
-  b26_src/                 빌드용 복사본(고치지 않음) · build/ install/ (colcon, Rust 재생기 build/obs_player)
-  src/                     연구실 저장소 원본 클론(neoul-ro, 참고용 — 더는 고치지 않음, behavior-integration 브랜치에 초기 작업)
-~/meridian_venv          frontend 용 torch 2.8 cu128 + TensorRT 10.13 (ROS 파이썬 3.10, system-site-packages)
-~/meridian_export_venv   ONNX export 전용 (CPU torch, ultralytics, open_clip)
-~/meridian_models/       ONNX 와 x86 TensorRT 엔진 (저장소에 안 올림)
+BEHAVIOR-1K/          challenge framework (StanfordVL, tag v3.9.3-post1) — submodule, never modified
+  datasets/           simulator assets, task instances, decryption key (not in git)
+data/                 2026 challenge demos (LeRobot v3): metadata + task 0 only (not in git)
+meridian_ws/src/      meridian dynamic scene graph, ported from the lab code (single source of truth)
+  meridian_frontend/    RGB-D → FastSAM·CLIP (TensorRT) → tracking → object episodes; C++ core
+  meridian_graphcore/   data association + object graph (Spark-DSG submodule)
+  meridian_engine/      data-association library
+  meridian_msgs/        messages
+  meridian_behavior/    scene_server (planner queries, TCP JSON) + launch; obs_player (Rust)
+src/
+  agent/              high-level planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
+  pi05_native/        π0.5 inference engine, hand-written C++/CUDA (in progress)
+  engine/             our own GPU simulator engine; layer 0 = PhysX 5.6.1 oracle replay (C++)
+  fasteval/           evaluator acceleration: chunked-replay policy server, instrumentation
+  fasttrain/          training data pipeline: NVDEC + fused CUDA kernels, Rust indexer
+  meridian/           meridian build/run scripts and tests
+  configs/            evaluator robot configs
+tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …)
+  setup/              one-time install/download scripts
+refs/                 reference repos (2025 top teams) — submodules
+docs/                 documentation (Korean); raw/ = verbatim copies of official pages
+outputs/ logs/        evaluation results (JSON; videos are not in git) and logs
+plan.md               plan and decisions
 ```
 
-meridian 의 sensor·slam 은 쓰지 않는다 — 시뮬레이터가 RGB-D 를 주고, 위치는 학습 데이터에선 정답 pose,
-평가에선 바퀴 속도 적분(라이다·IMU 없음)으로 만든다. Windows 쪽 사본은 2026-09-29 지웠다(원격과 동일, 변경 없음 확인).
+## Environments
 
-정책 서버는 WSL 에서, 평가기(시뮬레이터)는 Windows 에서 돌리고 localhost:8000 으로 잇는다.
+**Windows (`C:\behavior-2026`)**
+- conda env `behavior`: Python 3.11, Isaac Sim 5.1, OmniGibson (eval), BDDL, JoyLo.
+- Official evaluator: `conda activate behavior` → `python -m omnigibson.eval.eval ...`, or use `tools/run_eval_radio.ps1`.
+
+**WSL (`Ubuntu-22.04`, user `juyoung`)**
+
+```
+/opt/ros/humble          ROS 2 Humble (meridian)
+~/openpi                 π0.5 reference server (wensi-ai/openpi, behavior branch)
+~/openpi-comet           2025 2nd-place code adapted to the 2026 evaluator (private mirror: juyoung020/openpi-comet-behavior2026)
+~/checkpoints/           π0.5 radio, GR00T N1.7 radio, 2025 1st-place submission, Comet pt50
+~/meridian_ws/           meridian build tree (sources come from meridian_ws/src here via src/meridian/build_meridian_ws.sh)
+~/engine-deps/           PhysX 5.6.1 source + build (engine oracle)
+~/.config/behavior-2026/ secrets (KAU API key), never committed — see .env.example
+```
+
+## Setup notes
+
+- Submodules: `git submodule update --init` (BEHAVIOR-1K, refs, Spark-DSG).
+- Data, assets, keys, model weights and videos are not in git. Download scripts live in `tools/setup/`, and install notes in [docs/설치기록.md](docs/설치기록.md).
+- Known issue on this Windows PC: if another process holds more than about 5 GiB of GPU memory, Isaac Sim 5.1 returns all-black RGB to the policy (depth is fine). See plan.md §4.0.
+  - Do not run the π0.5 server on the same GPU as the simulator.
+  - `tools/black_frame_check.py` flags invalid runs.
