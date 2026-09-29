@@ -147,6 +147,8 @@ def main():
     ap.add_argument("--tokenizer", default=None, help="paligemma_tokenizer.model (default: openpi download cache)")
     ap.add_argument("--action-horizon", type=int, default=32)
     ap.add_argument("--robot", default="b1k/R1Pro")
+    ap.add_argument("--arch", default="pi05", choices=["pi05", "pi_behavior"],
+                    help="pi_behavior = 2025 1st place (IliaLarchenko/behavior-1k-solution) PiBehavior model")
     args = ap.parse_args()
 
     ckpt = pathlib.Path(args.ckpt).expanduser()
@@ -154,6 +156,12 @@ def main():
     print(f"restored {len(p)} arrays", file=sys.stderr)
 
     W = Writer()
+    if args.arch == "pi_behavior":
+        export_pi_behavior(args, ckpt, p, W)
+        export_backbone(p, W)
+        total = W.write(pathlib.Path(args.out))
+        print(f"wrote {args.out}: {len(W.tensors)} tensors, {total / 2**30:.2f} GiB", file=sys.stderr)
+        return
     # ---- config -------------------------------------------------------------------------------
     # Pi0Config(action_horizon=32, pi05=True): openpi src/openpi/training/config.py:758,
     # widths/depths from src/openpi/models/gemma.py:69-87 and siglip.py:311-370 ("So400m/14").
@@ -203,7 +211,89 @@ def main():
     tok = pathlib.Path(tok_path).read_bytes()
     W.t("tokenizer.model", np.frombuffer(tok, np.uint8))
     W.c("tokenizer.sha256", hashlib.sha256(tok).hexdigest())
+    export_backbone(p, W)
+    total = W.write(pathlib.Path(args.out))
+    print(f"wrote {args.out}: {len(W.tensors)} tensors, {total / 2**30:.2f} GiB", file=sys.stderr)
 
+
+# 2025 1st place stage table (TASK_NUM_STAGES_2025, alstar8 pi_behavior_config.py:62-68 = original
+# IliaLarchenko pi_behavior_config.py:29-35)
+TASK_NUM_STAGES_2025 = (
+    5, 6, 15, 15, 14, 12, 9, 15, 10, 15,
+    7, 13, 10, 15, 15, 15, 15, 11, 13, 12,
+    14, 15, 9, 15, 15, 15, 15, 15, 15, 15,
+    11, 10, 10, 13, 5, 5, 14, 6, 8, 10,
+    5, 15, 8, 15, 12, 11, 9, 14, 15, 15,
+)
+
+
+def export_pi_behavior(args, ckpt, p, W):
+    """PiBehavior (behavior-1k-solution/src/b1k/models/pi_behavior.py) extras + host-side tables.
+    Config = alstar8 `pi_behavior_2025_submission` (training/config.py:428-472): horizon 30, 50 tasks, 2025 stage
+    table, correlated noise beta 0.5, kv transform, per-timestamp action z-score, delta mask (-3,3,-1,7,-1,7,-1)."""
+    import json
+
+    W.c("model", "pi_behavior")
+    W.c("action_dim", 32)
+    W.c("action_horizon", 30)
+    W.c("max_token_len", 0)
+    W.c("num_steps", 20)  # serve_b1k.py --num-steps 20
+    W.c("img.width", 1152); W.c("img.depth", 27); W.c("img.mlp", 4304); W.c("img.mlp_pad", 4352)
+    W.c("img.heads", 16); W.c("img.head_dim", 72); W.c("img.patch", 14); W.c("img.res", 224)
+    W.c("llm.width", 2048); W.c("llm.depth", 18); W.c("llm.mlp", 16384); W.c("llm.heads", 8)
+    W.c("llm.kv_heads", 1); W.c("llm.head_dim", 256); W.c("llm.vocab", 257152)
+    W.c("ae.width", 1024); W.c("ae.mlp", 4096)
+    W.c("source", str(ckpt))
+    W.c("pb.num_tasks", 50)
+    W.c("pb.stages", *TASK_NUM_STAGES_2025)
+    W.c("pb.inpaint_threshold", 0.3)
+    W.c("pb.beta", 0.5)
+    # 2026 eval robot (r1pro.yaml name robot_r1) and 61-d compact proprio (alstar8 b1k_proprio.py)
+    W.c("robot.name", "robot_r1")
+    W.c("robot.action_dim", 23)
+    for i, k in enumerate(("zed_link", "left_realsense_link", "right_realsense_link")):
+        W.c(f"robot.cam{i}", f"robot_r1::robot_r1:{k}:Camera:0::rgb")
+    W.c("robot.kind", "pi_behavior")
+    # delta mask make_bool_mask(-3, 3, -1, 7, -1, 7, -1) (training/config.py LeRobotB1KDataConfig)
+    mask = [0] * 3 + [1] * 3 + [0] + [1] * 7 + [0] + [1] * 7 + [0]
+    W.c("pb.delta_mask", *mask)
+
+    ns = json.loads((ckpt / "assets" / args.asset / "norm_stats.json").read_text())
+    ns = ns.get("norm_stats", ns)
+    W.t("norm.state.mean", np.asarray(ns["state"]["mean"], np.float64))
+    W.t("norm.state.std", np.asarray(ns["state"]["std"], np.float64))
+    W.t("norm.actions.mean", np.asarray(ns["actions"]["mean"], np.float64))
+    W.t("norm.actions.std", np.asarray(ns["actions"]["std"], np.float64))
+    W.t("norm.actions.pt_mean", np.asarray(ns["actions"]["per_timestamp_mean"], np.float64))  # [30, 32]
+    W.t("norm.actions.pt_std", np.asarray(ns["actions"]["per_timestamp_std"], np.float64))
+
+    # correlated noise: L_reg = chol(beta * L L^T + (1 - beta) I) (pi_behavior.py:335-355), L from norm stats as f32
+    L = np.asarray(ns["actions"]["action_correlation_cholesky"], np.float32).astype(np.float64)
+    beta = 0.5
+    sig = beta * (L @ L.T) + (1 - beta) * np.eye(L.shape[0])
+    Lr = np.linalg.cholesky(sig)
+    W.t("pb.corr_L", Lr)  # f64 [960, 960]
+    # inpainting correction for the standard wrapper (keep 4 actions, all 32 dims): Sigma_UO Sigma_OO^-1
+    # (pi_behavior.py:403-450; Sigma = L_reg L_reg^T)
+    S = Lr @ Lr.T
+    O = np.arange(4 * 32)
+    U = np.arange(4 * 32, 30 * 32)
+    soo = S[np.ix_(O, O)]
+    eps = 1e-6 * max(np.mean(np.diag(soo)), 1.0)
+    C = np.linalg.solve(soo + eps * np.eye(len(O)), S[np.ix_(U, O)].T).T
+    W.t("pb.inpaint_C4", C.astype(np.float32))  # [832, 128]
+
+    W.t("pb.task_emb", p["task_embeddings/embedding"])  # [50, 2048]
+    W.t("pb.task_stage_emb", p["task_stage_embeddings/embedding"])  # [596, 1024]
+    for n in ("gate_sincos", "gate_task_stage", "gate_task", "fusion_layer1", "fusion_layer2", "stage_projection",
+              "stage_pred_from_vlm"):
+        W.t(f"pb.{n}.w", T(p[f"{n}/kernel"]))  # [out, in]
+        W.t(f"pb.{n}.b", p[f"{n}/bias"])
+    for n in ("k_coeffs", "v_coeffs", "k_bias", "v_bias"):
+        W.t(f"pb.kv.{n}", p[f"kv_transform/{n}"])  # bf16, as restored
+
+
+def export_backbone(p, W):
     # ---- SigLIP So400m/14 (PaliGemma/img) ---------------------------------------------------------
     g = lambda k: p["PaliGemma/img/" + k]
     emb = g("embedding/kernel")  # [14,14,3,1152] HWIO; patch vector order (kh, kw, c)
@@ -257,9 +347,6 @@ def main():
     for n in ("action_in_proj", "time_mlp_in", "time_mlp_out", "action_out_proj"):
         W.t(f"{n}.w", T(p[f"{n}/kernel"]))  # [out, in]
         W.t(f"{n}.b", p[f"{n}/bias"])
-
-    total = W.write(pathlib.Path(args.out))
-    print(f"wrote {args.out}: {len(W.tensors)} tensors, {total / 2**30:.2f} GiB", file=sys.stderr)
 
 
 if __name__ == "__main__":

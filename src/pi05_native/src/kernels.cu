@@ -45,6 +45,7 @@ __device__ float block_max(float v, float* sh) {
 __global__ void __launch_bounds__(256) stem_kernel(const uint8_t* __restrict__ img, const bf16* __restrict__ w,
                                                    const bf16* __restrict__ b, const bf16* __restrict__ pos,
                                                    float* __restrict__ stem_out, bf16* __restrict__ x, int M) {
+  pdl_entry();
   constexpr int K = 588, N = 1152, BK = 16;
   __shared__ float sa[BK][64 + 4];
   __shared__ float sb[BK][64 + 4];
@@ -98,7 +99,7 @@ __global__ void __launch_bounds__(256) stem_kernel(const uint8_t* __restrict__ i
 void launch_stem(const uint8_t* img, const bf16* w, const bf16* b, const bf16* pos, float* stem_out, bf16* x,
                  int n_img, cudaStream_t st) {
   const int M = n_img * 256;
-  stem_kernel<<<dim3(1152 / 64, cdiv(M, 64)), 256, 0, st>>>(img, w, b, pos, stem_out, x, M);
+  launch_k(stem_kernel, dim3(1152 / 64, cdiv(M, 64)), 256, 0, st, img, w, b, pos, stem_out, x, M);
 }
 
 // ---- LayerNorm (flax nn.LayerNorm(dtype=bf16), use_fast_variance=True) -----------------------------------
@@ -108,6 +109,7 @@ void launch_stem(const uint8_t* img, const bf16* w, const bf16* b, const bf16* p
 template <int NT>
 __global__ void __launch_bounds__(NT) layernorm_kernel(const bf16* __restrict__ x, const bf16* __restrict__ scale,
                                                        const bf16* __restrict__ bias, bf16* __restrict__ y, int dim) {
+  pdl_entry();
   __shared__ float sh[NT / 32];
   const bf16* xr = x + (size_t)blockIdx.x * dim;
   float s = 0.f, s2 = 0.f;
@@ -128,7 +130,7 @@ __global__ void __launch_bounds__(NT) layernorm_kernel(const bf16* __restrict__ 
 }
 
 void launch_layernorm(const bf16* x, const bf16* scale, const bf16* bias, bf16* y, int rows, int dim, cudaStream_t st) {
-  layernorm_kernel<128><<<rows, 128, 0, st>>>(x, scale, bias, y, dim);
+  launch_k(layernorm_kernel<128>, rows, 128, 0, st, x, scale, bias, y, dim);
 }
 
 // ---- SigLIP attention pieces ------------------------------------------------------------------------------
@@ -138,6 +140,7 @@ void launch_layernorm(const bf16* x, const bf16* scale, const bf16* bias, bf16* 
 // prep: qs[r, h*72+d] = bf16(q / 8.5); vt[img][h][d][tok] = v  (so P.V is an NT GEMM)
 __global__ void siglip_attn_prep_kernel(const bf16* __restrict__ qkv, bf16* __restrict__ qs, bf16* __restrict__ vt,
                                         int rows) {
+  pdl_entry();
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= rows * 1152) return;
   const int r = i / 1152, c = i % 1152;
@@ -148,11 +151,12 @@ __global__ void siglip_attn_prep_kernel(const bf16* __restrict__ qkv, bf16* __re
 
 void launch_siglip_attn_prep(const bf16* qkv, bf16* qs, bf16* vt, int n_img, cudaStream_t st) {
   const int n = n_img * 256 * 1152;
-  siglip_attn_prep_kernel<<<cdiv(n, 256), 256, 0, st>>>(qkv, qs, vt, n_img * 256);
+  launch_k(siglip_attn_prep_kernel, cdiv(n, 256), 256, 0, st, qkv, qs, vt, n_img * 256);
 }
 
 // jax.nn.softmax on a bf16 row: m = max; e = bf16(exp(bf16(x - m))); s = bf16(sum_f32(e)); p = bf16(e / s)
 __global__ void __launch_bounds__(256) softmax_bf16_kernel(bf16* __restrict__ s, int cols) {
+  pdl_entry();
   __shared__ float sh[8];
   bf16* row = s + (size_t)blockIdx.x * cols;
   float m = __int_as_float(0xff800000);  // -inf
@@ -168,7 +172,7 @@ __global__ void __launch_bounds__(256) softmax_bf16_kernel(bf16* __restrict__ s,
 }
 
 void launch_softmax_bf16_rows(bf16* s, int rows, int cols, cudaStream_t st) {
-  softmax_bf16_kernel<<<rows, 256, 0, st>>>(s, cols);
+  launch_k(softmax_bf16_kernel, rows, 256, 0, st, s, cols);
 }
 
 // ---- Gemma RMSNorm (gemma.py:113-131) ---------------------------------------------------------------------
@@ -186,6 +190,7 @@ __device__ __forceinline__ float rms_inv(float var) {
 template <int NT>
 __global__ void __launch_bounds__(NT) rmsnorm_kernel(const bf16* __restrict__ x, const bf16* __restrict__ scale,
                                                      bf16* __restrict__ y, int dim, const int* d_rows) {
+  pdl_entry();
   if (d_rows && (int)blockIdx.x >= *d_rows) return;
   __shared__ float sh[NT / 32];
   const bf16* xr = x + (size_t)blockIdx.x * dim;
@@ -200,13 +205,14 @@ __global__ void __launch_bounds__(NT) rmsnorm_kernel(const bf16* __restrict__ x,
 }
 
 void launch_rmsnorm(const bf16* x, const bf16* scale, bf16* y, int rows, int dim, const int* d_rows, cudaStream_t st) {
-  rmsnorm_kernel<256><<<rows, 256, 0, st>>>(x, scale, y, dim, d_rows);
+  launch_k(rmsnorm_kernel<256>, rows, 256, 0, st, x, scale, y, dim, d_rows);
 }
 
 // mod = [scale | shift | gate] (bf16, 3*dim), shared by every row (cond is per batch, gemma.py:128-130)
 template <int NT>
 __global__ void __launch_bounds__(NT) adarms_kernel(const bf16* __restrict__ x, const bf16* __restrict__ mod,
                                                     bf16* __restrict__ y, int dim) {
+  pdl_entry();
   __shared__ float sh[NT / 32];
   const bf16* xr = x + (size_t)blockIdx.x * dim;
   float s2 = 0.f;
@@ -221,13 +227,14 @@ __global__ void __launch_bounds__(NT) adarms_kernel(const bf16* __restrict__ x, 
 }
 
 void launch_adarms(const bf16* x, const bf16* mod, bf16* y, int rows, int dim, cudaStream_t st) {
-  adarms_kernel<256><<<rows, 256, 0, st>>>(x, mod, y, dim);
+  launch_k(adarms_kernel<256>, rows, 256, 0, st, x, mod, y, dim);
 }
 
 // ---- RoPE (gemma.py:424-440) ----------------------------------------------------------------------------------
 //   freq_exp = (2/256) * arange(128) ; timescale = 10000 ** freq_exp ; rad = pos / timescale  (f32)
 //   out = [x1*cos - x2*sin, x2*cos + x1*sin] in f32, then .astype(bf16); q additionally *= 256**-0.5 (bf16)
 __global__ void rope_table_kernel(float2* table, int max_pos, int half) {
+  pdl_entry();
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= max_pos * half) return;
   const int pos = i / half, j = i % half;
@@ -238,7 +245,7 @@ __global__ void rope_table_kernel(float2* table, int max_pos, int half) {
 }
 
 void launch_rope_tables(float2* table, int max_pos, int half, cudaStream_t st) {
-  rope_table_kernel<<<cdiv(max_pos * half, 256), 256, 0, st>>>(table, max_pos, half);
+  launch_k(rope_table_kernel, cdiv(max_pos * half, 256), 256, 0, st, table, max_pos, half);
 }
 
 // one block per token row, 128 threads: each thread owns rotation pair j (x[j], x[j+128])
@@ -246,6 +253,7 @@ __global__ void __launch_bounds__(128) rope_split_kernel(const bf16* __restrict_
                                                          bf16* __restrict__ q_out, bf16* __restrict__ kc,
                                                          bf16* __restrict__ vt, const int* d_rows, int heads,
                                                          int vt_ld, int pos0, const int* d_pos0) {
+  pdl_entry();
   const int r = blockIdx.x;
   if (d_rows && r >= *d_rows) return;
   const int p0 = d_pos0 ? *d_pos0 : pos0;
@@ -272,7 +280,7 @@ __global__ void __launch_bounds__(128) rope_split_kernel(const bf16* __restrict_
 
 void launch_rope_split(const bf16* qkv, const float2* rope, bf16* q_out, bf16* kc, bf16* vt, int rows,
                        const int* d_rows, int heads, int vt_ld, int pos0, const int* d_pos0, cudaStream_t st) {
-  rope_split_kernel<<<rows, 128, 0, st>>>(qkv, rope, q_out, kc, vt, d_rows, heads, vt_ld, pos0, d_pos0);
+  launch_k(rope_split_kernel, rows, 128, 0, st, qkv, rope, q_out, kc, vt, d_rows, heads, vt_ld, pos0, d_pos0);
 }
 
 // ---- f32 attention softmax (gemma.py:217-228) --------------------------------------------------------------------
@@ -280,10 +288,12 @@ void launch_rope_split(const bf16* qkv, const float2* rope, bf16* q_out, bf16* k
 //   P.V GEMM can run its K loop to a multiple of 8.
 __global__ void __launch_bounds__(256) softmax_f32_kernel(const float* __restrict__ lg, int ld_in, bf16* __restrict__ p,
                                                           int ld_out, const int* d_rows, const int* d_cols,
-                                                          const int* d_cols8) {
+                                                          const int* d_cols8, int g0, int heads) {
+  pdl_entry();
   if (d_rows && (int)blockIdx.x >= *d_rows) return;
   __shared__ float sh[8];
-  const int cols = *d_cols, cols8 = *d_cols8;
+  // g0 > 0: two attention groups (PiBehavior prefix, pi_behavior.py:590-609): query tokens < g0 see keys < g0 only
+  const int cols = (g0 > 0 && (int)blockIdx.x / heads < g0) ? g0 : *d_cols, cols8 = *d_cols8;
   const float* row = lg + (size_t)blockIdx.x * ld_in;
   float m = __int_as_float(0xff800000);  // -inf
   for (int i = threadIdx.x; i < cols; i += 256) m = fmaxf(m, row[i]);
@@ -297,14 +307,15 @@ __global__ void __launch_bounds__(256) softmax_f32_kernel(const float* __restric
 }
 
 void launch_softmax_f32_rows(const float* logits, int ld_in, bf16* p, int ld_out, int rows, const int* d_rows,
-                             const int* d_cols, const int* d_cols8, cudaStream_t st) {
-  softmax_f32_kernel<<<rows, 256, 0, st>>>(logits, ld_in, p, ld_out, d_rows, d_cols, d_cols8);
+                             const int* d_cols, const int* d_cols8, cudaStream_t st, int g0, int heads) {
+  launch_k(softmax_f32_kernel, rows, 256, 0, st, logits, ld_in, p, ld_out, d_rows, d_cols, d_cols8, g0, heads);
 }
 
 // ---- action expert input / flow update ------------------------------------------------------------------------------
 // pi0.py:159  action_in_proj(x_t): nnx.Linear, f32 input x bf16 kernel -> f32 ; later .astype(bf16) (gemma.py:400)
 __global__ void action_in_kernel(const float* __restrict__ x, const bf16* __restrict__ w, const bf16* __restrict__ b,
                                  bf16* __restrict__ h, int in_dim, int out_dim) {
+  pdl_entry();
   const int r = blockIdx.y;
   const int o = blockIdx.x * blockDim.x + threadIdx.x;
   if (o >= out_dim) return;
@@ -315,29 +326,27 @@ __global__ void action_in_kernel(const float* __restrict__ x, const bf16* __rest
 
 void launch_action_in(const float* x, const bf16* w, const bf16* b, bf16* h, int rows, int in_dim, int out_dim,
                       cudaStream_t st) {
-  action_in_kernel<<<dim3(cdiv(out_dim, 128), rows), 128, 0, st>>>(x, w, b, h, in_dim, out_dim);
+  launch_k(action_in_kernel, dim3(cdiv(out_dim, 128), rows), 128, 0, st, x, w, b, h, in_dim, out_dim);
 }
 
-// pi0.py:271  x_t + dt * v_t : dt is a Python float, so it becomes bf16(-0.1) = -0.10009765625 and dt*v_t is a
-// bf16 product; x_t is f32. PI05_FLOW_F32 keeps the product unrounded (fused with excess precision).
-__global__ void flow_update_kernel(float* x, const bf16* v, int n) {
+// pi0.py:271  x_t + dt * v_t : dt is a Python float, so it becomes bf16(dt) (bf16(-0.1) = -0.10009765625) and dt*v_t
+// is a bf16 product; x_t is f32 (bit-checked against the JAX dump). dtb = bf16(-1/num_steps) as a float.
+__global__ void flow_update_kernel(float* x, const bf16* v, int n, float dtb) {
+  pdl_entry();
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
-#ifdef PI05_FLOW_F32
-  x[i] = x[i] + (-0.10009765625f) * b2f(v[i]);
-#else
-  x[i] = x[i] + bfr(-0.10009765625f * b2f(v[i]));
-#endif
+  x[i] = x[i] + bfr(dtb * b2f(v[i]));
 }
 
-void launch_flow_update(float* x, const bf16* v, int n, cudaStream_t st) {
-  flow_update_kernel<<<cdiv(n, 256), 256, 0, st>>>(x, v, n);
+void launch_flow_update(float* x, const bf16* v, int n, float dtb, cudaStream_t st) {
+  launch_k(flow_update_kernel, cdiv(n, 256), 256, 0, st, x, v, n, dtb);
 }
 
 // ---- time conditioning (pi0.py:47-63, 161-167), computed once per denoising step at load time ----------------------
 //   fraction = linspace(0, 1, dim/2); period = 4e-3 * (4.0/4e-3) ** fraction
 //   emb = [sin(t * (1/period * 2 * pi)), cos(...)]  (f32)
 __global__ void time_embed_kernel(const float* times, int dim, float* out) {
+  pdl_entry();
   const int s = blockIdx.x;
   const int half = dim / 2;
   for (int j = threadIdx.x; j < half; j += blockDim.x) {
@@ -351,12 +360,13 @@ __global__ void time_embed_kernel(const float* times, int dim, float* out) {
 }
 
 void launch_time_embed(const float* times, int n_steps, int dim, float* out, cudaStream_t st) {
-  time_embed_kernel<<<n_steps, 256, 0, st>>>(times, dim, out);
+  launch_k(time_embed_kernel, n_steps, 256, 0, st, times, dim, out);
 }
 
 // y = x . W^T + b in f32 (nnx.Linear with f32 input, bf16 kernel); optional swish (jax.nn.swish = x * sigmoid(x))
 __global__ void linear_f32_kernel(const float* __restrict__ x, const bf16* __restrict__ w, const bf16* __restrict__ b,
                                   float* __restrict__ y, int in_dim, int out_dim, int swish) {
+  pdl_entry();
   const int r = blockIdx.y;
   const int o = blockIdx.x * (blockDim.x / 32) + (threadIdx.x >> 5);
   const int lane = threadIdx.x & 31;
@@ -366,19 +376,22 @@ __global__ void linear_f32_kernel(const float* __restrict__ x, const bf16* __res
   acc = warp_sum(acc);
   if (lane == 0) {
     float v = acc + b2f(b[o]);
-    if (swish) v = v * __fdiv_rn(1.0f, 1.0f + expf(-v));
+    if (swish == 1) v = v * __fdiv_rn(1.0f, 1.0f + expf(-v));
+    else if (swish == 2) v = __fdiv_rn(1.0f, 1.0f + expf(-v));  // jax.nn.sigmoid
+    else if (swish == 3) v = fmaxf(v, 0.0f);                    // relu
     y[(size_t)r * out_dim + o] = v;
   }
 }
 
 void launch_linear_f32(const float* x, const bf16* w, const bf16* b, float* y, int rows, int in_dim, int out_dim,
                        int swish, cudaStream_t st) {
-  linear_f32_kernel<<<dim3(cdiv(out_dim, 8), rows), 256, 0, st>>>(x, w, b, y, in_dim, out_dim, swish);
+  launch_k(linear_f32_kernel, dim3(cdiv(out_dim, 8), rows), 256, 0, st, x, w, b, y, in_dim, out_dim, swish);
 }
 
 // flax nn.Dense(dtype=bf16) on an f32 input: x -> bf16, dot -> bf16, + bias (bf16)
 __global__ void linear_bf16_vec_kernel(const float* __restrict__ x, const bf16* __restrict__ w,
                                        const bf16* __restrict__ b, bf16* __restrict__ y, int in_dim, int out_dim) {
+  pdl_entry();
   const int r = blockIdx.y;
   const int o = blockIdx.x * (blockDim.x / 32) + (threadIdx.x >> 5);
   const int lane = threadIdx.x & 31;
@@ -391,7 +404,7 @@ __global__ void linear_bf16_vec_kernel(const float* __restrict__ x, const bf16* 
 
 void launch_linear_bf16_vec(const float* x, const bf16* w, const bf16* b, bf16* y, int rows, int in_dim, int out_dim,
                             cudaStream_t st) {
-  linear_bf16_vec_kernel<<<dim3(cdiv(out_dim, 8), rows), 256, 0, st>>>(x, w, b, y, in_dim, out_dim);
+  launch_k(linear_bf16_vec_kernel, dim3(cdiv(out_dim, 8), rows), 256, 0, st, x, w, b, y, in_dim, out_dim);
 }
 
 }  // namespace pi05

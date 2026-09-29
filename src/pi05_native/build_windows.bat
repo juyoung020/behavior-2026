@@ -6,6 +6,7 @@ rem Static CUDA runtime (no cudart DLL clash with torch in the evaluator). No CM
 setlocal
 set HERE=%~dp0
 set B=%HERE%build_win
+if not "%~1"=="" set B=%~1
 set CONDA_ENVS=C:\Users\user one\anaconda3\envs
 set CUDA=%CONDA_ENVS%\pi05build\Library
 set PY=%CONDA_ENVS%\behavior
@@ -14,13 +15,13 @@ if not exist "%B%\obj" mkdir "%B%\obj"
 if not exist "%B%\objtok" mkdir "%B%\objtok"
 set NVCC="%CUDA%\bin\nvcc.exe" -std=c++20 -O3 -gencode arch=compute_120,code=sm_120 -Xcompiler "/O2 /MD /EHsc /utf-8" -cudart static %PI05_DEFS%
 cd /d "%HERE%src"
-for %%f in (kernels model) do (
+for %%f in (kernels model pb_kernels) do (
   %NVCC% -c %%f.cu -o "%B%\obj\%%f.obj" || exit /b 1
 )
-for %%f in (tokenizer weights host_io image engine_api) do (
+for %%f in (tokenizer weights host_io image pb_host engine_api) do (
   %NVCC% -x cu -c %%f.cpp -o "%B%\obj\%%f.obj" || exit /b 1
 )
-set OBJS="%B%\obj\kernels.obj" "%B%\obj\model.obj" "%B%\obj\tokenizer.obj" "%B%\obj\weights.obj" "%B%\obj\host_io.obj" "%B%\obj\image.obj" "%B%\obj\engine_api.obj"
+set OBJS="%B%\obj\kernels.obj" "%B%\obj\model.obj" "%B%\obj\pb_kernels.obj" "%B%\obj\pb_host.obj" "%B%\obj\tokenizer.obj" "%B%\obj\weights.obj" "%B%\obj\host_io.obj" "%B%\obj\image.obj" "%B%\obj\engine_api.obj"
 lib /nologo /out:"%B%\pi05.lib" %OBJS% || exit /b 1
 cd /d "%HERE%glue"
 cl /nologo /O2 /MD /utf-8 /DPI05_STATIC /c pi05native_module.c /I"%PY%\include" /Fo"%B%\obj\pi05native_module.obj" || exit /b 1

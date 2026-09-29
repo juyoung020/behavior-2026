@@ -25,6 +25,8 @@ struct GemmParams {
   long long sA1 = 0, sA2 = 0, sB1 = 0, sB2 = 0;     // element strides per batch coordinate
   long long sC1 = 0, sC2 = 0;                       // passed to the epilogue as an offset
   float* ws = nullptr;                              // split-K workspace [splits][M][N]
+  int* counters = nullptr;                          // split-K tile tickets (zeroed); null -> separate reduce kernel
+  bool b_static = false;                            // B is a weight (not written by earlier kernels): prefetch before PDL wait
 };
 
 __device__ __forceinline__ uint32_t smem_u32(const void* p) {
@@ -49,20 +51,29 @@ __device__ __forceinline__ void mma_bf16(float (&d)[4], const uint32_t (&a)[4], 
       : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
 }
 
-constexpr int GEMM_BK = 32;  // 64-byte rows: 4 x 16B chunks, chunk ^= (row >> 1) & 3
+constexpr int GEMM_BK = 32;  // K granularity every config supports (tails are zero-filled per 8 elements)
 
-__device__ __forceinline__ int swz(int r, int ch) { return r * GEMM_BK + ((ch ^ ((r >> 1) & 3)) << 3); }
+// XOR swizzle of 16-byte chunks inside a BK-wide bf16 row: conflict-free cp.async stores and ldmatrix loads.
+// BK=32: 64-byte rows, 4 chunks, chunk ^= (row >> 1) & 3.  BK=64: 128-byte rows, 8 chunks, chunk ^= row & 7.
+template <int BK>
+__device__ __forceinline__ int swz(int r, int ch) {
+  if constexpr (BK == 32) return r * BK + ((ch ^ ((r >> 1) & 3)) << 3);
+  else return r * BK + ((ch ^ (r & 7)) << 3);
+}
 
-template <int BM, int BN, int WARPS_M, int WARPS_N, int STAGES>
+template <int BM, int BN, int WARPS_M, int WARPS_N, int STAGES, int BK = 32>
 struct GemmCfg {
   static constexpr int kThreads = WARPS_M * WARPS_N * 32;
-  static constexpr int kSmem = STAGES * (BM + BN) * GEMM_BK * 2;
+  static constexpr int kSmem = STAGES * (BM + BN) * BK * 2;
 };
 
-template <int BM, int BN, int WARPS_M, int WARPS_N, int STAGES, class Epi>
+// Grid: x = M tiles (fastest), y = N tiles, z = batch * splits. M-fastest order makes the CTAs that share one
+// weight tile run back to back, so each weight byte comes from DRAM once (weights >> L2, activations fit in L2).
+template <int BM, int BN, int WARPS_M, int WARPS_N, int STAGES, int BK, class Epi>
 __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
     gemm_nt_kernel(GemmParams p, Epi epi) {
-  constexpr int BK = GEMM_BK;
+  pdl_trigger();  // pdl_wait() comes after the static weight prefetch below
+  constexpr int CH = BK / 8;  // 16-byte chunks per row
   constexpr int NT = WARPS_M * WARPS_N * 32;
   constexpr int WM = BM / WARPS_M, WN = BN / WARPS_N;
   constexpr int MT = WM / 16, NT8 = WN / 8;
@@ -74,7 +85,7 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
   const int M = p.dM ? *p.dM : p.M;
   const int N = p.dN ? *p.dN : p.N;
   const int K = p.dK ? *p.dK : p.K;
-  const int m0 = blockIdx.y * BM, n0 = blockIdx.x * BN;
+  const int m0 = blockIdx.x * BM, n0 = blockIdx.y * BN;
   if (m0 >= M || n0 >= N) return;
   const int split = blockIdx.z % p.splits;
   const int b = blockIdx.z / p.splits;
@@ -91,26 +102,33 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
   const int wm = warp / WARPS_N, wn = warp % WARPS_N;
 
-  auto load_stage = [&](int stage, int kt) {
+  auto load_a = [&](int stage, int kt) {
     const int k0 = kt * BK;
     bf16* a = sA + stage * BM * BK;
-    bf16* bb = sB + stage * BN * BK;
 #pragma unroll
-    for (int c = tid; c < BM * 4; c += NT) {
-      int r = c >> 2, ch = c & 3;
+    for (int c = tid; c < BM * CH; c += NT) {
+      int r = c / CH, ch = c % CH;
       int gr = m0 + r, gk = k0 + ch * 8;
       bool ok = gr < M && gk < K;
       const bf16* src = ok ? A + (long long)gr * p.lda + gk : A;
-      cp_async16(smem_u32(a + swz(r, ch)), src, ok ? 16 : 0);
+      cp_async16(smem_u32(a + swz<BK>(r, ch)), src, ok ? 16 : 0);
     }
+  };
+  auto load_b = [&](int stage, int kt) {
+    const int k0 = kt * BK;
+    bf16* bb = sB + stage * BN * BK;
 #pragma unroll
-    for (int c = tid; c < BN * 4; c += NT) {
-      int r = c >> 2, ch = c & 3;
+    for (int c = tid; c < BN * CH; c += NT) {
+      int r = c / CH, ch = c % CH;
       int gr = n0 + r, gk = k0 + ch * 8;
       bool ok = gr < N && gk < K;
       const bf16* src = ok ? B + (long long)gr * p.ldb + gk : B;
-      cp_async16(smem_u32(bb + swz(r, ch)), src, ok ? 16 : 0);
+      cp_async16(smem_u32(bb + swz<BK>(r, ch)), src, ok ? 16 : 0);
     }
+  };
+  auto load_stage = [&](int stage, int kt) {
+    load_a(stage, kt);
+    load_b(stage, kt);
   };
 
   float acc[MT][NT8][4];
@@ -121,10 +139,28 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
 #pragma unroll
       for (int q = 0; q < 4; ++q) acc[i][j][q] = 0.f;
 
+  // Prologue: STAGES cp.async groups either way (group 0 = prefetched weights or empty), so the main loop's
+  // wait_group<STAGES-2> finds stage i complete at iteration i.
+  if (p.b_static) {
+    // weights do not depend on the previous kernel: start streaming them before waiting for it (PDL overlap)
 #pragma unroll
-  for (int s = 0; s < STAGES - 1; ++s) {
-    if (s < nk) load_stage(s, kt0 + s);
+    for (int s = 0; s < STAGES - 1; ++s)
+      if (s < nk) load_b(s, kt0 + s);
     cp_async_commit();
+    pdl_wait();
+#pragma unroll
+    for (int s = 0; s < STAGES - 1; ++s) {
+      if (s < nk) load_a(s, kt0 + s);
+      cp_async_commit();
+    }
+  } else {
+    pdl_wait();
+    cp_async_commit();
+#pragma unroll
+    for (int s = 0; s < STAGES - 1; ++s) {
+      if (s < nk) load_stage(s, kt0 + s);
+      cp_async_commit();
+    }
   }
 
   for (int i = 0; i < nk; ++i) {
@@ -142,13 +178,13 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
 #pragma unroll
       for (int mt = 0; mt < MT; ++mt) {
         int r = wm * WM + mt * 16 + (lane & 15);
-        ldmatrix_x4(af[mt], smem_u32(a + swz(r, kk + (lane >> 4))));
+        ldmatrix_x4(af[mt], smem_u32(a + swz<BK>(r, kk + (lane >> 4))));
       }
 #pragma unroll
       for (int np = 0; np < NT8 / 2; ++np) {
         int r = wn * WN + np * 16 + (lane & 7) + ((lane >> 4) << 3);
         uint32_t t[4];
-        ldmatrix_x4(t, smem_u32(bb + swz(r, kk + ((lane >> 3) & 1))));
+        ldmatrix_x4(t, smem_u32(bb + swz<BK>(r, kk + ((lane >> 3) & 1))));
         bfg[2 * np][0] = t[0];
         bfg[2 * np][1] = t[1];
         bfg[2 * np + 1][0] = t[2];
@@ -181,11 +217,37 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
       }
     }
   }
+  if (p.splits > 1 && p.counters) {
+    // In-kernel split-K reduction without a second launch: the last CTA of this output tile (ticket counter)
+    // sums every split's partial in the fixed order 0..splits-1 (deterministic regardless of which CTA finishes
+    // last), applies the epilogue and re-arms the counter for the next launch / graph replay.
+    __shared__ int is_last;
+    __threadfence();
+    __syncthreads();
+    int* ctr = p.counters + blockIdx.y * gridDim.x + blockIdx.x;
+    if (tid == 0) is_last = atomicAdd(ctr, 1) == p.splits - 1;
+    __syncthreads();
+    if (!is_last) return;
+    __threadfence();
+    const int rows = min(BM, M - m0), cols = min(BN, N - n0);
+    for (int idx = tid; idx < rows * (cols / 2); idx += NT) {
+      const int r = m0 + idx / (cols / 2), c = n0 + 2 * (idx % (cols / 2));
+      float2 s = __ldcg(reinterpret_cast<const float2*>(p.ws + (long long)r * p.N + c));
+      for (int k = 1; k < p.splits; ++k) {
+        const float2 v = __ldcg(reinterpret_cast<const float2*>(p.ws + (long long)k * p.M * p.N + (long long)r * p.N + c));
+        s.x += v.x;
+        s.y += v.y;
+      }
+      epi(r, c, s.x, s.y, coff);
+    }
+    if (tid == 0) *ctr = 0;
+  }
 }
 
 // Sums split-K partials in a fixed order (deterministic) and applies the epilogue.
 template <class Epi>
 __global__ void splitk_reduce_kernel(const float* ws, int splits, int M, int N, const int* dM, Epi epi) {
+  pdl_entry();
   const int Mr = dM ? *dM : M;
   const int half = N / 2;
   for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < Mr * half; idx += gridDim.x * blockDim.x) {
@@ -276,6 +338,63 @@ struct EpiGatedResid {  // action expert: x = x + bf16(dot) * gate   (bf16 ops)
     float a = __low2float(x) + bfr(bfr(v0) * b2f(gate[c]));
     float b = __high2float(x) + bfr(bfr(v1) * b2f(gate[c + 1]));
     *reinterpret_cast<bf162*>(out + i) = __floats2bfloat162_rn(a, b);
+  }
+};
+
+// Gemma attention input projection with RoPE, q scaling and KV-cache writes fused (gemma.py:185-206,424-440).
+// The q and k weight rows are permuted at load time so that output columns (2j, 2j+1) of every 256-wide head hold
+// dims (j, j+128) = the RoPE pair; v rows keep their order.  Per element exactly what JAX does:
+//   x = bf16(dot); rot = bf16(f32 rotation of (x1, x2)); q = bf16(rot * 0.0625); k -> cache; v -> transposed cache.
+struct EpiQKVRope {
+  bf16* q;            // [rows][heads][256]
+  bf16* kc;           // [pos][256]
+  bf16* vt;           // [256][vt_ld]
+  const float2* rope; // [pos][128] (cos, sin)
+  const int* d_pos0;  // position of row 0 (prefix: null -> 0, suffix: number of prefix tokens)
+  int heads, vt_ld;
+  __device__ void operator()(int r, int c, float v0, float v1, long long) const {
+    const int blk = c >> 8, cc = c & 255;
+    const int pos = (d_pos0 ? *d_pos0 : 0) + r;
+    if (blk <= heads) {
+      const int j = cc >> 1;
+      const float2 cs = rope[pos * 128 + j];
+      const float x1 = bfr(v0), x2 = bfr(v1);
+      const float o1 = bfr(x1 * cs.x - x2 * cs.y), o2 = bfr(x2 * cs.x + x1 * cs.y);
+      if (blk < heads) {
+        bf16* qo = q + ((long long)r * heads + blk) * 256;
+        qo[j] = f2b(o1 * 0.0625f);
+        qo[j + 128] = f2b(o2 * 0.0625f);
+      } else {
+        kc[(long long)pos * 256 + j] = f2b(o1);
+        kc[(long long)pos * 256 + j + 128] = f2b(o2);
+      }
+    } else {
+      vt[(long long)cc * vt_ld + pos] = f2b(v0);
+      vt[(long long)(cc + 1) * vt_ld + pos] = f2b(v1);
+    }
+  }
+};
+
+// SigLIP qkv DenseGeneral (+bias, bf16) fused with the attention prep (flax attention.py:129-132):
+// q -> bf16(q / bf16(sqrt(72)) = 8.5) into qs, k stays in place, v -> vt[img][head][dim][token].
+struct EpiSiglipQKV {
+  bf16* qkv;  // [rows][3456]  (k columns written here)
+  bf16* qs;   // [rows][1152]
+  bf16* vt;   // [img][16][72][256]
+  const bf16* bias;
+  __device__ void operator()(int r, int c, float v0, float v1, long long) const {
+    const float a = bfr(bfr(v0) + b2f(bias[c])), b = bfr(bfr(v1) + b2f(bias[c + 1]));
+    if (c < 1152) {
+      *reinterpret_cast<bf162*>(qs + (long long)r * 1152 + c) =
+          __floats2bfloat162_rn(__fdiv_rn(a, 8.5f), __fdiv_rn(b, 8.5f));
+    } else if (c < 2304) {
+      *reinterpret_cast<bf162*>(qkv + (long long)r * 3456 + c) = __floats2bfloat162_rn(a, b);
+    } else {
+      const int cc = c - 2304, im = r >> 8, tok = r & 255, h = cc / 72, d = cc % 72;  // d even: d, d+1 same head
+      bf16* base = vt + (((long long)im * 16 + h) * 72 + d) * 256 + tok;
+      base[0] = f2b(a);
+      base[256] = f2b(b);
+    }
   }
 };
 

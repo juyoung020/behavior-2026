@@ -30,20 +30,31 @@ static uint16_t f2bf_h(float f) {
   return (uint16_t)(u >> 16);
 }
 
-template <int BM, int BN, int WM, int WN, int ST, class Epi>
+template <int BM, int BN, int WM, int WN, int ST, int BK, class Epi>
 void run(GemmParams p, Epi e, int batch = 1) {
-  using C = GemmCfg<BM, BN, WM, WN, ST>;
-  dim3 grid(cdiv(p.N, BN), cdiv(p.M, BM), batch * p.splits);
-  gemm_nt_kernel<BM, BN, WM, WN, ST, Epi><<<grid, C::kThreads, C::kSmem>>>(p, e);
+  using C = GemmCfg<BM, BN, WM, WN, ST, BK>;
+  auto kern = gemm_nt_kernel<BM, BN, WM, WN, ST, BK, Epi>;
+  if (C::kSmem > 48 * 1024) cudaFuncSetAttribute(kern, cudaFuncAttributeMaxDynamicSharedMemorySize, C::kSmem);
+  dim3 grid(cdiv(p.M, BM), cdiv(p.N, BN), batch * p.splits);
+  kern<<<grid, C::kThreads, C::kSmem>>>(p, e);
 }
+
+constexpr int NCFG = 8;
+const char* CFG_NAME[NCFG] = {"128x128x32s3", "128x64x32s4", "64x64x32s4", "32x64x32s6", "128x128x64s3",
+                              "128x256x32s3", "32x64x64s4", "32x128x64s4"};
+bool cfg_skinny(int c) { return c == 3 || c == 6 || c == 7; }
 
 template <class Epi>
 void run_cfg(int cfg, GemmParams p, Epi e) {
   switch (cfg) {
-    case 0: run<128, 128, 2, 4, 3>(p, e); break;
-    case 1: run<128, 64, 2, 2, 4>(p, e); break;
-    case 2: run<64, 64, 2, 2, 4>(p, e); break;
-    case 3: run<32, 64, 1, 4, 6>(p, e); break;
+    case 0: run<128, 128, 2, 4, 3, 32>(p, e); break;
+    case 1: run<128, 64, 2, 2, 4, 32>(p, e); break;
+    case 2: run<64, 64, 2, 2, 4, 32>(p, e); break;
+    case 3: run<32, 64, 1, 4, 6, 32>(p, e); break;
+    case 4: run<128, 128, 2, 4, 3, 64>(p, e); break;
+    case 5: run<128, 256, 2, 4, 3, 32>(p, e); break;
+    case 6: run<32, 64, 1, 4, 4, 64>(p, e); break;
+    case 7: run<32, 128, 1, 4, 4, 64>(p, e); break;
   }
 }
 
@@ -70,19 +81,23 @@ int correctness() {
     cudaMalloc(&dB, B.size() * 2);
     cudaMalloc(&dC, ref.size() * 4);
     cudaMalloc(&ws, ref.size() * 4 * 8);
+    int* ctr;
+    cudaMalloc(&ctr, 1 << 16);
+    cudaMemset(ctr, 0, 1 << 16);
     cudaMemcpy(dA, A.data(), A.size() * 2, cudaMemcpyHostToDevice);
     cudaMemcpy(dB, B.data(), B.size() * 2, cudaMemcpyHostToDevice);
-    for (int cfg = 0; cfg < 4; ++cfg) {
+    for (int cfg = 0; cfg < NCFG; ++cfg) {
       for (int splits : {1, 2, 4}) {
-        if (splits > 1 && cfg != 3) continue;
+        if (splits > 1 && !cfg_skinny(cfg)) continue;
         cudaMemset(dC, 0xff, ref.size() * 4);
         GemmParams p;
         p.A = dA; p.lda = s.K; p.B = dB; p.ldb = s.K; p.M = s.M; p.N = s.N; p.K = s.K;
         p.splits = splits;
         p.ws = ws;
+        p.counters = ctr;  // in-kernel fixed-order reduction
         EpiF32 e{dC, s.N};
         run_cfg(cfg, p, e);
-        if (splits > 1) splitk_reduce_kernel<<<cdiv(s.M * s.N / 2, 256), 256>>>(ws, splits, s.M, s.N, nullptr, e);
+        if (splits > 1) run_cfg(cfg, p, e);  // second launch checks the tickets were re-armed
         cudaError_t ce = cudaDeviceSynchronize();
         std::vector<float> C(ref.size());
         cudaMemcpy(C.data(), dC, C.size() * 4, cudaMemcpyDeviceToHost);
@@ -93,7 +108,7 @@ int correctness() {
         printf("M%5d N%5d K%5d cfg%d split%d : max rel err %.2e %s\n", s.M, s.N, s.K, cfg, splits, maxe, ok ? "ok" : "BAD");
       }
     }
-    cudaFree(dA); cudaFree(dB); cudaFree(dC); cudaFree(ws);
+    cudaFree(dA); cudaFree(dB); cudaFree(dC); cudaFree(ws); cudaFree(ctr);
   }
   return bad;
 }
@@ -108,35 +123,42 @@ void bench() {
   cudaEvent_t e0, e1;
   cudaEventCreate(&e0);
   cudaEventCreate(&e1);
+  int* bctr;
+  cudaMalloc(&bctr, 1 << 16);
+  cudaMemset(bctr, 0, 1 << 16);
   for (auto s : shapes) {
     bf16 *dA, *dB, *dC;
     float* ws;
     cudaMalloc(&dA, (size_t)s.M * s.K * 2);
-    cudaMalloc(&dB, (size_t)s.N * s.K * 2);
+    // weights rotate through >= 128 MB of copies so every launch streams them from DRAM (as in the real model)
+    const size_t bbytes = (size_t)s.N * s.K * 2;
+    const int nrot = (int)std::max<size_t>(1, (128u << 20) / bbytes + 1);
+    cudaMalloc(&dB, bbytes * nrot);
     cudaMalloc(&dC, (size_t)s.M * s.N * 2);
-    cudaMalloc(&ws, (size_t)s.M * s.N * 4 * 8);
+    cudaMalloc(&ws, (size_t)s.M * s.N * 4 * 16);
     cudaMemset(dA, 0, (size_t)s.M * s.K * 2);
-    cudaMemset(dB, 0, (size_t)s.N * s.K * 2);
+    cudaMemset(dB, 0, bbytes * nrot);
     printf("%-14s M%5d N%6d K%6d :", s.name, s.M, s.N, s.K);
-    for (int cfg = 0; cfg < 4; ++cfg) {
-      if (cfg == 3 && s.M > 64) continue;
-      if (cfg < 3 && s.M <= 32) continue;
+    for (int cfg = 0; cfg < NCFG; ++cfg) {
+      if (cfg_skinny(cfg) && s.M > 64) continue;
+      if (!cfg_skinny(cfg) && s.M <= 32) continue;
       GemmParams p;
       p.A = dA; p.lda = s.K; p.B = dB; p.ldb = s.K; p.M = s.M; p.N = s.N; p.K = s.K;
       int splits = 1;
-      if (cfg == 3) {
-        int ctas = cdiv(s.N, 64), kt = cdiv(s.K, 32);
+      if (cfg_skinny(cfg)) {
+        int ctas = cdiv(s.N, cfg == 7 ? 128 : 64), kt = cdiv(s.K, 32);
         while (ctas * splits < 140 && kt / (splits * 2) >= 4) splits *= 2;
       }
       p.splits = splits;
       p.ws = ws;
+      p.counters = bctr;
       EpiBf16 e{dC, s.N};
       for (int w = 0; w < 3; ++w) run_cfg(cfg, p, e);
       const int it = 20;
       cudaEventRecord(e0);
       for (int i = 0; i < it; ++i) {
+        p.B = dB + (size_t)(i % nrot) * s.N * s.K;
         run_cfg(cfg, p, e);
-        if (splits > 1) splitk_reduce_kernel<<<cdiv(s.M * s.N / 2, 256), 256>>>(ws, splits, s.M, s.N, nullptr, e);
       }
       cudaEventRecord(e1);
       cudaEventSynchronize(e1);
@@ -145,7 +167,7 @@ void bench() {
       ms /= it;
       double tf = 2.0 * s.M * s.N * s.K / (ms * 1e-3) / 1e12;
       double gbs = ((double)s.N * s.K * 2) / (ms * 1e-3) / 1e9;
-      printf("  cfg%d %7.3f ms %6.1f TF/s %6.0f GB/s", cfg, ms, tf, gbs);
+      printf("\n    %-14s %7.3f ms %6.1f TF/s %6.0f GB/s", CFG_NAME[cfg], ms, tf, gbs);
     }
 #ifdef WITH_CUBLAS
     {
@@ -175,13 +197,13 @@ void bench() {
         cublasLtMatmul(lt, op, &alpha, dB, la, dA, lb, &beta, dC, lc, dC, lc, &hr.algo, wsp, wss, 0);
       cudaEventRecord(e0);
       for (int i = 0; i < 20; ++i)
-        cublasLtMatmul(lt, op, &alpha, dB, la, dA, lb, &beta, dC, lc, dC, lc, &hr.algo, wsp, wss, 0);
+        cublasLtMatmul(lt, op, &alpha, dB + (size_t)(i % nrot) * s.N * s.K, la, dA, lb, &beta, dC, lc, dC, lc, &hr.algo, wsp, wss, 0);
       cudaEventRecord(e1);
       cudaEventSynchronize(e1);
       float ms;
       cudaEventElapsedTime(&ms, e0, e1);
       ms /= 20;
-      printf("  | cuBLASLt %7.3f ms %6.1f TF/s", ms, 2.0 * s.M * s.N * s.K / (ms * 1e-3) / 1e12);
+      printf("\n    %-14s %7.3f ms %6.1f TF/s", "cuBLASLt", ms, 2.0 * s.M * s.N * s.K / (ms * 1e-3) / 1e12);
       cudaFree(wsp);
       cublasLtDestroy(lt);
     }

@@ -10,14 +10,18 @@ ARCH=${PI05_ARCH:-"-gencode arch=compute_120,code=sm_120"}
 NVCC="$CUDA/bin/nvcc -std=c++20 -O3 $ARCH -Xcompiler -fPIC,-O3 -lineinfo ${PI05_DEFS}"
 mkdir -p $B/obj
 cd $HERE/src
-for f in kernels model; do $NVCC -c $f.cu -o $B/obj/$f.o & done
-for f in tokenizer weights host_io image engine_api; do
+for f in kernels model pb_kernels; do $NVCC -c $f.cu -o $B/obj/$f.o & done
+for f in tokenizer weights host_io image pb_host engine_api; do
   [ -f $f.cpp ] && $NVCC -x cu -c $f.cpp -o $B/obj/$f.o &
 done
 wait
 ar rcs $B/libpi05.a $B/obj/*.o
 cd $HERE/tools
 $NVCC -o $B/pi05_verify verify.cpp $B/libpi05.a
+$NVCC -o $B/pi05_verify_pb verify_pb.cpp $B/libpi05.a
 [ -f bench.cpp ] && $NVCC -o $B/pi05_bench bench.cpp $B/libpi05.a
 g++ -O2 -std=c++20 -o $B/tok_test tok_test.cpp ../src/tokenizer.cpp ../src/weights.cpp
 echo "built into $B"
+# native websocket policy server (submission side)
+g++ -O2 -std=c++20 -pthread -o $B/pi05_server $HERE/server/pi05_server.cpp $B/libpi05.a -L$CUDA/lib64 -lcudart_static -ldl -lrt
+echo "built $B/pi05_server"

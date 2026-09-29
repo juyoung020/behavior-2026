@@ -195,7 +195,6 @@ std::vector<Point> points_for(const ModelCfg& c, bool single) {
   for (int l = 0; l < c.depth; ++l) {
     std::string L = "pre.l" + std::to_string(l);
     p.push_back({L + ".norm1", L + ".norm1", 0});
-    p.push_back({L + ".qkv", L, 2});
     p.push_back({L + ".k", L + ".k", 0});
     p.push_back({L + ".vt", L + ".v", 3});
     p.push_back({L + ".norm2", L + ".norm2", 0});
@@ -547,6 +546,33 @@ int main(int argc, char** argv) {
     }
     std::sort(ms.begin(), ms.end());
     printf("graph forward: median %.2f ms, min %.2f ms (T=%d)\n", ms[ms.size() / 2], ms[0], model.h_dims.T);
+    // stage breakdown (eager launches, so a little launch overhead is included)
+    {
+      cudaEvent_t ev[5];
+      for (auto& e : ev) cudaEventCreate(&e);
+      std::vector<double> acc(4, 0.0);
+      const int reps = 5;
+      for (int r = 0; r < reps; ++r) {
+        cudaEventRecord(ev[0], st);
+        model.siglip(st);
+        cudaEventRecord(ev[1], st);
+        model.text_embed(st);
+        for (int l = 0; l < c.depth; ++l) model.prefix_layer(l, st);
+        cudaEventRecord(ev[2], st);
+        model.denoise_step(0, st);
+        cudaEventRecord(ev[3], st);
+        for (int s = 1; s < c.steps; ++s) model.denoise_step(s, st);
+        cudaEventRecord(ev[4], st);
+        cudaEventSynchronize(ev[4]);
+        for (int k = 0; k < 4; ++k) {
+          float t;
+          cudaEventElapsedTime(&t, ev[k], ev[k + 1]);
+          acc[k] += t / reps;
+        }
+      }
+      printf("eager stages: siglip %.2f ms | prefix %.2f ms | 1 denoise step %.2f ms | other %d steps %.2f ms\n", acc[0],
+             acc[1], acc[2], c.steps - 1, acc[3]);
+    }
     size_t fr, tot;
     cudaMemGetInfo(&fr, &tot);
     printf("device memory used by process (approx): %.2f GiB\n", (tot - fr) / 1073741824.0);

@@ -50,4 +50,47 @@ __device__ __forceinline__ float gelu_bf16(float x) {
 
 inline int cdiv(int a, int b) { return (a + b - 1) / b; }
 
+// Programmatic dependent launch (sm_90+). Every kernel begins with pdl_entry(): first allow the next kernel in the
+// stream to be scheduled (it only gets SM slots once all of our CTAs are running, i.e. it fills our tail), then wait
+// until the previous kernel has completed and its writes are visible. Without the launch attribute (PI05_PDL=0) both
+// instructions are no-ops, so correctness never depends on it.
+__device__ __forceinline__ void pdl_trigger() {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  asm volatile("griddepcontrol.launch_dependents;" ::: "memory");
+#endif
+}
+__device__ __forceinline__ void pdl_wait() {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  asm volatile("griddepcontrol.wait;" ::: "memory");
+#endif
+}
+__device__ __forceinline__ void pdl_entry() {
+  pdl_trigger();
+  pdl_wait();
+}
+
+inline bool pdl_enabled() {
+  static const bool on = [] {
+    const char* v = getenv("PI05_PDL");
+    return !(v && v[0] == '0');
+  }();
+  return on;
+}
+
+// Kernel launch with the programmatic-stream-serialization attribute (captured into the CUDA graph as a PDL edge).
+template <typename... KArgs, typename... Args>
+inline void launch_k(void (*k)(KArgs...), dim3 grid, dim3 block, size_t smem, cudaStream_t st, Args... args) {
+  cudaLaunchConfig_t c = {};
+  c.gridDim = grid;
+  c.blockDim = block;
+  c.dynamicSmemBytes = smem;
+  c.stream = st;
+  cudaLaunchAttribute a[1];
+  a[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+  a[0].val.programmaticStreamSerializationAllowed = 1;
+  c.attrs = a;
+  c.numAttrs = pdl_enabled() ? 1 : 0;
+  PI05_CUDA(cudaLaunchKernelEx(&c, k, static_cast<KArgs>(args)...));
+}
+
 }  // namespace pi05

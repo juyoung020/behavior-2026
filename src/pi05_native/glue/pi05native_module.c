@@ -37,10 +37,11 @@ static PyObject* py_info(PyObject* self, PyObject* args) {
   if (!e) return NULL;
   Pi05Info i;
   pi05_info(e, &i);
-  return Py_BuildValue("{s:i,s:i,s:i,s:L,s:L,s:s,s:(sss)}", "action_horizon", i.action_horizon, "action_dim",
+  return Py_BuildValue("{s:i,s:i,s:i,s:L,s:L,s:s,s:(sss),s:i,s:i}", "action_horizon", i.action_horizon, "action_dim",
                        i.action_dim, "proprio_min_len", i.proprio_min_len, "weight_bytes", (long long)i.weight_bytes,
                        "activation_bytes", (long long)i.activation_bytes, "robot_name", i.robot_name, "cam_keys",
-                       i.cam_keys[0], i.cam_keys[1], i.cam_keys[2]);
+                       i.cam_keys[0], i.cam_keys[1], i.cam_keys[2], "model_kind", i.model_kind, "num_steps",
+                       i.num_steps);
 }
 
 /* image argument: a buffer (H, W, C>=3) uint8, or a tuple (device_ptr, h, w, row_stride, pix_stride) */
@@ -191,6 +192,48 @@ done_img:
   return ret;
 }
 
+/* ---- PiBehavior (2025 1st place) ---- */
+static PyObject* py_set_task(PyObject* self, PyObject* args) {
+  PyObject* cap;
+  int slot, task;
+  if (!PyArg_ParseTuple(args, "Oii", &cap, &slot, &task)) return NULL;
+  Pi05Engine* e = get_engine(cap);
+  if (!e) return NULL;
+  pi05_set_task(e, slot, task);
+  Py_RETURN_NONE;
+}
+
+static PyObject* py_set_stage(PyObject* self, PyObject* args) {
+  PyObject* cap;
+  int slot, stage, mode;
+  if (!PyArg_ParseTuple(args, "Oiii", &cap, &slot, &stage, &mode)) return NULL;
+  Pi05Engine* e = get_engine(cap);
+  if (!e) return NULL;
+  pi05_set_stage(e, slot, stage, mode);
+  Py_RETURN_NONE;
+}
+
+static PyObject* py_get_stage(PyObject* self, PyObject* args) {
+  PyObject* cap;
+  int slot;
+  if (!PyArg_ParseTuple(args, "Oi", &cap, &slot)) return NULL;
+  Pi05Engine* e = get_engine(cap);
+  if (!e) return NULL;
+  int32_t s, p, f;
+  pi05_get_stage(e, slot, &s, &p, &f);
+  return Py_BuildValue("(iii)", s, p, f);
+}
+
+static PyObject* py_pb_config(PyObject* self, PyObject* args) {
+  PyObject* cap;
+  int ex, keep, steps, tricks;
+  if (!PyArg_ParseTuple(args, "Oiiii", &cap, &ex, &keep, &steps, &tricks)) return NULL;
+  Pi05Engine* e = get_engine(cap);
+  if (!e) return NULL;
+  pi05_pb_config(e, ex, keep, steps, tricks);
+  Py_RETURN_NONE;
+}
+
 static PyObject* py_reset(PyObject* self, PyObject* args) {
   PyObject* cap;
   int slot = -1;
@@ -219,6 +262,11 @@ static PyMethodDef methods[] = {
     {"act", py_act, METH_VARARGS,
      "act(engine, slot, img0, img1, img2, proprio_f32, prompt, replan_every, out_f32) -> (new_chunk, timing)"},
     {"reset", py_reset, METH_VARARGS, "reset(engine, slot=-1)"},
+    {"set_task", py_set_task, METH_VARARGS, "set_task(engine, slot, task)  (PiBehavior)"},
+    {"set_stage", py_set_stage, METH_VARARGS,
+     "set_stage(engine, slot, stage, mode)  mode 0 = model voting, 1 = fixed from outside (PiBehavior)"},
+    {"get_stage", py_get_stage, METH_VARARGS, "get_stage(engine, slot) -> (stage, last predicted, forced)"},
+    {"pb_config", py_pb_config, METH_VARARGS, "pb_config(engine, execute, keep, steps, apply_eval_tricks)"},
     {"seed", py_seed, METH_VARARGS, "seed(engine, seed)"},
     {NULL, NULL, 0, NULL}};
 

@@ -27,13 +27,13 @@ void launch_rope_tables(float2* table, int max_pos, int half, cudaStream_t st);
 void launch_rope_split(const bf16* qkv, const float2* rope, bf16* q_out, bf16* kc, bf16* vt, int rows,
                        const int* d_rows, int heads, int vt_ld, int pos0, const int* d_pos0, cudaStream_t st);
 void launch_softmax_f32_rows(const float* logits, int ld_in, bf16* p, int ld_out, int rows, const int* d_rows,
-                             const int* d_cols, const int* d_cols8, cudaStream_t st);
+                             const int* d_cols, const int* d_cols8, cudaStream_t st, int g0 = 0, int heads = 1);
 void launch_action_in(const float* x, const bf16* w, const bf16* b, bf16* h, int rows, int in_dim, int out_dim,
                       cudaStream_t st);
-void launch_flow_update(float* x, const bf16* v, int n, cudaStream_t st);
+void launch_flow_update(float* x, const bf16* v, int n, float dtb, cudaStream_t st);
 void launch_time_embed(const float* times, int n_steps, int dim, float* out, cudaStream_t st);
 void launch_linear_f32(const float* x, const bf16* w, const bf16* b, float* y, int rows, int in_dim, int out_dim,
-                       int swish, cudaStream_t st);
+                       int act, cudaStream_t st);  // act: 0 none, 1 swish, 2 sigmoid, 3 relu
 void launch_linear_bf16_vec(const float* x, const bf16* w, const bf16* b, bf16* y, int rows, int in_dim,
                             int out_dim, cudaStream_t st);
 

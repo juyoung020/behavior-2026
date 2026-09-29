@@ -4,6 +4,7 @@
 #include <map>
 
 #include "gemm.cuh"
+#include "pb_kernels.cuh"
 
 namespace pi05 {
 
@@ -16,11 +17,17 @@ int g_sms = 70;
 
 enum class Tile { L, M, S, K };
 
-template <int BM, int BN, int WM, int WN, int ST, class Epi>
+template <int BM, int BN, int WM, int WN, int ST, int BK, class Epi>
 void launch_tile(const GemmParams& p, const Epi& epi, int batch, cudaStream_t st) {
-  using C = GemmCfg<BM, BN, WM, WN, ST>;
-  dim3 grid(cdiv(p.N, BN), cdiv(p.M, BM), batch * p.splits);
-  gemm_nt_kernel<BM, BN, WM, WN, ST, Epi><<<grid, C::kThreads, C::kSmem, st>>>(p, epi);
+  using C = GemmCfg<BM, BN, WM, WN, ST, BK>;
+  auto kern = gemm_nt_kernel<BM, BN, WM, WN, ST, BK, Epi>;
+  static bool attr = false;  // one static per template instance
+  if (!attr && C::kSmem > 48 * 1024) {
+    PI05_CUDA(cudaFuncSetAttribute(kern, cudaFuncAttributeMaxDynamicSharedMemorySize, C::kSmem));
+    attr = true;
+  }
+  dim3 grid(cdiv(p.M, BM), cdiv(p.N, BN), batch * p.splits);
+  launch_k(kern, grid, C::kThreads, C::kSmem, st, p, epi);
 }
 
 Tile choose_tile(int M, int N, int batch) {
@@ -42,6 +49,8 @@ Tile choose_tile(int M, int N, int batch) {
 }
 
 // C[M,N] = A[M,K] . B[N,K]^T with epilogue. `ws` is needed when the skinny tile splits K.
+int* g_counters = nullptr;  // split-K tile tickets, zeroed once; every reducing CTA re-arms its own
+
 template <class Epi>
 void gemm(GemmParams p, const Epi& epi, cudaStream_t st, float* ws = nullptr, size_t ws_floats = 0, int batch = 1) {
   Tile t = choose_tile(p.M, p.N, batch);
@@ -53,22 +62,29 @@ void gemm(GemmParams p, const Epi& epi, cudaStream_t st, float* ws = nullptr, si
     if (splits > 1 && (size_t)splits * p.M * p.N > ws_floats) splits = 1;
     p.splits = splits;
     p.ws = ws;
-    launch_tile<32, 64, 1, 4, 6>(p, epi, batch, st);
-    if (splits > 1) {
+    p.counters = g_counters;
+    launch_tile<32, 64, 1, 4, 6, 32>(p, epi, batch, st);
+    if (splits > 1 && !p.counters) {
       const int pairs = p.M * p.N / 2;
-      splitk_reduce_kernel<<<cdiv(pairs, 256), 256, 0, st>>>(ws, splits, p.M, p.N, p.dM, epi);
+      launch_k(splitk_reduce_kernel<Epi>, cdiv(pairs, 256), 256, 0, st, (const float*)ws, splits, p.M, p.N, p.dM, epi);
     }
     return;
   }
   p.splits = 1;
-  if (t == Tile::L) launch_tile<128, 128, 2, 4, 3>(p, epi, batch, st);
-  else if (t == Tile::M) launch_tile<128, 64, 2, 2, 4>(p, epi, batch, st);
-  else launch_tile<64, 64, 2, 2, 4>(p, epi, batch, st);
+  if (t == Tile::L) launch_tile<128, 128, 2, 4, 3, 32>(p, epi, batch, st);
+  else if (t == Tile::M) launch_tile<128, 64, 2, 2, 4, 32>(p, epi, batch, st);
+  else launch_tile<64, 64, 2, 2, 4, 32>(p, epi, batch, st);
 }
 
 GemmParams gp(const bf16* A, int lda, const bf16* B, int ldb, int M, int N, int K) {
   GemmParams p;
   p.A = A; p.lda = lda; p.B = B; p.ldb = ldb; p.M = M; p.N = N; p.K = K;
+  return p;
+}
+// B is a model weight: its tiles may be prefetched before the PDL wait
+GemmParams gw(const bf16* A, int lda, const bf16* B, int ldb, int M, int N, int K) {
+  GemmParams p = gp(A, lda, B, ldb, M, N, K);
+  p.b_static = true;
   return p;
 }
 
@@ -109,6 +125,19 @@ bool Model::load(const WeightFile& wf, std::string* err) {
   cfg.max_tok = wf.cfg_int("max_token_len", 200);
   cfg.depth = wf.cfg_int("llm.depth", 18);
   cfg.img_depth = wf.cfg_int("img.depth", 27);
+  cfg.pb = wf.cfg_str("model", "pi05") == "pi_behavior";
+  if (cfg.pb) {
+    cfg.extra_dev = 5;   // base task + 4 fused task/stage tokens (pi_behavior.py:577-590)
+    cfg.max_tok = 32;    // one token per padded state dim (pi_behavior.py:592-609)
+    cfg.g0 = cfg.img_tokens() + 1;  // images + base task token attend among themselves only
+    cfg.num_tasks = wf.cfg_int("pb.num_tasks", 50);
+    cfg.stages.clear();
+    if (auto v = wf.cfg("pb.stages"))
+      for (auto& s : *v) cfg.stages.push_back(std::stoi(s));
+    if ((int)cfg.stages.size() != cfg.num_tasks) { *err = "pb.stages size"; return false; }
+    inpaint_threshold = std::stof(wf.cfg_str("pb.inpaint_threshold", "0.3"));
+  }
+  cfg.dtb = host_bf2f(host_f2bf((float)(-1.0 / cfg.steps)));
   if (wf.cfg_int("llm.width", 0) != 2048 || wf.cfg_int("ae.width", 0) != 1024 || wf.cfg_int("img.width", 0) != 1152 ||
       wf.cfg_int("llm.head_dim", 0) != 256 || wf.cfg_int("llm.heads", 0) != 8 || wf.cfg_int("llm.kv_heads", 0) != 1) {
     *err = "unsupported model dimensions";
@@ -120,7 +149,7 @@ bool Model::load(const WeightFile& wf, std::string* err) {
   for (const TensorInfo& t : wf.tensors()) {
     const std::string& nm = t.name;
     if (t.dtype != DType::BF16) continue;
-    if (nm == "llm.embed" || nm.find("_mod_") != std::string::npos || nm == "llm.final_norm") continue;
+    if (nm == "llm.embed" || nm.find("_mod_") != std::string::npos) continue;
     if (nm.rfind("time_mlp", 0) == 0) continue;
     dev.push_back(&t);
   }
@@ -135,11 +164,33 @@ bool Model::load(const WeightFile& wf, std::string* err) {
   const size_t chunk = 64 << 20;
   uint8_t* stage = nullptr;
   PI05_CUDA(cudaMallocHost(&stage, chunk));
+  std::vector<uint8_t> perm;
   for (auto* t : dev) {
+    const std::string& nm = t->name;
+    const bool rope_rows = nm.size() > 6 && nm.compare(nm.size() - 6, 6, ".qkv_w") == 0 && nm.rfind("img.", 0) != 0;
+    if (rope_rows) {
+      // q and k rows of every 256-wide head reordered to (0,128,1,129,...) so the GEMM epilogue sees RoPE pairs
+      // side by side (EpiQKVRope); v rows unchanged.
+      const int64_t rows = t->shape[0], K = t->shape[1];
+      std::vector<uint8_t> src(t->nbytes);
+      if (!wf.read(*t, src.data(), err)) { cudaFreeHost(stage); return false; }
+      perm.assign(t->nbytes, 0);
+      const int64_t rb = K * 2, rope_blocks = rows / 256 - 1;  // all heads + k; the last block is v
+      for (int64_t r = 0; r < rows; ++r) {
+        int64_t srow = r;
+        if (r / 256 < rope_blocks) {
+          const int64_t c = r % 256;
+          srow = (r / 256) * 256 + (c >> 1) + (c & 1) * 128;
+        }
+        memcpy(&perm[r * rb], &src[srow * rb], rb);
+      }
+      PI05_CUDA(cudaMemcpy(arena_ + off[nm], perm.data(), t->nbytes, cudaMemcpyHostToDevice));
+      continue;
+    }
     for (uint64_t o = 0; o < t->nbytes; o += chunk) {
       uint64_t n = std::min<uint64_t>(chunk, t->nbytes - o);
       if (!wf.read_range(*t, o, n, stage, err)) { cudaFreeHost(stage); return false; }
-      PI05_CUDA(cudaMemcpy(arena_ + off[t->name] + o, stage, n, cudaMemcpyHostToDevice));
+      PI05_CUDA(cudaMemcpy(arena_ + off[nm] + o, stage, n, cudaMemcpyHostToDevice));
     }
   }
   cudaFreeHost(stage);
@@ -165,13 +216,28 @@ bool Model::load(const WeightFile& wf, std::string* err) {
     ll_[l] = {W(p + "attn_norm"), W(p + "qkv_w"), W(p + "o_w"), W(p + "ffn_norm"), W(p + "gu_w"), W(p + "down_w")};
     al_[l] = {W(a + "qkv_w"), W(a + "o_w"), W(a + "gu_w"), W(a + "down_w")};
   }
+  final_norm_ = W("llm.final_norm");
+  if (cfg.pb) {
+    pb_task_emb_ = W("pb.task_emb");
+    pb_stage_emb_ = W("pb.task_stage_emb");
+    const char* lin[7] = {"gate_sincos", "gate_task_stage", "gate_task", "fusion_layer1", "fusion_layer2",
+                          "stage_projection", "stage_pred_from_vlm"};
+    for (int i = 0; i < 7; ++i) {
+      pb_w_[i] = W(std::string("pb.") + lin[i] + ".w");
+      pb_b_[i] = W(std::string("pb.") + lin[i] + ".b");
+    }
+    const char* kv[4] = {"k_coeffs", "v_coeffs", "k_bias", "v_bias"};
+    for (int i = 0; i < 4; ++i) pb_kv_[i] = W(std::string("pb.kv.") + kv[i]);
+  }
   if (!err->empty()) return false;
 
   // ---- token embedding table stays in host memory (only <= 200 rows are used per call) ----
+  // PiBehavior only embeds state bins 0..255, so only those rows are read.
   const TensorInfo* emb = wf.find("llm.embed");
   if (!emb) { *err = "missing llm.embed"; return false; }
-  PI05_CUDA(cudaMallocHost(&embed_host, emb->nbytes));
-  if (!wf.read(*emb, embed_host, err)) return false;
+  const uint64_t emb_bytes = cfg.pb ? (uint64_t)256 * cfg.w * 2 : emb->nbytes;
+  PI05_CUDA(cudaMallocHost(&embed_host, emb_bytes));
+  if (!wf.read_range(*emb, 0, emb_bytes, embed_host, err)) return false;
 
   // ---- activations: one arena ----
   const int IT = cfg.img_tokens(), TC = cfg.t_cap(), SC = cfg.s_cap();
@@ -211,9 +277,33 @@ bool Model::load(const WeightFile& wf, std::string* err) {
       {(void**)&shid, (size_t)cfg.ah * cfg.ae_mlp * 2},
       {(void**)&v, (size_t)cfg.ah * cfg.ad * 2},
       {(void**)&ws, ws_floats * 4},
+      {(void**)&counters, 4096 * 4},
       {(void**)&mods, ((size_t)cfg.steps * cfg.depth * 2 + cfg.steps) * 3 * cfg.ae_w * 2},
       {(void**)&rope, (size_t)(SC + 64) * 128 * sizeof(float2)},
   };
+  if (cfg.pb) {
+    const std::vector<Buf> pbb = {
+        {(void**)&pb_ints, 16},
+        {(void**)&pb_nstages, (size_t)cfg.num_tasks * 4},
+        {(void**)&pb_offsets, (size_t)cfg.num_tasks * 4},
+        {(void**)&pb_all, 4096 * 4},
+        {(void**)&pb_gsc, 1024 * 4},
+        {(void**)&pb_gts, 1024 * 4},
+        {(void**)&pb_gt, 2048 * 4},
+        {(void**)&pb_h1, 4096 * 4},
+        {(void**)&pb_bal, 2048 * 4},
+        {(void**)&pb_sf, 2048 * 4},
+        {(void**)&pb_sd, 2048 * 4},
+        {(void**)&pb_x0O, 512 * 4},
+        {(void**)&pb_zO, 512 * 4},
+        {(void**)&pb_C, (size_t)pb_nU * pb_nO * 4},
+        {(void**)&pb_stage_n, 2048 * 2},
+        {(void**)&pb_logits, 16 * 2},
+        {(void**)&kc2, (size_t)cfg.depth * SC * cfg.hd * 2},
+        {(void**)&vt2, (size_t)cfg.depth * cfg.hd * SC * 2},
+    };
+    bufs.insert(bufs.end(), pbb.begin(), pbb.end());
+  }
   size_t atot = 0;
   for (auto& b : bufs) atot += (b.bytes + 255) / 256 * 256;
   PI05_CUDA(cudaMalloc(&act_arena_, atot));
@@ -223,6 +313,21 @@ bool Model::load(const WeightFile& wf, std::string* err) {
   for (auto& b : bufs) {
     *b.p = act_arena_ + o;
     o += (b.bytes + 255) / 256 * 256;
+  }
+  g_counters = counters;
+  if (cfg.pb) {
+    std::vector<int> offs(cfg.num_tasks, 0);
+    for (int i = 1; i < cfg.num_tasks; ++i) offs[i] = offs[i - 1] + cfg.stages[i - 1];
+    PI05_CUDA(cudaMemcpy(pb_nstages, cfg.stages.data(), cfg.num_tasks * 4, cudaMemcpyHostToDevice));
+    PI05_CUDA(cudaMemcpy(pb_offsets, offs.data(), cfg.num_tasks * 4, cudaMemcpyHostToDevice));
+    const TensorInfo* tc = wf.find("pb.inpaint_C4");
+    const TensorInfo* tl = wf.find("pb.corr_L");
+    if (!tc || !tl || tc->numel() != (int64_t)pb_nU * pb_nO) { *err = "missing pb.inpaint_C4 / pb.corr_L"; return false; }
+    std::vector<float> Ch(tc->numel());
+    if (!wf.read(*tc, Ch.data(), err)) return false;
+    PI05_CUDA(cudaMemcpy(pb_C, Ch.data(), Ch.size() * 4, cudaMemcpyHostToDevice));
+    corr_L.resize(tl->numel());
+    if (!wf.read(*tl, corr_L.data(), err)) return false;
   }
   launch_rope_tables(rope, SC + 64, 128, 0);
   if (!precompute_modulation(wf, err)) return false;
@@ -237,9 +342,11 @@ bool Model::precompute_modulation(const WeightFile& wf, std::string* err) {
   times.resize(cfg.steps);
   float t = 1.0f;
   const float dt = (float)(-1.0 / cfg.steps);
+  t_new.resize(cfg.steps);
   for (int s = 0; s < cfg.steps; ++s) {
     times[s] = t;
     t = t + dt;
+    t_new[s] = t;  // time after this Euler step (pi_behavior.py:1064 time_new = time + dt)
   }
   auto load_tmp = [&](const std::string& nm, bf16** dst) -> bool {
     const TensorInfo* ti = wf.find(nm);
@@ -296,8 +403,8 @@ void Model::do_tap(const std::string& name, const void* p, int dt, std::vector<i
 
 void Model::upload_inputs(const uint8_t* img, const std::vector<int>& tokens, const float* noise, cudaStream_t st) {
   const int L = (int)tokens.size();
-  h_dims.L = L;
-  h_dims.T = cfg.img_tokens() + L;
+  h_dims.L = cfg.extra_dev + L;
+  h_dims.T = cfg.img_tokens() + cfg.extra_dev + L;
   h_dims.T8 = (h_dims.T + 7) / 8 * 8;
   h_dims.S = h_dims.T + cfg.ah;
   h_dims.S8 = (h_dims.S + 7) / 8 * 8;
@@ -314,18 +421,37 @@ void Model::upload_inputs(const uint8_t* img, const std::vector<int>& tokens, co
   if (img) PI05_CUDA(cudaMemcpyAsync(d_img, img, (size_t)cfg.n_img * 224 * 224 * 3, cudaMemcpyHostToDevice, st));
   PI05_CUDA(cudaMemcpyAsync(d_tokens, tokens.data(), (size_t)L * 4, cudaMemcpyHostToDevice, st));
   PI05_CUDA(cudaMemcpyAsync(d_dims, &h_dims, sizeof(Dims), cudaMemcpyHostToDevice, st));
-  PI05_CUDA(cudaMemcpyAsync(x + (size_t)cfg.img_tokens() * row, h_emb.data(), (size_t)L * row * 2,
+  PI05_CUDA(cudaMemcpyAsync(x + (size_t)(cfg.img_tokens() + cfg.extra_dev) * row, h_emb.data(), (size_t)L * row * 2,
                             cudaMemcpyHostToDevice, st));
   PI05_CUDA(cudaMemcpyAsync(xt, noise, (size_t)cfg.ah * cfg.ad * 4, cudaMemcpyHostToDevice, st));
   PI05_CUDA(cudaStreamSynchronize(st));  // host buffers may be reused by the caller
+}
+
+void Model::set_pb_inputs(int task, int stage, const float* x0O, const float* zO, int nO, cudaStream_t st) {
+  if (!cfg.pb) return;
+  h_pb_ints[0] = task;
+  h_pb_ints[1] = stage;
+  h_pb_ints[2] = (x0O && zO && nO == pb_nO) ? 1 : 0;
+  PI05_CUDA(cudaMemcpyAsync(pb_ints, h_pb_ints, sizeof h_pb_ints, cudaMemcpyHostToDevice, st));
+  if (h_pb_ints[2]) {
+    PI05_CUDA(cudaMemcpyAsync(pb_x0O, x0O, (size_t)nO * 4, cudaMemcpyHostToDevice, st));
+    PI05_CUDA(cudaMemcpyAsync(pb_zO, zO, (size_t)nO * 4, cudaMemcpyHostToDevice, st));
+  }
+  PI05_CUDA(cudaStreamSynchronize(st));
+}
+
+void Model::download_stage_logits(float* out, cudaStream_t st) {
+  uint16_t hb[16];
+  PI05_CUDA(cudaMemcpyAsync(hb, pb_logits, 15 * 2, cudaMemcpyDeviceToHost, st));
+  PI05_CUDA(cudaStreamSynchronize(st));
+  for (int i = 0; i < 15; ++i) out[i] = host_bf2f(hb[i]);
 }
 
 void Model::siglip_layer(int l, cudaStream_t st) {
   const ImgLayer& w = il_[l];
   const int M = cfg.img_tokens(), D = cfg.img_w;
   launch_layernorm(xi, w.ln1_s, w.ln1_b, ni, M, D, st);
-  gemm(gp(ni, D, w.qkv_w, D, M, 3 * D, D), EpiBias{qkvi, 3 * D, w.qkv_b}, st);
-  launch_siglip_attn_prep(qkvi, qsi, vti, cfg.n_img, st);
+  gemm(gw(ni, D, w.qkv_w, D, M, 3 * D, D), EpiSiglipQKV{qkvi, qsi, vti, w.qkv_b}, st);
   {  // logits per (image, head): [256, 72] . [256, 72]^T -> bf16
     GemmParams p = gp(qsi, D, qkvi + D, 3 * D, 256, 256, cfg.img_hd);
     p.nb2 = cfg.img_heads;
@@ -343,12 +469,12 @@ void Model::siglip_layer(int l, cudaStream_t st) {
     p.sC1 = 256LL * D; p.sC2 = cfg.img_hd;
     gemm(p, EpiBf16{ai, D}, st, nullptr, 0, cfg.n_img * cfg.img_heads);
   }
-  gemm(gp(ai, D, w.o_w, D, M, D, D), EpiBiasResid{xi, D, w.o_b, xi}, st);
+  gemm(gw(ai, D, w.o_w, D, M, D, D), EpiBiasResid{xi, D, w.o_b, xi}, st);
   if (tap) for (int c = 0; c < cfg.n_img; ++c)
     do_tap("img.c" + std::to_string(c) + ".l" + std::to_string(l) + ".res1", xi + (size_t)c * 256 * D, 0, {256, D}, st);
   launch_layernorm(xi, w.ln2_s, w.ln2_b, ni, M, D, st);
-  gemm(gp(ni, D, w.fc1_w, D, M, cfg.img_mlp, D), EpiBiasGelu{hi, cfg.img_mlp, w.fc1_b}, st);
-  gemm(gp(hi, cfg.img_mlp, w.fc2_w, cfg.img_mlp, M, D, cfg.img_mlp), EpiBiasResid{xi, D, w.fc2_b, xi}, st);
+  gemm(gw(ni, D, w.fc1_w, D, M, cfg.img_mlp, D), EpiBiasGelu{hi, cfg.img_mlp, w.fc1_b}, st);
+  gemm(gw(hi, cfg.img_mlp, w.fc2_w, cfg.img_mlp, M, D, cfg.img_mlp), EpiBiasResid{xi, D, w.fc2_b, xi}, st);
   if (tap) for (int c = 0; c < cfg.n_img; ++c)
     do_tap("img.c" + std::to_string(c) + ".l" + std::to_string(l) + ".out", xi + (size_t)c * 256 * D, 0, {256, D}, st);
 }
@@ -358,7 +484,7 @@ void Model::siglip_head(cudaStream_t st) {
   launch_layernorm(xi, post_s_, post_b_, ni, M, D, st);
   if (tap) for (int c = 0; c < cfg.n_img; ++c)
     do_tap("img.c" + std::to_string(c) + ".encoded", ni + (size_t)c * 256 * D, 0, {256, D}, st);
-  gemm(gp(ni, D, head_w_, D, M, cfg.w, D), EpiBias{x, cfg.w, head_b_}, st);
+  gemm(gw(ni, D, head_w_, D, M, cfg.w, D), EpiBias{x, cfg.w, head_b_}, st);
   if (tap) for (int c = 0; c < cfg.n_img; ++c)
     do_tap("img.c" + std::to_string(c) + ".tokens", x + (size_t)c * 256 * cfg.w, 0, {256, cfg.w}, st);
 }
@@ -374,7 +500,38 @@ void Model::siglip(cudaStream_t st) {
 }
 
 void Model::text_embed(cudaStream_t st) {
+  if (cfg.pb) {  // task + stage tokens (pi_behavior.py:452-517), rows [img_tokens, img_tokens + 5)
+    bf16* rows = x + (size_t)cfg.img_tokens() * cfg.w;
+    launch_pb_task_prep(PbTaskArgs{pb_task_emb_, pb_stage_emb_, pb_ints, pb_nstages, pb_offsets}, pb_all, rows, st);
+    launch_linear_f32(pb_all, pb_w_[0], pb_b_[0], pb_gsc, 1, 4096, 1024, 2, st);  // sigmoid(gate_sincos)
+    launch_linear_f32(pb_all, pb_w_[1], pb_b_[1], pb_gts, 1, 4096, 1024, 2, st);  // sigmoid(gate_task_stage)
+    launch_linear_f32(pb_all, pb_w_[2], pb_b_[2], pb_gt, 1, 4096, 2048, 2, st);   // sigmoid(gate_task)
+    launch_linear_f32(pb_all, pb_w_[3], pb_b_[3], pb_h1, 1, 4096, 4096, 3, st);   // relu(fusion_layer1)
+    launch_linear_f32(pb_h1, pb_w_[4], pb_b_[4], pb_bal, 1, 4096, 2048, 0, st);   // fusion_layer2
+    launch_pb_stage_feat(pb_all, pb_gsc, pb_gts, pb_sf, st);
+    launch_linear_f32(pb_sf, pb_w_[5], pb_b_[5], pb_sd, 1, 2048, 2048, 0, st);    // stage_projection
+    launch_pb_task_rows(pb_all, pb_gt, pb_bal, pb_sd, rows, st);
+  }
+  if (tap && cfg.pb) do_tap("pre.x0", x, 0, {h_dims.T, cfg.w}, st);
   if (tap) do_tap("txt.emb", x + (size_t)cfg.img_tokens() * cfg.w, 0, {h_dims.L, cfg.w}, st);
+}
+
+void Model::prefix_tail(cudaStream_t st) {
+  if (!cfg.pb) return;
+  // stage head: final_norm(prefix_out[base task token]) -> stage_pred_from_vlm (pi_behavior.py:1009-1022)
+  launch_rmsnorm(x + (size_t)cfg.img_tokens() * cfg.w, final_norm_, pb_stage_n, 1, cfg.w, nullptr, st);
+  launch_linear_bf16in(pb_stage_n, pb_w_[6], pb_b_[6], pb_logits, cfg.w, 15, st);
+  // each action-expert layer attends to a learned mix of all VLM layers' K/V (pi_behavior.py:1024-1026)
+  launch_kv_transform(kc, vt, kc2, vt2, pb_kv_[0], pb_kv_[1], pb_kv_[2], pb_kv_[3], cfg.depth, cfg.s_cap(), &d_dims->T,
+                      st);
+  if (tap) {
+    do_tap("pre.stage_logits", pb_logits, 0, {15}, st);
+    do_tap("pre.base_final", pb_stage_n, 0, {cfg.w}, st);
+    for (int l : {0, cfg.depth - 1}) {
+      do_tap("pre.kv2.l" + std::to_string(l) + ".k", kc2 + (size_t)l * cfg.s_cap() * cfg.hd, 0, {h_dims.T, cfg.hd}, st);
+      do_tap("pre.kv2.l" + std::to_string(l) + ".vt", vt2 + (size_t)l * cfg.hd * cfg.s_cap(), 0, {cfg.hd, cfg.s_cap()}, st);
+    }
+  }
 }
 
 void Model::prefix_layer(int l, cudaStream_t st) {
@@ -385,14 +542,12 @@ void Model::prefix_layer(int l, cudaStream_t st) {
   launch_rmsnorm(x, w.attn_norm, n, TC, D, dT, st);
   if (tap) do_tap(p + ".norm1", n, 0, {h_dims.T, D}, st);
   {
-    GemmParams g = gp(n, D, w.qkv_w, D, TC, (H + 2) * HD, D);
+    GemmParams g = gw(n, D, w.qkv_w, D, TC, (H + 2) * HD, D);
     g.dM = dT;
-    gemm(g, EpiBf16{qkv, (H + 2) * HD}, st);
+    gemm(g, EpiQKVRope{q, kc + (size_t)l * SC * HD, vt + (size_t)l * HD * SC, rope, nullptr, H, SC}, st);
   }
-  if (tap) do_tap(p + ".qkv", qkv, 0, {h_dims.T, (H + 2) * HD}, st);
   bf16* kcl = kc + (size_t)l * SC * HD;
   bf16* vtl = vt + (size_t)l * HD * SC;
-  launch_rope_split(qkv, rope, q, kcl, vtl, TC, dT, H, SC, 0, nullptr, st);
   if (tap) {
     do_tap(p + ".k", kcl, 0, {h_dims.T, HD}, st);
     do_tap(p + ".vt", vtl, 0, {HD, SC}, st);
@@ -403,7 +558,7 @@ void Model::prefix_layer(int l, cudaStream_t st) {
     g.dN = dT;
     gemm(g, EpiF32{lg, SC}, st);
   }
-  launch_softmax_f32_rows(lg, SC, pr, SC, TC * H, &d_dims->TH, dT, &d_dims->T8, st);
+  launch_softmax_f32_rows(lg, SC, pr, SC, TC * H, &d_dims->TH, dT, &d_dims->T8, st, cfg.g0, H);
   {
     GemmParams g = gp(pr, SC, vtl, SC, TC * H, HD, SC);
     g.dM = &d_dims->TH;
@@ -411,7 +566,7 @@ void Model::prefix_layer(int l, cudaStream_t st) {
     gemm(g, EpiBf16{att, HD}, st);
   }
   {
-    GemmParams g = gp(att, D, w.o_w, D, TC, D, D);
+    GemmParams g = gw(att, D, w.o_w, D, TC, D, D);
     g.dM = dT;
     gemm(g, EpiResid{x, D, x}, st);
   }
@@ -419,12 +574,12 @@ void Model::prefix_layer(int l, cudaStream_t st) {
   launch_rmsnorm(x, w.ffn_norm, n, TC, D, dT, st);
   if (tap) do_tap(p + ".norm2", n, 0, {h_dims.T, D}, st);
   {
-    GemmParams g = gp(n, D, w.gu_w, D, TC, 2 * cfg.mlp, D);
+    GemmParams g = gw(n, D, w.gu_w, D, TC, 2 * cfg.mlp, D);
     g.dM = dT;
     gemm(g, EpiGeluGate{hid, cfg.mlp}, st);
   }
   {
-    GemmParams g = gp(hid, cfg.mlp, w.down_w, cfg.mlp, TC, D, cfg.mlp);
+    GemmParams g = gw(hid, cfg.mlp, w.down_w, cfg.mlp, TC, D, cfg.mlp);
     g.dM = dT;
     gemm(g, EpiResid{x, D, x}, st);
   }
@@ -439,10 +594,9 @@ void Model::suffix_layer(int s, int l, cudaStream_t st) {
   bf16* m2 = mod(s, l, 1);
   launch_adarms(h, m1, hn, A, D, st);
   if (tap) do_tap(p + ".norm1", hn, 0, {A, D}, st);
-  gemm(gp(hn, D, w.qkv_w, D, A, (H + 2) * HD, D), EpiBf16{sqkv, (H + 2) * HD}, st, ws, ws_floats);
-  bf16* kcl = kc + (size_t)l * SC * HD;
-  bf16* vtl = vt + (size_t)l * HD * SC;
-  launch_rope_split(sqkv, rope, sq, kcl, vtl, A, nullptr, H, SC, 0, &d_dims->T, st);
+  bf16* kcl = (cfg.pb ? kc2 : kc) + (size_t)l * SC * HD;  // PiBehavior: layer-mixed prefix cache
+  bf16* vtl = (cfg.pb ? vt2 : vt) + (size_t)l * HD * SC;
+  gemm(gw(hn, D, w.qkv_w, D, A, (H + 2) * HD, D), EpiQKVRope{sq, kcl, vtl, rope, &d_dims->T, H, SC}, st, ws, ws_floats);
   {
     GemmParams g = gp(sq, HD, kcl, HD, A * H, SC, HD);
     g.dN = &d_dims->S;
@@ -454,12 +608,12 @@ void Model::suffix_layer(int s, int l, cudaStream_t st) {
     g.dK = &d_dims->S8;
     gemm(g, EpiBf16{satt, HD}, st);
   }
-  gemm(gp(satt, H * HD, w.o_w, H * HD, A, D, H * HD), EpiGatedResid{h, D, h, m1 + 2 * D}, st, ws, ws_floats);
+  gemm(gw(satt, H * HD, w.o_w, H * HD, A, D, H * HD), EpiGatedResid{h, D, h, m1 + 2 * D}, st, ws, ws_floats);
   if (tap) do_tap(p + ".res1", h, 0, {A, D}, st);
   launch_adarms(h, m2, hn, A, D, st);
   if (tap) do_tap(p + ".norm2", hn, 0, {A, D}, st);
-  gemm(gp(hn, D, w.gu_w, D, A, 2 * cfg.ae_mlp, D), EpiGeluGate{shid, cfg.ae_mlp}, st, ws, ws_floats);
-  gemm(gp(shid, cfg.ae_mlp, w.down_w, cfg.ae_mlp, A, D, cfg.ae_mlp), EpiGatedResid{h, D, h, m2 + 2 * D}, st, ws,
+  gemm(gw(hn, D, w.gu_w, D, A, 2 * cfg.ae_mlp, D), EpiGeluGate{shid, cfg.ae_mlp}, st, ws, ws_floats);
+  gemm(gw(shid, cfg.ae_mlp, w.down_w, cfg.ae_mlp, A, D, cfg.ae_mlp), EpiGatedResid{h, D, h, m2 + 2 * D}, st, ws,
        ws_floats);
   if (tap) do_tap(p + ".out", h, 0, {A, D}, st);
 }
@@ -468,9 +622,11 @@ void Model::suffix_head(int s, cudaStream_t st) {
   const int A = cfg.ah, D = cfg.ae_w;
   launch_adarms(h, final_mod(s), hn, A, D, st);
   if (tap) do_tap("suf.s" + std::to_string(s) + ".final", hn, 0, {A, D}, st);
-  gemm(gp(hn, D, aout_w_, D, A, cfg.ad, D), EpiBias{v, cfg.ad, aout_b_}, st, ws, ws_floats);
+  gemm(gw(hn, D, aout_w_, D, A, cfg.ad, D), EpiBias{v, cfg.ad, aout_b_}, st, ws, ws_floats);
   if (tap) do_tap("suf.s" + std::to_string(s) + ".v", v, 0, {A, cfg.ad}, st);
-  launch_flow_update(xt, v, A * cfg.ad, st);
+  launch_flow_update(xt, v, A * cfg.ad, cfg.dtb, st);
+  if (cfg.pb && t_new[s] > inpaint_threshold)  // soft inpainting only while time_new > 0.3 (pi_behavior.py:1101-1107)
+    launch_inpaint(xt, pb_x0O, pb_zO, pb_C, pb_nO, pb_nU, t_new[s], pb_ints, st);
   if (tap) do_tap("suf.s" + std::to_string(s) + ".x", xt, 1, {A, cfg.ad}, st);
 }
 
@@ -489,6 +645,7 @@ void Model::forward_eager(cudaStream_t st) {
   siglip(st);
   text_embed(st);
   for (int l = 0; l < cfg.depth; ++l) prefix_layer(l, st);
+  prefix_tail(st);
   for (int s = 0; s < cfg.steps; ++s) denoise_step(s, st);
 }
 

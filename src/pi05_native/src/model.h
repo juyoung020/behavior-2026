@@ -15,8 +15,14 @@ struct ModelCfg {
   int w = 2048, depth = 18, mlp = 16384, heads = 8, hd = 256;
   int ae_w = 1024, ae_mlp = 4096;
   int ah = 32, ad = 32, steps = 10, max_tok = 200;
+  // PiBehavior (2025 1st place): 5 task/stage tokens computed on the GPU after the images, then max_tok = 32 state
+  // tokens gathered on the host; two attention groups (tokens < g0 only see tokens < g0).
+  bool pb = false;
+  int extra_dev = 0, g0 = 0, num_tasks = 0;
+  float dtb = -0.10009765625f;  // bf16(-1 / steps)
+  std::vector<int> stages;      // per task (PiBehavior)
   int img_tokens() const { return n_img * 256; }
-  int t_cap() const { return img_tokens() + max_tok; }  // 968
+  int t_cap() const { return img_tokens() + extra_dev + max_tok; }  // pi05 968, PiBehavior 805
   int s_cap() const { return 1024; }                    // key capacity >= t_cap + ah, multiple of 64
 };
 
@@ -31,6 +37,9 @@ class Model {
 
   // Host inputs for one inference: images [n_img][224][224][3] uint8, text tokens, noise [ah][ad] f32.
   void upload_inputs(const uint8_t* img, const std::vector<int>& tokens, const float* noise, cudaStream_t st);
+  // PiBehavior per-call inputs (call before upload_inputs/forward): task, stage, inpainting (x0O/zO: nO floats or null)
+  void set_pb_inputs(int task, int stage, const float* x0O, const float* zO, int nO, cudaStream_t st);
+  void download_stage_logits(float* out, cudaStream_t st);  // [15] as float (bf16 values)
   // Full forward on `st`. With a graph already captured this just launches it.
   void forward(cudaStream_t st);
   void forward_eager(cudaStream_t st);
@@ -43,6 +52,7 @@ class Model {
   void siglip_head(cudaStream_t st);
   void text_embed(cudaStream_t st);
   void prefix_layer(int l, cudaStream_t st);
+  void prefix_tail(cudaStream_t st);  // PiBehavior: stage head + KV layer mixing
   void denoise_step(int s, cudaStream_t st);
   void action_in(int s, cudaStream_t st);
   void suffix_layer(int s, int l, cudaStream_t st);
@@ -68,7 +78,19 @@ class Model {
        *v = nullptr;
   float* slg = nullptr;
   float* ws = nullptr;
+  int* counters = nullptr;
   size_t ws_floats = 0;
+  // PiBehavior
+  int* pb_ints = nullptr;  // [task, stage, inpaint_on, pad]
+  int h_pb_ints[4] = {0, 0, 0, 0};
+  int *pb_nstages = nullptr, *pb_offsets = nullptr;
+  float *pb_all = nullptr, *pb_gsc = nullptr, *pb_gts = nullptr, *pb_gt = nullptr, *pb_h1 = nullptr, *pb_bal = nullptr,
+        *pb_sf = nullptr, *pb_sd = nullptr, *pb_x0O = nullptr, *pb_zO = nullptr, *pb_C = nullptr;
+  bf16 *pb_stage_n = nullptr, *pb_logits = nullptr, *kc2 = nullptr, *vt2 = nullptr;
+  int pb_nO = 128, pb_nU = 832;
+  std::vector<float> t_new;          // flow time after each step (inpainting threshold)
+  float inpaint_threshold = 0.3f;
+  std::vector<double> corr_L;        // PiBehavior correlated noise factor [ah*ad]^2 (row major)
   bf16* mods = nullptr;  // adaRMS scale|shift|gate per (layer, norm, step), see mod()
   float2* rope = nullptr;
   bf16* embed_host = nullptr;  // token embedding table, pinned host memory (gathered on the CPU)
@@ -89,6 +111,8 @@ class Model {
   std::vector<AeLayer> al_;
   const bf16 *patch_w_, *patch_b_, *pos_, *post_s_, *post_b_, *head_w_, *head_b_;
   const bf16 *ain_w_, *ain_b_, *aout_w_, *aout_b_;
+  const bf16 *pb_task_emb_ = nullptr, *pb_stage_emb_ = nullptr, *pb_w_[7] = {}, *pb_b_[7] = {}, *pb_kv_[4] = {},
+             *final_norm_ = nullptr;
   uint8_t* arena_ = nullptr;
   uint8_t* act_arena_ = nullptr;
   cudaGraphExec_t graph_ = nullptr;
