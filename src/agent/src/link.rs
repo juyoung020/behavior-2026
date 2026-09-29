@@ -82,6 +82,16 @@ pub const WANT_ALL_RGB: u16 = want_rgb(0) | want_rgb(1) | want_rgb(2);
 const BASE_QVEL: usize = crate::wire::BASE_QVEL;
 const GRIP_LEFT: usize = crate::wire::GRIP_LEFT;
 const GRIP_RIGHT: usize = crate::wire::GRIP_RIGHT;
+/// 팔 끝 자세 시작 번호(PROPRIOCEPTION_INDICES["R1Pro"]: eef_left_pos 17:20 + eef_left_quat 20:24, eef_right_pos 42:45 + eef_right_quat 45:49)
+pub const EEF_LEFT: usize = 17;
+pub const EEF_RIGHT: usize = 42;
+
+/// proprio → (팔 끝 자세 [왼, 오른] xyz + xyzw, 그리퍼 [왼, 오른] 두 손가락 합). 평가기 `get_relative_eef_pose`(베이스 기준) 값 그대로.
+pub fn eef_grip(proprio: &[f32]) -> ([[f64; 7]; 2], [f64; 2]) {
+    let p = |i: usize| proprio.get(i).copied().unwrap_or(0.0) as f64;
+    let e = |o: usize| -> [f64; 7] { std::array::from_fn(|k| p(o + k)) };
+    ([e(EEF_LEFT), e(EEF_RIGHT)], [p(GRIP_LEFT) + p(GRIP_LEFT + 1), p(GRIP_RIGHT) + p(GRIP_RIGHT + 1)])
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CamSpec {
@@ -260,6 +270,10 @@ pub struct ObsPacket {
     pub base: Pose,
     /// 이 스텝의 base_qvel 원값(로봇 기준 vx, vy, wz) — meridian_odom 입력 `/base_qvel`
     pub qvel: [f64; 3],
+    /// 이 스텝 팔 끝 자세 [왼, 오른](베이스 기준 xyz + xyzw, proprio 17:24·42:49) — meridian `/robot/eef`
+    pub eef: [[f64; 7]; 2],
+    /// 이 스텝 그리퍼 벌어짐 [왼, 오른](두 손가락 합, proprio 24:26·49:51) — meridian `/robot/gripper`
+    pub grip: [f64; 2],
     /// 카메라별(0 머리, 1 왼손목, 2 오른손목) 베이스 기준 자세 xyz + xyzw(= robot2cam, proprio 순기구학). 모르면 None
     pub cam_rel: [Option<[f64; 7]>; 3],
     pub frames: Vec<Frame>,
@@ -1038,6 +1052,8 @@ impl<'a> Server<'a> {
             img_cam_rel,
             base,
             qvel,
+            eef: eef_grip(proprio).0,
+            grip: grips,
             cam_rel,
             frames,
             boundary: decide_here,
@@ -1429,6 +1445,16 @@ mod tests {
         assert_eq!(Ack::decode(&enc[12..]).unwrap(), a);
         let a2 = Ack { step: 8, hold_next: false, want_next: 0, decision: None };
         assert_eq!(Ack::decode(&a2.encode()[12..]).unwrap(), a2);
+    }
+
+    #[test]
+    fn eef_grip_indices() {
+        // 평가기 proprio 표(eval_utils PROPRIOCEPTION_INDICES["R1Pro"])와 대조: 값 = 번호
+        let p: Vec<f32> = (0..61).map(|i| i as f32).collect();
+        let (e, g) = eef_grip(&p);
+        assert_eq!(e[0], [17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0]);
+        assert_eq!(e[1], [42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0]);
+        assert_eq!(g, [24.0 + 25.0, 49.0 + 50.0]);
     }
 
     #[test]

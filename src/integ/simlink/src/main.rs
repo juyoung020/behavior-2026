@@ -7,6 +7,8 @@
 //!      같은 변환: 가운데 4:3 자르기·면적 축소·깊이 mm·K 옮기기)
 //!    - 매 스텝 `/base_qvel`(TwistStamped, 로봇 기준 원값)·`/camera/extrinsic`(PoseStamped, 베이스 기준 머리 카메라 = robot2cam,
 //!      proprio 순기구학) — 영상이 있는 스텝이면 영상과 같은 stamp. meridian_odom(깊이 보정 위치 추정기)의 입력
+//!    - 매 스텝 `/robot/eef`(PoseArray [왼, 오른] 베이스 기준 팔 끝, proprio 17:24·42:49)·`/robot/gripper`(JointState, 손가락 합
+//!      24:26·49:51) — 같은 stamp 규칙. meridian 옮겨진 물체 처리(잡기·놓기) 입력
 //!    - `--pose-source simlink`(지금 기본): link 의 추정기(적분)로 `/camera/pose`(광학 프레임 map 자세)·`/base_pose` 도 낸다.
 //!      `--pose-source meridian`: 그 둘은 meridian_odom 이 내고, simlink 는 `/base_pose` 를 받아 계획기 추정기에 고정점으로 넣는다
 //!    - 손목: `/camera_left/*`, `/camera_right/*`(원래 크기 480x480) — 영상이 온 스텝만
@@ -26,7 +28,8 @@ use bagent::util::Args;
 use convert::CamConv;
 use futures::stream::StreamExt;
 use r2r::builtin_interfaces::msg::Time;
-use r2r::geometry_msgs::msg::{Point, Pose as RPose, PoseStamped, Quaternion, Twist, TwistStamped, Vector3};
+use r2r::geometry_msgs::msg::{Point, Pose as RPose, PoseArray, PoseStamped, Quaternion, Twist, TwistStamped, Vector3};
+use r2r::sensor_msgs::msg::JointState;
 use r2r::sensor_msgs::msg::{CameraInfo, Image};
 use r2r::std_msgs::msg::Header;
 use serde_json::{json, Value};
@@ -223,6 +226,8 @@ fn ros_thread(rx: Receiver<Msg>, sh: Arc<Shared>, stop: Arc<AtomicBool>, a: Args
     let p_base = if own_pose { Some(node.create_publisher::<PoseStamped>("/base_pose", qos.clone().keep_last(100)).map_err(e)?) } else { None };
     let p_qvel = node.create_publisher::<TwistStamped>("/base_qvel", qos.clone().keep_last(100)).map_err(e)?;
     let p_ext = node.create_publisher::<PoseStamped>("/camera/extrinsic", qos.clone().keep_last(100)).map_err(e)?;
+    let p_eef = node.create_publisher::<PoseArray>("/robot/eef", qos.clone().keep_last(100)).map_err(e)?;
+    let p_grip = node.create_publisher::<JointState>("/robot/gripper", qos.clone().keep_last(100)).map_err(e)?;
     let ev_sub = node
         .subscribe::<r2r::meridian_msgs::msg::GraphUpdateEventDev>("/graph_update_event", r2r::QosProfile::default().keep_last(64))
         .map_err(e)?;
@@ -270,7 +275,7 @@ fn ros_thread(rx: Receiver<Msg>, sh: Arc<Shared>, stop: Arc<AtomicBool>, a: Args
         if own_pose { " /camera/pose /base_pose" } else { "" },
         if own_pose { "" } else { " /base_pose(meridian_odom)" }
     );
-    let pubs = Pubs { base: p_base, qvel: p_qvel, ext: p_ext, own_pose };
+    let pubs = Pubs { base: p_base, qvel: p_qvel, ext: p_ext, eef: p_eef, grip: p_grip, own_pose };
 
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(Duration::from_millis(2)) {
@@ -304,6 +309,8 @@ struct Pubs {
     base: Option<r2r::Publisher<PoseStamped>>,
     qvel: r2r::Publisher<TwistStamped>,
     ext: r2r::Publisher<PoseStamped>,
+    eef: r2r::Publisher<PoseArray>,
+    grip: r2r::Publisher<JointState>,
     own_pose: bool,
 }
 
@@ -320,6 +327,21 @@ fn publish(cams: &mut [CamPub; 3], pb: &Pubs, p: &ObsPacket, sh: &Shared) -> Res
             pose: RPose { position: Point { x: rel[0], y: rel[1], z: rel[2] }, orientation: Quaternion { x: rel[3], y: rel[4], z: rel[5], w: rel[6] } },
         })?;
     }
+    // meridian 옮겨진 물체 처리 입력(매 스텝 이 스텝 stamp — 영상 k(stamp k-1)와는 k-1 값이 짝): 팔 끝 [왼, 오른], 그리퍼 합
+    pb.eef.publish(&PoseArray {
+        header: Header { stamp: t.clone(), frame_id: "base_link".into() },
+        poses: p
+            .eef
+            .iter()
+            .map(|e| RPose { position: Point { x: e[0], y: e[1], z: e[2] }, orientation: Quaternion { x: e[3], y: e[4], z: e[5], w: e[6] } })
+            .collect(),
+    })?;
+    pb.grip.publish(&JointState {
+        header: Header { stamp: t.clone(), frame_id: "base_link".into() },
+        name: vec!["left_gripper".into(), "right_gripper".into()],
+        position: p.grip.to_vec(),
+        ..Default::default()
+    })?;
     let has = |cam: u8| p.frames.iter().any(|f| f.cam == cam);
     if let Some(b) = &pb.base {
         let (rwb, twb) = pose::base_rt(&p.base);
