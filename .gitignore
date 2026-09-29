@@ -18,3 +18,6 @@ __pycache__/
 .env
 *.env
 !.env.example
+
+# GPU 사용 잠금(에이전트 간)
+.gpu_lock/
