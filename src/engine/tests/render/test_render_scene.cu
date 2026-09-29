@@ -1,10 +1,11 @@
 // 렌더 시험 — 공식 기록 장면 (render_capture.py -> convert_scene.py 결과).
 //   test_render_scene <폴더(scene.rsc, frame_*.rfr)> [--gpu 0|1] [--envs E] [--check K] [--reps R] [--res N(모든 카메라 N×N)]
-//                     [--spp S] [--bounces B] [--exposure X] [--ambient a] [--ao 거리] [--tonemap T] [--white W] [--lights 0|1] [--out 폴더 [--ppm]] [--official 0(공식 비교 건너뜀)] [--frames 0,10]
+//                     [--spp S] [--bounces B] [--exposure X] [--ambient a] [--ao 거리] [--tonemap T] [--white W] [--lights 0|1] [--out 폴더 [--ppm]] [--official 0(공식 비교 건너뜀)] [--fit(노출 맞추기)] [--frames 0,10]
 // 1) 층 1 vs 공식 RTX: depth 는 픽셀마다 차이 분포(공식 depth_linear), RGB 는 채널 평균·히스토그램·SSIM 을 공식 자신의
 //    잡음(같은 상태에서 다시 그린 장)과 나란히.
 // 2) 층 1 = 층 2: 판 e 가 프레임 (e mod 프레임 수) 를 그린다. 판 0..K-1 을 층 1 로 그려 depth 비트·RGB 바이트 전부 비교.
 // 3) 처리량: 판 E × 카메라 3 대 GPU 시간.
+// 4) 카메라를 링크에 붙여(RenderBatch, 포팅 평가기 입구) 층1=층2 와 처리량.
 #include <cuda_runtime.h>
 #include <dirent.h>
 
@@ -18,9 +19,10 @@
 #include <string>
 #include <vector>
 
-#include "cuda/render/render_cuda.cuh"
+#include "cuda/render/render_batch.cuh"
 #include "tests/render/io/npy.h"
 #include <sys/stat.h>
+#include <xmmintrin.h>
 
 using namespace eng;
 using namespace eng::rnd;
@@ -109,7 +111,7 @@ static void write_ppm(const std::string& fn, const uint8_t* rgb, int stride, int
 int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "사용: test_render_scene <폴더> ...\n"); return 2; }
   const std::string dir = argv[1];
-  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1;
+  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0;
   float exposure = -1, ambient = -1, ao = -1, white = -1;
   std::string out;
   std::vector<int> only_frames;
@@ -131,6 +133,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = nx();
     else if (!strcmp(argv[i], "--ppm")) ppm = 1;
     else if (!strcmp(argv[i], "--official") && i + 1 < argc) official = atoi(nx());
+    else if (!strcmp(argv[i], "--fit")) fit = 1;
     else if (!strcmp(argv[i], "--frames") && i + 1 < argc) {
       char* s = nx();
       for (char* t = strtok(s, ","); t; t = strtok(nullptr, ",")) only_frames.push_back(atoi(t));
@@ -270,6 +273,71 @@ int main(int argc, char** argv) {
     }
   }
   printf("층 1 CPU: %.2f s, %.2f M픽셀/초 (%u 스레드)\n", sum_t1, n_pix_t1 / sum_t1 * 1e-6, std::thread::hardware_concurrency());
+  if (fit) {
+    // 노출 맞추기: 선형 휘도를 한 번 그려 두고, 톤매핑 연산자마다 노출을 훑어 공식과 히스토그램 EMD 가 가장 작은 값을 찾는다.
+    // (장면 하나에 노출 스칼라 하나 = 보정값. 프레임마다 맞추지 않는다.) 검은 공식 프레임은 뺀다.
+    struct Buf { std::vector<float> L; const Image* off; int n; };
+    std::vector<Buf> bufs;
+    for (auto& F : frames) {
+      HostEnv HE;
+      HE.resize(SV);
+      for (int a = 0; a < SV.n_anchor && a < int(F.anchor.size()); ++a) HE.anchor[a] = F.anchor[a];
+      for (size_t w = 0; w < HE.vis.size() && w < F.vis.size(); ++w) HE.vis[w] = F.vis[w];
+      HE.build(SV);
+      const EnvView ev = HE.view();
+      for (int c = 0; c < 3 && c < int(F.cams.size()); ++c) {
+        const Camera& cm = F.cams[c];
+        const Image* orgb = F.find(std::string("img::") + kRoles[c] + "::rgb");
+        if (!orgb || orgb->h != cm.h || orgb->w != cm.w) continue;
+        const int n = cm.w * cm.h;
+        const RgbStat so = rgb_stat(orgb->data.data(), int(orgb->c), n);
+        if (so.mean[0] + so.mean[1] + so.mean[2] < 6.0) continue;  // 검은 프레임
+        Buf b{std::vector<float>(size_t(n) * 3), orgb, n};
+        std::vector<std::thread> th;
+        const int nt = int(std::thread::hardware_concurrency());
+        for (int t = 0; t < nt; ++t)
+          th.emplace_back([&, t] {
+            const unsigned old = _mm_getcsr();
+            _mm_setcsr(old | 0x8040u);
+            for (int py = t; py < cm.h; py += nt)
+              for (int px = 0; px < cm.w; ++px) {
+                float d;
+                V3 L;
+                shade_pixel(SV, ev, cm, px, py, pixel_seed(0, c, px, py, int(F.step)), d, L);
+                float* o = &b.L[3 * (size_t(py) * cm.w + px)];
+                o[0] = L.x; o[1] = L.y; o[2] = L.z;
+              }
+            _mm_setcsr(old);
+          });
+        for (auto& x : th) x.join();
+        bufs.push_back(std::move(b));
+      }
+    }
+    printf("\n== 노출 맞추기 (영상 %zu 장, 검은 프레임 뺌) ==\n", bufs.size());
+    const char* tm_name[6] = {"클램프", "sRGB", "ACES(N)", "ACES(Hill)", "Reinhard", "Hable"};
+    for (int tm = 1; tm <= 5; ++tm) {
+      double best = 1e30, best_x = 0, best_md = 0;
+      for (int k = -60; k <= 60; ++k) {
+        const double x = std::pow(2.0, k * 0.25) * H.sp.exposure;
+        ShadeParams sp = H.sp;
+        sp.tonemap = tm;
+        sp.exposure = float(x);
+        double emd = 0, md = 0;
+        for (auto& b : bufs) {
+          std::vector<uint8_t> rgb(size_t(b.n) * 3);
+          for (int i = 0; i < b.n; ++i) eng::rnd::tonemap(sp, V3{b.L[3 * i], b.L[3 * i + 1], b.L[3 * i + 2]}, &rgb[3 * i]);
+          const RgbStat su = rgb_stat(rgb.data(), 3, b.n), so = rgb_stat(b.off->data.data(), int(b.off->c), b.n);
+          emd += hist_emd(so, su);
+          md += (su.mean[0] + su.mean[1] + su.mean[2] - so.mean[0] - so.mean[1] - so.mean[2]) / 3;
+        }
+        emd /= bufs.size();
+        md /= bufs.size();
+        if (emd < best) { best = emd; best_x = x; best_md = md; }
+      }
+      printf("  %-10s 노출 %.4g : EMD %.2f, 평균 차 %+.2f\n", tm_name[tm], best_x, best, best_md);
+    }
+    return 0;
+  }
   if (!use_gpu) return 0;
 
   // ---- 2) 층 2
@@ -372,5 +440,99 @@ int main(int argc, char** argv) {
   printf("층 1 = 층 2 (판 %d 개 × 카메라 3): depth %" PRIu64 " 개 중 비트 다름 %" PRIu64 ", RGB %" PRIu64 " 개 중 다름 %" PRIu64
          " | 첫 다름 판 %d 카메라 %d 픽셀 %d\n", check, n_dep, bad_dep, n_rgb, bad_rgb, fe, fc, fp);
   gpu::free_batch(B);
-  return (bad_dep || bad_rgb) ? 1 : 0;
+  for (int c = 0; c < 3; ++c) { cudaFree(ddep[c]); cudaFree(drgb[c]); }
+  cudaFree(dcams);
+
+  // ---- 4) 카메라를 링크(기준 prim)에 붙여 따라가게 (포팅 평가기 경로: 물리 자세만 넘기면 됨) — RenderBatch
+  // 카메라마다 프레임 사이 상대 변환이 가장 일정한 기준 prim 을 찾는다(double). 그 rel 로 만든 카메라와 뜬 카메라의 차이도 적는다.
+  auto inv_d = [](const Aff& a, double* o) {  // 3x4 역행렬 (double)
+    double m[12];
+    for (int k = 0; k < 12; ++k) m[k] = a.m[k];
+    const double c00 = m[5] * m[10] - m[6] * m[9], c01 = m[6] * m[8] - m[4] * m[10], c02 = m[4] * m[9] - m[5] * m[8];
+    const double id = 1.0 / (m[0] * c00 + m[1] * c01 + m[2] * c02);
+    o[0] = c00 * id; o[1] = (m[2] * m[9] - m[1] * m[10]) * id; o[2] = (m[1] * m[6] - m[2] * m[5]) * id;
+    o[4] = c01 * id; o[5] = (m[0] * m[10] - m[2] * m[8]) * id; o[6] = (m[2] * m[4] - m[0] * m[6]) * id;
+    o[8] = c02 * id; o[9] = (m[1] * m[8] - m[0] * m[9]) * id; o[10] = (m[0] * m[5] - m[1] * m[4]) * id;
+    for (int r = 0; r < 3; ++r) o[r * 4 + 3] = -(o[r * 4] * m[3] + o[r * 4 + 1] * m[7] + o[r * 4 + 2] * m[11]);
+  };
+  auto mul_d = [](const double* a, const Aff& b, double* o) {
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 4; ++j) o[i * 4 + j] = a[i * 4] * b.m[j] + a[i * 4 + 1] * b.m[4 + j] + a[i * 4 + 2] * b.m[8 + j];
+      o[i * 4 + 3] += a[i * 4 + 3];
+    }
+  };
+  std::vector<CamRig> rigs(3);
+  for (int c = 0; c < 3; ++c) {
+    int best = -1;
+    double best_dev = 1e30, rel0[12] = {0};
+    for (int a = 0; a < SV.n_anchor; ++a) {
+      double r0[12], dev = 0;
+      for (int f = 0; f < nf; ++f) {
+        double iv[12], r[12];
+        inv_d(frames[f].anchor[a], iv);
+        mul_d(iv, frames[f].cams[c].world, r);
+        if (f == 0) memcpy(r0, r, sizeof r0);
+        for (int k = 0; k < 12; ++k) dev = std::max(dev, std::fabs(r[k] - r0[k]));
+      }
+      if (dev < best_dev) { best_dev = dev; best = a; memcpy(rel0, r0, sizeof rel0); }
+    }
+    CamRig& g = rigs[c];
+    g.anchor = best;
+    for (int k = 0; k < 12; ++k) g.rel.m[k] = float(rel0[k]);
+    const Camera& c0 = frames[0].cams[c];
+    g.w = c0.w; g.h = c0.h; g.tanx = c0.tanx; g.tany = c0.tany; g.znear = c0.znear; g.zfar = c0.zfar;
+    double perr = 0;
+    for (int f = 0; f < nf; ++f) {
+      const Camera cr = camera_from_rig(g, frames[f].anchor.data());
+      for (int k = 0; k < 12; ++k) perr = std::max(perr, double(std::fabs(cr.world.m[k] - frames[f].cams[c].world.m[k])));
+    }
+    printf("카메라 %-11s 붙은 기준 prim %d (프레임 사이 rel 최대 흔들림 %.2e), rel 로 만든 카메라와 뜬 카메라 행렬 최대 차 %.2e\n", kRoles[c],
+           best, best_dev, perr);
+  }
+  gpu::RenderBatch rb;
+  rb.init(H, envs, rigs);
+  Aff* dan;
+  RCK(cudaMalloc(&dan, anchors.size() * sizeof(Aff)));
+  RCK(cudaMemcpy(dan, anchors.data(), anchors.size() * sizeof(Aff), cudaMemcpyHostToDevice));
+  uint32_t* dvis;
+  RCK(cudaMalloc(&dvis, vis.size() * 4));
+  RCK(cudaMemcpy(dvis, vis.data(), vis.size() * 4, cudaMemcpyHostToDevice));
+  rb.set_anchors(dan);
+  rb.set_visibility(dvis);
+  rb.render(7);
+  RCK(cudaDeviceSynchronize());
+  cudaEventRecord(e0);
+  for (int r = 0; r < reps; ++r) rb.render(7);
+  cudaEventRecord(e2);
+  RCK(cudaEventSynchronize(e2));
+  float rb_ms;
+  cudaEventElapsedTime(&rb_ms, e0, e2);
+  rb_ms /= reps;
+  uint64_t rn = 0, rbad = 0;
+  for (int e = 0; e < check; ++e) {
+    HostEnv HE;
+    HE.resize(SV);
+    for (int a = 0; a < SV.n_anchor; ++a) HE.anchor[a] = anchors[size_t(e) * B.A + a];
+    for (size_t w = 0; w < HE.vis.size(); ++w) HE.vis[w] = vis[size_t(e) * B.W + w];
+    HE.build(SV);
+    for (int c = 0; c < 3; ++c) {
+      const Camera cm = camera_from_rig(rigs[c], HE.anchor.data());
+      const size_t hw = size_t(cm.w) * cm.h;
+      std::vector<float> hd(hw), gd(hw);
+      std::vector<uint8_t> hr(hw * 3), gr(hw * 3);
+      render_host(SV, HE, cm, e, c, 7, hd.data(), hr.data());
+      RCK(cudaMemcpy(gd.data(), rb.depth(c) + e * hw, hw * 4, cudaMemcpyDeviceToHost));
+      RCK(cudaMemcpy(gr.data(), rb.rgb(c) + e * hw * 3, hw * 3, cudaMemcpyDeviceToHost));
+      for (size_t p = 0; p < hw; ++p) {
+        rn += 4;
+        rbad += memcmp(&hd[p], &gd[p], 4) != 0;
+        for (int k = 0; k < 3; ++k) rbad += hr[3 * p + k] != gr[3 * p + k];
+      }
+    }
+  }
+  printf("RenderBatch(링크에 붙은 카메라): 판 %d × 카메라 3 = %.2f ms/프레임 (판·프레임 %.0f/초) | 층 1 과 비교 %" PRIu64
+         " 개 중 다름 %" PRIu64 "\n", envs, rb_ms, envs / (rb_ms * 1e-3), rn, rbad);
+  cudaFree(dan);
+  cudaFree(dvis);
+  return (bad_dep || bad_rgb || rbad) ? 1 : 0;
 }

@@ -15,7 +15,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -165,8 +167,8 @@ inline void build_mips(HostScene& S) {
 
 // 기하 하나를 더한다: BLAS 굽기 + 굽힌 순서로 삼각형·속성 저장. 반환 = 기하 번호
 inline int32_t add_geometry(HostScene& S, const float* tv, const float* tn, const float* tu, const int32_t* ts, uint32_t cnt,
-                            int32_t flags, uint32_t max_leaf = 4) {
-  BlasOut b = blas_build(tv, cnt, max_leaf);
+                            int32_t flags, uint32_t max_leaf = 4, const BlasOut* prebuilt = nullptr) {
+  const BlasOut b = prebuilt ? *prebuilt : blas_build(tv, cnt, max_leaf);
   GeomInfo gi{};
   gi.node_base = int32_t(S.blas_nodes.size());
   gi.tri_base = int32_t(S.tris.size());
@@ -246,10 +248,24 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.ao_range = sp[9];
   S.n_anchor = int32_t(na);
   build_mips(S);
-  // BLAS 굽기 (기하마다), 삼각형 속성을 굽힌 순서로
+  // BLAS 굽기: 기하끼리 독립이라 스레드로 나눠 굽고(결과는 스레드 수와 무관), 붙이기는 기하 순서대로
+  std::vector<BlasOut> blas(ng);
+  {
+    std::atomic<int64_t> next{0};
+    std::vector<std::thread> th;
+    const int nt = std::max(1u, std::thread::hardware_concurrency());
+    for (int t = 0; t < nt; ++t)
+      th.emplace_back([&] {
+        for (int64_t g; (g = next.fetch_add(1)) < ng;)
+          blas[g] = blas_build(&tv[9 * gt[3 * g]], uint32_t(gt[3 * g + 1]), max_leaf);
+      });
+    for (auto& x : th) x.join();
+  }
   for (int64_t g = 0; g < ng; ++g) {
     const int64_t off = gt[3 * g], cnt = gt[3 * g + 1];
-    add_geometry(S, &tv[9 * off], &tn[9 * off], &tu[6 * off], &ts[off], uint32_t(cnt), int32_t(gt[3 * g + 2]), max_leaf);
+    add_geometry(S, &tv[9 * off], &tn[9 * off], &tu[6 * off], &ts[off], uint32_t(cnt), int32_t(gt[3 * g + 2]), max_leaf,
+                 &blas[g]);
+    BlasOut().nodes.swap(blas[g].nodes);
   }
   return true;
 }
