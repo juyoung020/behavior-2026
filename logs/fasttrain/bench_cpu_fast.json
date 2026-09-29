@@ -1,0 +1,42 @@
+{
+ "per_sample_ms": {
+  "행 읽기(원래와 같음)": 3.4280138700069074,
+  "샘플 전체(행 읽기+프레임 번호+변환)": 4.587967350021245
+ },
+ "transforms_ms": {
+  "PromptFromLeRobotTask": 0.007467710015589546,
+  "RepackTransform": 0.044712724984492525,
+  "B1KInputs": 0.18845096496988845,
+  "MappedDeltaActions": 0.23452898499272123,
+  "Normalize": 0.08582221001688595,
+  "InjectDefaultPrompt": 0.0009618600279281964,
+  "TokenizePrompt": 0.20997242001612904,
+  "PadStatesAndActions": 0.10192045499934466
+ },
+ "loader": [
+  {
+   "workers": 1,
+   "samples_per_s": 296.35105538566296,
+   "batches_per_s": 9.260970480801967,
+   "load": 1.0556640625
+  },
+  {
+   "workers": 2,
+   "samples_per_s": 652.1256663768851,
+   "batches_per_s": 20.37892707427766,
+   "load": 1.123046875
+  },
+  {
+   "workers": 4,
+   "samples_per_s": 1318.6407469309943,
+   "batches_per_s": 41.20752334159357,
+   "load": 1.2109375
+  },
+  {
+   "workers": 8,
+   "samples_per_s": 1250.0096466803202,
+   "batches_per_s": 39.062801458760006,
+   "load": 1.14501953125
+  }
+ ]
+}

@@ -1,0 +1,42 @@
+[
+ {
+  "workers": 1,
+  "batch": 32,
+  "sec_per_batch": 5.310827717000014,
+  "samples_per_s": 6.0254261115584065,
+  "batches_per_s": 0.1882945659862002,
+  "startup_s": 22.43261621399961,
+  "gpu_mem_mb": 873,
+  "load": 7.55224609375
+ },
+ {
+  "workers": 2,
+  "batch": 32,
+  "sec_per_batch": 3.232107282833264,
+  "samples_per_s": 9.90066145698877,
+  "batches_per_s": 0.30939567053089906,
+  "startup_s": 35.70850602600012,
+  "gpu_mem_mb": 318,
+  "load": 7.07568359375
+ },
+ {
+  "workers": 4,
+  "batch": 32,
+  "sec_per_batch": 1.6947127591249682,
+  "samples_per_s": 18.882255903072668,
+  "batches_per_s": 0.5900704969710209,
+  "startup_s": 48.23480093099988,
+  "gpu_mem_mb": 5558,
+  "load": 9.67919921875
+ },
+ {
+  "workers": 8,
+  "batch": 32,
+  "sec_per_batch": 0.8914112756249892,
+  "samples_per_s": 35.898132405341244,
+  "batches_per_s": 1.1218166376669139,
+  "startup_s": 70.46926146800024,
+  "gpu_mem_mb": 35,
+  "load": 13.400390625
+ }
+]
