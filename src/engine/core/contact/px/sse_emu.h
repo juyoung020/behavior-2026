@@ -180,6 +180,19 @@ EM_CMP(em_cmple_ps, <=)
 EHD em128 em_cmpneq_ps(const em128& a, const em128& b) {
   return em128{{em_mask(!(a.f[0] == b.f[0])), em_mask(!(a.f[1] == b.f[1])), em_mask(!(a.f[2] == b.f[2])), em_mask(!(a.f[3] == b.f[3]))}};
 }
+// CMPNLTPS/CMPNLEPS/CMPNGTPS/CMPNGEPS: 순서 없는 부정 비교 (NaN 이면 참)
+EHD em128 em_cmpngt_ps(const em128& a, const em128& b) {
+  return em128{{em_mask(!(a.f[0] > b.f[0])), em_mask(!(a.f[1] > b.f[1])), em_mask(!(a.f[2] > b.f[2])), em_mask(!(a.f[3] > b.f[3]))}};
+}
+EHD em128 em_cmpnge_ps(const em128& a, const em128& b) {
+  return em128{{em_mask(!(a.f[0] >= b.f[0])), em_mask(!(a.f[1] >= b.f[1])), em_mask(!(a.f[2] >= b.f[2])), em_mask(!(a.f[3] >= b.f[3]))}};
+}
+EHD em128 em_cmpnlt_ps(const em128& a, const em128& b) {
+  return em128{{em_mask(!(a.f[0] < b.f[0])), em_mask(!(a.f[1] < b.f[1])), em_mask(!(a.f[2] < b.f[2])), em_mask(!(a.f[3] < b.f[3]))}};
+}
+EHD em128 em_cmpnle_ps(const em128& a, const em128& b) {
+  return em128{{em_mask(!(a.f[0] <= b.f[0])), em_mask(!(a.f[1] <= b.f[1])), em_mask(!(a.f[2] <= b.f[2])), em_mask(!(a.f[3] <= b.f[3]))}};
+}
 EHD int em_comieq_ss(const em128& a, const em128& b) { return a.f[0] == b.f[0] ? 1 : 0; }
 EHD int em_comigt_ss(const em128& a, const em128& b) { return a.f[0] > b.f[0] ? 1 : 0; }
 EHD int em_comige_ss(const em128& a, const em128& b) { return a.f[0] >= b.f[0] ? 1 : 0; }

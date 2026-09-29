@@ -53,13 +53,79 @@ struct PxDummyAlloc {
   EHD void deallocate(void*) {}
 };
 template <class T> struct PxAllocatorTraits { typedef PxDummyAlloc Type; };
-template <class T> struct PxArray {
-  EHD void pushBack(const T&) {}
-  EHD T popBack() { return T(); }
-  EHD PxU32 size() const { return 0; }
-  EHD void clear() {}
-  EHD T& operator[](PxU32) { return *static_cast<T*>(nullptr); }
-  EHD const T& operator[](PxU32) const { return *static_cast<const T*>(nullptr); }
+// foundation/PxArray.h 의 쓰이는 부분 (호스트용 동적 배열; 늘리는 규칙은 결과에 영향 없음 — 크기·순서만 같으면 됨)
+template <class T> class PxArray {
+ public:
+  EHDI PxArray() : mData(nullptr), mSize(0), mCapacity(0) {}
+  EHDI explicit PxArray(const char*) : mData(nullptr), mSize(0), mCapacity(0) {}
+  template <class A> EHDI explicit PxArray(const A&) : mData(nullptr), mSize(0), mCapacity(0) {}
+  EHDI PxArray(const PxArray& o) : mData(nullptr), mSize(0), mCapacity(0) { assignFrom(o); }
+  EHDI PxArray& operator=(const PxArray& o) { if (this != &o) { mSize = 0; assignFrom(o); } return *this; }
+  EHDI ~PxArray() { freeAll(); }
+  EHD PxU32 size() const { return mSize; }
+  EHD PxU32 capacity() const { return mCapacity; }
+  EHD bool empty() const { return mSize == 0; }
+  EHD T* begin() { return mData; }
+  EHD const T* begin() const { return mData; }
+  EHD T* end() { return mData + mSize; }
+  EHD const T* end() const { return mData + mSize; }
+  EHD T& operator[](PxU32 i) { return mData[i]; }
+  EHD const T& operator[](PxU32 i) const { return mData[i]; }
+  EHD T& back() { return mData[mSize - 1]; }
+  EHD const T& back() const { return mData[mSize - 1]; }
+  EHD T& front() { return mData[0]; }
+  EHDI T& pushBack(const T& v) {
+    if (mSize == mCapacity) {
+      const T copy = v;  // v 가 배열 안을 가리킬 수 있음
+      grow(mCapacity ? mCapacity * 2 : 1);
+      new (mData + mSize) T(copy);
+    } else {
+      new (mData + mSize) T(v);
+    }
+    return mData[mSize++];
+  }
+  EHDI T& insert() { if (mSize == mCapacity) grow(mCapacity ? mCapacity * 2 : 1); new (mData + mSize) T(); return mData[mSize++]; }
+  EHDI T popBack() { T t = mData[mSize - 1]; mData[--mSize].~T(); return t; }
+  EHDI void reserve(PxU32 n) { if (n > mCapacity) grow(n); }
+  EHDI void resize(PxU32 n, const T& v = T()) {
+    reserve(n);
+    for (PxU32 i = mSize; i < n; ++i) new (mData + i) T(v);
+    for (PxU32 i = n; i < mSize; ++i) mData[i].~T();
+    mSize = n;
+  }
+  EHDI void resizeUninitialized(PxU32 n) { reserve(n); mSize = n; }
+  EHDI void forceSize_Unsafe(PxU32 n) { mSize = n; }
+  EHDI void clear() { for (PxU32 i = 0; i < mSize; ++i) mData[i].~T(); mSize = 0; }
+  EHDI void reset() { freeAll(); }
+  EHDI void resetOrClear() { clear(); }
+  EHDI void shrink() {}
+  EHDI void remove(PxU32 i) {  // 뒤를 한 칸씩 당김 (순서 유지)
+    for (PxU32 k = i; k + 1 < mSize; ++k) mData[k] = mData[k + 1];
+    mData[--mSize].~T();
+  }
+  EHDI void replaceWithLast(PxU32 i) {  // 마지막 것을 i 자리로 (순서 안 지킴)
+    mData[i] = mData[mSize - 1];
+    mData[--mSize].~T();
+  }
+  EHDI bool findAndReplaceWithLast(const T& v) {
+    for (PxU32 i = 0; i < mSize; ++i)
+      if (mData[i] == v) { replaceWithLast(i); return true; }
+    return false;
+  }
+  EHDI T* find(const T& v) { for (PxU32 i = 0; i < mSize; ++i) if (mData[i] == v) return mData + i; return end(); }
+
+ private:
+  T* mData;
+  PxU32 mSize, mCapacity;
+  EHDI void grow(PxU32 n) {
+    T* nd = static_cast<T*>(malloc(sizeof(T) * n));
+    for (PxU32 i = 0; i < mSize; ++i) { new (nd + i) T(mData[i]); mData[i].~T(); }
+    free(mData);
+    mData = nd;
+    mCapacity = n;
+  }
+  EHDI void freeAll() { clear(); free(mData); mData = nullptr; mCapacity = 0; }
+  EHDI void assignFrom(const PxArray& o) { reserve(o.mSize); for (PxU32 i = 0; i < o.mSize; ++i) new (mData + i) T(o.mData[i]); mSize = o.mSize; }
 };
 
 #define EPX_ALWAYS_ASSERT_MESSAGE(...) ((void)0)
@@ -97,3 +163,6 @@ EHD aos::BoolV boxVertexTable_get(PxU32 i) {
 }
 
 }  // namespace px
+namespace px {
+EHDI int Pxstrcmp(const char* a, const char* b) { while (*a && *a == *b) { ++a; ++b; } return int((unsigned char)*a) - int((unsigned char)*b); }
+}

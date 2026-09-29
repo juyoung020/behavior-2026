@@ -25,12 +25,20 @@ KNOWN = {  # 리눅스 carbonite checked 빌드 (clang 14, x86_64, SSE2) 에서�
     'PX_DEBUG_GJK': 0, 'PX_INTEL_FAMILY_SSE': 1, 'PX_SSE2': 1, 'PX_ENABLE_INVARIANT_CHECKS': 0,
     'EPA_DEBUG': 0, 'GJK_DEBUG': 0, 'PX_GJK_EPA_DEBUG': 0, 'PCM_BOX_HULL_DEBUG': 0, 'PX_PROFILE': 0,
     'PX_CUDA_ARCH': 0, '__CUDA_ARCH__': None, '__CUDACC__': None, 'PX_ENABLE_PROFILE': 0, 'PX_NVTX': 0,
-    'PX_SUPPORT_EXTERN_TEMPLATE': 0, 'PX_MAX_ALIGN': 16, 'PX_GJK_TEST_EPA': 0, '__EMSCRIPTEN__': None, '__SSE2__': 1, '__GNUC__': 4, '_DEBUG': None, '__clang__': 1, 'NDEBUG': 1, '_MSC_VER': None, '__linux__': 1, 'PX_GPU_BROADPHASE': 0, 'PX_ENABLE_GPU': 0, 'PX_ARM': 0,
+    'PX_SUPPORT_EXTERN_TEMPLATE': 0, 'PX_MAX_ALIGN': 16, 'PX_GJK_TEST_EPA': 0, '__EMSCRIPTEN__': None, '__SSE2__': 1, '__GNUC__': 4, '_DEBUG': None, '__clang__': 1, 'NDEBUG': 1, '_MSC_VER': None, '__linux__': 1, 'PX_GPU_BROADPHASE': 0, 'PX_ENABLE_GPU': 0, 'PX_ARM': 0, '__BIG_ENDIAN__': None, '_XBOX': None,
 }
 
 
 class CondError(Exception):
     pass
+
+
+def lenient_unknown(name, path, lineno):
+    """파일 안 설정 매크로(예: ABP_USE_INTEGER_XS)는 정의 안 된 것으로 본다. PX_/플랫폼 매크로는 엄격히 멈춘다."""
+    if name.startswith('PX_') or name.startswith('__'):
+        raise CondError(f'{path}:{lineno}: 모르는 매크로 {name}')
+    sys.stderr.write(f'  (정의 안 됨으로 봄) {name} @ {path}:{lineno}\n')
+    KNOWN[name] = None
 
 
 def eval_cond(expr, path, lineno):
@@ -78,7 +86,7 @@ def preprocess(text, path):
                 if d == 'ifdef':
                     name = rest.split()[0]
                     if name not in KNOWN:
-                        raise CondError(f'{path}:{i}: 모르는 매크로 {name}')
+                        lenient_unknown(name, path, i)
                     c = KNOWN[name] is not None
                 elif d == 'ifndef':
                     name = rest.split()[0]
@@ -86,7 +94,7 @@ def preprocess(text, path):
                     if name not in KNOWN and re.match(r'#\s*define\s+' + name + r'(\s|$)', nxt):
                         KNOWN[name] = None  # "없으면 정의" 꼴
                     if name not in KNOWN:
-                        raise CondError(f'{path}:{i}: 모르는 매크로 {name}')
+                        lenient_unknown(name, path, i)
                     c = KNOWN[name] is None
                 else:
                     c = eval_cond(rest, path, i)
@@ -118,7 +126,7 @@ def preprocess(text, path):
                 continue
             if d == 'define':
                 dm = re.match(r'(\w+)(\(?)\s*(.*)', rest)
-                if dm and not dm.group(2) and dm.group(1) not in KNOWN:
+                if dm and not dm.group(2) and (dm.group(1) not in KNOWN or (KNOWN[dm.group(1)] is None and not dm.group(1).startswith('PX_'))):
                     val = dm.group(3).strip()
                     KNOWN[dm.group(1)] = int(val) if re.fullmatch(r'\d+', val) else 1
             if d == 'undef':
@@ -269,6 +277,7 @@ POST_RULES = [
     (r'#define EPX_GLOBALCONST extern const __attribute__\(\(weak\)\)', '#define EPX_GLOBALCONST static constexpr'),
     # 원본 .cpp 의 전역 이름공간 static 함수를 ::f 로 부르는 곳 (우리 번역은 전부 eng 안이라 :: 를 뗀다)
     (r'(?<![\w>])::(intersectSegmentAABB)\(', r'\1('),
+    (r'(?<![\w>])::px::', 'px::'),  # 원본 ::physx:: (우리 px 는 eng 안)
     # GuConvexSupportTable.cpp:33 boxVertexTable (함수 호출로 초기화되는 전역 표) -> 같은 값을 번호로 만드는 함수
     (r'EPX_PHYSX_COMMON_API\s+extern const aos::BoolV boxVertexTable\[8\];|extern const aos::BoolV boxVertexTable\[8\];', ''),
     (r'\bboxVertexTable\[(\w+)\]', r'boxVertexTable_get(\1)'),

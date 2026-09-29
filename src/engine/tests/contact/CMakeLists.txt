@@ -39,3 +39,6 @@ set(PX_SCENE_INC
 contact_test(test_np_scene test_np_scene.cpp PHYSX)
 target_include_directories(test_np_scene PRIVATE ${PX_SCENE_INC})
 target_compile_definitions(test_np_scene PRIVATE PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+contact_test(test_bp_abp test_bp_abp.cpp PHYSX)
+target_include_directories(test_bp_abp PRIVATE ${PHYSX_ROOT}/source/lowlevelaabb/include ${PHYSX_ROOT}/source/lowlevelaabb/src)
+target_compile_definitions(test_bp_abp PRIVATE PX_PUBLIC_RELEASE=1 PX_NVTX=0)

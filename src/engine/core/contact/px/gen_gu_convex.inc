@@ -13766,3 +13766,463 @@ EHDI bool Gu::pcmContactSphereSphere(GU_CONTACT_METHOD_ARGS)
 	}
 	return false;
 }
+
+// ===== 원본: physx/source/geomutils/include/GuSphere.h
+namespace px
+{
+
+/**
+\brief Represents a sphere defined by its center point and radius.
+*/
+namespace Gu
+{
+	class Sphere
+	{
+	public:
+		/**
+		\brief Constructor
+		*/
+		EHDI Sphere()
+		{
+		}
+
+		/**
+		\brief Constructor
+		*/
+		EHDI Sphere(const PxVec3& _center, PxF32 _radius) : center(_center), radius(_radius)
+		{
+		}
+		/**
+		\brief Copy constructor
+		*/
+		EHDI Sphere(const Sphere& sphere) : center(sphere.center), radius(sphere.radius)
+		{
+		}
+		/**
+		\brief Destructor
+		*/
+		EHDI ~Sphere()
+		{
+		}
+
+		EHDI	void	set(const PxVec3& _center, float _radius)		{ center = _center; radius = _radius;	}
+
+		/**
+		\brief Checks the sphere is valid.
+
+		\return		true if the sphere is valid
+		*/
+		EHDI bool isValid() const
+		{
+			// Consistency condition for spheres: Radius >= 0.0f
+			return radius >= 0.0f;
+		}
+
+		/**
+		\brief Tests if a point is contained within the sphere.
+
+		\param[in] p the point to test
+		\return	true if inside the sphere
+		*/
+		EHDI bool contains(const PxVec3& p) const
+		{
+			return (center-p).magnitudeSquared() <= radius*radius;
+		}
+
+		PxVec3	center;		//!< Sphere's center
+		PxF32	radius;		//!< Sphere's radius
+	};
+}
+
+}
+
+// ===== 원본: physx/source/geomutils/include/GuBox.h
+namespace px
+{
+namespace Gu
+{
+	class Capsule;
+
+	 EHDV void computeOBBPoints(PxVec3*  pts, const PxVec3& center, const PxVec3& extents, const PxVec3& base0, const PxVec3& base1, const PxVec3& base2);
+
+
+	/**
+	\brief Represents an oriented bounding box. 
+
+	As a center point, extents(radii) and a rotation. i.e. the center of the box is at the center point, 
+	the box is rotated around this point with the rotation and it is 2*extents in width, height and depth.
+	*/
+
+	/**
+	Box geometry
+
+	The rot member describes the world space orientation of the box.
+	The center member gives the world space position of the box.
+	The extents give the local space coordinates of the box corner in the positive octant.
+	Dimensions of the box are: 2*extent.
+	Transformation to world space is: worldPoint = rot * localPoint + center
+	Transformation to local space is: localPoint = T(rot) * (worldPoint - center)
+	Where T(M) denotes the transpose of M.
+	*/
+	class  Box
+	{
+	public:
+		/**
+		\brief Constructor
+		*/
+		EHD Box()
+		{
+		}
+
+		/**
+		\brief Constructor
+
+		\param origin Center of the OBB
+		\param extent Extents/radii of the obb.
+		\param base rotation to apply to the obb.
+		*/
+		//! Construct from center, extent and rotation
+		EHD Box(const PxVec3& origin, const PxVec3& extent, const PxMat33& base) : rot(base), center(origin), extents(extent)
+		{}
+
+		//! Copy constructor
+		EHD Box(const Box& other) : rot(other.rot), center(other.center), extents(other.extents)
+		{}
+
+		/**
+		\brief Destructor
+		*/
+		EHD ~Box()
+		{
+		}
+
+		//! Assignment operator
+		EHD const Box& operator=(const Box& other)
+		{
+			rot		= other.rot;
+			center	= other.center;
+			extents	= other.extents;
+			return *this;
+		}
+
+		/**
+		\brief Setups an empty box.
+		*/
+		EHDI void setEmpty()
+		{
+			center = PxVec3(0);
+			extents = PxVec3(-EPX_MAX_REAL, -EPX_MAX_REAL, -EPX_MAX_REAL);
+			rot = PxMat33(PxIdentity);
+		}
+
+		/**
+		\brief Checks the box is valid.
+
+		\return	true if the box is valid
+		*/
+		EHDI bool isValid() const
+		{
+			// Consistency condition for (Center, Extents) boxes: Extents >= 0.0f
+			if(extents.x < 0.0f)	return false;
+			if(extents.y < 0.0f)	return false;
+			if(extents.z < 0.0f)	return false;
+			return true;
+		}
+
+/////////////
+		EHD	void	setAxes(const PxVec3& axis0, const PxVec3& axis1, const PxVec3& axis2)
+		{
+			rot.column0 = axis0;
+			rot.column1 = axis1;
+			rot.column2 = axis2;
+		}
+
+		EHD	PxVec3	rotate(const PxVec3& src)	const
+		{
+			return rot * src;
+		}
+
+		EHD	PxVec3	rotateInv(const PxVec3& src)	const
+		{
+			return rot.transformTranspose(src);
+		}
+
+		EHD	PxVec3	transform(const PxVec3& src)	const
+		{
+			return rot * src + center;
+		}
+
+		EHD	PxTransform getTransform()	const
+		{
+			return PxTransform(center, PxQuat(rot));
+		}
+
+		EHDI PxVec3 computeAABBExtent() const
+		{
+			const PxReal a00 = PxAbs(rot[0][0]);
+			const PxReal a01 = PxAbs(rot[0][1]);
+			const PxReal a02 = PxAbs(rot[0][2]);
+
+			const PxReal a10 = PxAbs(rot[1][0]);
+			const PxReal a11 = PxAbs(rot[1][1]);
+			const PxReal a12 = PxAbs(rot[1][2]);
+
+			const PxReal a20 = PxAbs(rot[2][0]);
+			const PxReal a21 = PxAbs(rot[2][1]);
+			const PxReal a22 = PxAbs(rot[2][2]);
+
+			const PxReal ex = extents.x;
+			const PxReal ey = extents.y;
+			const PxReal ez = extents.z;
+
+			return PxVec3(	a00 * ex + a10 * ey + a20 * ez,
+							a01 * ex + a11 * ey + a21 * ez,
+							a02 * ex + a12 * ey + a22 * ez);
+		}
+
+		/**
+		Computes the obb points.
+		\param		pts	[out] 8 box points
+		*/
+		EHD void computeBoxPoints(PxVec3*  pts) const
+		{
+			Gu::computeOBBPoints(pts, center, extents, rot.column0, rot.column1, rot.column2);
+		}
+
+		EHDV void create(const Gu::Capsule& capsule);
+
+		PxMat33	rot;
+		PxVec3	center;
+		PxVec3	extents;
+	};
+	E_STATIC_ASSERT(sizeof(Gu::Box) == 60);
+
+	//! A padded version of Gu::Box, to safely load its data using SIMD
+	class BoxPadded : public Box
+	{
+	public:
+		EHD BoxPadded()		{}
+		EHD ~BoxPadded()	{}
+		PxU32	padding;
+	};
+	E_STATIC_ASSERT(sizeof(Gu::BoxPadded) == 64);
+
+
+}
+
+}
+
+// ===== 원본: physx/source/geomutils/include/GuCapsule.h
+namespace px
+{
+namespace Gu
+{
+
+/**
+\brief Represents a capsule.
+*/
+	class Capsule : public Segment
+	{
+	public:
+		/**
+		\brief Constructor
+		*/
+		EHDI Capsule()
+		{
+		}
+
+		/**
+		\brief Constructor
+
+		\param seg Line segment to create capsule from.
+		\param _radius Radius of the capsule.
+		*/
+		EHDI Capsule(const Segment& seg, PxF32 _radius) : Segment(seg), radius(_radius)
+		{
+		}
+
+		/**
+		\brief Constructor
+
+		\param _p0 First segment point
+		\param _p1 Second segment point
+		\param _radius Radius of the capsule.
+		*/
+		EHDI Capsule(const PxVec3& _p0, const PxVec3& _p1, PxF32 _radius) : Segment(_p0, _p1), radius(_radius)
+		{           
+		}
+
+		/**
+		\brief Destructor
+		*/
+		EHDI ~Capsule()
+		{
+		}
+
+		PxF32	radius;
+	};
+}
+
+}
+
+// ===== 원본: physx/source/geomutils/include/GuBounds.h
+// PT: the EPX_MAX_BOUNDS_EXTENTS value is too large and produces INF floats when the box values are squared in
+// some collision routines. Thus, for the SQ subsystem we use this alternative (smaller) value to mark empty bounds.
+// See PX-954 for details.
+#define GU_EMPTY_BOUNDS_EXTENTS	PxSqrt(0.25f * 1e33f)
+
+namespace px
+{
+	class PxMeshScale;
+
+namespace Gu
+{
+	EHD void computeCapsuleBounds(PxBounds3& bounds, const PxCapsuleGeometry& capsuleGeom, const PxTransform& pose, float contactOffset=0.0f, float inflation=1.0f)
+	{
+		const PxVec3 d = pose.q.getBasisVector0();
+		PxVec3 extents;
+		for(PxU32 ax = 0; ax<3; ax++)
+			extents[ax] = (PxAbs(d[ax]) * capsuleGeom.halfHeight + capsuleGeom.radius + contactOffset)*inflation;
+		bounds.minimum = pose.p - extents;
+		bounds.maximum = pose.p + extents;
+	}
+
+	//'contactOffset' and 'inflation' should not be used at the same time, i.e. either contactOffset==0.0f, or inflation==1.0f
+	 EHDV void computeBounds(PxBounds3& bounds, const PxGeometry& geometry, const PxTransform& transform, float contactOffset, float inflation);	//AABB in world space.
+
+	EHD PxBounds3 computeBounds(const PxGeometry& geometry, const PxTransform& pose)
+	{
+		PxBounds3 bounds;
+		computeBounds(bounds, geometry, pose, 0.0f, 1.0f);
+		return bounds;
+	}
+
+	EHDV void computeGlobalBox(PxBounds3& bounds, PxU32 nbPrims, const PxBounds3*  boxes, const PxU32*  primitives);
+
+	 EHDV void computeBoundsAroundVertices(PxBounds3& bounds, PxU32 nbVerts, const PxVec3*  verts);
+	 EHDV void computeTightBounds(PxBounds3& bounds, PxU32 nbVerts, const PxVec3*  verts, const PxTransform& pose, const PxMeshScale& scale, float contactOffset, float inflation);
+	 EHDV void computeLocalBoundsAndGeomEpsilon(const PxVec3* vertices, PxU32 nbVerties, PxBounds3& localBounds, PxReal& geomEpsilon);
+
+	#define StoreBounds(bounds, minV, maxV)	\
+		V4StoreU(minV, &bounds.minimum.x);	\
+		PxVec4 max4;			\
+		V4StoreA(maxV, &max4.x);			\
+		bounds.maximum = PxVec3(max4.x, max4.y, max4.z);
+
+	// PT: TODO: - refactor with "inflateBounds" in GuBounds.cpp if possible
+	template<const bool useSIMD>
+	EHD void inflateBounds(PxBounds3& dst, const PxBounds3& src, float enlargement)
+	{
+		const float coeff = 0.5f * enlargement;
+		if(useSIMD)
+		{
+			using namespace px::aos;
+
+			Vec4V minV = V4LoadU(&src.minimum.x);
+			Vec4V maxV = V4LoadU(&src.maximum.x);
+			const Vec4V eV = V4Scale(V4Sub(maxV, minV), FLoad(coeff));
+
+			minV = V4Sub(minV, eV);
+			maxV = V4Add(maxV, eV);
+
+			StoreBounds(dst, minV, maxV);
+		}
+		else
+		{
+			// PT: this clumsy but necessary second codepath is used to read the last bound of the array
+			// (making sure we don't V4LoadU invalid memory). Implementation must stay in sync with the
+			// main codepath above. No, this is not very nice.
+			const PxVec3& minV = src.minimum;
+			const PxVec3& maxV = src.maximum;
+			const PxVec3 eV = (maxV - minV) * coeff;
+			dst.minimum = minV - eV;
+			dst.maximum = maxV + eV;
+		}
+	}
+
+	class ShapeData
+	{
+	public:
+
+								EHDV ShapeData(const PxGeometry& g, const PxTransform& t, PxReal inflation);	
+
+		// PT: used by overlaps (box, capsule, convex)
+		EHD const PxVec3&			getPrunerBoxGeomExtentsInflated()	const	{ return mPrunerBoxGeomExtents; }
+
+		// PT: used by overlaps (box, capsule, convex)
+		EHD const PxVec3&			getPrunerWorldPos()					const	{ return mGuBox.center;			}
+
+		EHD const PxBounds3&		getPrunerInflatedWorldAABB()		const	{ return mPrunerInflatedAABB;	}
+
+		// PT: used by overlaps (box, capsule, convex)
+		EHD const PxMat33&			getPrunerWorldRot33()				const	{ return mGuBox.rot;			}
+
+		// PT: this one only used by overlaps so far (for sphere shape, pruner level)
+		EHD const Gu::Sphere&		getGuSphere() const
+		{
+			E_ASSERT(mType == PxGeometryType::eSPHERE);
+			return reinterpret_cast<const Gu::Sphere&>(mGuSphere);
+		}
+
+		// PT: this one only used by sweeps so far (for box shape, NP level)
+		EHD const Gu::Box&			getGuBox() const
+		{
+			E_ASSERT(mType == PxGeometryType::eBOX);
+			return mGuBox;
+		}
+
+		// PT: this one used by sweeps (NP level) and overlaps (pruner level) - for capsule shape
+		EHD const Gu::Capsule&		getGuCapsule() const
+		{
+			E_ASSERT(mType == PxGeometryType::eCAPSULE);
+			return reinterpret_cast<const Gu::Capsule&>(mGuCapsule);
+		}
+
+		EHD float					getCapsuleHalfHeight() const
+		{
+			E_ASSERT(mType == PxGeometryType::eCAPSULE);
+			return mGuBox.extents.x;
+		}
+
+		EHD	PxU32					isOBB()		const { return PxU32(mIsOBB);				}
+		EHD	PxGeometryType::Enum	getType()	const { return PxGeometryType::Enum(mType);	}
+
+		E_NOCOPY(ShapeData)
+	private:
+
+		// PT: box: pre-inflated box extents
+		//     capsule: pre-inflated extents of box-around-capsule
+		//     convex: pre-inflated extents of box-around-convex
+		//     sphere: not used
+		PxVec3				mPrunerBoxGeomExtents;	// used for pruners. This volume encloses but can differ from the original shape
+
+		// PT:
+		//
+		// box center = unchanged copy of initial shape's position, except for convex (position of box around convex)
+		// SIMD code will load it as a V4 (safe because member is not last of Gu structure)
+		//
+		// box rot = precomputed PxMat33 version of initial shape's rotation, except for convex (rotation of box around convex)
+		// SIMD code will load it as V4s (safe because member is not last of Gu structure)
+		//
+		// box extents = non-inflated initial box extents for box shape, half-height for capsule, otherwise not used
+		Gu::Box				mGuBox;
+
+		PxBounds3			mPrunerInflatedAABB;	// precomputed AABB for the pruner shape
+		PxU16				mIsOBB;					// true for OBB, false for AABB. Also used as padding for mPrunerInflatedAABB, don't move.
+		PxU16				mType;					// shape's type
+
+		// these union Gu shapes are only precomputed for narrow phase (not pruners), can be different from mPrunerVolume
+		// so need separate storage
+		union
+		{
+			EHDV PxU8 mGuCapsule[sizeof(Gu::Capsule)];	// 28
+			EHDV PxU8 mGuSphere[sizeof(Gu::Sphere)];		// 16
+		};
+	};
+
+// PT: please make sure it fits in "one" cache line
+E_STATIC_ASSERT(sizeof(ShapeData)==128);
+
+}  // namespace Gu
+
+}

@@ -180,7 +180,7 @@ int main(int argc, char** argv) {
   CK(cudaMemcpy(dPairs, devPairs.data(), sizeof(ec::ShapePair) * pairs, cudaMemcpyHostToDevice));
 
   const float contactDist = 0.04f, meshMargin = 0.01f, tolLen = 1.0f;
-  CK(cudaDeviceSetLimit(cudaLimitStackSize, 32 * 1024));
+  CK(cudaDeviceSetLimit(cudaLimitStackSize, size_t(getenv("CX_STACK_KB") ? atoi(getenv("CX_STACK_KB")) : 64) * 1024));
 
   // ---- 자세 (판·쌍마다 따로 흔듦)
   const size_t N = size_t(envs) * pairs;
