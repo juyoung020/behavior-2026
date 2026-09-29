@@ -25,7 +25,7 @@ KNOWN = {  # 리눅스 carbonite checked 빌드 (clang 14, x86_64, SSE2) 에서�
     'PX_DEBUG_GJK': 0, 'PX_INTEL_FAMILY_SSE': 1, 'PX_SSE2': 1, 'PX_ENABLE_INVARIANT_CHECKS': 0,
     'EPA_DEBUG': 0, 'GJK_DEBUG': 0, 'PX_GJK_EPA_DEBUG': 0, 'PCM_BOX_HULL_DEBUG': 0, 'PX_PROFILE': 0,
     'PX_CUDA_ARCH': 0, '__CUDA_ARCH__': None, '__CUDACC__': None, 'PX_ENABLE_PROFILE': 0, 'PX_NVTX': 0,
-    'PX_SUPPORT_EXTERN_TEMPLATE': 0, 'PX_MAX_ALIGN': 16, 'PX_GJK_TEST_EPA': 0, '__EMSCRIPTEN__': None, '__SSE2__': 1,
+    'PX_SUPPORT_EXTERN_TEMPLATE': 0, 'PX_MAX_ALIGN': 16, 'PX_GJK_TEST_EPA': 0, '__EMSCRIPTEN__': None, '__SSE2__': 1, '__GNUC__': 4, '_DEBUG': None, '__clang__': 1, 'NDEBUG': 1, '_MSC_VER': None, '__linux__': 1, 'PX_GPU_BROADPHASE': 0, 'PX_ENABLE_GPU': 0, 'PX_ARM': 0,
 }
 
 
@@ -196,7 +196,16 @@ def replace_px_align(text):
             elif c == ',' and depth == 1 and comma is None:
                 comma = p
             p += 1
-        out.append(text[comma + 1:p - 1].strip())
+        align = text[k:comma].strip()
+        content = text[comma + 1:p - 1].strip()
+        # 줄 앞(공백만 앞에 있음)에서 "형 이름" 선언이면 alignas 로 정렬을 지킨다 (PxContactPoint 등 배치가 원본과 같아야 함).
+        # 형 뒤에 붙은 꼴(Vec3V PX_ALIGN(16, col0))이나 형만 든 꼴(PX_ALIGN(16, PxF32))은 내용만 (em128 은 이미 16 정렬).
+        line_start = text.rfind('\n', 0, j) + 1
+        before = text[line_start:j]
+        if before.strip() == '' and len(re.findall(r'[A-Za-z_]\w*', content.split('[')[0].split('=')[0])) >= 2:
+            out.append(f'alignas({align}) {content}')
+        else:
+            out.append(content)
         i = p
     return ''.join(out)
 
@@ -245,7 +254,7 @@ CONST_RENAMES = ['PX_MAX_F32', 'PX_MAX_F64', 'PX_EPS_F32', 'PX_EPS_F64', 'PX_MAX
                  'PX_PI', 'PX_HALF_PI', 'PX_TWO_PI', 'PX_INV_PI', 'PX_INV_TWO_PI', 'PX_PIDIV2', 'PX_PIDIV4',
                  'PX_SQRT2', 'PX_SQRT3', 'PX_INV_SQRT2', 'PX_INV_SQRT3', 'PX_MAX_SWEEP_DISTANCE', 'PX_MIN_F32',
                  'PX_MAX_F32_BITS', 'PX_INVALID_U32', 'PX_INVALID_U16', 'PX_INVALID_NODE', 'PX_MAX_BOUNDS_EXTENTS',
-                 'PX_GLOBALCONST', 'PX_VECTORF32']
+                 'PX_GLOBALCONST', 'PX_VECTORF32', 'PX_SIGN_BITMASK']
 
 LANE = {'x': '0', 'y': '1', 'z': '2', 'w': '3'}
 # 번역 뒤 손질: GPU 에서 못 읽는 전역 상수 배열, 형 다른 참조로 칸 읽기(엄격 별칭 규칙 위반) 등을 같은 값의 식으로 바꾼다
@@ -258,6 +267,9 @@ POST_RULES = [
     (r'const PxF32 gMaskXYZ\[4\] = \{[^}]*\};', ''),
     (r'reinterpret_cast<const Vec3V&>\(f\)', 'em_loadu_ps(&f.x)'),
     (r'#define EPX_GLOBALCONST extern const __attribute__\(\(weak\)\)', '#define EPX_GLOBALCONST static constexpr'),
+    # 스택 할당(alloca) -> 고정 크기 지역 배열 (GPU 에 alloca 없음). 개수 상한 E_ALLOCA_N (볼록 꼭짓점 255, 접촉 256)
+    (r'(\w+)\*\s*(\w+)\s*=\s*reinterpret_cast<\w+\*>\(PxAlloca(?:Aligned)?\(sizeof\((\w+)\)\s*\*\s*([\w.]+)(?:\s*,\s*16)?\)\);',
+     r'\1 \2_buf[E_ALLOCA_N]; \1* \2 = \2_buf;'),
 ]
 
 
@@ -273,11 +285,41 @@ def translate_text(text, path, root=None, seen=None):
         text = re.sub(r'\b' + c + r'\b', 'E' + c, text)
     for pat, rep in POST_RULES:
         text = re.sub(pat, rep, text)
+    # 남은 PX_ 매크로(번역본 안에서 정의되는 것들)는 EPX_ 로: 시험 프로그램에서 PhysX 헤더와 같이 써도 겹치지 않게
+    text = re.sub(r'\bPX_(\w+)', r'EPX_\1', text)
     return text
 
 
 def leftover_px(text):
     return sorted(set(re.findall(r'\bPX_\w+', text)))
+
+
+GTABLE = re.compile(r'^(?:static\s+)?const\s+(\w+)\s+(\w+)\s*\[\s*(\w*)\s*\]\s*=\s*(\{.*?\})\s*;', re.S | re.M)
+
+
+def device_tables(text):
+    """이름공간 수준 상수 표(맨 앞 칸에서 시작하는 const T name[N] = {...};)를 호스트·장치 둘 다 읽을 수 있게 바꾼다.
+    E_GTABLE 가 호스트 표 + __constant__ 표 + 고르는 함수 name_p() 를 만들고, 쓰는 곳 name[ 는 name_p()[ 로."""
+    names = []
+    holders = []  # 정의·extern 선언은 자리표로 빼 두었다가 쓰는 곳 이름을 바꾼 뒤 되돌린다
+
+    def rep(m):
+        t, name, n, body = m.group(1), m.group(2), m.group(3), m.group(4)
+        names.append(name)
+        n = n or str(body.count(',') + 1)
+        holders.append(f'E_GTABLE({t}, {name}, {n}, {" ".join(body.split())})')
+        return f'@@GT{len(holders) - 1}@@'
+    text = GTABLE.sub(rep, text)
+    for name in names:
+        def rep_ext(m, name=name):
+            holders.append(f'E_GTABLE_DECL({m.group(1)}, {name});')
+            return f'@@GT{len(holders) - 1}@@'
+        text = re.sub(r'(?:EHDV\s+)?extern\s+const\s+(\w+)\s+' + name + r'\s*\[\s*\w*\s*\]\s*;', rep_ext, text)
+    for name in names:
+        text = re.sub(r'\b' + name + r'\b', name + '_p()', text)
+    for k, h in enumerate(holders):
+        text = text.replace(f'@@GT{k}@@', h)
+    return text
 
 
 def shadow_code(text):
@@ -367,7 +409,10 @@ def after_template(head, off):
 
 def classify(head):
     """'ns' | 'cls' | 'fn' | 'other'"""
-    h = head.strip()
+    h = head[after_template(head, 0):].strip()
+    h = re.sub(r'alignas\s*\(\s*\w+\s*\)', '', h).strip()
+    if h.startswith('E_'):
+        return 'other'
     if re.match(r'(namespace\b|extern\s*$)', h) or h == 'namespace':
         return 'ns'
     pre = h.split('(')[0]
@@ -398,7 +443,7 @@ def annotate_functions(text):
                 kind = classify(head[off:])
                 if kind == 'fn':
                     body = head[off:]
-                    if not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__)\b', body):
+                    if not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|PX_\w*INLINE\w*)\b', body):
                         ins = after_template(head, off)
                         while ins < len(head) and head[ins] in ' \t\n':
                             ins += 1
@@ -415,7 +460,7 @@ def annotate_functions(text):
             head = sh[head_start:i]
             off = skip_prefix(head)
             body = head[off:].strip()
-            if body and classify(body) == 'fn' and not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|friend)\b', body) \
+            if body and classify(body) == 'fn' and not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|friend|PX_\w*INLINE\w*)\b', body) \
                     and not re.match(r'E_', body):
                 ins = after_template(head, off)
                 while ins < len(head) and head[ins] in ' \t\n':
@@ -444,21 +489,25 @@ def main():
             INLINE_INCLUDES.update(l.split()[1:])
         elif l.strip() and not l.startswith('#'):
             jobs.append(l.split())
+    seen = set()  # 모든 조각에 걸쳐 한 번만 펼친다 (앞 조각에서 번역한 헤더는 다시 넣지 않음)
     for job in jobs:
         out_name, srcs = job[0], job[1:]
         annotate = False
         if srcs and srcs[0] == 'ANNOTATE':
             annotate, srcs = True, srcs[1:]
         body = []
-        seen = set()
         for s in srcs:
+            if s.startswith('@'):  # 손으로 짠 조각을 이 자리에 끼움
+                body.append(f'#include "core/contact/px/{s[1:]}"\n')
+                continue
             p = root / s
             seen.add(p.name)
             t = translate_text(p.read_text(), s, root, seen)
-            if annotate:
-                t = annotate_functions(t)
             body.append(f'// ===== 원본: physx/{s}\n' + t.strip('\n') + '\n')
         text = '\n'.join(body)
+        if annotate:
+            text = annotate_functions(text)
+            text = device_tables(text)
         (outdir / out_name).write_text(text)
         lo = leftover_px(text)
         print(f'{out_name}: {len(text.splitlines())} 줄, 남은 PX_ 토큰: {" ".join(lo)}')

@@ -2092,6 +2092,241 @@ typedef PxTransformPadded	PxTransform32;
 
 } // namespace px
 
+// ===== 원본: physx/include/foundation/PxMat34.h
+namespace px
+{
+/*!
+Basic mathematical 3x4 matrix, implemented as a 3x3 rotation matrix and a translation
+
+See PxMat33 for the format of the rotation matrix.
+*/
+
+template<class Type>
+class PxMat34T
+{
+	public:
+	//! Default constructor
+	EHD PxMat34T()
+	{
+	}
+
+	//! Construct from four base vectors
+	EHD PxMat34T(const PxVec3T<Type>& b0, const PxVec3T<Type>& b1, const PxVec3T<Type>& b2, const PxVec3T<Type>& b3)
+		: m(b0, b1, b2), p(b3)
+	{
+	}
+
+	//! Construct from Type[12]
+	explicit EHD PxMat34T(Type values[]) :
+		m(values), p(values[9], values[10], values[11])
+	{		
+	}
+
+	//! Construct from a 3x3 matrix
+	explicit EHD PxMat34T(const PxMat33T<Type>& other)
+		: m(other), p(PxZero)
+	{
+	}
+
+	//! Construct from a 3x3 matrix and a translation vector
+	EHD PxMat34T(const PxMat33T<Type>& other, const PxVec3T<Type>& t)
+		: m(other), p(t)
+	{
+	}
+
+	//! Construct from a PxTransformT<Type>
+	explicit EHD PxMat34T(const PxTransformT<Type>& other)
+		 : m(other.q), p(other.p)
+	{
+	}
+
+	//! Copy constructor
+	EHD PxMat34T(const PxMat34T& other) : m(other.m), p(other.p)
+	{
+	}
+
+	//! Assignment operator
+	EHD const PxMat34T& operator=(const PxMat34T& other)
+	{
+		m = other.m;
+		p = other.p;
+		return *this;
+	}
+
+	//! Set to identity matrix
+	EHD void setIdentity()
+	{
+		m = PxMat33T<Type>(PxIdentity);
+		p = PxVec3T<Type>(0);
+	}
+	
+	// Simpler operators
+	//! Equality operator
+	EHD bool operator==(const PxMat34T& other) const
+	{
+		return m == other.m && p == other.p;
+	}
+
+	//! Inequality operator
+	EHD bool operator!=(const PxMat34T& other) const
+	{
+		return !operator==(other);
+	}
+
+	//! Unary minus
+	EHD PxMat34T operator-() const
+	{
+		return PxMat34T(-m, -p);
+	}
+
+	//! Add
+	EHD PxMat34T operator+(const PxMat34T& other) const
+	{
+		return PxMat34T(m + other.m, p + other.p);
+	}
+
+	//! Subtract
+	EHD PxMat34T operator-(const PxMat34T& other) const
+	{
+		return PxMat34T(m - other.m, p - other.p);
+	}
+
+	//! Scalar multiplication
+	EHD PxMat34T operator*(Type scalar) const
+	{
+		return PxMat34T(m*scalar, p*scalar);
+	}
+
+	//! Matrix multiplication
+	EHD PxMat34T operator*(const PxMat34T& other) const
+	{
+		//Rows from this <dot> columns from other
+		//base0 = rotate(other.m.column0) etc
+		return PxMat34T(m*other.m, m*other.p + p);
+	}
+
+	//! Matrix multiplication, extend the second matrix
+	EHD PxMat34T operator*(const PxMat33T<Type>& other) const
+	{
+		//Rows from this <dot> columns from other
+		//base0 = transform(other.m.column0) etc
+		return PxMat34T(m*other, p);
+	}
+
+	template<class Type2>
+	friend PxMat34T<Type2> operator*(const PxMat33T<Type2>& a, const PxMat34T<Type2>& b);
+	
+	// a <op>= b operators
+
+	//! Equals-add
+	EHD PxMat34T& operator+=(const PxMat34T& other)
+	{
+		m += other.m;
+		p += other.p;
+		return *this;
+	}
+
+	//! Equals-sub
+	EHD PxMat34T& operator-=(const PxMat34T& other)
+	{
+		m -= other.m;
+		p -= other.p;
+		return *this;
+	}
+
+	//! Equals scalar multiplication
+	EHD PxMat34T& operator*=(Type scalar)
+	{
+		m *= scalar;
+		p *= scalar;
+		return *this;
+	}
+
+	//! Element access, mathematical way!
+	EHD Type operator()(PxU32 row, PxU32 col) const
+	{
+		return (*this)[col][row];
+	}
+
+	//! Element access, mathematical way!
+	EHD Type& operator()(PxU32 row, PxU32 col)
+	{
+		return (*this)[col][row];
+	}
+
+	// Transform etc
+	
+	//! Transform vector by matrix, equal to v' = M*v
+	EHD PxVec3T<Type> rotate(const PxVec3T<Type>& other) const
+	{
+		return m*other;
+	}
+
+	//! Transform vector by transpose of matrix, equal to v' = M^t*v
+	EHD PxVec3T<Type> rotateTranspose(const PxVec3T<Type>& other) const
+	{
+		return m.transformTranspose(other);
+	}
+
+	//! Transform point by matrix
+	EHD PxVec3T<Type> transform(const PxVec3T<Type>& other) const
+	{
+		return m*other + p;
+	}
+
+	//! Transform point by transposed matrix
+	EHD PxVec3T<Type> transformTranspose(const PxVec3T<Type>& other) const
+	{
+		return m.transformTranspose(other - p);
+	}
+
+	//! Transform point by transposed matrix
+	EHD PxMat34T transformTranspose(const PxMat34T& other) const
+	{
+		return PxMat34T(m.transformTranspose(other.m.column0), 
+						m.transformTranspose(other.m.column1), 
+						m.transformTranspose(other.m.column2), 
+						m.transformTranspose(other.p - p));
+	}
+
+	//! Invert matrix treating it as a rotation+translation matrix only
+	EHD PxMat34T getInverseRT() const
+	{
+		return PxMat34T(m.getTranspose(), m.transformTranspose(-p));
+	}
+
+	EHD		PxVec3T<Type>& operator[](PxU32 num)			{ return (&m.column0)[num];	}
+	EHD const	PxVec3T<Type>& operator[](PxU32 num)	const	{ return (&m.column0)[num];	}
+
+	//Data, see above for format!
+
+	PxMat33T<Type> m;
+	PxVec3T<Type> p;
+};
+
+//! Multiply a*b, a is extended
+template<class Type>
+EHDI PxMat34T<Type> operator*(const PxMat33T<Type>& a, const PxMat34T<Type>& b)
+{
+	return PxMat34T<Type>(a * b.m, a * b.p);
+}
+
+typedef PxMat34T<float>		PxMat34;
+typedef PxMat34T<double>	PxMat34d;
+
+//! A padded version of PxMat34, to safely load its data using SIMD
+class PxMat34Padded : public PxMat34
+{
+	public:
+		EHD	PxMat34Padded(const PxMat34& src) : PxMat34(src)	{}
+		EHD	PxMat34Padded()										{}
+		EHD	~PxMat34Padded()									{}
+		PxU32	padding;
+};
+E_STATIC_ASSERT(0==(sizeof(PxMat34Padded)==16));
+
+} // namespace px
+
 // ===== 원본: physx/include/foundation/PxBounds3.h
 namespace px
 {

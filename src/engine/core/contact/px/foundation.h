@@ -20,6 +20,11 @@
 #define E_STATIC_ASSERT(x) static_assert((x), #x)
 #define E_OFFSET_OF(T, m) offsetof(T, m)
 #define E_PLACEMENT_NEW(p, T) new (p) T
+#define E_NOCOPY(Class) \
+ protected:             \
+  Class(const Class&);  \
+  Class& operator=(const Class&);
+#define EPX_FL __FILE__, __LINE__
 
 #define EPX_MAX_F32 3.4028234663852885981170418348452e+38F
 #define EPX_EPS_F32 FLT_EPSILON
@@ -37,6 +42,7 @@
 #define EPX_MAX_U32 UINT32_MAX
 #define EPX_INVALID_U32 0xffffffff
 #define EPX_INVALID_U16 0xffff
+#define EPX_SIGN_BITMASK 0x80000000
 
 namespace eng {
 namespace px {
@@ -115,7 +121,6 @@ EHD float PxFloor(float a) { return ::floorf(a); }
 EHD float PxCeil(float a) { return ::ceilf(a); }
 EHD float PxSign(float a) { return intrinsics::sign(a); }
 EHD float PxSign2(float a, float eps = FLT_EPSILON) { return (a < -eps) ? -1.0f : (a > eps) ? 1.0f : 0.0f; }
-template <class T> EHD void PxSwap(T& x, T& y) { const T tmp = x; x = y; y = tmp; }
 
 EHD uint32_t PxHighestSetBitUnsafe(uint32_t v) {
 #if defined(__CUDA_ARCH__)

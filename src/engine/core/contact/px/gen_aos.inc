@@ -1564,7 +1564,7 @@ EHD void QuatGetMat33V(const QuatVArg q, Vec3V& column0, Vec3V& column1, Vec3V& 
 EHD bool isValidVec3V(const Vec3V a)
 {
 	//using em_comieq_ss to do the comparison doesn't work for NaN.
-	PxF32 f[4];
+	alignas(16) PxF32 f[4];
 	V4StoreA(a, f);
 	return f[3] == 0.0f;
 }
@@ -4248,7 +4248,7 @@ EHD bool isFiniteVec3V(const Vec3V a)
 EHD bool isFiniteVec4V(const Vec4V a)
 {
 	/*Vec4V a;
-	PxF32 f[4];
+	alignas(16) PxF32 f[4];
 	F32Array_Aligned_From_Vec4V(a, f);
 	return PxIsFinite(f[0])
 	        && PxIsFinite(f[1])
@@ -4319,7 +4319,7 @@ EHD void V3StoreU(const Vec3V a, PxVec3& f)
 EHD FloatV FAbs(const FloatV a)
 {
 	E_ASSERT_ISVALIDFLOATV(a);
-	const PxU32 absMask[4] = { 0x7fFFffFF, 0x7fFFffFF, 0x7fFFffFF, 0x7fFFffFF };
+	alignas(16) const PxU32 absMask[4] = { 0x7fFFffFF, 0x7fFFffFF, 0x7fFFffFF, 0x7fFFffFF };
 	return em_and_ps(a, em_load_ps(reinterpret_cast<const PxF32*>(absMask)));
 }
 
