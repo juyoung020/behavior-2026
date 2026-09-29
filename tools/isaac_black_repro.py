@@ -27,6 +27,8 @@ ap.add_argument("--set", action="append", default=[], help="/키=값 (시작 뒤
 ap.add_argument("--simctx", action="store_true", help="OmniGibson 처럼 SimulationContext(physics_dt=1/120, rendering_dt=1/30) 로 step(render=True)")
 ap.add_argument("--physics-hz", type=float, default=120.0)
 ap.add_argument("--render-hz", type=float, default=30.0)
+ap.add_argument("--cuda-hold-gib", type=float, default=0.0, help="이 프로세스 안에서 torch 로 CUDA 메모리를 잡아 둔다(평가기 프로세스의 torch/warp 흉내)")
+ap.add_argument("--cuda-burn", type=int, default=0, help="매 프레임 같은 프로세스에서 4096x4096 행렬곱을 N 번(정책 추론 흉내)")
 ap.add_argument("--og-render", action="store_true", help="OmniGibson simulator.py _set_renderer_settings 와 같은 렌더 설정을 넣는다")
 a = ap.parse_args()
 
@@ -105,6 +107,17 @@ for i in range(a.cams):
     rgbs.append(r)
     deps.append(d)
 
+held = []
+if a.cuda_hold_gib > 0:  # 같은 프로세스 안 CUDA 메모리 (계산 없음)
+    import torch
+
+    left = int(a.cuda_hold_gib * (1 << 30))
+    while left > 0:
+        n = min(left, 1 << 30)
+        held.append(torch.empty(n, dtype=torch.uint8, device="cuda"))
+        left -= n
+    torch.cuda.synchronize()
+    print(f"[repro] 같은 프로세스 CUDA {a.cuda_hold_gib} GiB 잡음", flush=True)
 sim = None
 if a.simctx:  # OmniGibson simulator.py 와 같은 방식: SimulationContext(physics_dt, rendering_dt, backend torch, device cpu)
     from isaacsim.core.api import SimulationContext
@@ -124,8 +137,17 @@ for _ in range(20):  # 데우기 (OmniGibson 도 장면 로드 뒤 여러 번 �
 
 black = [[] for _ in range(a.cams)]
 dblack = [0] * a.cams
+rgb_only = [[] for _ in range(a.cams)]  # 증상 그대로: RGB 는 비었는데 depth 는 값이 있음 (데우기 중엔 둘 다 빈다)
 t0 = time.time()
+burn = None
+if a.cuda_burn > 0:
+    import torch
+
+    burn = (torch.randn(4096, 4096, device="cuda", dtype=torch.float16), torch.randn(4096, 4096, device="cuda", dtype=torch.float16))
 for f in range(a.frames):
+    if burn is not None:
+        for _ in range(a.cuda_burn):
+            burn[0].copy_(burn[0] @ burn[1] * 1e-3)
     step()
     for i in range(a.cams):
         x = rgbs[i].get_data(device="cpu")
@@ -134,12 +156,16 @@ for f in range(a.frames):
             black[i].append(f)
         y = deps[i].get_data(device="cpu")
         y = y["data"] if isinstance(y, dict) else y
-        if y.size == 0 or not np.any(y):
+        dz = y.size == 0 or not np.any(y)
+        if dz:
             dblack[i] += 1
+        if black[i] and black[i][-1] == f and not dz:
+            rgb_only[i].append(f)
 dt = time.time() - t0
-print(f"[repro] simctx={a.simctx} phys={a.physics_hz} rend={a.render_hz} kit={a.kit} cams={a.cams} res={a.res} renderer={a.renderer} play={not a.no_play} set={a.set} "
+print(f"[repro] burn={a.cuda_burn} cuda_hold={a.cuda_hold_gib} simctx={a.simctx} phys={a.physics_hz} rend={a.render_hz} kit={a.kit} cams={a.cams} res={a.res} renderer={a.renderer} play={not a.no_play} set={a.set} "
       f"frames={a.frames} ({a.frames / dt:.1f} fps)", flush=True)
 for i in range(a.cams):
-    print(f"[repro] 카메라 {i}: RGB 검정 {len(black[i])}/{a.frames} 처음 {black[i][:12]}  depth 0 {dblack[i]}", flush=True)
-print(f"[repro] 합계 RGB 검정 {sum(len(b) for b in black)}/{a.frames * a.cams}", flush=True)
+    print(f"[repro] cam {i}: rgb_black {len(black[i])}/{a.frames} depth_zero {dblack[i]} "
+          f"RGB_ONLY(symptom) {len(rgb_only[i])} first {rgb_only[i][:10]}", flush=True)
+print(f"[repro] total rgb_black {sum(len(b) for b in black)}/{a.frames * a.cams} RGB_ONLY {sum(len(r) for r in rgb_only)}", flush=True)
 app.close()

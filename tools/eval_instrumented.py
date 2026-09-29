@@ -389,6 +389,7 @@ class BlackFrameDiag:
         self.rows = defaultdict(list)  # 센서 -> [(스텝, host 검정, cuda 검정, 둘 다 안 검을 때 최대|차|)]
         self.n_black = defaultdict(int)
         self.n_total = defaultdict(int)
+        self.times = defaultdict(list)  # 센서 -> [(스텝, 검정, 프레임 기준 시각, 시뮬레이터 시각)]
 
     def after_get_obs(self, sensor, obs):
         if "rgb" not in obs:
@@ -400,6 +401,22 @@ class BlackFrameDiag:
         self.n_black[name] += hb
         step = len(T.steps)
         if self.diag:
+            # 시간 동기화 확인: 이 스텝에 받은 annotator 데이터가 몇 시각에 그린 프레임인지(ReferenceTime annotator) vs 시뮬레이터 시각
+            ref = None
+            try:
+                import omnigibson as og
+                import omni.replicator.core as rep
+
+                if not hasattr(sensor, "_fe_reftime"):
+                    with og.sim.editing_usd():  # render var 추가 = USD 편집 (OmniGibson 의 USD 편집 감시)
+                        sensor._fe_reftime = rep.AnnotatorRegistry.get_annotator("ReferenceTime")
+                        sensor._fe_reftime.attach([sensor.render_product])
+                rt = sensor._fe_reftime.get_data()
+                num, den = rt.get("referenceTimeNumerator"), rt.get("referenceTimeDenominator")
+                ref = (float(num) / float(den)) if den else None
+                self.times[name].append((step, hb, ref, float(og.sim.current_time)))
+            except Exception as e:
+                self.times[name].append((step, hb, None, f"{type(e).__name__}: {e}"[:60]))
             try:
                 import warp as wp
 
@@ -421,6 +438,7 @@ class BlackFrameDiag:
         out = {"black": dict(self.n_black), "total": dict(self.n_total), "settings": getattr(self, "settings", {})}
         if self.diag:
             out["diag"] = {k: v for k, v in self.rows.items()}
+            out["times"] = {k: v for k, v in self.times.items()}
         return out
 
 
