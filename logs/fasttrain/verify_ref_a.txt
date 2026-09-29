@@ -1,0 +1,12 @@
+원래 파이프라인 기준 288개 샘플 → /home/juyoung/fasttrain_work/ref/ref_a.npz (64s)
+  state                           (288, 32)               float32
+  image/base_0_rgb                (288, 224, 224, 3)      uint8
+  image/left_wrist_0_rgb          (288, 224, 224, 3)      uint8
+  image/right_wrist_0_rgb         (288, 224, 224, 3)      uint8
+  image_mask/base_0_rgb           (288,)                  bool
+  image_mask/left_wrist_0_rgb     (288,)                  bool
+  image_mask/right_wrist_0_rgb    (288,)                  bool
+  actions                         (288, 32, 32)           float32
+  tokenized_prompt                (288, 200)              int32
+  tokenized_prompt_mask           (288, 200)              bool
+  _idx                            (288,)                  int64

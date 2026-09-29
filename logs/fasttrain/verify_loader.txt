@@ -1,0 +1,12 @@
+  배치 0 actions                                     비트 동일       
+  배치 0 obs/image/base_0_rgb                        비트 동일       
+  배치 0 obs/image/left_wrist_0_rgb                  비트 동일       
+  배치 0 obs/image/right_wrist_0_rgb                 비트 동일       
+  배치 0 obs/image_mask/base_0_rgb                   비트 동일       
+  배치 0 obs/image_mask/left_wrist_0_rgb             비트 동일       
+  배치 0 obs/image_mask/right_wrist_0_rgb            비트 동일       
+  배치 0 obs/state                                   비트 동일       
+  배치 0 obs/tokenized_prompt                        비트 동일       
+  배치 0 obs/tokenized_prompt_mask                   비트 동일       
+네이티브 로더 통계 {'batches': 4.0, 'consumer_wait_s': 5.950001650489867e-06, 'producer_wait_slot_s': 22.070217377999143, 'fill_s': 0.016799142000309075, 'requests': 864.0, 'decoded_frames': 3858.0, 'parsers': 864.0, 'map_s': 1.2061008680000003}
+통과 — 로더 출력(섞기 순서 포함) 전부 비트 동일

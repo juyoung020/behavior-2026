@@ -1,0 +1,13 @@
+크기 조정 커널 vs 원래 PIL, 무작위 uint8 영상 16장씩 (모양별 다른 값 수): {'720x720': 0, '480x480': 0, '480x640': 0, '300x200': 0}
+==============================================================================
+구간별 대조 (파일 6개 × 프레임 24개, 무작위 seed=0)
+==============================================================================
+  파일                                                       RGB(색표)        224²
+  observation.rgb.zed_link_camera_0/chunk-000/file-000.mp4           0           0
+  observation.rgb.zed_link_camera_0/chunk-000/file-001.mp4           0           0
+  observation.rgb.left_realsense_link_camera_0/chunk-000/file-000.mp4           0           0
+  observation.rgb.left_realsense_link_camera_0/chunk-000/file-001.mp4           0           0
+  observation.rgb.right_realsense_link_camera_0/chunk-000/file-000.mp4           0           0
+  observation.rgb.right_realsense_link_camera_0/chunk-000/file-001.mp4           0           0
+  (표의 숫자 = 원래와 다른 값의 개수, 0 이면 비트 동일)   엔진 {'requests': 288.0, 'decoded_frames': 1236.0, 'parsers': 288.0, 'map_s': 0.117226217}
+통과
