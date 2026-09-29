@@ -414,8 +414,18 @@ class RenderCapture:
 
 
 def install(cap: RenderCapture):
+    import tempfile
+
     import omnigibson as og
     from omnigibson.eval import evaluator as E
+
+    # og.tempdir(%TEMP%\tmpXXXX, omnigibson/__init__.py:70)가 09-29 23:57 첫 시도에서 장면 로딩 중 사라져
+    # (다른 작업의 %TEMP%\tmp* 정리로 추정) LightObject._build_usd 가 FileNotFoundError 로 죽었다.
+    # -> %TEMP% 밖 전용 폴더로 옮긴다. 저장소 밖이라 여기 풀린 USD 가 git 에 들어갈 일도 없다. og.shutdown 의 cleanup 이 지운다.
+    base = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "og_render_capture")
+    os.makedirs(base, exist_ok=True)
+    og.tempdir = tempfile.mkdtemp(prefix="og_", dir=base)
+    print(f"[render_capture] og.tempdir -> {og.tempdir}", flush=True)
 
     Ev = E.BatchedEvaluator
     orig_apply = Ev._apply_actions

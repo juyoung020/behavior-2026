@@ -6,7 +6,23 @@
 param([Parameter(Mandatory = $true)][string]$Actions, [string]$Tag = 'capture', [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'RGBD',
       [int]$MaxSteps = 500, [string]$Steps = '', [int]$Minutes = 20, [int]$MaxOtherMiB = 3500)
 . C:\behavior-2026\tools\gpu_lock.ps1 -Lib
-if (-not (Enter-GpuLock 'engine-render' "render 기준 자료 ($Tag, 공식 평가기 RTX $Wrapper)" $Minutes '9' 180)) { exit 2 }
+# 잠금 잡기: gpu_lock.ps1 과 같은 owner.txt 형식, 30 초 간격(규칙 30~60 초 안), 오래된 잠금(end_epoch + 900 초)은 지움
+$t0 = Get-NowEpoch
+while ($true) {
+    cmd /c mkdir "$script:GpuLockDir" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $s = Get-NowEpoch
+        $txt = "owner=engine-render`npurpose=render 기준 자료 ($Tag, 공식 평가기 RTX $Wrapper)`nstart_epoch=$s`nend_epoch=$($s + 60 * $Minutes)`nvram_gb=9`n"
+        [IO.File]::WriteAllText((Join-Path $script:GpuLockDir 'owner.txt'), $txt, [Text.UTF8Encoding]::new($false))
+        "[gpu_lock] 잡음: engine-render ($Minutes 분)"
+        break
+    }
+    if (Test-GpuLockStale) { Remove-Item $script:GpuLockDir -Recurse -Force -ErrorAction SilentlyContinue; continue }
+    if (((Get-NowEpoch) - $t0) -gt 3 * 3600) { "[gpu_lock] 3 시간 기다려도 못 잡음"; exit 2 }
+    $o = Get-GpuLockOwner
+    "[gpu_lock] 사용 중: $(if ($o) { "$($o['owner']) / $($o['purpose'])" }) -- 30 초 뒤 다시"
+    Start-Sleep -Seconds 30
+}
 try {
     $ok = $false
     for ($i = 0; $i -lt 20; $i++) {

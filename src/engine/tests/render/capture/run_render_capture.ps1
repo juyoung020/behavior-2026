@@ -38,4 +38,6 @@ python C:\behavior-2026\src\engine\tests\render\capture\render_capture.py @ours 
     --host 127.0.0.1 --port 8010 --instance-indices $Instance --num-envs 1 --max-steps $MaxSteps `
     --output-dir $dump --write-video --headless 2>&1 | ForEach-Object { "$_" } | Out-File -FilePath $log -Encoding utf8
 $srv.WaitForExit(30000) | Out-Null
+# 평가기가 연결 전에 죽으면 --once 재생 서버가 8010 에서 계속 기다린다 -> 이 실행의 서버만 끈다(로그 경로로 가림)
+wsl -d Ubuntu-22.04 -u juyoung -- pkill -f "replay_policy_server.py.*render_$Tag/server_log" 2>$null
 "=== 렌더 기준 자료 끝: $dump ==="

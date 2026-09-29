@@ -281,7 +281,6 @@ def main():
 
     # ---- 기하 (재질 칸 나눔까지 같은 것끼리 한 번만)
     anchors = S["anchors"]
-    robot_seg = "/" + a.robot_name + "/"
     geo_key, geo_list = {}, []  # (원 기하 번호, 칸 해시) -> 내보낸 번호
     tri_pos, tri_nrm, tri_uv, tri_slot, geom_ntri, geom_flags = [], [], [], [], [], []
     inst_geom, inst_anchor, inst_slot_base, inst_flags, inst_rel, slot_mat, inst_paths = [], [], [], [], [], [], []
@@ -324,7 +323,8 @@ def main():
         inst_slot_base.append(len(slot_mat))
         slot_mat.extend(mats)
         flg = 1 if m.get("double_sided") else 0
-        if robot_seg in anchors[m["anchor"]]["path"] + "/":
+        segs = anchors[m["anchor"]]["path"].split("/")
+        if any(x == a.robot_name or x.endswith("__" + a.robot_name) for x in segs):  # 예: controllable__r1pro__robot
             flg |= 2
         if str(m.get("orientation")) == "leftHanded":
             flg |= 4
