@@ -464,17 +464,32 @@ impl<F: FnMut(&ChatRequest) -> Result<Msg, String> + Send> Llm for FnLlm<F> {
 
 /// 기록된 응답을 순서대로 돌려주는 LLM(재생). 목적별로 줄을 따로 둔다.
 pub struct ReplayLlm {
-    pub queues: std::collections::HashMap<String, std::collections::VecDeque<(String, ChatResult)>>,
-    pub mismatches: Vec<String>,
+    /// 목적별: (요청 지문, 응답, 기록된 요청 메시지)
+    pub queues: std::collections::HashMap<String, std::collections::VecDeque<(String, ChatResult, Value)>>,
+    pub mismatches: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl Llm for ReplayLlm {
     fn chat(&mut self, req: &ChatRequest) -> Result<ChatResult, String> {
         let q = self.queues.get_mut(&req.purpose).ok_or_else(|| format!("기록에 '{}' 응답이 없음", req.purpose))?;
-        let (fp, r) = q.pop_front().ok_or_else(|| format!("기록된 '{}' 응답이 바닥남", req.purpose))?;
+        let (fp, r, recorded) = q.pop_front().ok_or_else(|| format!("기록된 '{}' 응답이 바닥남", req.purpose))?;
         let now = req.fingerprint();
         if !fp.is_empty() && fp != now {
-            self.mismatches.push(format!("{}: 요청 지문 다름 기록 {fp} / 지금 {now}", req.purpose));
+            // 처음 달라지는 메시지·글자 위치를 같이 남긴다
+            let mut detail = String::new();
+            if let Some(rec) = recorded.as_array() {
+                for (i, m) in req.messages.iter().enumerate() {
+                    let a = rec.get(i).and_then(|x| serde_json::from_value::<Msg>(x.clone()).ok()).map(|x| x.text()).unwrap_or_default();
+                    let b = m.text();
+                    if a != b {
+                        let p = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+                        let ctx = |s: &str| s.chars().skip(p.saturating_sub(40)).take(120).collect::<String>();
+                        detail = format!("메시지 {i}({}) 글자 {p}: 기록 «{}» / 지금 «{}»", m.role, ctx(&a), ctx(&b));
+                        break;
+                    }
+                }
+            }
+            self.mismatches.lock().unwrap().push(format!("{}: 요청 지문 다름 기록 {fp} / 지금 {now} {detail}", req.purpose));
         }
         Ok(r)
     }

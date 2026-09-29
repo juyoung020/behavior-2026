@@ -139,8 +139,9 @@ pub fn serve_fake_pi(l: TcpListener, log: Option<Arc<Mutex<FakePiLog>>>, once: b
     for s in l.incoming() {
         let Ok(s) = s else { continue };
         let log = log.clone();
+        // /healthz 같은 HTTP 요청은 여기서 답하고 다음 접속으로
+        let Ok(Accepted::Ws(mut c)) = Conn::accept(s) else { continue };
         let h = std::thread::spawn(move || {
-            let Ok(Accepted::Ws(mut c)) = Conn::accept(s) else { return };
             let mut meta = Vec::new();
             msgpack::w_json(&mut meta, &json!({"fake_pi": true, "action_dim": 23}));
             if c.send(OP_BIN, &[&meta]).is_err() {

@@ -343,23 +343,44 @@ impl Core {
         }
     }
 
-    /// 결정적 대체. LLM 이 없어도 로봇이 멈추지 않게: 확인 경계면 계속, 예산 소진이면 재시도(한도까지),
-    /// 그다음은 체크리스트의 다음 단계, 없으면 과제 문장.
+    /// 결정적 대체. LLM 이 없어도 로봇이 멈추지 않게. 감시 신호를 증거로 쓴다:
+    /// - 끝남 증거(이동 단계에서 이동 뒤 멈춤, 집기에서 그리퍼가 무언가에 닫힘, 놓기에서 열림,
+    ///   예산 소진이어도 이동 단계면 0.3 m 넘게 움직임) → 다음 단계
+    /// - 증거 없음 + 확인 경계 → 계속(한도까지)
+    /// - 증거 없음 + 예산 소진 → 같은 단계 재시도(한도까지), 그다음은 실패로 두고 다음 단계
+    /// - 남은 단계가 없으면 과제 문장
     pub fn fallback(&mut self, ev: &BoundaryEvent, why: &str) -> Decision {
         let src = format!("fallback: {why}");
+        let mut previous = "none".to_string();
         if let Some(cur) = self.mem.current().cloned() {
-            if matches!(ev.trigger, Trigger::CheckDue | Trigger::Settled | Trigger::GripperChange) && self.continues < self.cfg.max_continues {
-                return Decision::Continue { extra: 0, check_every: 0, reason: "keep executing the current step".into(), source: src };
+            let skill = cur.instruction.skill.as_str();
+            let nav = skill == "move to";
+            let grasp = matches!(skill, "pick up from" | "hold" | "lift");
+            let place = matches!(skill, "place on" | "place in" | "place on next to" | "place in next to" | "place under" | "release" | "hang" | "insert" | "attach");
+            let holds_something = ev.grippers.iter().any(|&w| w > 0.005 && w < 0.07);
+            let done = match ev.trigger {
+                Trigger::Settled => nav,
+                Trigger::GripperChange => (grasp && holds_something) || place || (!grasp && !nav),
+                Trigger::BudgetExhausted => nav && ev.moved_in_stage > 0.3,
+                _ => false,
+            };
+            if !done {
+                if matches!(ev.trigger, Trigger::CheckDue | Trigger::Settled | Trigger::GripperChange) && self.continues < self.cfg.max_continues {
+                    return Decision::Continue { extra: 0, check_every: 0, reason: "keep executing the current step".into(), source: src };
+                }
+                let fails = self.mem.consecutive_failures(&cur.instruction);
+                if ev.trigger == Trigger::BudgetExhausted && fails < self.cfg.max_retries && cur.attempt <= self.cfg.max_retries {
+                    let ins = cur.instruction.clone();
+                    let prompt = ins.render(self.cfg.format, &self.task.prompt, self.cfg.max_prompt_tokens);
+                    let budget = ins.budget_steps.min(ev.steps_left().max(1));
+                    return Decision::Issue { instruction: ins, prompt, budget, check_every: 0, previous: "failed".into(), flush: self.cfg.flush_on_change, source: src };
+                }
             }
-            let fails = self.mem.consecutive_failures(&cur.instruction);
-            if ev.trigger == Trigger::BudgetExhausted && fails < self.cfg.max_retries && cur.attempt <= self.cfg.max_retries {
-                let ins = cur.instruction.clone();
-                let prompt = ins.render(self.cfg.format, &self.task.prompt, self.cfg.max_prompt_tokens);
-                let budget = ins.budget_steps.min(ev.steps_left().max(1));
-                return Decision::Issue { instruction: ins, prompt, budget, check_every: 0, previous: "failed".into(), flush: self.cfg.flush_on_change, source: src };
+            previous = if done { "done" } else { "failed" }.to_string();
+            if done {
+                self.belief_after_done(&cur.instruction);
             }
         }
-        let previous = if self.mem.current().is_some() { "partial" } else { "none" }.to_string();
         let doing = self.plan.doing().map(|s| s.id);
         let next = self.plan.steps.iter().find(|s| matches!(s.status, Status::Todo | Status::Failed) && Some(s.id) != doing).cloned();
         if let Some(step) = next {

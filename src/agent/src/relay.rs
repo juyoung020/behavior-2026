@@ -140,6 +140,11 @@ impl Lat {
 
 pub fn run(cfg: RelayCfg) -> io::Result<()> {
     let l = TcpListener::bind(&cfg.listen)?;
+    run_listener(l, cfg)
+}
+
+/// 이미 연 소켓으로(시험: 포트 0 으로 열고 주소를 먼저 알아 둔다).
+pub fn run_listener(l: TcpListener, cfg: RelayCfg) -> io::Result<()> {
     eprintln!("[relay] {} ← 평가기, → π0.5 {} (모드 {:?}, pause {})", cfg.listen, cfg.upstream, mode_name(&cfg.mode), cfg.pause);
     let tracer = match &cfg.trace_dir {
         Some(d) => Some(Tracer::create(d)?),

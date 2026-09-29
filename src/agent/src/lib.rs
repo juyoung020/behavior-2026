@@ -27,6 +27,7 @@ pub mod odom;
 pub mod plan;
 pub mod planner;
 pub mod relay;
+pub mod replay;
 pub mod session;
 pub mod tools;
 pub mod trace;

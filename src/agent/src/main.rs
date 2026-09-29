@@ -238,93 +238,17 @@ fn cmd_replay(a: &Args) -> Result<(), String> {
     }
     if a.flag("verify") {
         let catalog = load_catalog(a)?;
-        return verify(&events, &catalog, path.parent().unwrap_or(Path::new(".")));
+        let rep = bagent::replay::verify(&events, &catalog, path.parent().unwrap_or(Path::new(".")))?;
+        for d in &rep.diffs {
+            println!("다름: {d}");
+        }
+        println!("재생 결정 {}/{} 일치, 요청 지문 다름 {}건", rep.same, rep.total, rep.fingerprint_mismatches);
+        return if rep.same == rep.total { Ok(()) } else { Err("재생 결과가 기록과 다름".into()) };
     }
     if a.get("html").is_none() {
         println!("{}", trace::timeline(&events));
     }
     Ok(())
-}
-
-/// 기록된 LLM 응답을 다시 먹여 같은 결정이 나오는지.
-fn verify(events: &[Value], catalog: &Catalog, dir: &Path) -> Result<(), String> {
-    use bagent::llm::{ChatResult, ReplayLlm};
-    use std::collections::{BTreeMap, HashMap, VecDeque};
-    let mut envs: BTreeMap<u64, Vec<&Value>> = BTreeMap::new();
-    for e in events {
-        envs.entry(e["env"].as_u64().unwrap_or(0)).or_default().push(e);
-    }
-    let mut total = 0;
-    let mut same = 0;
-    for (env, evs) in envs {
-        let Some(agent_ev) = evs.iter().rev().find(|e| e["type"] == "agent" && e.get("task").is_some()) else { continue };
-        let task_name = agent_ev["task"].as_str().unwrap_or("");
-        let Some(task) = catalog.task_by_name(task_name) else { return Err(format!("카탈로그에 {task_name} 없음")) };
-        let cfg: PlannerCfg = serde_json::from_value(agent_ev["cfg"].clone()).map_err(|e| e.to_string())?;
-        let mut queues: HashMap<String, VecDeque<(String, ChatResult)>> = HashMap::new();
-        for e in evs.iter().filter(|e| e["type"] == "llm") {
-            let r: ChatResult = serde_json::from_value(e["result"].clone()).map_err(|e| e.to_string())?;
-            queues.entry(e["purpose"].as_str().unwrap_or("plan").to_string()).or_default().push_back((e["fingerprint"].as_str().unwrap_or("").to_string(), r));
-        }
-        let graph = SharedGraph::default();
-        let decider_name = agent_ev["decider"].as_str().unwrap_or("llm");
-        let decider: Box<dyn Decider> = if decider_name == "prior" {
-            Box::new(PriorDecider)
-        } else {
-            Box::new(LlmDecider { llm: Box::new(ReplayLlm { queues, mismatches: vec![] }) })
-        };
-        let core = Core::new(cfg, task.clone(), catalog, Box::new(graph.clone()), env as usize);
-        let mut agent = Agent::new(core, decider);
-        let decisions: Vec<&&Value> = evs.iter().filter(|e| e["type"] == "decision").collect();
-        let mut di = 0;
-        let mut first_ep = true;
-        for e in &evs {
-            match e["type"].as_str() {
-                Some("episode_start") => {
-                    if !first_ep {
-                        agent.reset_episode(e["episode"].as_u64().unwrap_or(0) as u32);
-                    }
-                    first_ep = false;
-                }
-                Some("boundary") => {
-                    let mut bev: bagent::planner::BoundaryEvent = serde_json::from_value(e["event"].clone()).map_err(|e| e.to_string())?;
-                    bev.images = bev
-                        .image_files
-                        .iter()
-                        .filter_map(|f| {
-                            let cam = f.rsplit('_').next()?.trim_end_matches(".jpg");
-                            let cam = if cam == "wrist" { f.rsplit('_').nth(1).map(|x| format!("{x}_wrist"))? } else { cam.to_string() };
-                            Some((cam, std::fs::read(dir.join(f)).ok()?))
-                        })
-                        .collect();
-                    if bev.image_files.is_empty() && agent.core.cfg.send_images {
-                        // 가짜 세계 기록: 같은 무늬 영상
-                        bev.images = vec![("head".into(), bagent::image::Rgb::pattern(64, 64, 7).jpeg(70))];
-                    }
-                    let nodes: Vec<bagent::graph::Node> = serde_json::from_value(e["nodes"].clone()).unwrap_or_default();
-                    *graph.0.lock().unwrap() = StaticGraph { nodes, name: "replay".into() };
-                    let d = agent.decide(&bev);
-                    agent.maintain();
-                    let rec = decisions.get(di).map(|x| x["decision"].clone()).unwrap_or(Value::Null);
-                    di += 1;
-                    total += 1;
-                    let rec_d: Option<bagent::planner::Decision> = serde_json::from_value(rec).ok();
-                    let ok = rec_d.as_ref().map(|r| r.key() == d.key()).unwrap_or(false);
-                    same += usize::from(ok);
-                    if !ok {
-                        println!("env{env} step {}: 다름\n  기록 {:?}\n  재생 {}", bev.step, rec_d.map(|r| r.key()), d.key());
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    println!("재생 결정 {same}/{total} 일치");
-    if same == total {
-        Ok(())
-    } else {
-        Err("재생 결과가 기록과 다름".into())
-    }
 }
 
 fn cmd_build_assets(a: &Args) -> Result<(), String> {
@@ -439,7 +363,6 @@ fn cmd_bench_local(a: &Args) -> Result<(), String> {
     // 중계기
     let rl = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let raddr = rl.local_addr().unwrap().to_string();
-    drop(rl);
     let mode = match a.str_or("mode", "passthrough").as_str() {
         "fixed" => Mode::Fixed("pick up radio from coffee table".into()),
         "agent" => Mode::Agent,
@@ -457,8 +380,7 @@ fn cmd_bench_local(a: &Args) -> Result<(), String> {
         }));
     }
     let cfg2 = cfg.clone();
-    std::thread::spawn(move || relay::run(cfg2));
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::spawn(move || relay::run_listener(rl, cfg2));
     let warm = 20usize;
     let rounds: usize = a.num("rounds", 3);
     let mut direct = Vec::new();
