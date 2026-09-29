@@ -6,7 +6,7 @@
 param([Parameter(Mandatory = $true)][string]$Actions, [string]$Tag = 'capture', [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'RGBD',
       [int]$MaxSteps = 500, [string]$Steps = '', [int]$Minutes = 20, [int]$MaxOtherMiB = 3500)
 . C:\behavior-2026\tools\gpu_lock.ps1 -Lib
-if (-not (Enter-GpuLock 'render' "render 기준 자료 ($Tag, 공식 평가기 RTX $Wrapper)" $Minutes '9' 180)) { exit 2 }
+if (-not (Enter-GpuLock 'engine-render' "render 기준 자료 ($Tag, 공식 평가기 RTX $Wrapper)" $Minutes '9' 180)) { exit 2 }
 try {
     $ok = $false
     for ($i = 0; $i -lt 20; $i++) {
@@ -21,6 +21,6 @@ try {
     if ($Steps) { $a.Steps = $Steps }
     & C:\behavior-2026\src\engine\tests\render\capture\run_render_capture.ps1 @a
 } finally {
-    Exit-GpuLock 'render' | Out-Null
+    Exit-GpuLock 'engine-render' | Out-Null
     "[capture_with_lock] 잠금 풀림"
 }
