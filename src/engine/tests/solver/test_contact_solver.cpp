@@ -600,6 +600,9 @@ int main(int argc, char** argv) {
   // PhysX 풀이가 끝난 뒤 관리자별 마찰 패치 수. 다음 스냅샷에서 활성화도 새 관리자도 아닌데 0 이 되어 있으면 Sc 층이 캐시 상태를 지운 것
   // (clearCachedState 말고는 풀이 밖에서 이 값을 바꾸는 곳이 없다: PxcNpWorkUnit.h:201, PxsContactManager.h:120, DyTGSDynamics.cpp:552,1178)
   std::unordered_map<const void*, uint32_t> pxPostCount;
+  // 규칙 확인: 조인트가 끊긴 스텝 뒤 캐시 지움 대상 = 두 행위자 중 상호작용 수가 적은 쪽(같으면 두 번째)의 접촉 관리자 전부 (ScConstraintBreakage.cpp:96-101)
+  std::unordered_set<const void*> ruleExpect;
+  uint64_t ruleHit = 0, ruleMiss = 0, ruleExtra = 0, ruleSkip = 0;
   std::vector<uint8_t> wasActive(nb, 1), isActive(nb, 0);
   std::vector<uint8_t> dumpBody;  // 스텝 블록들 (--dump)
   const std::vector<eng::Body> bodies0 = eb;
@@ -692,6 +695,14 @@ int main(int argc, char** argv) {
           if (resetNow) {
             resetList.push_back(idx);
             resetEvents++;
+          }
+          {  // 규칙 확인: 대상이 될 수 있었던 관리자(지난 풀이 뒤 마찰 수 > 0, 활성화·새 관리자 아님)만 센다
+            auto pc = pxPostCount.find(c.key);
+            const bool eligible = pc != pxPostCount.end() && pc->second != 0 && !actKeys.count(c.key);
+            const bool expected = ruleExpect.count(c.key) != 0;
+            if (resetNow && expected) ruleHit++;
+            else if (resetNow) ruleExtra++;
+            else if (expected && eligible) ruleMiss++;
           }
           icm.push_back(idx);
           cmIn.push_back(m);
@@ -809,6 +820,25 @@ int main(int argc, char** argv) {
       FtzScope f;
       svs::runStep(B, prm, v);
     }
+    ruleExpect.clear();
+    if (S.valid)
+      for (size_t k = 0; k < c1dIn.size(); ++k) {
+        const Dy::ConstraintWriteback& w = static_cast<Dy::Context*>(gNpScene->getScScene().getDynamicsContext())->getConstraintWriteBackPool()[c1dIn[k].index];
+        if (!w.isBroken()) continue;
+        if (c1dIn[k].body0 == sv::NONE || c1dIn[k].body1 == sv::NONE) {
+          ruleSkip++;
+          continue;
+        }
+        Sc::BodySim* a0 = static_cast<NpRigidDynamic*>(px[c1dIn[k].body0])->getCore().getSim();
+        Sc::BodySim* a1 = static_cast<NpRigidDynamic*>(px[c1dIn[k].body1])->getCore().getSim();
+        Sc::ActorSim* a = a0->getActorInteractionCount() < a1->getActorInteractionCount() ? static_cast<Sc::ActorSim*>(a0) : static_cast<Sc::ActorSim*>(a1);
+        Sc::Interaction** it = a->getActorInteractions();
+        for (PxU32 n = a->getActorInteractionCount(); n--; ++it)
+          if ((*it)->getType() == Sc::InteractionType::eOVERLAP) {
+            const PxsContactManager* m = static_cast<Sc::ShapeInteraction*>(*it)->getContactManager();
+            if (m) ruleExpect.insert(m);
+          }
+      }
     if (S.valid)  // PhysX 풀이 뒤 마찰 패치 수 기록 (이번 스텝 섬의 관리자는 fetchResults 뒤에도 살아 있다)
       for (const SnapCM& c : S.cms) pxPostCount[c.key] = static_cast<const PxsContactManager*>(c.key)->getWorkUnit().mFrictionPatchCount;
     // 1D 제약 되쓰기 대조 (PhysX Dy::ConstraintWriteback 칸 = 우리 칸, 이번 스텝 섬에 있던 제약)
@@ -900,6 +930,8 @@ int main(int argc, char** argv) {
          B.statBatches, B.statFreeBatches, B.statHeaders, B.statBlock4, B.statSingle, B.statMaxPartitions);
   printf("Sc 층 깨움 입력 %" PRIu64 " 회, 풀이 직전 우리 깸 카운터가 PhysX 보다 큼(오류) %" PRIu64 "\n", wakeEvents, wakeBad);
   printf("새로 만들어진 접촉 관리자(섬 간선에 건 것) %" PRIu64 ", Sc 층 캐시 지움(조인트 끊김 뒤 등) %" PRIu64 "\n", freshCMs, resetEvents);
+  printf("  캐시 지움 규칙 확인(끊긴 조인트의 상호작용 적은 쪽): 맞음 %" PRIu64 ", 규칙 밖 지움 %" PRIu64 ", 규칙인데 안 지움 %" PRIu64 ", 세계에 건 조인트(건너뜀) %" PRIu64 "\n",
+         ruleHit, ruleExtra, ruleMiss, ruleSkip);
   printf("스냅샷 오류 %" PRIu64 ", 엔진 오류 0x%x\n", snapErr, B.error);
   printf("1D 제약(D6 조인트) 되쓰기 비교 %" PRIu64 " (제약·스텝), 다름 %" PRIu64 ", 첫 다름 스텝 %" PRId64 ", 끊김 표시 %" PRIu64
          " | 4개 묶음 준비 %" PRIu64 ", 하나씩 %" PRIu64 " (행 0 %" PRIu64 ")\n",

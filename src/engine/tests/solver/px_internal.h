@@ -32,6 +32,7 @@
 #include "PxsSimpleIslandManager.h"
 #include "PxvNphaseImplementationContext.h"
 #include "ScBodySim.h"
+#include "ScShapeInteraction.h"
 #include "ScScene.h"
 #include "DyDynamicsBase.h"
 #include "DyFrictionPatch.h"
