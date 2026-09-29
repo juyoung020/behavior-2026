@@ -1,0 +1,24 @@
+{
+  "comment": "tools\\subpack.ps1 -Meta 예시. 실제 제출 때 값을 채운다. README(영문)에 그대로 들어간다.",
+  "team": "<team name>",
+  "method": "<25 chars max>",
+  "wrapper_target": "omnigibson.eval.wrappers.DefaultWrapper",
+  "wrapper_file": "C:/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/eval/wrappers/default_wrapper.py",
+  "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml",
+  "launcher": {
+    "kit_args": ["--/app/settings/fabricDefaultStageFrameHistoryCount=4"],
+    "reason": "Windows 11 + Isaac Sim 5.1 RTX returns empty (all-zero RGBA) camera buffers in a fixed 3-step pattern; a 4-entry Fabric stage frame history avoids it.",
+    "evidence": "<exp_run.ps1 compare 결과 파일 경로(compare.md) — 칸 3 vs 칸 4 물리·판정·JSON 비트 동일>"
+  },
+  "policy": {
+    "method": "Docker image",
+    "docker_uri": "<ghcr.io/...:tag>",
+    "docker_digest": "<sha256:...>",
+    "server_url": "",
+    "ports": "",
+    "weights": "<model / checkpoint description>",
+    "auth": "none",
+    "capacity": "single 24 GB GPU"
+  },
+  "notes": ""
+}
