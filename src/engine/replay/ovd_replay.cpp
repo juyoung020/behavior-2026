@@ -9,6 +9,7 @@
 //   - simulate() 는 PxScene.elapsedTime set 으로 표시된다(NpScene.cpp:2839). 그 뒤 다음 stopFrame 까지는
 //     fetchResults 가 적은 결과(NpSceneFetchResults.cpp:277-470) -> 적용하지 않고 비교만 한다.
 //   - OVD 에 안 남는 호출(applyCache 계열, wakeUp/putToSleep)은 capture 의 sidelog 로 채운다.
+#include <algorithm>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
@@ -1387,6 +1388,7 @@ class Replayer {
   // ------------------------------------------------------------------ 비교
   int shown = 0;
   std::string cur_obj;
+  std::map<std::string, int64_t> obj_first_diff;  // 물체(/World/scene_0/<이름>) -> 첫 다른 simulate
   void cmp(const std::string& what, const float* ours, const uint8_t* rec, int n) {
     Stat& s = stats[what];
     if (verbose && shown < verbose_max && memcmp(ours, rec, 4 * n)) {
@@ -1405,6 +1407,15 @@ class Replayer {
     if (bit) {
       s.bitdiff++;
       frame_bitdiff++;
+      {  // 객체별 첫 다름 (관절 조인트는 자식 링크 이름으로 이미 cur_obj 에 들어 있다)
+        std::string key = cur_obj;
+        const size_t cut = key.find("/", key.find("/World/scene_0/") == 0 ? 15 : 0);  // 물체 단위: /World/scene_0/<물체>
+        if (key.rfind("joint->", 0) == 0) key = key.substr(7);
+        const size_t s0 = key.find("/World/scene_0/");
+        if (s0 != std::string::npos) { const size_t e = key.find('/', s0 + 15); key = key.substr(s0, e == std::string::npos ? std::string::npos : e - s0); }
+        (void)cut;
+        if (!obj_first_diff.count(key)) obj_first_diff[key] = int64_t(sims);
+      }
       if (s.first_bit < 0) s.first_bit = int64_t(sims);
       if (first_div_frame < 0) { first_div_frame = int64_t(sims); first_div_what = what; }
     }
@@ -1584,6 +1595,13 @@ class Replayer {
 
   void report() {
     check_joint_binding();
+    {
+      std::vector<std::pair<int64_t, std::string>> v;
+      for (auto& kv : obj_first_diff) v.emplace_back(kv.second, kv.first);
+      std::sort(v.begin(), v.end());
+      printf("물체별 첫 다른 simulate (%zu 물체):\n", v.size());
+      for (size_t i = 0; i < v.size() && i < 25; ++i) printf("  %6" PRId64 "  %s\n", v[i].first, v[i].second.c_str());
+    }
     report_approx_users();
     printf("\n== 재생 결과 ==\nsimulate %" PRIu64 " 번, 볼록 메시 원본 %" PRIu64 " / 근사 %" PRIu64 ", 정규화 원상 %" PRIu64
            " 번 중 못 찾음 %" PRIu64 "\n", sims, convex_exact, convex_approx, g_prenorm_calls, g_prenorm_fail);

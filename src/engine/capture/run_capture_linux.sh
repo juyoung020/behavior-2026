@@ -5,6 +5,7 @@
 # 결과: ~/engine-data/linux_official/<태그>/ (에셋 파생물 -> 저장소 밖)
 # 켜기 전에 윈도 쪽 Isaac Sim 이 없는지 확인할 것 (GPU 한 장 공유).
 set -euo pipefail
+ulimit -c 0  # Kit 은 끝날 때 죽는다(139, 결과는 이미 다 씀) -> 코어 덤프(수 GB, %TEMP%\wsl-crashes)를 남기지 않는다
 ACTIONS=${1:?actions.npz}
 TAG=${2:?tag}
 MAXSTEPS=${3:-500}
