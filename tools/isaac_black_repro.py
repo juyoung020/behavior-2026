@@ -24,6 +24,10 @@ ap.add_argument("--frames", type=int, default=300)
 ap.add_argument("--renderer", default="RaytracedLighting")
 ap.add_argument("--no-play", action="store_true", help="타임라인을 재생하지 않는다 (replicator 는 재생 중에만 찍는다 -- 진단용)")
 ap.add_argument("--set", action="append", default=[], help="/키=값 (시작 뒤 carb 설정)")
+ap.add_argument("--simctx", action="store_true", help="OmniGibson 처럼 SimulationContext(physics_dt=1/120, rendering_dt=1/30) 로 step(render=True)")
+ap.add_argument("--physics-hz", type=float, default=120.0)
+ap.add_argument("--render-hz", type=float, default=30.0)
+ap.add_argument("--og-render", action="store_true", help="OmniGibson simulator.py _set_renderer_settings 와 같은 렌더 설정을 넣는다")
 a = ap.parse_args()
 
 from isaacsim import SimulationApp  # noqa: E402
@@ -50,13 +54,26 @@ import omni.usd  # noqa: E402
 from pxr import Gf, UsdGeom, UsdLux  # noqa: E402
 
 cs = carb.settings.get_settings()
+OG_RENDER = [  # BEHAVIOR-1K OmniGibson simulator.py:660-693 _set_renderer_settings 와 같은 값 (렌더 관련)
+    "/rtx/rtx/modes/rt/enabled=true", "/rtx/rtx/modes/rt2/enabled=true", "/rtx/rendermode=RealTimePathTracing",
+    "/rtx/raytracing/fractionalCutoutOpacity=true", "/rtx/reflections/enabled=true", "/rtx/indirectDiffuse/enabled=true",
+    "/rtx/post/dlss/execMode=0", "/rtx/ambientOcclusion/enabled=true", "/rtx/directLighting/sampledLighting/enabled=true",
+    "/rtx/raytracing/showLights=1", "/rtx/sceneDb/ambientLightIntensity=1.0", "/app/renderer/skipMaterialLoading=false",
+    "/rtx/flow/enabled=true", "/physics/updateToUsd=false", "/physics/updateParticlesToUsd=true",
+    "/physics/updateVelocitiesToUsd=false", "/physics/fabricUpdateTransformations=true", "/physics/fabricUseGPUInterop=true",
+]
+if a.og_render:
+    a.set = OG_RENDER + a.set
 for kv in a.set:
     k, v = kv.split("=", 1)
     val = {"true": True, "false": False}.get(v.lower(), v)
-    try:
-        val = int(val) if not isinstance(val, bool) else val
-    except ValueError:
-        pass
+    if not isinstance(val, bool):
+        for conv in (int, float):
+            try:
+                val = conv(val)
+                break
+            except ValueError:
+                pass
     cs.set(k, val)
 watch = ["/app/gatherRenderResults", "/app/settings/fabricDefaultStageFrameHistoryCount", "/omni/replicator/captureOnPlay",
          "/rtx/rendermode", "/rtx/post/aa/op", "/rtx-transient/dlssg/enabled", "/app/vulkan", "/app/asyncRendering",
@@ -88,18 +105,28 @@ for i in range(a.cams):
     rgbs.append(r)
     deps.append(d)
 
-if not a.no_play:  # OmniGibson 처럼 타임라인 재생 (omni.replicator.captureOnPlay = true 라 재생 중에만 annotator 가 찍힌다)
-    import omni.timeline
+sim = None
+if a.simctx:  # OmniGibson simulator.py 와 같은 방식: SimulationContext(physics_dt, rendering_dt, backend torch, device cpu)
+    from isaacsim.core.api import SimulationContext
 
-    omni.timeline.get_timeline_interface().play()
+    sim = SimulationContext(physics_dt=1.0 / a.physics_hz, rendering_dt=1.0 / a.render_hz, backend="torch", device="cpu")
+    sim.initialize_physics()
+    sim.play()
+    step = lambda: sim.step(render=True)  # noqa: E731  (= _sim_context.step(render=True) -> app.update())
+else:
+    if not a.no_play:  # OmniGibson 처럼 타임라인 재생 (omni.replicator.captureOnPlay = true 라 재생 중에만 annotator 가 찍힌다)
+        import omni.timeline
+
+        omni.timeline.get_timeline_interface().play()
+    step = app.update
 for _ in range(20):  # 데우기 (OmniGibson 도 장면 로드 뒤 여러 번 렌더)
-    app.update()
+    step()
 
 black = [[] for _ in range(a.cams)]
 dblack = [0] * a.cams
 t0 = time.time()
 for f in range(a.frames):
-    app.update()
+    step()
     for i in range(a.cams):
         x = rgbs[i].get_data(device="cpu")
         x = x["data"] if isinstance(x, dict) else x
@@ -110,7 +137,7 @@ for f in range(a.frames):
         if y.size == 0 or not np.any(y):
             dblack[i] += 1
 dt = time.time() - t0
-print(f"[repro] kit={a.kit} cams={a.cams} res={a.res} renderer={a.renderer} play={not a.no_play} set={a.set} "
+print(f"[repro] simctx={a.simctx} phys={a.physics_hz} rend={a.render_hz} kit={a.kit} cams={a.cams} res={a.res} renderer={a.renderer} play={not a.no_play} set={a.set} "
       f"frames={a.frames} ({a.frames / dt:.1f} fps)", flush=True)
 for i in range(a.cams):
     print(f"[repro] 카메라 {i}: RGB 검정 {len(black[i])}/{a.frames} 처음 {black[i][:12]}  depth 0 {dblack[i]}", flush=True)
