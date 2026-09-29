@@ -67,8 +67,8 @@ inline physx::PxFilterFlags OmniFilterShader(physx::PxFilterObjectAttributes att
 // 단, 키네마틱/정적끼리 쌍의 eSOLVE_CONTACT 제거는 보고 대상일 때만 일어나며 두 쪽 다 무한 질량이라 결과에 영향 없음.
 class OmniFilterCallback : public physx::PxSimulationFilterCallback {
  public:
-  physx::PxFilterFlags pairFound(physx::PxU64, physx::PxFilterObjectAttributes, physx::PxFilterData filterData0,
-                                 const physx::PxActor* a0, const physx::PxShape* s0, physx::PxFilterObjectAttributes,
+  physx::PxFilterFlags pairFound(physx::PxU64, physx::PxFilterObjectAttributes attributes0, physx::PxFilterData filterData0,
+                                 const physx::PxActor* a0, const physx::PxShape* s0, physx::PxFilterObjectAttributes attributes1,
                                  physx::PxFilterData filterData1, const physx::PxActor* a1, const physx::PxShape* s1,
                                  physx::PxPairFlags& pairFlags) override {
     using namespace physx;
@@ -77,6 +77,18 @@ class OmniFilterCallback : public physx::PxSimulationFilterCallback {
       pairFlags = PxPairFlag::eTRIGGER_DEFAULT;
     if ((filterData0.word3 & CONTACT_SOLVE_DISABLE) || (filterData1.word3 & CONTACT_SOLVE_DISABLE))
       pairFlags &= ~PxPairFlag::eSOLVE_CONTACT;
+    if (report_all) {  // omni PhysXScene.cpp:149 checkPair 가 참인 쌍 (radio: 접촉 보고 prim 416 개 ≈ 모든 몸체 -> 모든 쌍으로 근사)
+      const bool k0 = PxFilterObjectIsKinematic(attributes0), k1 = PxFilterObjectIsKinematic(attributes1);
+      const bool st0 = PxGetFilterObjectType(attributes0) == PxFilterObjectType::eRIGID_STATIC;
+      const bool st1 = PxGetFilterObjectType(attributes1) == PxFilterObjectType::eRIGID_STATIC;
+      pairFlags = pairFlags | PxPairFlag::eNOTIFY_TOUCH_LOST | PxPairFlag::eNOTIFY_TOUCH_FOUND | PxPairFlag::eNOTIFY_TOUCH_PERSISTS |
+                  PxPairFlag::eNOTIFY_CONTACT_POINTS;
+      if ((k0 || st0) && (k1 || st1)) {
+        pairFlags &= ~PxPairFlag::eSOLVE_CONTACT;
+        pairFlags |= PxPairFlag::eDETECT_DISCRETE_CONTACT;
+      }
+      return PxFilterFlags();
+    }
     if (!diag_sub.empty()) {  // 진단(ovd_replay --trace-obj): 알림 플래그만 더한다
       const char* n0 = a0->getName();
       const char* n1 = a1->getName();
@@ -86,6 +98,7 @@ class OmniFilterCallback : public physx::PxSimulationFilterCallback {
     return PxFilterFlags();
   }
   std::string diag_sub;
+  bool report_all = false;  // --contact-report-all
   void pairLost(physx::PxU64, physx::PxFilterObjectAttributes, physx::PxFilterData, physx::PxFilterObjectAttributes,
                 physx::PxFilterData, bool) override {}
   bool statusChange(physx::PxU64&, physx::PxPairFlags&, physx::PxFilterFlags&) override { return false; }

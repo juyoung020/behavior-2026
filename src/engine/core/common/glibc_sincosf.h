@@ -84,6 +84,15 @@ EHD uint32_t asuint(float f) {
   memcpy(&u, &f, 4);
   return u;
 }
+// glibc __math_invalidf = (x - x) / (x - x) 의 x86 SSE 결과를 비트로 만든다 (GPU 는 NaN 무늬가 달라서 연산으로 두면 안 된다):
+//   ±Inf -> 기본 NaN 0xffc00000, NaN -> 입력 NaN 을 조용하게(꼬리·부호 유지). 확인: tests/common/test_glibc_trig_gpu (sinf/cosf 2^32).
+EHD float invalid_nan(float y) {
+  const uint32_t u = asuint(y);
+  const uint32_t r = ((u & 0x7fffffffu) == 0x7f800000u) ? 0xffc00000u : (u | 0x00400000u);
+  float f;
+  memcpy(&f, &r, 4);
+  return f;
+}
 EHD uint32_t abstop12(float x) { return (asuint(x) >> 20) & 0x7ff; }
 
 EHD double reduce_fast(double x, const SinCosT* p, int* np) {
@@ -150,7 +159,7 @@ EHD float sinf(float y) {
     if ((n + sign) & 2) p = &table()[1];
     return sinf_poly(x * s, x * x, p, n);
   }
-  return (y - y) / (y - y);  // NaN (glibc __math_invalidf)
+  return invalid_nan(y);  // NaN (glibc __math_invalidf)
 }
 
 EHD float cosf(float y) {
@@ -175,7 +184,7 @@ EHD float cosf(float y) {
     if ((n + sign) & 2) p = &table()[1];
     return sinf_poly(x * s, x * x, p, n ^ 1);
   }
-  return (y - y) / (y - y);
+  return invalid_nan(y);
 }
 
 }  // namespace glibc

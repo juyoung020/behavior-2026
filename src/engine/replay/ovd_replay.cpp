@@ -160,7 +160,8 @@ class Replayer {
   int64_t max_frames = -1;
   bool verbose = false;
   int verbose_max = 12;
-  bool diag_no_self_collision = false;  // --diag-no-self-collision: 모든 관절체 자기 충돌 끔 (원인 가르기 진단용, 결과 비교용 아님)
+  bool diag_no_self_collision = false;
+  bool contact_report_all = false;  // --contact-report-all: omni 접촉 보고 쌍 처리(알림 플래그 + 정적/키네마틱 쌍 풀이 끔)를 모든 쌍에  // --diag-no-self-collision: 모든 관절체 자기 충돌 끔 (원인 가르기 진단용, 결과 비교용 아님)
   FILE* csv = nullptr;
   double frame_max = 0;
   uint64_t frame_bitdiff = 0, frame_cmp = 0;
@@ -431,6 +432,7 @@ class Replayer {
     sd.filterShaderDataSize = sizeof(specp);
     sd.filterCallback = &filter_cb;
     if (!trace_sub.empty()) { diag_cb.sub = trace_sub; diag_cb.sims = &sims; sd.simulationEventCallback = &diag_cb; filter_cb.diag_sub = trace_sub; }
+    if (contact_report_all) { filter_cb.report_all = true; if (!sd.simulationEventCallback) sd.simulationEventCallback = &diag_cb; diag_cb.sims = &sims; }
     o.scene = phys->createScene(sd);
     o.px = nullptr;
     if (verbose) fprintf(stderr, "[scene] flags=0x%x solver=%d bp=%d\n", uint32_t(sd.flags), int(sd.solverType), int(sd.broadPhaseType));
@@ -1665,6 +1667,7 @@ int main(int argc, char** argv) {
     else if (a == "--no-refilter") R.refilter_on = false;
     else if (a == "--trace-obj" && i + 1 < argc) R.trace_sub = argv[++i];
     else if (a == "--diag-no-self-collision") R.diag_no_self_collision = true;
+    else if (a == "--contact-report-all") R.contact_report_all = true;
     else if (a == "--side-offset" && i + 1 < argc) R.side_offset = strtoull(argv[++i], nullptr, 10);
   }
   if (!convex.empty() && !engine::read_convex_bin(convex, R.convex)) fprintf(stderr, "convex 보조 파일을 못 읽음: %s\n", convex.c_str());
