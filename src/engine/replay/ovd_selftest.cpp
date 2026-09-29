@@ -26,13 +26,14 @@ static PxDefaultErrorCallback gErr;
 int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "usage: ovd_selftest <out_dir> [--threads N] [--substeps N] [--seed S] [--no-ovd]\n"); return 2; }
   std::string out = argv[1];
-  int threads = 4, substeps = 600, seed = 7;
+  int threads = 4, substeps = 600, seed = 7, pile = 0;
   bool ovd = true;
   for (int i = 2; i < argc; ++i) {
     if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--substeps") && i + 1 < argc) substeps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--no-ovd")) ovd = false;
+    else if (!strcmp(argv[i], "--pile") && i + 1 < argc) pile = atoi(argv[++i]);  // 볼록 물체 N 개를 더 쌓는다 (접촉 많은 장면)
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxOmniPvd* opvd = nullptr;
@@ -132,6 +133,36 @@ int main(int argc, char** argv) {
     bodies.push_back(b);
   }
   scene->addAggregate(*agg);
+  // --pile N: 바닥 위에서 볼록 물체 N 개를 떨어뜨려 쌓는다 (접촉·섬·잠이 많은 장면; 묶음 밖 개별 액터)
+  for (int i = 0; i < pile; ++i) {
+    std::vector<PxVec3> pts;
+    for (int k = 0; k < 30; ++k) pts.push_back(PxVec3(0.05f * U(rng), 0.05f * U(rng), 0.04f * U(rng)));
+    PxConvexMeshDesc cd;
+    cd.points.count = PxU32(pts.size()); cd.points.stride = sizeof(PxVec3); cd.points.data = pts.data();
+    cd.flags = PxConvexFlag::eCOMPUTE_CONVEX;
+    PxConvexMesh* cm = PxCreateConvexMesh(cp, cd, phys->getPhysicsInsertionCallback());
+    engine::ConvexData c;
+    c.verts.assign(reinterpret_cast<const float*>(cm->getVertices()), reinterpret_cast<const float*>(cm->getVertices()) + 3 * cm->getNbVertices());
+    PxU32 maxIdx = 0;
+    for (PxU32 p = 0; p < cm->getNbPolygons(); ++p) {
+      PxHullPolygon hp; cm->getPolygonData(p, hp);
+      engine::ConvexData::Poly q;
+      memcpy(q.plane, hp.mPlane, 16); q.nverts = hp.mNbVerts; q.base = hp.mIndexBase;
+      c.polys.push_back(q);
+      maxIdx = PxMax(maxIdx, PxU32(hp.mIndexBase + hp.mNbVerts));
+    }
+    c.indices.assign(cm->getIndexBuffer(), cm->getIndexBuffer() + maxIdx);
+    hulls.push_back(c);
+    PxRigidDynamic* b = phys->createRigidDynamic(PxTransform(
+        PxVec3(-1.5f + 0.13f * float(i % 12), -2.0f + 0.13f * float((i / 12) % 12), 0.3f + 0.12f * float(i / 144)),
+        PxQuat(0.7f * float(i), PxVec3(0.3f, 0.5f, 0.8f).getNormalized())));
+    b->setName(("/World/pile_" + std::to_string(i)).c_str());
+    PxRigidActorExt::createExclusiveShape(*b, PxConvexMeshGeometry(cm), *mat)->setContactOffset(0.01f);
+    PxRigidBodyExt::updateMassAndInertia(*b, 500.0f);
+    b->setSolverIterationCounts(16, 1);
+    scene->addActor(*b);
+    bodies.push_back(b);
+  }
   engine::write_convex_bin(out + "/convex.bin", hulls);
 
   // 관절체: 떠 있는 바닥 + 회전(위치 드라이브) + 직선(속도 드라이브) + 회전 두 개(흉내 관절)
