@@ -195,7 +195,7 @@ OEHD int longest_axis_abs(const float v[3]) {  // warp vec.h longest_axis(abs): 
 // warp intersect.h:317 intersect_ray_tri_woop. 축약(PTX): Ax = fma(-Sx, A[kz], A[kx]) 등 (ptxas 가 mul+sub 를 묶음),
 // det = (U+V)+W, T = fma(W, Cz, fma(U, Az, V*Bz)), t = rcp(det) * T
 OEHD bool ray_tri_woop(const float p[3], const float dir[3], const float a[3], const float b[3], const float c[3],
-                       float* t_out) {
+                       float* t_out, float* det_out = nullptr) {
   const int kz = longest_axis_abs(dir);
   int kx = kz + 1;
   if (kx == 3) kx = 0;
@@ -237,6 +237,7 @@ OEHD bool ray_tri_woop(const float p[3], const float dir[3], const float a[3], c
   if (wf::bitsf(wf::fbits(T) ^ det_sign) < 0.0f) return false;
   const float rcp_det = wf::rcp_rn(det);
   *t_out = rcp_det * T;
+  if (det_out) *det_out = det;  // warp: sign = det
   return true;
 }
 // 광선을 링크 좌표로: origin_local_i = dot3((P_0i,P_1i,P_2i), o) - s_i, dir_local_i = fma(s_i, -0, dot3(.., d))
@@ -372,6 +373,183 @@ OEHD void toggle_set_value(uint8_t* value, int32_t* mask, float* time, float thr
   *mask = 0;
   if (flip) *value = (uint8_t)(1 - *value);
 }
+
+// ---------------- 온도 사슬 (한 스텝: 열원 켜짐 → 들어오는 열 → 감쇠 → 불 붙은 물체 유지 → 최고 온도 → OnFire) ----------------
+//   heat_source_or_sink.py:31 _heatsource_is_active_kernel, temperature.py:27 _incoming_heat_kernel, :178 _temperature_decay_kernel,
+//   :202 _self_heating_clamp_kernel, max_temperature.py:9, on_fire.py:19, cooked.py:35 / frozen.py:42 (파이썬 비교, double)
+// 판 행렬은 모두 (판, 번호) 행 우선. 원자 덧셈(incoming_heat_rate)은 열원 번호 순으로 더한다 — 공식 GPU 는 순서가 비결정이라
+// 한 물체에 열원 둘 이상이 동시에 닿을 때만 끝비트가 갈릴 수 있다(문서 참고).
+OEHD uint8_t heat_active(const uint8_t* req_toggle, const uint8_t* req_closed, const uint8_t* req_fire, const int32_t* toggle_idx,
+                         const int32_t* open_idx, const int32_t* fire_idx, const uint8_t* toggle_vals, int n_toggle, int n_toggle_scenes,
+                         const uint8_t* open_vals, int n_open, int n_open_scenes, const uint8_t* fire_vals, int n_fire,
+                         int n_fire_scenes, int s, int h) {
+  uint8_t active = 1;
+  if (req_toggle[h]) {
+    const int ti = toggle_idx[h];
+    if (ti < 0 || s >= n_toggle_scenes) active = 0;
+    else if (toggle_vals[(size_t)s * n_toggle + ti] == 0) active = 0;
+  }
+  if (active == 1 && req_closed[h]) {
+    const int oi = open_idx[h];
+    if (oi < 0 || s >= n_open_scenes) active = 0;
+    else if (open_vals[(size_t)s * n_open + oi] != 0) active = 0;
+  }
+  if (active == 1 && req_fire[h]) {
+    const int fi = fire_idx[h];
+    if (fi < 0 || s >= n_fire_scenes) active = 0;
+    else if (fire_vals[(size_t)s * n_fire + fi] == 0) active = 0;
+  }
+  return active;
+}
+// warp mesh.h:2248 mesh_query_inside_ray_tracing: x,y,z 축 광선 셋, 가장 가까운 맞음(t>=0)의 det<0 이 둘 이상이면 안(-1)
+OEHD float mesh_inside_sign(const float* pts, const int32_t* tri, int n_tri, const float x[3]) {
+  int vote = 0;
+  for (int i = 0; i < 3; ++i) {
+    const float d[3] = {i == 0 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 2 ? 1.0f : 0.0f};
+    float min_t = 3.40282347e+38f, min_sign = 1.0f;
+    for (int f = 0; f < n_tri; ++f) {
+      float t, det;
+      if (ray_tri_woop(x, d, pts + tri[f * 3] * 3, pts + tri[f * 3 + 1] * 3, pts + tri[f * 3 + 2] * 3, &t, &det))
+        if (t < min_t && t >= 0.0f) {
+          min_t = t;
+          min_sign = det;
+        }
+    }
+    if (min_t < 3.40282347e+38f && min_sign < 0.0f) ++vote;
+  }
+  return vote >= 2 ? -1.0f : 1.0f;
+}
+// warp mesh.h:139 mesh_query_point (삼각형 전수) + :2496 mesh_eval_position 뒤 거리. 참이면 *sign, *dist 를 채운다.
+OEHD bool mesh_query_point_dist(const float* pts, const int32_t* tri, int n_tri, const float x[3], float max_dist, float* sign,
+                                float* dist) {
+  float min_d2 = max_dist * max_dist;
+  int min_face = -1;
+  float min_v = 0.0f, min_w = 0.0f;
+  for (int f = 0; f < n_tri; ++f) {
+    const float* p = pts + tri[f * 3 + 0] * 3;
+    const float* q = pts + tri[f * 3 + 1] * 3;
+    const float* r = pts + tri[f * 3 + 2] * 3;
+    const float e0[3] = {q[0] - p[0], q[1] - p[1], q[2] - p[2]};
+    const float e1[3] = {r[0] - p[0], r[1] - p[1], r[2] - p[2]};
+    const float e2[3] = {r[0] - q[0], r[1] - q[1], r[2] - q[2]};
+    float nrm[3];
+    cross3(e0, e1, nrm);
+    const float len = wf::sqrt_rn(wf::dot3(nrm, nrm));
+    const float den = (wf::dot3(e0, e0) + wf::dot3(e1, e1)) + wf::dot3(e2, e2);
+    if (wf::div_rn(len, den) < 1.e-6f) continue;
+    float u, v;
+    closest_point_uv(p, q, r, x, &u, &v);
+    const float w = (1.0f - u) - v;
+    float d[3];
+    for (int k = 0; k < 3; ++k) d[k] = wf::fma_(w, r[k], wf::fma_(u, p[k], v * q[k])) - x[k];
+    const float d2 = wf::dot3(d, d);
+    if (d2 < min_d2) {
+      min_d2 = d2;
+      min_v = v;
+      min_w = w;
+      min_face = f;
+    }
+  }
+  if (!(min_d2 < max_dist * max_dist)) return false;
+  const float u = (1.0f - min_v) - min_w, v = min_v;
+  const float* p = pts + tri[min_face * 3 + 0] * 3;
+  const float* q = pts + tri[min_face * 3 + 1] * 3;
+  const float* r = pts + tri[min_face * 3 + 2] * 3;
+  const float wv = (1.0f - u) - v;
+  float d[3];
+  for (int k = 0; k < 3; ++k) d[k] = x[k] - wf::fma_(r[k], wv, wf::fma_(p[k], u, q[k] * v));
+  *dist = wf::sqrt_rn(wf::dot3(d, d));
+  *sign = mesh_inside_sign(pts, tri, n_tri, x);
+  return true;
+}
+struct HeatIn {
+  const uint8_t* src_vals;  // (S_hss, N_hss) 이번 스텝 heat_active 결과
+  int N_hss;
+  const uint8_t* req_inside;
+  const float *src_temp, *rate, *thr;
+  const int32_t *self_temp, *self_inside;
+  const int32_t* link_flat;  // (S_hss, N_hss), -1 = 없음
+  const float* link_off;     // (N_hss, 3)
+  const int32_t *temp_to_aabb, *temp_to_inside;
+  const int32_t *tl_off, *tl_idx;  // 대상 충돌 링크 CSR (S_temp*N_temp+1), (K)
+  const uint8_t* has_mesh;         // 링크별 메시 있음 (LINK_MESH_IDS != 0)
+  const float* pts;
+  const int32_t *tri, *poff, *toff;  // 링크별 메시 (꼭짓점·삼각형 시작)
+  int n_temp;
+  const M44* mats;
+  const float* aabb;  // (S, N_aabb, 6)
+  int N_aabb;
+  const uint8_t* inside;  // (S, N_in, N_in)
+  int N_inside, n_inside_scenes;
+  const float* temp_vals;  // (S_temp, N_temp)
+};
+// _incoming_heat_kernel 칸 하나 (s, h, n). 참이면 영향 표시 1, *delta = (T_h - T_n) * rate
+OEHD bool heat_pair(const HeatIn& in, int s, int h, int n, float* delta) {
+  if (in.src_vals[(size_t)s * in.N_hss + h] == 0) return false;
+  if (in.self_temp[h] == n) return false;
+  const int ta = in.temp_to_aabb[n];
+  if (ta < 0) return false;
+  if (in.req_inside[h]) {
+    if (s >= in.n_inside_scenes) return false;
+    const int si = in.self_inside[h], ti = in.temp_to_inside[n];
+    if (si < 0 || ti < 0) return false;
+    if (in.inside[((size_t)s * in.N_inside + ti) * in.N_inside + si] == 0) return false;
+  } else {
+    const int li = in.link_flat[(size_t)s * in.N_hss + h];
+    if (li < 0) return false;
+    float src[3];
+    wf::transform_point(in.mats[li], in.link_off + h * 3, src);
+    const float* bx = in.aabb + ((size_t)s * in.N_aabb + ta) * 6;
+    float dd[3];
+    for (int k = 0; k < 3; ++k) dd[k] = src[k] - wf::wmin(wf::wmax(bx[k], src[k]), bx[3 + k]);  // warp clamp = min(max(a,x),b)
+    const float d2 = wf::fma_(dd[2], dd[2], wf::fma_(dd[0], dd[0], dd[1] * dd[1]));
+    const float threshold = in.thr[h];
+    if (d2 > threshold * threshold) return false;
+    const int base = s * in.n_temp + n;
+    const int lo = in.tl_off[base], hi = in.tl_off[base + 1];
+    if (hi > lo) {
+      float max_d = threshold;
+      if (d2 == 0.0f) {
+        const float e[3] = {bx[3] - bx[0], bx[4] - bx[1], bx[5] - bx[2]};
+        max_d = threshold + wf::sqrt_rn(wf::fma_(e[2], e[2], wf::fma_(e[0], e[0], e[1] * e[1])));
+      }
+      bool hit = false;
+      for (int k = lo; k < hi && !hit; ++k) {
+        const int body = in.tl_idx[k];
+        if (!in.has_mesh[body]) continue;
+        const M44& lp = in.mats[body];
+        const float rel[3] = {src[0] - lp(0, 3), src[1] - lp(1, 3), src[2] - lp(2, 3)};
+        float x[3];
+        for (int i = 0; i < 3; ++i) {
+          const float col[3] = {lp(0, i), lp(1, i), lp(2, i)};
+          x[i] = wf::dot3(col, rel);
+        }
+        float sign, dist;
+        if (mesh_query_point_dist(in.pts + (size_t)in.poff[body] * 3, in.tri + (size_t)in.toff[body] * 3,
+                                  in.toff[body + 1] - in.toff[body], x, max_d, &sign, &dist))
+          if (sign < 0.0f || dist <= threshold) hit = true;
+      }
+      if (!hit) return false;
+    }
+  }
+  *delta = (in.src_temp[h] - in.temp_vals[(size_t)s * in.n_temp + n]) * in.rate[h];
+  return true;
+}
+// _temperature_decay_kernel (SASS sm_120·sm_89 같음): fma(dt, inc, fma((def - v) * decay, dt, v))
+OEHD float temp_decay(float v, float inc, float def, float decay, float dt) {
+  return wf::fma_(dt, inc, wf::fma_((def - v) * decay, dt, v));
+}
+// _self_heating_clamp_kernel 칸 하나: 새 온도를 돌려준다 (안 바꾸면 그대로)
+OEHD float temp_self_clamp(uint8_t req_fire, uint8_t active, float src_temp, float ign, float t) {
+  if (!req_fire || !active) return t;
+  if (t < ign) return t;
+  return src_temp > t ? src_temp : t;
+}
+OEHD float max_temp_update(float mx, float t) { return t > mx ? t : mx; }
+OEHD uint8_t on_fire_value(int self_temp_idx, float t, float ign) { return self_temp_idx < 0 ? 0 : (t >= ign ? 1 : 0); }
+// 파이썬 비교: float32 값을 .item() 으로 꺼내 파이썬 수(double)와 비교
+OEHD uint8_t cooked_value(float max_temp, double cook_temperature) { return (double)max_temp >= cook_temperature ? 1 : 0; }
+OEHD uint8_t frozen_value(float temp, double freeze_temperature) { return (double)temp <= freeze_temperature ? 1 : 0; }
 
 // ---------------- OnTop / Under / NextTo (칸 하나) ----------------
 // adj: 판 하나 (Na,Na,K), touch: 판 하나 (Nt,Nt)

@@ -5,6 +5,7 @@
 //   C. 물체 상태: 공식 warp 결과(states/frame_*) 의 자세→행렬, Adjacency 를 GPU 로 다시 계산해 비교
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -62,7 +63,7 @@ int main(int argc, char** argv) {
   }
   const std::string root = argv[1];
   const int boards = argc > 2 ? atoi(argv[2]) : 4096;
-  const std::string parts = argc > 3 ? argv[3] : "ABC";
+  const std::string parts = argc > 3 ? argv[3] : "ABCD";
   long long total_bad = 0;
   std::mt19937 rng(5);
 
@@ -382,6 +383,65 @@ int main(int argc, char** argv) {
         }
         cudaFree(d_mask), cudaFree(d_pairs), cudaFree(d_mkp), cudaFree(d_mko), cudaFree(d_mkr);
       }
+      // 온도 사슬 (스텝마다 공식 입력)
+      if (std::ifstream(d + "hs_n.npy").good()) {
+        const auto hn = L_("hs_n").vec<int32_t>();
+        const int H = hn[0];
+        std::vector<void*> fr_;
+        auto P = [&](auto v) {
+          auto* p = dput(v);
+          fr_.push_back(p);
+          return p;
+        };
+        gpu::HeatGates g{P(L_("hs_req_tg").vec<uint8_t>()), P(L_("hs_req_cl").vec<uint8_t>()), P(L_("hs_req_fi").vec<uint8_t>()),
+                         P(L_("hs_tg_idx").vec<int32_t>()), P(L_("hs_op_idx").vec<int32_t>()), P(L_("hs_fi_idx").vec<int32_t>()),
+                         P(L_("tp_tg_v").vec<uint8_t>()), O, hn[1], P(L_("tp_op_v").vec<uint8_t>()), O, hn[2], nullptr, O, hn[3]};
+        auto* d_hv = P(std::vector<uint8_t>(S * H));
+        st::HeatIn in{d_hv, H, P(L_("hs_req_in").vec<uint8_t>()), P(L_("hs_temp").vec<float>()), P(L_("hs_rate").vec<float>()),
+                      P(L_("hs_thr").vec<float>()), P(L_("hs_self_temp").vec<int32_t>()), P(L_("hs_self_in").vec<int32_t>()),
+                      P(L_("hs_link").vec<int32_t>()), P(L_("hs_off").vec<float>()), P(L_("tp_t2a").vec<int32_t>()),
+                      P(L_("tp_t2i").vec<int32_t>()), P(L_("tp_tl_off").vec<int32_t>()), P(L_("tp_tl_idx").vec<int32_t>()), d_hm,
+                      d_pts, d_tri, d_poff, d_toff, O, d_mo, d_aabb, O, P(L_("inside").vec<uint8_t>()), O, S, nullptr};
+        const auto* d_req_fi = g.req_fi;
+        auto* d_ign = P(L_("hs_ign").vec<float>());
+        auto* d_mxi = P(L_("tp_mx_idx").vec<int32_t>());
+        auto* d_ofi = P(L_("tp_of_idx").vec<int32_t>());
+        auto* d_ofg = P(L_("tp_of_ign").vec<float>());
+        auto* d_infl = P(std::vector<uint8_t>((size_t)S * H * O));
+        auto* d_inc = P(std::vector<float>(S * O));
+        auto* d_tout = P(std::vector<float>(S * O));
+        auto* d_fire = P(std::vector<uint8_t>(S * O));
+        auto cmp_u8 = [&](const uint8_t* dp, const std::vector<uint8_t>& ref) {
+          const auto v = dget(dp, ref.size());
+          for (size_t e = 0; e < ref.size(); ++e) ++cmp_s, bad_s += v[e] != ref[e];
+        };
+        auto cmp_f = [&](const float* dp, const std::vector<float>& ref) {
+          const auto v = dget(dp, ref.size());
+          for (size_t e = 0; e < ref.size(); ++e) ++cmp_s, bad_s += memcmp(&v[e], &ref[e], 4) != 0;
+        };
+        for (int k = 0; k < 4; ++k) {
+          const std::string ks = "_" + std::to_string(k);
+          auto LK = [&](const char* n) { return L_((std::string(n) + ks).c_str()); };
+          g.fi_v = P(LK("tp_fi_in").vec<uint8_t>());
+          gpu::k_heat_active<<<(S * H + 63) / 64, 64>>>(g, S, H, d_hv);
+          cmp_u8(d_hv, LK("tp_hv").vec<uint8_t>());
+          CK(cudaMemcpy(d_hv, LK("tp_hv").vec<uint8_t>().data(), S * H, cudaMemcpyHostToDevice));
+          in.temp_vals = P(LK("tp_t_in").vec<float>());
+          gpu::k_heat_gather<<<(S * O + 63) / 64, 64>>>(in, S, d_req_fi, d_ign, 23.0f, 0.02f, (float)(1.0 / 30.0), d_infl, d_inc,
+                                                         d_tout);
+          CK(cudaDeviceSynchronize());
+          cmp_u8(d_infl, LK("tp_infl").vec<uint8_t>());
+          cmp_f(d_inc, LK("tp_inc").vec<float>());
+          cmp_f(d_tout, LK("tp_t_out").vec<float>());
+          auto* d_mx = P(LK("tp_mx_in").vec<float>());
+          auto* d_tref = P(LK("tp_t_out").vec<float>());
+          gpu::k_max_fire<<<(S * O + 63) / 64, 64>>>(d_tref, S, O, d_mx, d_mxi, d_ofi, d_ofg, d_fire);
+          CK(cudaDeviceSynchronize());
+          cmp_f(d_mx, LK("tp_mx_out").vec<float>());
+          cmp_u8(d_fire, LK("tp_fi_out").vec<uint8_t>());
+        }
+        for (void* p : fr_) cudaFree(p);
+      }
       cudaFree(d_poses), cudaFree(d_m), cudaFree(d_mo), cudaFree(d_aabb), cudaFree(d_aidx), cudaFree(d_hm), cudaFree(d_l2o);
       cudaFree(d_l2s), cudaFree(d_dirs), cudaFree(d_maxd), cudaFree(d_pts), cudaFree(d_tri), cudaFree(d_poff), cudaFree(d_toff);
       cudaFree(d_adj);
@@ -390,6 +450,34 @@ int main(int argc, char** argv) {
     printf("C. Adjacency GPU=warp    비교 %lld, 다름 %lld | 광선 스레드 %.1f 백만/초 (삼각형 전수)\n", cmp_a, bad_a, rays / t_adj / 1e6);
     printf("C. AABB·Inside·Toggle 겹침 GPU=warp  비교 %lld, 다름 %lld\n", cmp_s, bad_s);
     total_bad += bad_m + bad_a + bad_s;
+  }
+  // ---------------- D. 보조 잡기 관절 틀 ----------------
+  if (parts.find('D') != std::string::npos) {
+    std::ifstream g(root + "/agframe/agframe.bin", std::ios::binary | std::ios::ate);
+    const size_t nb = (size_t)g.tellg();
+    g.seekg(0);
+    std::vector<float> v(nb / 4);
+    g.read((char*)v.data(), nb);
+    const int W = 20, n0 = (int)(v.size() / W);
+    const int n = std::max(n0, boards * 64 / n0 * n0);  // 처리량용으로 복제
+    std::vector<float> in((size_t)n * 13);
+    for (int r = 0; r < n; ++r) memcpy(&in[(size_t)r * 13], &v[(size_t)(r % n0) * W], 13 * 4);
+    auto* d_in = dput(in);
+    float* d_out;
+    CK(cudaMalloc(&d_out, (size_t)n * 7 * 4));
+    gpu::k_agframe<<<(n + 127) / 128, 128>>>(d_in, n, d_out);
+    CK(cudaDeviceSynchronize());
+    const double t0 = now_s();
+    gpu::k_agframe<<<(n + 127) / 128, 128>>>(d_in, n, d_out);
+    CK(cudaDeviceSynchronize());
+    const double dt = now_s() - t0;
+    const auto o = dget(d_out, (size_t)n * 7);
+    long long cmp = 0, bad = 0;
+    for (int r = 0; r < n; ++r)
+      for (int k = 0; k < 7; ++k) ++cmp, bad += memcmp(&o[(size_t)r * 7 + k], &v[(size_t)(r % n0) * W + 13 + k], 4) != 0;
+    printf("D. 잡기 관절 틀 GPU=공식  비교 %lld, 다름 %lld | %d 개 %.3f ms\n", cmp, bad, n, dt * 1e3);
+    total_bad += bad;
+    cudaFree(d_in), cudaFree(d_out);
   }
   return total_bad ? 1 : 0;
 }

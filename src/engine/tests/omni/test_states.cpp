@@ -50,7 +50,9 @@ int main(int argc, char** argv) {
   std::ifstream idx(root + "/index.txt");
   std::string fr;
   Tally t_mat, t_aabb, t_open, t_cm, t_ccm, t_btf, t_touch, t_pre, t_invw, t_out, t_inside, t_adj, t_ontop, t_under,
-      t_nextto, t_tg_contact, t_tg_overlap, t_tg_val, t_tg_time;
+      t_nextto, t_tg_contact, t_tg_overlap, t_tg_val, t_tg_time, t_hv, t_infl, t_inc, t_dec, t_tout, t_mx, t_fire,
+      t_cook;
+  long long multi_src = 0;
   int frames = 0;
   while (std::getline(idx, fr)) {
     if (fr.empty()) continue;
@@ -302,8 +304,97 @@ int main(int argc, char** argv) {
         t_tg_time.f(time[k], tref[k], fr + " tg_time");
       }
     }
+    // 10. 온도 사슬 (스텝마다 공식 입력)
+    if (has("hs_n")) {
+      const auto hn = L_("hs_n").vec<int32_t>();
+      const int H = hn[0];
+      const auto self_temp = L_("hs_self_temp").vec<int32_t>(), self_in = L_("hs_self_in").vec<int32_t>();
+      const auto req_in = L_("hs_req_in").vec<uint8_t>(), req_tg = L_("hs_req_tg").vec<uint8_t>(),
+                 req_cl = L_("hs_req_cl").vec<uint8_t>(), req_fi = L_("hs_req_fi").vec<uint8_t>();
+      const auto tg_idx = L_("hs_tg_idx").vec<int32_t>(), op_idx = L_("hs_op_idx").vec<int32_t>(),
+                 fi_idx = L_("hs_fi_idx").vec<int32_t>();
+      const auto h_temp = L_("hs_temp").vec<float>(), h_rate = L_("hs_rate").vec<float>(), h_thr = L_("hs_thr").vec<float>(),
+                 h_ign = L_("hs_ign").vec<float>();
+      const auto h_link = L_("hs_link").vec<int32_t>();
+      const auto h_off = L_("hs_off").vec<float>();
+      const auto t2a = L_("tp_t2a").vec<int32_t>(), t2i = L_("tp_t2i").vec<int32_t>();
+      const auto tl_off = L_("tp_tl_off").vec<int32_t>(), tl_idx = L_("tp_tl_idx").vec<int32_t>();
+      const auto tg_v = L_("tp_tg_v").vec<uint8_t>(), op_v = L_("tp_op_v").vec<uint8_t>();
+      const auto mx_idx = L_("tp_mx_idx").vec<int32_t>(), of_idx = L_("tp_of_idx").vec<int32_t>();
+      const auto of_ign = L_("tp_of_ign").vec<float>();
+      const auto inside_v = L_("inside").vec<uint8_t>();
+      for (int k = 0; k < 4; ++k) {
+        const std::string ks = "_" + std::to_string(k);
+        auto LK = [&](const char* n) { return L_((std::string(n) + ks).c_str()); };
+        const auto fi_in = LK("tp_fi_in").vec<uint8_t>();
+        const auto hv_ref = LK("tp_hv").vec<uint8_t>();
+        for (int s = 0; s < S; ++s)
+          for (int h = 0; h < H; ++h)
+            t_hv.u(st::heat_active(req_tg.data(), req_cl.data(), req_fi.data(), tg_idx.data(), op_idx.data(), fi_idx.data(),
+                                   tg_v.data(), O, hn[1], op_v.data(), O, hn[2], fi_in.data(), O, hn[3], s, h),
+                   hv_ref[s * H + h], fr + " 열원 켜짐");
+        const auto t_in = LK("tp_t_in").vec<float>();
+        const st::HeatIn in{hv_ref.data(), H, req_in.data(), h_temp.data(), h_rate.data(), h_thr.data(), self_temp.data(),
+                            self_in.data(), h_link.data(), h_off.data(), t2a.data(), t2i.data(), tl_off.data(), tl_idx.data(),
+                            has_mesh.data(), mpts.data(), mtri.data(), poff.data(), toff.data(), O, M.data(), aabb.data(), O,
+                            inside_v.data(), O, S, t_in.data()};
+        const auto infl_ref = LK("tp_infl").vec<uint8_t>();
+        const auto inc_ref = LK("tp_inc").vec<float>();
+        for (int s = 0; s < S; ++s)
+          for (int n = 0; n < O; ++n) {
+            int cnt = 0;
+            float acc = 0.0f;
+            for (int h = 0; h < H; ++h) {
+              float dl = 0.0f;
+              const bool hit = st::heat_pair(in, s, h, n, &dl);
+              t_infl.u(hit, infl_ref[((size_t)s * H + h) * O + n],
+                       fr + " 영향 s" + std::to_string(s) + " h" + std::to_string(h) + " n" + std::to_string(n) + ks);
+              if (hit) acc = acc + dl, ++cnt;
+            }
+            if (cnt > 1) ++multi_src;
+            t_inc.f(acc, inc_ref[s * O + n], fr + " 들어온 열" + ks);
+          }
+        const auto dec_ref = LK("tp_t_dec").vec<float>();
+        for (int e = 0; e < S * O; ++e)
+          t_dec.f(st::temp_decay(t_in[e], inc_ref[e], 23.0f, 0.02f, (float)(1.0 / 30.0)), dec_ref[e], fr + " 감쇠");
+        auto t = dec_ref;
+        for (int s = 0; s < S; ++s)
+          for (int h = 0; h < H; ++h) {
+            const int n = self_temp[h];
+            if (n < 0) continue;
+            t[s * O + n] = st::temp_self_clamp(req_fi[h], hv_ref[s * H + h], h_temp[h], h_ign[h], t[s * O + n]);
+          }
+        const auto tout_ref = LK("tp_t_out").vec<float>();
+        for (int e = 0; e < S * O; ++e) t_tout.f(t[e], tout_ref[e], fr + " 불 유지 뒤 온도");
+        const auto mx_in = LK("tp_mx_in").vec<float>(), mx_ref = LK("tp_mx_out").vec<float>();
+        const auto fi_ref = LK("tp_fi_out").vec<uint8_t>();
+        for (int s = 0; s < S; ++s)
+          for (int o = 0; o < O; ++o) {
+            t_mx.f(st::max_temp_update(mx_in[s * O + o], tout_ref[s * O + mx_idx[o]]), mx_ref[s * O + o], fr + " 최고 온도");
+            const int ti = of_idx[o];
+            t_fire.u(st::on_fire_value(ti, ti < 0 ? 0.0f : tout_ref[s * O + ti], of_ign[o]), fi_ref[s * O + o], fr + " OnFire");
+          }
+      }
+      // Cooked / Frozen (마지막 스텝 값, 공식 파이썬 _get_value)
+      const auto mxl = L_("tp_mx_out_3").vec<float>(), tl = L_("tp_t_out_3").vec<float>();
+      const auto ck_t = L_("ck_temp").vec<double>(), fz_t = L_("fz_temp").vec<double>();
+      const auto ck_o = L_("ck_out").vec<uint8_t>(), fz_o = L_("fz_out").vec<uint8_t>();
+      for (int e = 0; e < S * O; ++e) {
+        t_cook.u(st::cooked_value(mxl[e], ck_t[e]), ck_o[e], fr + " Cooked");
+        t_cook.u(st::frozen_value(tl[e], fz_t[e]), fz_o[e], fr + " Frozen");
+      }
+    }
   }
   printf("장면 %d 개\n", frames);
+  t_hv.print("열원 켜짐");
+  t_infl.print("열 영향 표시 (s,h,n)");
+  t_inc.print("들어온 열 (float)");
+  printf("  (열원 둘 이상이 한 물체에 닿은 칸 %lld — 공식 원자 덧셈 순서가 비결정인 자리)\n", multi_src);
+  t_dec.print("온도 감쇠 (float)");
+  t_tout.print("불 유지 뒤 온도 (float)");
+  t_mx.print("최고 온도 (float)");
+  t_fire.print("OnFire");
+  t_cook.print("Cooked·Frozen (파이썬 비교)");
   t_tg_contact.print("Toggle 손가락 접촉 표시");
   t_tg_overlap.print("Toggle 표식 겹침 표시");
   t_tg_val.print("ToggledOn 값");
@@ -325,6 +416,7 @@ int main(int argc, char** argv) {
   t_nextto.print("NextTo");
   const long long bad = t_mat.bad + t_aabb.bad + t_open.bad + t_cm.bad + t_ccm.bad + t_btf.bad + t_touch.bad + t_pre.bad +
                         t_invw.bad + t_out.bad + t_inside.bad + t_adj.bad + t_ontop.bad + t_under.bad + t_nextto.bad +
-                        t_tg_contact.bad + t_tg_overlap.bad + t_tg_val.bad + t_tg_time.bad;
+                        t_tg_contact.bad + t_tg_overlap.bad + t_tg_val.bad + t_tg_time.bad + t_hv.bad + t_infl.bad + t_inc.bad +
+                        t_dec.bad + t_tout.bad + t_mx.bad + t_fire.bad + t_cook.bad;
   return bad ? 1 : 0;
 }

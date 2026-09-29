@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 
+#include "core/omni/agframe.h"
 #include "core/omni/bddl.h"
 #include "core/omni/controllers.h"
 #include "core/omni/states.h"
@@ -161,6 +162,62 @@ __global__ void k_toggle_overlap(const wf::M44* mats, const uint8_t* has_mesh, c
                                 tri + (size_t)toff[fg] * 3,
                                 toff[fg + 1] - toff[fg]))
     atomicMax(&mask[k], 2);
+}
+
+// 보조 잡기 관절 틀: 스레드 = 한 번의 틀 계산 (행 = contact3 link_pos3 link_q4 scale3 → pos3 q4)
+__global__ void k_agframe(const float* in, int n, float* out) {
+  const int t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= n) return;
+  const float* x = in + (size_t)t * 13;
+  agf::grasp_frame(x, x + 3, x + 6, x + 10, out + (size_t)t * 7, out + (size_t)t * 7 + 3);
+}
+
+// 온도 사슬 한 스텝 (층 1 과 같은 함수, 원자 덧셈 대신 스레드 = (s, n) 가 열원 번호 순으로 더함 — 결정적)
+struct HeatGates {
+  const uint8_t *req_tg, *req_cl, *req_fi;
+  const int32_t *tg_idx, *op_idx, *fi_idx;
+  const uint8_t* tg_v;
+  int n_tg, n_tg_sc;
+  const uint8_t* op_v;
+  int n_op, n_op_sc;
+  const uint8_t* fi_v;  // 앞 스텝 OnFire
+  int n_fi, n_fi_sc;
+};
+__global__ void k_heat_active(HeatGates g, int S, int H, uint8_t* hv) {
+  const int t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= S * H) return;
+  const int s = t / H, h = t % H;
+  hv[t] = st::heat_active(g.req_tg, g.req_cl, g.req_fi, g.tg_idx, g.op_idx, g.fi_idx, g.tg_v, g.n_tg, g.n_tg_sc, g.op_v, g.n_op,
+                          g.n_op_sc, g.fi_v, g.n_fi, g.n_fi_sc, s, h);
+}
+// in.temp_vals 는 이번 스텝 들어갈 때 온도. temp_out 에 감쇠·불 유지 뒤 온도, infl (S,H,N), inc (S,N) 는 확인용
+__global__ void k_heat_gather(st::HeatIn in, int S, const uint8_t* req_fi, const float* ign, float def, float decay,
+                              float dt, uint8_t* infl, float* inc, float* temp_out) {
+  const int t = blockIdx.x * blockDim.x + threadIdx.x;
+  const int N = in.n_temp, H = in.N_hss;
+  if (t >= S * N) return;
+  const int s = t / N, n = t % N;
+  float acc = 0.0f;
+  for (int h = 0; h < H; ++h) {
+    float dl = 0.0f;
+    const bool hit = st::heat_pair(in, s, h, n, &dl);
+    infl[((size_t)s * H + h) * N + n] = hit ? 1 : 0;
+    if (hit) acc = acc + dl;
+  }
+  inc[t] = acc;
+  float v = st::temp_decay(in.temp_vals[t], acc, def, decay, dt);
+  for (int h = 0; h < H; ++h)
+    if (in.self_temp[h] == n) v = st::temp_self_clamp(req_fi[h], in.src_vals[s * H + h], in.src_temp[h], ign[h], v);
+  temp_out[t] = v;
+}
+__global__ void k_max_fire(const float* temp, int S, int N, float* mx, const int32_t* mx_idx, const int32_t* of_idx,
+                           const float* of_ign, uint8_t* fire) {
+  const int t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= S * N) return;
+  const int s = t / N, o = t % N;
+  mx[t] = st::max_temp_update(mx[t], temp[s * N + mx_idx[o]]);
+  const int ti = of_idx[o];
+  fire[t] = st::on_fire_value(ti, ti < 0 ? 0.0f : temp[s * N + ti], of_ign[o]);
 }
 
 }  // namespace gpu

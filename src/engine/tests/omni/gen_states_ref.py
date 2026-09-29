@@ -24,6 +24,12 @@ import omnigibson.object_states.on_top as ONT
 import omnigibson.object_states.open_state as OPN
 import omnigibson.object_states.touching as TCH
 import omnigibson.object_states.toggle as TOG
+import omnigibson.object_states.cooked as CKD
+import omnigibson.object_states.frozen as FRZ
+import omnigibson.object_states.heat_source_or_sink as HSS
+import omnigibson.object_states.max_temperature as MXT
+import omnigibson.object_states.on_fire as ONF
+import omnigibson.object_states.temperature as TMP
 import omnigibson.object_states.under as UND
 import omnigibson.utils.usd_utils as UU
 
@@ -447,6 +453,142 @@ def frame(rng, out):
          tg_vals=tvals_wp.numpy(), tg_time=ttime_wp.numpy(), tg_mask_end=mask.numpy())
     for s in range(S):
         save(out, **{f"tg_cm_{s}": tg_cm[s], f"tg_q_{s}": tg_q[s], f"tg_with_{s}": tg_with[s]})
+
+    # ---- 9. 온도 사슬 (HeatSourceOrSink → Temperature(열 모으기·감쇠·불 유지) → MaxTemperature → OnFire), 4 스텝
+    H = int(rng.integers(1, min(O, 5) + 1))
+    src_obj = rng.choice(O, H, replace=False)
+    hs_self_temp = np.array([int(o) if rng.random() < 0.85 else -1 for o in src_obj], np.int32)
+    hs_self_in = np.array([int(o) if rng.random() < 0.85 else -1 for o in src_obj], np.int32)
+    hs_req_in = (rng.random(H) < 0.3).astype(np.uint8)
+    hs_req_tg = (rng.random(H) < 0.4).astype(np.uint8)
+    hs_req_cl = (rng.random(H) < 0.3).astype(np.uint8)
+    hs_req_fi = (rng.random(H) < 0.25).astype(np.uint8)
+    hs_tg_idx = np.array([int(o) if rng.random() < 0.9 else -1 for o in src_obj], np.int32)
+    hs_op_idx = np.array([int(o) if rng.random() < 0.9 else -1 for o in src_obj], np.int32)
+    hs_fi_idx = np.array([int(o) if rng.random() < 0.9 else -1 for o in src_obj], np.int32)
+    hs_temp = f32(rng.choice([200.0, 250.0, 1000.0, -20.0, 180.5], H))
+    hs_rate = f32(rng.choice([0.04, 0.1, 0.5, 0.037], H))
+    hs_thr = f32(rng.uniform(0.05, 0.4, H))
+    hs_ign = f32(rng.choice([250.0, 200.0, 99.9], H))
+    hs_link = np.full((S, H), -1, np.int32)
+    for s_ in range(S):
+        for h in range(H):
+            ls_ = [l for l in range(L) if link_scene[l] == s_ and link_obj[l] == int(src_obj[h])]
+            if ls_ and rng.random() < 0.95:
+                hs_link[s_, h] = int(rng.choice(ls_))
+    # 열 요소 위치: 판 0 기준으로 대상 메시 면 위 한 점에서 바깥(또는 안)으로 문턱 ± 몇 ulp 떨어진 곳 (경계 시험)
+    hs_off = np.zeros((H, 3), np.float32)
+    for h in range(H):
+        li = hs_link[0, h]
+        tl = [l for l in range(L) if link_scene[l] == 0 and link_obj[l] != int(src_obj[h]) and mesh_ids[l] != 0]
+        if li < 0 or not tl or rng.random() < 0.2:
+            hs_off[h] = f32(rng.uniform(-0.5, 0.5, 3))
+            continue
+        tgt = int(rng.choice(tl))
+        pts_t, tri_t = link_mesh[tgt]
+        f_ = tri_t[rng.integers(0, len(tri_t))]
+        bc = rng.dirichlet([1, 1, 1])
+        ploc = bc @ pts_t[f_].astype(np.float64)
+        nrm = np.cross(pts_t[f_[1]] - pts_t[f_[0]], pts_t[f_[2]] - pts_t[f_[0]]).astype(np.float64)
+        nrm /= np.linalg.norm(nrm) + 1e-30
+        if np.dot(nrm, ploc - pts_t.mean(0)) < 0:
+            nrm = -nrm
+        r_ = rng.random()
+        if r_ < 0.5:
+            dist = float(hs_thr[h]) * (1.0 + float(rng.integers(-4, 5)) * 1.2e-7)
+        elif r_ < 0.7:
+            dist = -float(rng.uniform(0.001, 0.05))
+        else:
+            dist = float(rng.uniform(0.0, 2.0)) * float(hs_thr[h])
+        Mt = matsn[tgt].astype(np.float64)
+        wpt = Mt[:3, :3] @ (ploc + nrm * dist) + Mt[:3, 3]
+        Ms = matsn[li].astype(np.float64)
+        hs_off[h] = f32(Ms[:3, :3].T @ (wpt - Ms[:3, 3]))
+    t2a = np.arange(O, dtype=np.int32)
+    t2i = np.arange(O, dtype=np.int32)
+    if rng.random() < 0.3:
+        t2a[rng.integers(0, O)] = -1
+    if rng.random() < 0.3:
+        t2i[rng.integers(0, O)] = -1
+    tl_off, tl_idx = [0], []
+    for s_ in range(S):
+        for n in range(O):
+            if rng.random() < 0.9:
+                tl_idx.extend([l for l in range(L) if link_scene[l] == s_ and link_obj[l] == n])
+            tl_off.append(len(tl_idx))
+    tl_off = np.array(tl_off, np.int32)
+    tl_idx = np.array(tl_idx if tl_idx else [0], np.int32)
+    tg_v = (rng.random((S, O)) < 0.6).astype(np.uint8)
+    op_v = (rng.random((S, O)) < 0.4).astype(np.uint8)
+    fi_v = (rng.random((S, O)) < 0.4).astype(np.uint8)
+    n_sc = [S if rng.random() < 0.8 else max(0, S - 1) for _ in range(3)]
+    temp = f32(np.where(rng.random((S, O)) < 0.3, rng.choice([250.0, 23.0, 70.0, 0.0, 99.9], (S, O)), rng.uniform(-30, 300, (S, O))))
+    mx_idx = np.arange(O, dtype=np.int32)
+    mx = f32(np.where(rng.random((S, O)) < 0.3, -np.inf, rng.uniform(-30, 300, (S, O))))
+    of_idx = np.array([o if rng.random() < 0.9 else -1 for o in range(O)], np.int32)
+    of_ign = f32(rng.choice([250.0, 200.0, 99.9], O))
+    save(out, hs_n=np.array([H] + n_sc, np.int32), hs_self_temp=hs_self_temp, hs_self_in=hs_self_in, hs_req_in=hs_req_in,
+         hs_req_tg=hs_req_tg, hs_req_cl=hs_req_cl, hs_req_fi=hs_req_fi, hs_tg_idx=hs_tg_idx, hs_op_idx=hs_op_idx,
+         hs_fi_idx=hs_fi_idx, hs_temp=hs_temp, hs_rate=hs_rate, hs_thr=hs_thr, hs_ign=hs_ign, hs_link=hs_link, hs_off=hs_off,
+         tp_t2a=t2a, tp_t2i=t2i, tp_tl_off=tl_off, tp_tl_idx=tl_idx, tp_tg_v=tg_v, tp_op_v=op_v, tp_mx_idx=mx_idx,
+         tp_of_idx=of_idx, tp_of_ign=of_ign)
+    ph = wp.zeros((1, 1), dtype=wp.uint8, device=D)
+    temp_wp = wpa(temp)
+    mx_wp = wpa(mx)
+    fi_wp = wpa(fi_v)
+    dt = wp.array(np.array([np.float32(1.0 / 30.0)], np.float32), dtype=wp.float32, device=D)
+    for k in range(4):
+        fi_in = fi_wp.numpy().copy()
+        hv = wp.zeros((S, H), dtype=wp.uint8, device=D)
+        wp.launch(HSS._heatsource_is_active_kernel, dim=(S, H),
+                  inputs=[wpa(hs_req_tg), wpa(hs_req_cl), wpa(hs_req_fi), wpa(hs_tg_idx), wpa(hs_op_idx), wpa(hs_fi_idx),
+                          wpa(tg_v), wpa(op_v), fi_wp, wp.int32(n_sc[0]), wp.int32(n_sc[1]), wp.int32(n_sc[2]), hv], device=D)
+        infl = wp.zeros((S, H, O), dtype=wp.uint8, device=D)
+        inc = wp.zeros((S, O), dtype=wp.float32, device=D)
+        t_in = temp_wp.numpy().copy()
+        wp.launch(TMP._incoming_heat_kernel, dim=(S, H, O),
+                  inputs=[hv, wpa(hs_req_in), wpa(hs_temp), wpa(hs_rate), wpa(hs_thr), wpa(hs_self_temp), wpa(hs_self_in),
+                          wpa(hs_link), wp.array(hs_off, dtype=wp.vec3, device=D), wpa(t2a), wpa(t2i), wpa(tl_off), wpa(tl_idx),
+                          link_mesh_ids, wp.int32(O), mats, aabb3, ivals, temp_wp, wp.int32(S), infl, inc], device=D)
+        inc_np = inc.numpy().copy()
+        wp.launch(TMP._temperature_decay_kernel, dim=(S, O),
+                  inputs=[temp_wp, inc, wp.float32(TMP.m.DEFAULT_TEMPERATURE), wp.float32(TMP.m.TEMPERATURE_DECAY_SPEED), dt],
+                  device=D)
+        t_dec = temp_wp.numpy().copy()
+        wp.launch(TMP._self_heating_clamp_kernel, dim=(S, H),
+                  inputs=[hv, wpa(hs_req_fi), wpa(hs_temp), wpa(hs_ign), wpa(hs_self_temp), temp_wp], device=D)
+        mx_in = mx_wp.numpy().copy()
+        wp.launch(MXT._max_temperature_kernel, dim=(S, O), inputs=[mx_wp, temp_wp, wpa(mx_idx)], device=D)
+        wp.launch(ONF._on_fire_kernel, dim=(S, O), inputs=[wpa(of_idx), wpa(of_ign), temp_wp, fi_wp], device=D)
+        save(out, **{f"tp_fi_in_{k}": fi_in, f"tp_hv_{k}": hv.numpy(), f"tp_t_in_{k}": t_in, f"tp_infl_{k}": infl.numpy(),
+                     f"tp_inc_{k}": inc_np, f"tp_t_dec_{k}": t_dec, f"tp_t_out_{k}": temp_wp.numpy(), f"tp_mx_in_{k}": mx_in,
+                     f"tp_mx_out_{k}": mx_wp.numpy(), f"tp_fi_out_{k}": fi_wp.numpy()})
+    del ph
+    # Cooked / Frozen: 공식 _get_value (MaxTemperature/Temperature.get_value = float32 .item()) 를 가짜 물체로 부른다
+    class _F:
+        pass
+    mxn, tn = mx_wp.numpy(), temp_wp.numpy()
+    ck_t = np.array([float(rng.choice([70.0, 58.7, 100.0 / 3.0, float(mxn[s_, o]) if np.isfinite(mxn[s_, o]) else 70.0,
+                                       np.nextafter(float(mxn[s_, o]), np.inf) if np.isfinite(mxn[s_, o]) else 70.0]))
+                     for s_ in range(S) for o in range(O)], np.float64)
+    fz_t = np.array([float(rng.choice([0.0, -0.1, float(tn[s_, o]), np.nextafter(float(tn[s_, o]), -np.inf)]))
+                     for s_ in range(S) for o in range(O)], np.float64)
+    ck_o = np.zeros(S * O, np.uint8)
+    fz_o = np.zeros(S * O, np.uint8)
+    for s_ in range(S):
+        for o in range(O):
+            k = s_ * O + o
+            ob, ms_, ts_ = _F(), _F(), _F()
+            ms_.get_value = (lambda v=mxn[s_, o]: th.tensor(v).to(th.float32).item())
+            ts_.get_value = (lambda v=tn[s_, o]: th.tensor(v).to(th.float32).item())
+            ob.states = {MXT.MaxTemperature: ms_, TMP.Temperature: ts_}
+            c = CKD.Cooked.__new__(CKD.Cooked)
+            c.obj, c.cook_temperature = ob, ck_t[k]
+            z = FRZ.Frozen.__new__(FRZ.Frozen)
+            z.obj, z.freeze_temperature = ob, fz_t[k]
+            ck_o[k] = bool(c._get_value())
+            fz_o[k] = bool(z._get_value())
+    save(out, ck_temp=ck_t, ck_out=ck_o, fz_temp=fz_t, fz_out=fz_o)
     wp.synchronize()
     del meshes
 
