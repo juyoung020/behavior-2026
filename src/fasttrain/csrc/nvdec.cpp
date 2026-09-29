@@ -298,6 +298,13 @@ void Engine::Impl::process(Worker& w, int i) {
     CUdeviceptr dp = 0;
     unsigned int pitch = 0;
     CK(cv->cuvidMapVideoFrame(d.dec, pic, &dp, &pitch, &vpp));
+    struct Unmap {  // 커널·동기화 중 예외가 나도 매핑을 풀어 둔다
+        CUvideodecoder dec;
+        CUdeviceptr p;
+        ~Unmap() {
+            if (p) cv->cuvidUnmapVideoFrame(dec, p);
+        }
+    } unmap{d.dec, dp};
     const uint8_t* y = (const uint8_t*)dp;
     const uint8_t* uv = y + (size_t)pitch * ((d.h + 1) & ~1u);
     const int W = (int)d.w, H = (int)d.h;
@@ -311,6 +318,7 @@ void Engine::Impl::process(Worker& w, int i) {
         ck_rt("크기 조정 커널");
     }
     CK(cu->cuStreamSynchronize(w.stream));
+    unmap.p = 0;
     CK(cv->cuvidUnmapVideoFrame(d.dec, dp));
     w.wait_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
