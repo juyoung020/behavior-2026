@@ -57,5 +57,6 @@ void worldBody(TgsBodyVel& v, TgsTxInertia& t, TgsBodyData& d) { H::worldBody(v,
 }  // namespace jeng
 
 // 관절체 쪽 풀기는 관절체 모듈 연결 뒤 장면 시험에서 비교 — 여기서는 컴파일만 확인
-template void eng::jnt::solveExt1DStep<eng::jnt::NoArt>(uint8_t*, uint32_t, uint32_t, eng::jnt::NoArt*, eng::jnt::NoArt*, eng::jnt::TgsBodyVel*, eng::jnt::TgsBodyVel*,
-                                                        const eng::jnt::TgsTxInertia*, const eng::jnt::TgsTxInertia*, float, bool);
+template void eng::jnt::solveExt1DStep<eng::jnt::NoArt>(uint8_t*, uint32_t, uint32_t, const eng::jnt::NoArt&, const eng::jnt::NoArt&, bool,
+                                                        eng::jnt::TgsBodyVel*, eng::jnt::TgsBodyVel*, const eng::jnt::TgsTxInertia*,
+                                                        const eng::jnt::TgsTxInertia*, float, bool);

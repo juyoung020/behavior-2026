@@ -8,8 +8,8 @@
 //   풀기      : src/DyTGSContactPrep.cpp:2418 (solve1DStep), :2750 (conclude1DStep), :2837 (writeBack1DStep)
 //   관절체 쪽 : src/DyTGSContactPrep.cpp:212-320 (SolverExtBodyStep, getImpulseResponse), :2211 (solveExt1D), :2309 (solveExt1DStep)
 // 블록 배치(바이트): 머리 Sc1DHeader(176 B) + 행 Sc1DRow(96 B) 또는 Sc1DRowExt(160 B) × 개수. 앞에서 0 으로 채운다(PxMemSet).
-// 아직 안 옮긴 것: 4개 묶음 SIMD 경로(DyTGSContactPrepBlock.cpp setupSolverConstraintStep4/solve1D4 — 강체-강체 조인트 4개가
-//   한 분할에 모일 때), eIMPROVED_SLERP 대각화, 잔차(residual) 보고의 rcpps 근사 나눗셈.
+// 4개 묶음 SIMD 경로(강체-강체 조인트 4개가 한 분할에 모일 때)는 tgs_1d4.h.
+// 아직 안 옮긴 것: eIMPROVED_SLERP 대각화(omni 가 켜지 않음), 잔차 보고 켠 경로의 PhysX 대조(즉시 모드는 잔차를 끈다 — 식은 옮김).
 #pragma once
 #include <cstdint>
 
@@ -236,8 +236,8 @@ struct NoArt {
   EHD void getVelocities(uint32_t, uint32_t, V3& a, V3& b, V3& c, V3& d) const { a = b = c = d = V3{0, 0, 0}; }
   EHD void getMotionVector(uint32_t, V3& a, V3& b) const { a = V3{0, 0, 0}; b = V3{0, 0, 0}; }
   EHD Q getDeltaQ(uint32_t) const { return qid(); }
-  EHD void applyImpulse(uint32_t, const V3&, const V3&) {}
-  EHD void applyImpulses(uint32_t, const V3&, const V3&, uint32_t, const V3&, const V3&) {}
+  EHD void applyImpulse(uint32_t, const V3&, const V3&) const {}
+  EHD void applyImpulses(uint32_t, const V3&, const V3&, uint32_t, const V3&, const V3&) const {}
 };
 
 // ---- setupSolverConstraintStep (DyTGSContactPrep.cpp:1939). blk 는 blockLength(numRows, isExtended) 바이트 이상.
@@ -601,7 +601,8 @@ EHD void solve1DStep(uint8_t* blk, TgsBodyVel& b0, TgsBodyVel& b1, const TgsTxIn
 //   Q getDeltaQ(uint32_t link)
 //   void applyImpulse(uint32_t link, const V3& lin, const V3& ang)        // pxcFsApplyImpulse(link, lin, ang, NULL)
 //   void applyImpulses(uint32_t l0, const V3& lin0, const V3& ang0, uint32_t l1, const V3& lin1, const V3& ang1)  // pxcFsApplyImpulses
-// artA/artB: 링크가 속한 관절체 (강체 쪽은 nullptr). 같은 관절체면 같은 포인터.
+// artA/artB: 링크가 속한 관절체 접근자 (강체 쪽은 쓰지 않음 — 아무 값). sameArticulation = 두 쪽이 같은 관절체
+// (PhysX desc.articulationA == desc.articulationB). articulation 모듈의 ArtRef{&a}(core/articulation/art_adapters.h)를 그대로 넘긴다.
 EHD void solveExt1D(uint8_t* blk, aos::Vec3V& linVel0, aos::Vec3V& linVel1, aos::Vec3V& angVel0, aos::Vec3V& angVel1, const aos::Vec3V& linMotion0,
                     const aos::Vec3V& linMotion1, const aos::Vec3V& angMotion0, const aos::Vec3V& angMotion1, const aos::QuatV& rotA,
                     const aos::QuatV& rotB, float elapsedTimeF32, aos::Vec3V& linImpulse0, aos::Vec3V& linImpulse1, aos::Vec3V& angImpulse0,
@@ -673,7 +674,8 @@ EHD void solveExt1D(uint8_t* blk, aos::Vec3V& linVel0, aos::Vec3V& linVel1, aos:
 }
 
 template <class Art>
-EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, Art* artA, Art* artB, TgsBodyVel* bodyA, TgsBodyVel* bodyB,
+EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, const Art& artA, const Art& artB, bool sameArticulation,
+                        TgsBodyVel* bodyA, TgsBodyVel* bodyB,
                         const TgsTxInertia* txIA, const TgsTxInertia* txIB, float elapsedTimeF32, bool isPositionIteration) {
   using namespace aos;
   if (blk == nullptr) return;
@@ -681,16 +683,16 @@ EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, 
   QuatV rotA, rotB;
   auto ld = [](const V3& v) { return V3LoadA(PxVec3(v)); };
   auto ldq = [](const Q& q) { const float f[4] = {q.x, q.y, q.z, q.w}; return QuatVLoadU(f); };
-  if (artA == artB) {
+  if (sameArticulation) {
     V3 l0, a0, l1, a1;
-    artA->getVelocities(linkIndexA, linkIndexB, l0, a0, l1, a1);
+    artA.getVelocities(linkIndexA, linkIndexB, l0, a0, l1, a1);
     linVel0 = ld(l0); angVel0 = ld(a0); linVel1 = ld(l1); angVel1 = ld(a1);
     V3 m0l, m0a, m1l, m1a;
-    artA->getMotionVector(linkIndexA, m0l, m0a);
-    artB->getMotionVector(linkIndexB, m1l, m1a);
+    artA.getMotionVector(linkIndexA, m0l, m0a);
+    artB.getMotionVector(linkIndexB, m1l, m1a);
     linMotion0 = ld(m0l); angMotion0 = ld(m0a); linMotion1 = ld(m1l); angMotion1 = ld(m1a);
-    rotA = ldq(artA->getDeltaQ(linkIndexA));
-    rotB = ldq(artB->getDeltaQ(linkIndexB));
+    rotA = ldq(artA.getDeltaQ(linkIndexA));
+    rotB = ldq(artB.getDeltaQ(linkIndexB));
   } else {
     if (linkIndexA == RIGID_BODY) {
       linVel0 = ld(bodyA->linearVelocity); angVel0 = ld(bodyA->angularVelocity);
@@ -698,9 +700,9 @@ EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, 
       rotA = QuatVLoadA(&txIA->deltaBody2WorldQ.x);
     } else {
       V3 l, a, ml, ma;
-      artA->getVelocity(linkIndexA, l, a);
-      rotA = ldq(artA->getDeltaQ(linkIndexA));
-      artA->getMotionVector(linkIndexA, ml, ma);
+      artA.getVelocity(linkIndexA, l, a);
+      rotA = ldq(artA.getDeltaQ(linkIndexA));
+      artA.getMotionVector(linkIndexA, ml, ma);
       linVel0 = ld(l); angVel0 = ld(a); linMotion0 = ld(ml); angMotion0 = ld(ma);
     }
     if (linkIndexB == RIGID_BODY) {
@@ -709,9 +711,9 @@ EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, 
       rotB = QuatVLoadA(&txIB->deltaBody2WorldQ.x);
     } else {
       V3 l, a, ml, ma;
-      artB->getVelocity(linkIndexB, l, a);
-      rotB = ldq(artB->getDeltaQ(linkIndexB));
-      artB->getMotionVector(linkIndexB, ml, ma);
+      artB.getVelocity(linkIndexB, l, a);
+      rotB = ldq(artB.getDeltaQ(linkIndexB));
+      artB.getMotionVector(linkIndexB, ml, ma);
       linVel1 = ld(l); angVel1 = ld(a); linMotion1 = ld(ml); angMotion1 = ld(ma);
     }
   }
@@ -719,23 +721,23 @@ EHD void solveExt1DStep(uint8_t* blk, uint32_t linkIndexA, uint32_t linkIndexB, 
   solveExt1D(blk, linVel0, linVel1, angVel0, angVel1, linMotion0, linMotion1, angMotion0, angMotion1, rotA, rotB, elapsedTimeF32, li0, li1, ai0,
              ai1, isPositionIteration);
   PxVec3 t, t2, t3, t4;
-  if (artA == artB) {
+  if (sameArticulation) {
     V3StoreA(li0, t); V3StoreA(ai0, t2); V3StoreA(li1, t3); V3StoreA(ai1, t4);
-    artA->applyImpulses(linkIndexA, t, t2, linkIndexB, t3, t4);
+    artA.applyImpulses(linkIndexA, t, t2, linkIndexB, t3, t4);
   } else {
     if (linkIndexA == RIGID_BODY) {
       V3StoreA(linVel0, t); bodyA->linearVelocity = t;
       V3StoreA(angVel0, t); bodyA->angularVelocity = t;
     } else {
       V3StoreA(li0, t); V3StoreA(ai0, t2);
-      artA->applyImpulse(linkIndexA, t, t2);
+      artA.applyImpulse(linkIndexA, t, t2);
     }
     if (linkIndexB == RIGID_BODY) {
       V3StoreA(linVel1, t); bodyB->linearVelocity = t;
       V3StoreA(angVel1, t); bodyB->angularVelocity = t;
     } else {
       V3StoreA(li1, t); V3StoreA(ai1, t2);
-      artB->applyImpulse(linkIndexB, t, t2);
+      artB.applyImpulse(linkIndexB, t, t2);
     }
   }
 }
