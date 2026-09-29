@@ -73,7 +73,7 @@ def run_b(cw, seq, k):
 def main(a: VArgs) -> int:
     w, _ = build_policy(a)
     pol = w.policy
-    cw = ChunkedB1KPolicy(w, black_fill="off")  # 등가 검증은 공식 서버와 같은 입력 그대로
+    cw = ChunkedB1KPolicy(w)
     k = a.action_horizon
     bad = 0
     for B in (1, 2):

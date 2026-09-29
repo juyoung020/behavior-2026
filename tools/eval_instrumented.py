@@ -426,6 +426,8 @@ class BlackFrameDiag:
 
 BLACK = None
 SET_SETTINGS = []  # --set KEY=VALUE (진단용)
+RENDER_ITERS = 0  # --render-iters=N (진단용)
+KIT_ARGS = []  # --kit-arg=--/app/vulkan=false 등 Kit 시작 인자 (진단용)
 WATCH_SETTINGS = ["/rtx-transient/dlssg/enabled", "/rtx/post/dlss/execMode", "/rtx/post/aa/op", "/rtx/rendermode",
                   "/app/asyncRendering", "/app/asyncRenderingLowLatency", "/omni/replicator/asyncRendering",
                   "/app/hydraEngine/waitIdle", "/app/renderer/waitIdle", "/rtx/pathtracing/dlss/enabled",
@@ -564,6 +566,18 @@ def install(timing: bool, trace: TraceRecorder, out_dir: str, gpu: GpuMonitor, d
     Ev.__init__ = ev_init
 
     wrap(Ev, "_step_fn", "step", before=lambda a, kw: T.new_step())
+    if RENDER_ITERS:
+        # 진단용: 공식 _apply_actions 는 env.step(actions, n_render_iterations=1) 로 부른다(eval/evaluator.py:383).
+        # 여기서만 N 으로 바꿔 렌더를 더 돌린다 -- 물리·판정은 렌더 횟수와 무관해야 한다(trace_compare 로 확인).
+        from omnigibson.envs.env_base import Environment
+
+        orig_env_step = Environment.step
+
+        @functools.wraps(orig_env_step)
+        def env_step(self, action, n_render_iterations=1):
+            return orig_env_step(self, action, n_render_iterations=RENDER_ITERS)
+
+        Environment.step = env_step
     if timing:
         wrap(Ev, "_batch_obs", "batch_obs")
         wrap(Ev, "_preprocess_obs", "preprocess_obs")
@@ -810,11 +824,16 @@ def main():
     for g in ("warn", "abort"):
         if f"--black-guard={g}" in ours:
             guard = g
+    global RENDER_ITERS
     for o in ours:
+        if o.startswith("--kit-arg="):
+            KIT_ARGS.append(o[len("--kit-arg="):])
+        if o.startswith("--render-iters="):
+            RENDER_ITERS = int(o.split("=", 1)[1])
         if o.startswith("--set="):
             k, v = o[len("--set="):].split("=", 1)
             SET_SETTINGS.append((k, v))
-    if "--black-diag" in ours or guard or SET_SETTINGS:
+    if "--black-diag" in ours or guard or SET_SETTINGS or KIT_ARGS:
         BLACK = BlackFrameDiag(diag="--black-diag" in ours, guard=guard)
     out_dir = eval_args[eval_args.index("--output-dir") + 1] if "--output-dir" in eval_args else "/tmp/b1k_eval"
     os.makedirs(out_dir, exist_ok=True)
@@ -824,6 +843,23 @@ def main():
         gpu = GpuMonitor()
         gpu.start()
     install(timing, TraceRecorder(full_trace), out_dir, gpu, deep="--deep" in ours)
+    if KIT_ARGS:
+        # 진단용: OmniGibson 은 Kit 을 띄울 때 sys.argv 를 넘긴다(simulator.py _launch_app 가 앞뒤로 저장·복원).
+        # 평가기 인자 파싱이 끝난 뒤, Kit 을 띄우는 그 순간에만 인자를 덧붙인다.
+        import omnigibson.simulator as S
+
+        orig_launch = S._launch_app
+
+        def launch_with_args(*a, **kw):
+            saved = sys.argv
+            sys.argv = sys.argv + KIT_ARGS
+            print(f"[kit-arg] {KIT_ARGS}", flush=True)
+            try:
+                return orig_launch(*a, **kw)
+            finally:
+                sys.argv = saved
+
+        S._launch_app = launch_with_args
     from omnigibson.eval import eval as ev
 
     sys.argv = ["omnigibson.eval.eval"] + eval_args

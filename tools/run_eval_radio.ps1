@@ -15,7 +15,12 @@ param([string]$Task = 'turning_on_radio', [int]$Instance = 0, [string]$Instances
       [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'Default', [int]$Port = 8000, [string]$Tag = '', [string]$OutDir = '',
       [int]$ChunkSize = 0, [switch]$Gui, [switch]$Timing, [switch]$Trace, [switch]$Deep,
       [switch]$BlackDiag, [ValidateSet('', 'warn', 'abort')][string]$BlackGuard = '', [string[]]$KitSet = @(),
-      [string]$RobotConfig = 'C:\behavior-2026\src\configs\r1pro_openpi.yaml')
+      [string]$RobotConfig = 'C:\behavior-2026\src\configs\r1pro_openpi.yaml',
+      [ValidateSet('websocket', 'local')][string]$Policy = 'websocket', [int]$RenderIters = 0, [string[]]$KitArg = @())
+# -RobotConfig none : --robot-config 를 아예 안 넘김(평가기 기본 = 공식 eval\r1pro.yaml, 수정 0 재현용)
+# -Policy local     : 공식 평가기의 0 행동 정책(서버 없이, 평가기 점검용 공식 옵션)
+# -KitArg '--/app/vulkan=false' : 진단용 Kit 시작 인자
+# -RenderIters N    : 진단용 -- 스텝마다 렌더를 N 번(공식은 1, eval/evaluator.py:383). 물리·판정은 안 바뀌어야 한다
 $headless = if ($Gui) { '--no-headless' } else { '--headless' }
 $stepArgs = if ($MaxSteps -gt 0) { @('--max-steps', $MaxSteps) } else { @() }
 if ($ChunkSize -gt 1) { $stepArgs += @('--replay-action-chunk-size', $ChunkSize) }
@@ -38,7 +43,7 @@ $out = if ($OutDir) { $OutDir } else { "C:\behavior-2026\outputs\$name" }
 $log = "C:\behavior-2026\logs\$name.log"
 Set-Location C:\behavior-2026\BEHAVIOR-1K\OmniGibson
 $runner = @('-m', 'omnigibson.eval.eval')
-if ($Timing -or $Trace -or $BlackDiag -or $BlackGuard -or $KitSet.Count) {
+if ($Timing -or $Trace -or $BlackDiag -or $BlackGuard -or $KitSet.Count -or $RenderIters -or $KitArg.Count) {
     $flags = @()
     if ($Timing) { $flags += '--timing' }
     if ($Trace) { $flags += '--trace' }
@@ -46,15 +51,17 @@ if ($Timing -or $Trace -or $BlackDiag -or $BlackGuard -or $KitSet.Count) {
     if ($BlackDiag) { $flags += '--black-diag' }
     if ($BlackGuard) { $flags += "--black-guard=$BlackGuard" }
     foreach ($kv in $KitSet) { $flags += "--set=$kv" }
+    if ($RenderIters) { $flags += "--render-iters=$RenderIters" }
+    foreach ($ka in $KitArg) { $flags += "--kit-arg=$ka" }
     $runner = @('C:\behavior-2026\tools\eval_instrumented.py') + $flags + @('--')
 }
 New-Item -ItemType Directory -Force $out | Out-Null
 # 로그는 UTF-8 로 (Tee-Object 는 PowerShell 5.1 에서 UTF-16 으로 써서 다른 도구로 읽기 어렵다)
 $sw = [System.IO.StreamWriter]::new($log, $true, [Text.UTF8Encoding]::new($false))
 $sw.AutoFlush = $true
+$robotArgs = if ($RobotConfig -eq 'none') { @() } else { @('--robot-config', $RobotConfig) }
 python @runner `
-    --task-name $Task `
-    --robot-config $RobotConfig `
+    --task-name $Task @robotArgs --policy $Policy `
     --env-wrapper $wrapperTarget `
     --mode public_test `
     --host 127.0.0.1 --port $Port `
