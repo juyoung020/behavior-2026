@@ -309,7 +309,7 @@ class _DL:
 class NativeLoader:
     """openpi TorchDataLoader + DataLoaderImpl 자리에 들어간다: (Observation, actions) 를 낸다."""
 
-    def __init__(self, cfg, *, sharding=None, shuffle=False, num_batches=None, batch_size=None, decode_threads=6,
+    def __init__(self, cfg, *, sharding=None, shuffle=False, num_batches=None, batch_size=None, decode_threads=4,
                  slots=6, persistent=True, device=0, check=True):
         import jax
 
@@ -388,7 +388,7 @@ class NativeLoader:
             self.h = None
 
 
-def loader(batch_size=32, shuffle=True, decode_threads=6, num_batches=None, slots=6, cfg=None):
+def loader(batch_size=32, shuffle=True, decode_threads=4, num_batches=None, slots=6, cfg=None):
     from fasttrain import orig
 
     cfg = cfg or orig.train_config(batch_size=batch_size)
@@ -399,7 +399,8 @@ def loader(batch_size=32, shuffle=True, decode_threads=6, num_batches=None, slot
 def create_fast_b1k_data_loader(config, *, sharding=None, shuffle=False, num_batches=None, skip_norm_stats=False):
     """openpi data_loader.create_b1k_data_loader 와 같은 모양 (train_b1k.py 에서 FT_FAST_DATA=1 일 때)."""
     assert not skip_norm_stats, "skip_norm_stats 는 지원 안 함"
-    threads = int(os.environ.get("FT_DECODE_THREADS", "6"))
+    # 디코딩 스레드 4 가 이 PC(RTX 5070 Ti)에서 가장 빨랐다 (2: 185, 4: 289, 6: 264, 8: 249 샘플/s — docs/학습환경_가속.md 4.1)
+    threads = int(os.environ.get("FT_DECODE_THREADS", "4"))
     slots = int(os.environ.get("FT_SLOTS", "6"))
     # 원래 섞기 순서는 워커 수에 따라 다르다: 워커 > 0 이면 지속 반복자(기준 시드 한 번), 0 이면 에포크마다
     return NativeLoader(config, sharding=sharding, shuffle=shuffle, num_batches=num_batches, decode_threads=threads,
