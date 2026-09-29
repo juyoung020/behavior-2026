@@ -11,6 +11,7 @@
 
 #include "px_art_internal.h"
 #include "random_art.h"
+#include "core/articulation/art_adapters.h"
 #include "core/articulation/art_static.h"
 #include "foundation/PxSort.h"
 
@@ -159,6 +160,13 @@ int main(int argc, char** argv) {
           A::pxcFsGetVelocity(e, lq, se3, el, ea);
           const float px6[6] = {vl.x, vl.y, vl.z, va.x, va.y, va.z}, en6[6] = {el.x, el.y, el.z, ea.x, ea.y, ea.z};
           cmpv(3, px6, en6, 6, s);
+          {  // joints 가 쓰는 접근자(ArtRef)도 같은 값
+            const A::ArtRef ref{&e};
+            eng::V3 rl, ra;
+            ref.getVelocity(lq, rl, ra);
+            const float r6[6] = {rl.x, rl.y, rl.z, ra.x, ra.y, ra.z};
+            cmpv(3, px6, r6, 6, s);
+          }
           cmpv(4, sp3, se3, int(e.jointData[lq].nbDof), s);
           const uint32_t lc = pickLink(), ld = pickLink();
           Cm::SpatialVectorV v0, v1;
