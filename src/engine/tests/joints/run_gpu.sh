@@ -11,3 +11,4 @@ cd $B
 ./test_joints_gpu_1lane --envs 262144 --seed 5 --reps 5 | tail -6
 ./test_joints_block4_gpu_1lane --envs 32768 --seed 3 --reps 5 | tail -7
 ./test_tanf_gpu
+./test_scene_raycast_gpu --envs 16384 --rays 64 --seed 2 | tail -5
