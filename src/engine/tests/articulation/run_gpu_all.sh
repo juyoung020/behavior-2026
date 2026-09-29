@@ -12,7 +12,7 @@ echo "== 무작위 관절체 8 개/판, 구면 관절 포함, seed 5"
 bash $R test_articulation_gpu --arts 8 --steps 600 --envs 64 --check 8 --benchenvs 0 --seed 5 --spherical 1
 echo "== R1Pro 1 개 + 무작위 3 개/판 (위치반복 32)"
 bash $R test_articulation_gpu_r1 --arts 3 --r1pro $U --r1copies 1 --pos 32 --vel 1 --steps 600 --envs 32 --check 4 --benchenvs 0 --seed 11
-for t in test_articulation_gpu_r1 test_articulation_gpu_r1_m128 test_articulation_gpu_r1_m96 test_articulation_gpu_r1_m64; do
+for t in test_articulation_gpu_r1; do  # 레지스터 상한판(_m128/_m96/_m64)은 재귀를 없앤 뒤(147 개) 뺐다
   echo "== R1Pro 1 개/판 처리량: $t (판 16384, 120 스텝)"
   bash $R $t --arts 0 --r1pro $U --r1copies 1 --pos 32 --vel 1 --steps 120 --envs 4 --check 4 --benchenvs 16384
 done
