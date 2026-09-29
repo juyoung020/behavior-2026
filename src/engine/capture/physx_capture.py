@@ -1,0 +1,296 @@
+"""공식 평가기를 한 줄도 고치지 않고 돌리면서, 물리 층 검증에 쓸 기록을 뜬다 (엔진 자체 구현 층 0).
+
+    python C:\\behavior-2026\\src\\engine\\capture\\physx_capture.py --dump-dir <폴더> [--no-ovd] [--no-convex] [--no-sidelog] \\
+        -- <tools\\eval_instrumented.py 인자 그대로, 예: --trace -- --task-name turning_on_radio ...>
+
+남기는 것 (<폴더> 안, 에셋 파생물이라 git 에 올리지 않는다 -- src\\engine\\.gitignore 의 dumps/)
+    *_rec.ovd        OmniPVD 기록. PhysX SDK 가 모든 객체 생성·설정값과 매 서브스텝 결과(자세·속도·관절값)를
+                     float 원본 그대로 쓴 것. Kit 설정 두 개만 켠다(평가기 코드 무수정):
+                       /persistent/physics/omniPvdOvdRecordingDirectory, /physics/omniPvdOutputEnabled
+                     (omni.physx 소스 omni/extensions/runtime/source/omni.physx/plugins/Setup.cpp:444-560)
+    convex.npz       장면의 모든 볼록 충돌 메시 원본(꼭짓점·인덱스·다각형 평면식). OVD 에는 꼭짓점·삼각형만 있어서
+                     면 평면식까지 비트 그대로 다시 만들려면 이게 필요하다. omni.physx 공개 API
+                     request_convex_collision_representation 로 읽는다.
+    sidelog.npz      OVD 에 안 남는 PhysX 쓰기(관절체 상태를 한꺼번에 덮는 applyCache 계열 = omni.physics.tensors 의
+                     set_dof_positions / set_root_transforms / set_dof_actuation_forces 등)를 '몇 번째 물리 스텝 뒤'
+                     번호와 함께 적는다. 번호 = 물리 스텝 뒤 콜백(post-step, 우선순위 0)이 불린 횟수 = OVD 프레임 번호.
+    meta.json        물리 설정(스레드 수 등), 스텝 수, 파일 목록
+
+원리
+- OmniPVD 설정이 바뀌면 omni.physx 가 PxPhysics 를 다시 만들며 OVD 기록을 붙인다. 앱이 막 뜬 직후(장면이 없을 때)에
+  켜서, 장면 로딩부터 끝까지 PhysX 호출 전체가 기록되게 한다.
+- 기록을 켜도 물리 결과가 안 바뀌는지는 tools\\trace_compare.py 로 기존 실행(nf_a)과 비트 비교해 확인한다.
+- 나머지(시간 계측, trace.npz)는 평가기 가속 에이전트의 tools\\eval_instrumented.py 를 그대로 부른다.
+"""
+from __future__ import annotations
+
+import functools
+import json
+import os
+import runpy
+import sys
+import time
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+INSTRUMENTED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "eval_instrumented.py"))
+
+
+class Capture:
+    def __init__(self, dump_dir: str, ovd: bool, convex: bool, sidelog: bool):
+        self.dump_dir = os.path.abspath(dump_dir)
+        os.makedirs(self.dump_dir, exist_ok=True)
+        self.ovd, self.convex, self.sidelog = ovd, convex, sidelog
+        self.n_post = 0  # post-step 콜백 횟수 = 끝난 PhysX simulate 수
+        self.n_pre = 0
+        self.log = []  # (post_count, kind, method, view_id, indices, data)
+        self.views = {}  # id(view) -> (kind, prim_paths)
+        self.meta = {"started": time.strftime("%Y-%m-%d %H:%M:%S")}
+        self._subs = []
+        self.convex_done = False
+
+    # ------------------------------------------------------------------ 앱이 뜬 직후
+    def after_launch(self):
+        import carb
+        import omni.physx
+
+        cs = carb.settings.get_settings()
+        keys = ["/persistent/physics/numThreads", "/physics/physxDispatcher", "/physics/suppressReadback",
+                "/physics/updateToUsd", "/physics/useFastCache", "/persistent/physics/useLocalMeshCache",
+                "/physics/collisionConeCustomGeometry", "/physics/collisionCylinderCustomGeometry"]
+        self.meta["settings"] = {k: repr(cs.get(k)) for k in keys}
+        if self.ovd:
+            d = self.dump_dir.replace("\\", "/").rstrip("/") + "/"
+            cs.set_string("/persistent/physics/omniPvdOvdRecordingDirectory", d)
+            cs.set_bool("/physics/omniPvdOutputEnabled", True)
+            self.meta["ovd_recording"] = bool(cs.get("/physics/omniPvdIsRecording"))
+            print(f"[capture] OmniPVD 기록 시작: {d} (recording={self.meta['ovd_recording']})", flush=True)
+        iface = omni.physx.get_physx_interface()
+
+        def pre(_dt):
+            self.n_pre += 1
+
+        def post(_dt):
+            self.n_post += 1
+
+        # order 0 = 가장 먼저. OmniGibson 의 콜백(order 0)보다 먼저 구독하므로 같은 단계에서 앞에 불린다.
+        self._subs.append(iface.subscribe_physics_on_step_events(pre, pre_step=True, order=0))
+        self._subs.append(iface.subscribe_physics_on_step_events(post, pre_step=False, order=0))
+
+    # ------------------------------------------------------------------ OVD 에 안 남는 쓰기
+    def install_sidelog(self):
+        if not self.sidelog:
+            return
+        import omni.physics.tensors.impl.api as api
+
+        def to_np(x, dt):
+            if x is None:
+                return np.zeros(0, dt)
+            if hasattr(x, "detach"):
+                x = x.detach().cpu().numpy()
+            elif hasattr(x, "numpy") and not isinstance(x, np.ndarray):
+                x = x.numpy()
+            return np.ascontiguousarray(np.asarray(x), dtype=dt)
+
+        def wrap(cls, name, kind):
+            orig = getattr(cls, name)
+
+            @functools.wraps(orig)
+            def f(view, data, indices, *a, **kw):
+                vid = id(view)
+                if vid not in self.views:
+                    try:
+                        paths = list(view.prim_paths)
+                    except Exception:
+                        paths = []
+                    self.views[vid] = (kind, paths)
+                self.log.append((self.n_post, self.n_pre, kind, name, vid, to_np(indices, np.uint32),
+                                 to_np(data, np.float32)))
+                return orig(view, data, indices, *a, **kw)
+
+            setattr(cls, name, f)
+
+        n = 0
+        for cls, kind in ((api.ArticulationView, "art"), (api.RigidBodyView, "rb")):
+            for name in dir(cls):
+                if name.startswith("set_") and callable(getattr(cls, name)):
+                    wrap(cls, name, kind)
+                    n += 1
+        # OmniGibson 의 묶음 제어(BatchControlViewAPIImpl)는 _backend 를 직접 부른다 -> 그 함수들도 감싼다
+        from omnigibson.utils import usd_utils
+
+        B = usd_utils.BatchControlViewAPIImpl
+        for name in ("_set_dof_position_targets", "_set_dof_velocity_targets", "_set_dof_actuation_forces"):
+            orig = getattr(B, name)
+
+            def mk(orig, name):
+                @functools.wraps(orig)
+                def f(self_, data, indices, cast=True):
+                    vid = id(self_._view)
+                    if vid not in self.views:
+                        try:
+                            self.views[vid] = ("art", list(self_._view.prim_paths))
+                        except Exception:
+                            self.views[vid] = ("art", [])
+                    self.log.append((self.n_post, self.n_pre, "batch", name, vid, to_np(indices, np.uint32),
+                                     to_np(data, np.float32)))
+                    return orig(self_, data, indices, cast=cast)
+
+                return f
+
+            setattr(B, name, mk(orig, name))
+            n += 1
+        print(f"[capture] 텐서 쓰기 {n} 개 함수 감쌈", flush=True)
+
+    # ------------------------------------------------------------------ 볼록 메시 원본
+    def dump_convex(self):
+        if not self.convex or self.convex_done:
+            return
+        self.convex_done = True
+        t0 = time.perf_counter()
+        import omni.usd
+        from omni.physx import get_physx_cooking_interface
+        from pxr import PhysicsSchemaTools, UsdPhysics
+
+        ctx = omni.usd.get_context()
+        stage, stage_id = ctx.get_stage(), ctx.get_stage_id()
+        cooking = get_physx_cooking_interface()
+        paths, nconv, verts, idx, polys, poly_counts, vert_counts, idx_counts, results = [], [], [], [], [], [], [], [], []
+        n_prims = 0
+        for prim in stage.Traverse():
+            if not (prim.HasAPI(UsdPhysics.CollisionAPI) and prim.HasAPI(UsdPhysics.MeshCollisionAPI)):
+                continue
+            approx = UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get()
+            if approx not in ("convexHull", "convexDecomposition"):
+                continue
+            n_prims += 1
+            got = {}
+
+            def cb(result, convexes, got=got):
+                got["r"] = int(result)
+                got["c"] = convexes
+
+            cooking.request_convex_collision_representation(
+                stage_id, PhysicsSchemaTools.sdfPathToInt(prim.GetPath()), False, cb)
+            convs = got.get("c") or []
+            paths.append(str(prim.GetPath()))
+            results.append(got.get("r", -1))
+            nconv.append(len(convs))
+            for c in convs:
+                v = np.array([[p.x, p.y, p.z] for p in c.vertices], np.float32).reshape(-1, 3)
+                ii = np.array(list(c.indices), np.uint8)
+                pp = np.array([[q.plane.x, q.plane.y, q.plane.z, q.plane.w, q.num_vertices, q.index_base]
+                               for q in c.polygons], np.float64).reshape(-1, 6)
+                verts.append(v); idx.append(ii); polys.append(pp)
+                vert_counts.append(len(v)); idx_counts.append(len(ii)); poly_counts.append(len(pp))
+        out = os.path.join(self.dump_dir, "convex.npz")
+        np.savez_compressed(
+            out, paths=np.array(paths), result=np.array(results, np.int32), nconv=np.array(nconv, np.int32),
+            vert_counts=np.array(vert_counts, np.int32), idx_counts=np.array(idx_counts, np.int32),
+            poly_counts=np.array(poly_counts, np.int32),
+            verts=np.concatenate(verts) if verts else np.zeros((0, 3), np.float32),
+            indices=np.concatenate(idx) if idx else np.zeros(0, np.uint8),
+            polygons=np.concatenate(polys) if polys else np.zeros((0, 6)))
+        self.meta["convex"] = {"prims": n_prims, "meshes": len(verts), "sec": round(time.perf_counter() - t0, 2),
+                               "at_post_count": self.n_post}
+        print(f"[capture] 볼록 메시 {len(verts)} 개 (충돌 prim {n_prims}) -> {out}", flush=True)
+
+    # ------------------------------------------------------------------ 끝
+    def finish(self):
+        import carb
+
+        self.meta["post_step_count"] = self.n_post
+        self.meta["pre_step_count"] = self.n_pre
+        if self.sidelog:
+            kinds = np.array([e[2] for e in self.log])
+            np.savez_compressed(
+                os.path.join(self.dump_dir, "sidelog.npz"),
+                post=np.array([e[0] for e in self.log], np.int64), pre=np.array([e[1] for e in self.log], np.int64),
+                kind=kinds, method=np.array([e[3] for e in self.log]), view=np.array([e[4] for e in self.log], np.int64),
+                idx_len=np.array([len(e[5]) for e in self.log], np.int64),
+                idx=np.concatenate([e[5] for e in self.log]) if self.log else np.zeros(0, np.uint32),
+                data_len=np.array([e[6].size for e in self.log], np.int64),
+                data=np.concatenate([e[6].ravel() for e in self.log]) if self.log else np.zeros(0, np.float32),
+                view_ids=np.array(list(self.views), np.int64),
+                view_kind=np.array([v[0] for v in self.views.values()]),
+                view_paths=np.array(["|".join(v[1]) for v in self.views.values()]))
+            self.meta["sidelog_calls"] = len(self.log)
+        if self.ovd:
+            cs = carb.settings.get_settings()
+            cs.set_bool("/physics/omniPvdOutputEnabled", False)  # -> omni.physx 가 SDK 를 정리하며 tmp.ovd 를 *_rec.ovd 로
+            self.meta["ovd_files"] = sorted(f for f in os.listdir(self.dump_dir) if f.endswith(".ovd"))
+        self.meta["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(os.path.join(self.dump_dir, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump(self.meta, f, ensure_ascii=False, indent=1)
+        print(f"[capture] 끝: 물리 스텝 {self.n_post}, 곁기록 {len(self.log)} 건, {self.meta.get('ovd_files')}", flush=True)
+
+
+def install(cap: Capture):
+    import omnigibson as og
+    from omnigibson import simulator as S
+
+    orig_launch_app = S._launch_app
+
+    @functools.wraps(orig_launch_app)
+    def launch_app(*a, **kw):
+        app = orig_launch_app(*a, **kw)
+        cap.after_launch()
+        return app
+
+    S._launch_app = launch_app
+
+    from omnigibson.eval import evaluator as E
+
+    Ev = E.BatchedEvaluator
+    orig_init = Ev.__init__
+
+    @functools.wraps(orig_init)
+    def ev_init(self, *a, **kw):
+        cap.install_sidelog()  # omni.physics.tensors 는 앱이 뜬 뒤에만 import 된다
+        return orig_init(self, *a, **kw)
+
+    Ev.__init__ = ev_init
+
+    orig_exit = Ev.__exit__
+
+    @functools.wraps(orig_exit)
+    def ev_exit(self, *a, **kw):
+        try:
+            cap.dump_convex()  # 장면이 아직 살아 있을 때 (물리에 쓰지 않는 읽기 전용 요청)
+        except Exception as e:  # 기록 실패가 평가 결과를 바꾸면 안 된다
+            print(f"[capture] 볼록 메시 기록 실패: {e!r}", flush=True)
+        return orig_exit(self, *a, **kw)
+
+    Ev.__exit__ = ev_exit
+
+    orig_shutdown = og.shutdown
+
+    @functools.wraps(orig_shutdown)
+    def shutdown(*a, **kw):
+        try:
+            cap.finish()
+        except Exception as e:
+            print(f"[capture] 마무리 실패: {e!r}", flush=True)
+        return orig_shutdown(*a, **kw)
+
+    og.shutdown = shutdown
+
+
+def main():
+    argv = sys.argv[1:]
+    ours, rest = (argv[: argv.index("--")], argv[argv.index("--") + 1:]) if "--" in argv else (argv, [])
+    dump_dir = None
+    if "--dump-dir" in ours:
+        dump_dir = ours[ours.index("--dump-dir") + 1]
+    if not dump_dir:
+        sys.exit("--dump-dir 가 필요하다")
+    cap = Capture(dump_dir, ovd="--no-ovd" not in ours, convex="--no-convex" not in ours,
+                  sidelog="--no-sidelog" not in ours)
+    install(cap)
+    sys.argv = [INSTRUMENTED] + rest
+    runpy.run_path(INSTRUMENTED, run_name="__main__")
+
+
+if __name__ == "__main__":
+    main()

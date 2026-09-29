@@ -1,0 +1,35 @@
+﻿=== 19:55:00 ?쒖옉 nf_a ===
+=== 19:57:57 ??nf_a ===
+=== 19:57:57 ?쒖옉 nf_b ===
+=== 20:01:02 ??nf_b ===
+=== 20:01:02 ?쒖옉 nf_plain ===
+=== 20:05:16 ??nf_plain ===
+=== 20:05:16 ?쒖옉 nf_neg ===
+=== 20:08:30 ??nf_neg ===
+=== 20:08:30 ?쒖옉 nf_n2 ===
+=== 20:14:35 ??nf_n2 ===
+=== 20:14:35 ?쒖옉 t3_rgbd ===
+=== 20:18:38 ??t3_rgbd ===
+=== 20:18:38 ?쒖옉 t4_heavy ===
+=== 20:19:54 start bk_base ===
+=== 20:23:16 end bk_base ===
+=== black_exp done ===
+=== 20:23:38 start bk_dlssg_off gpu=8583 MiB
+=== 20:27:01 end bk_dlssg_off ===
+=== 20:27:01 start bk_ref gpu=8405 MiB
+=== 20:30:28 end bk_ref ===
+=== black_exp2 done ===
+=== 20:30:38 start bk_waitidle gpu=1686 MiB
+=== 20:33:37 end bk_waitidle ===
+=== 20:33:37 start bk_aa0 gpu=1715 MiB
+=== 20:37:21 end bk_aa0 ===
+=== 20:37:21 start bk_pt gpu=1670 MiB
+=== 20:40:50 end bk_pt ===
+=== black_exp3 done ===
+=== 20:41:43 start bk_render2 gpu=1670 MiB
+=== 20:44:47 end bk_render2 ===
+=== 20:44:47 start bk_dx12 gpu=1684 MiB
+=== 20:47:53 end bk_dx12 ===
+=== 20:47:53 start bk_resetuser gpu=1686 MiB
+=== 20:51:24 end bk_resetuser ===
+=== black_exp4 done ===

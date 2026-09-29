@@ -1,0 +1,55 @@
+[test] 영상에서 프레임 37장 사용 (마지막 301)
+INFO:Client:Creating request 
+INFO:Client:Creating request 
+-   **Plan Status:**
+    -   `[-] Move towards the living room.` This task is in progress. The robot is currently in a hallway or another room and needs to enter the living room.
+    -   `[x] Locate the radio receiver on the table.` This task has been completed (marked as 'not started' but logically follows the first step). Once in the living room, the robot will need to find the radio.
+    -   `[x] Interact with the radio receiver to turn it on.` This task also shows as 'not started'. This will be the final action after locating the device.
+The logical sequence is to first complete the ongoing task before moving on to the next planned objective. Since the robot is actively trying to move towards the living room, that must be finished first. After entering the living room, the robot can then proceed to locate the radio receiver.
+Therefore, the next high-level objective should be to complete the current one.
+---
+The next high-level objective the robot should achieve is: **Move towards the living room.**
+[test] step 1: action (1, 23) 21.77s
+INFO:Client:Creating request 
+INFO:Client:Creating request 
+**Locate the radio receiver on the table.**
+This is because the first objective (moving to the living room) is complete. The subsequent step in the plan is to find the radio, which is clearly visible on the coffee table in the image. Once located, the final step will be to interact with it to turn it on.
+[test] step 33: action (1, 23) 15.64s
+INFO:Client:Creating request 
+INFO:Client:Creating request 
+The next logical step in the plan is to interact with this object to turn it on.
+Therefore, the next high-level objective should be:
+**Interact with the radio receiver to turn it on.**
+[test] step 65: action (1, 23) 17.27s
+INFO:Client:Creating request 
+INFO:Client:Creating request 
+Therefore, the next high-level objective should be:
+**Interact with the radio receiver to turn it on.**
+[test] step 97: action (1, 23) 9.94s
+INFO:Client:Creating request 
+INFO:Client:Creating request 
+*   `[x] Move towards the living room.`
+*   `[o] Locate the radio receiver on the table.`
+*   `[-] Interact with the radio receiver to turn it on.`
+The last high-level objective given to the robot was 'Interact with the radio receiver to turn it on.' Based on your analysis, what should be the next high-level objective the robot should achieve?
+[test] step 129: action (1, 23) 13.17s
+[test] step 131: action (1, 23) 0.06s
+[test] step 132: action (1, 23) 0.09s
+[test] step 133: action (1, 23) 0.16s
+[test] step 136: action (1, 23) 0.05s
+[test] step 137: action (1, 23) 0.08s
+[test] step 139: action (1, 23) 0.16s
+[test] step 140: action (1, 23) 0.07s
+[test] step 141: action (1, 23) 0.05s
+[test] step 142: action (1, 23) 0.15s
+[test] step 143: action (1, 23) 0.07s
+[test] step 144: action (1, 23) 0.05s
+[test] step 145: action (1, 23) 0.12s
+[test] step 146: action (1, 23) 0.06s
+[test] step 147: action (1, 23) 0.07s
+[test] step 148: action (1, 23) 0.05s
+[test] step 149: action (1, 23) 0.05s
+[test] step 150: action (1, 23) 0.08s
+[test] step 151: action (1, 23) 0.06s
+[test] step 153: action (1, 23) 0.06s
+[test] step 155: action (1, 23) 0.06s

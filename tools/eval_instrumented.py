@@ -428,7 +428,9 @@ BLACK = None
 SET_SETTINGS = []  # --set KEY=VALUE (진단용)
 RENDER_ITERS = 0  # --render-iters=N (진단용)
 KIT_ARGS = []  # --kit-arg=--/app/vulkan=false 등 Kit 시작 인자 (진단용)
-WATCH_SETTINGS = ["/rtx-transient/dlssg/enabled", "/rtx/post/dlss/execMode", "/rtx/post/aa/op", "/rtx/rendermode",
+WATCH_SETTINGS = ["/app/vulkan", "/app/gatherRenderResults", "/app/settings/fabricDefaultStageFrameHistoryCount",
+                  "/exts/omni.kit.renderer.core/present/enabled", "/renderer/multiGpu/enabled", "/renderer/activeGpu",
+                  "/rtx-transient/dlssg/enabled", "/rtx/post/dlss/execMode", "/rtx/post/aa/op", "/rtx/rendermode",
                   "/app/asyncRendering", "/app/asyncRenderingLowLatency", "/omni/replicator/asyncRendering",
                   "/app/hydraEngine/waitIdle", "/app/renderer/waitIdle", "/rtx/pathtracing/dlss/enabled",
                   "/rtx-transient/dlssg/mode", "/rtx/dlssg/enabled"]
@@ -843,6 +845,10 @@ def main():
         gpu = GpuMonitor()
         gpu.start()
     install(timing, TraceRecorder(full_trace), out_dir, gpu, deep="--deep" in ours)
+    if "--reset-user" in KIT_ARGS:
+        # Kit 사용자 설정을 지우는 인자 -- 복원을 보장할 수 없어 받지 않는다(다른 Isaac Sim 환경에 영향 가능).
+        KIT_ARGS.remove("--reset-user")
+        print("[kit-arg] --reset-user 는 거부했다(사용자 설정 삭제 위험). 이 실행은 설정 그대로다.", flush=True)
     if KIT_ARGS:
         # 진단용: OmniGibson 은 Kit 을 띄울 때 sys.argv 를 넘긴다(simulator.py _launch_app 가 앞뒤로 저장·복원).
         # 평가기 인자 파싱이 끝난 뒤, Kit 을 띄우는 그 순간에만 인자를 덧붙인다.
@@ -851,13 +857,22 @@ def main():
         orig_launch = S._launch_app
 
         def launch_with_args(*a, **kw):
-            saved = sys.argv
-            sys.argv = sys.argv + KIT_ARGS
-            print(f"[kit-arg] {KIT_ARGS}", flush=True)
+            # _launch_app 은 sys.argv 를 스크립트 이름만 남기고 지운다 -> SimulationApp 설정의 extra_args 로 넣는다.
+            import isaacsim
+
+            orig_init = isaacsim.SimulationApp.__init__
+
+            def init(self, launch_config=None, *ia, **ikw):
+                cfg = dict(launch_config or {})
+                cfg["extra_args"] = list(cfg.get("extra_args", [])) + KIT_ARGS
+                print(f"[kit-arg] extra_args={cfg['extra_args']}", flush=True)
+                return orig_init(self, cfg, *ia, **ikw)
+
+            isaacsim.SimulationApp.__init__ = init
             try:
                 return orig_launch(*a, **kw)
             finally:
-                sys.argv = saved
+                isaacsim.SimulationApp.__init__ = orig_init
 
         S._launch_app = launch_with_args
     from omnigibson.eval import eval as ev

@@ -1,0 +1,14 @@
+0.00.064.169 W Setting 'enable_thinking' via --chat-template-kwargs is deprecated. Use --reasoning on / --reasoning off instead.
+0.00.064.734 I srv  llama_server: initializing ...
+0.00.064.750 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.065.153 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.069.880 I srv    load_model: loading model '/home/juyoung/models/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf'
+0.02.137.724 I cmn          init: llama threadpool init, n_threads = 16
+0.02.205.893 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.205.917 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.205.917 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.604.947 I srv    load_model: loaded multimodal model, '/home/juyoung/models/Qwen3.5-9B-GGUF/mmproj-F16.gguf'
+0.02.621.798 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 8192, kv_unified = 'false'
+0.02.624.818 I srv  llama_server: model loaded
+0.02.624.842 I srv  llama_server: listening on http://0.0.0.0:8081

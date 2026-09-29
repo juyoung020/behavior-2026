@@ -8,7 +8,7 @@
 param([Parameter(Mandatory = $true)][string]$Actions, [string]$Task = 'turning_on_radio', [string]$Instances = '0',
       [int]$MaxSteps = 500, [ValidateSet('Default', 'RGBD')][string]$Wrapper = 'Default', [string]$Tag = 'replay',
       [string]$Perturb = '', [switch]$Timing, [switch]$Trace, [switch]$Deep, [switch]$WindowsServer,
-      [switch]$BlackDiag, [string]$BlackGuard = '', [string[]]$KitSet = @(), [int]$RenderIters = 0, [string[]]$KitArg = @())
+      [switch]$BlackDiag, [string]$BlackGuard = '', [string[]]$KitSet = @(), [int]$RenderIters = 0, [string[]]$KitArg = @(), [switch]$VkNvidiaOnly)
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
 $out = "C:\behavior-2026\outputs\eval_${Task}_${stamp}_$Tag"
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -45,6 +45,7 @@ if ($BlackGuard) { $ev.BlackGuard = $BlackGuard }
 if ($KitSet.Count) { $ev.KitSet = $KitSet }
 if ($RenderIters) { $ev.RenderIters = $RenderIters }
 if ($KitArg.Count) { $ev.KitArg = $KitArg }
+if ($VkNvidiaOnly) { $ev.VkNvidiaOnly = $true }
 & C:\behavior-2026\tools\run_eval_radio.ps1 @ev
 $srv.WaitForExit(30000) | Out-Null
 "=== 재생 평가 끝: $out ==="

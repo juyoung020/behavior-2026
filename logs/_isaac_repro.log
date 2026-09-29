@@ -1,0 +1,9 @@
+﻿=== 20:51:35 s_og3 --kit omnigibson --cams 3 nv=False gpu=1729 MiB
+[repro] 설정: {'/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}
+[repro] kit=omnigibson cams=3 res=224 renderer=RaytracedLighting physics=False set=[] frames=600 (7.4 fps)
+[repro] 카메라 0: RGB 검정 600/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 600
+[repro] 카메라 1: RGB 검정 600/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 600
+[repro] 카메라 2: RGB 검정 600/600 처음 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  depth 0 600
+[repro] 합계 RGB 검정 1800/1800
+=== 20:53:13 s_def3 --kit default --cams 3 nv=False gpu=1629 MiB
+[repro] 설정: {'/rtx/rendermode': 'RaytracedLighting', '/rtx/post/aa/op': 3, '/rtx-transient/dlssg/enabled': False, '/app/vulkan': True, '/app/asyncRendering': False, '/app/hydraEngine/waitIdle': False, '/renderer/multiGpu/enabled': True}

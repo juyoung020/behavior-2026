@@ -16,7 +16,9 @@ param([string]$Task = 'turning_on_radio', [int]$Instance = 0, [string]$Instances
       [int]$ChunkSize = 0, [switch]$Gui, [switch]$Timing, [switch]$Trace, [switch]$Deep,
       [switch]$BlackDiag, [ValidateSet('', 'warn', 'abort')][string]$BlackGuard = '', [string[]]$KitSet = @(),
       [string]$RobotConfig = 'C:\behavior-2026\src\configs\r1pro_openpi.yaml',
-      [ValidateSet('websocket', 'local')][string]$Policy = 'websocket', [int]$RenderIters = 0, [string[]]$KitArg = @())
+      [ValidateSet('websocket', 'local')][string]$Policy = 'websocket', [int]$RenderIters = 0, [string[]]$KitArg = @(),
+      [switch]$VkNvidiaOnly)
+# -VkNvidiaOnly     : 진단용 -- 이 실행 프로세스에서만 Vulkan 이 NVIDIA 드라이버만 보게 한다(AMD 내장 GPU 숨김). 시스템 설정은 안 바꾼다
 # -RobotConfig none : --robot-config 를 아예 안 넘김(평가기 기본 = 공식 eval\r1pro.yaml, 수정 0 재현용)
 # -Policy local     : 공식 평가기의 0 행동 정책(서버 없이, 평가기 점검용 공식 옵션)
 # -KitArg '--/app/vulkan=false' : 진단용 Kit 시작 인자
@@ -34,6 +36,14 @@ $env:OMNI_KIT_ACCEPT_EULA = 'YES'
 # torch/MKL(libiomp5md) 와 conda llvm-openmp(libomp) 가 같이 올라와 장면 로딩 중 'OMP: Error #15' 로 죽는다
 # -> 오류 메시지가 안내하는 우회책 (환경은 안 바꾸고 이 실행에만 적용)
 $env:KMP_DUPLICATE_LIB_OK = 'TRUE'
+if ($VkNvidiaOnly) {
+    # 레지스트리 VulkanDriverName 에서 RTX 5070 Ti 의 ICD 를 찾아 이 프로세스 환경변수로만 지정 (Vulkan 로더 VK_DRIVER_FILES / 옛 이름 VK_ICD_FILENAMES)
+    $icd = Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue } |
+        Where-Object { $_.DriverDesc -like '*RTX 5070 Ti*' } | Select-Object -First 1 -ExpandProperty VulkanDriverName
+    $env:VK_DRIVER_FILES = "$icd"; $env:VK_ICD_FILENAMES = "$icd"
+    "Vulkan ICD (이 실행만): $icd"
+}
 . "$(conda info --base)\shell\condabin\conda-hook.ps1"
 conda activate behavior
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
