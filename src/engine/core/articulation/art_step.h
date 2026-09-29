@@ -813,8 +813,8 @@ EHD void computeUnconstrainedVelocitiesTGS(Articulation& a, float dt, const V3& 
 }
 
 // ---------------------------------------------------------------- 내부 제약 준비
-// setupInternalConstraintsRecursive (:2432)
-EHDR void setupInternalConstraintsLink(Articulation& a, float stepDt, float dt, bool isTGS, uint32_t linkID, float maxForceScale) {
+// setupInternalConstraintsRecursive (:2432) 의 한 링크 몫. 자식 재귀는 아래 setupInternalConstraintsSubtree 가 같은 순서(전위, 자식 번호 오름차순)로 돈다.
+EHD void setupInternalConstraintsLinkOne(Articulation& a, float stepDt, float dt, bool isTGS, uint32_t linkID, float maxForceScale) {
   const Link& link = a.links[linkID];
   const JointData& jd = a.jointData[linkID];
   const Link& pLink = a.links[link.parent];
@@ -973,7 +973,19 @@ EHDR void setupInternalConstraintsLink(Articulation& a, float stepDt, float dt, 
     }
   }
   // dofLimitMask 의 잠긴 축 처리(:2721)는 dof 가 잠기지 않은 축에만 있으므로 실행되지 않는다.
-  for (uint32_t i = 0; i < link.numChildren; ++i) setupInternalConstraintsLink(a, stepDt, dt, isTGS, link.childrenStart + i, maxForceScale);
+}
+// 재귀(:2432 끝의 자식 루프) 대신 명시적 스택: 링크를 꺼내 처리하고 자식을 거꾸로 넣는다 -> 전위 순서·자식 오름차순 = 원본 재귀 순서.
+// GPU 호출 스택을 쓰지 않아 트리 깊이(R1Pro 약 20)에 따라 cudaLimitStackSize 를 키울 필요가 없다.
+EHD void setupInternalConstraintsSubtree(Articulation& a, float stepDt, float dt, bool isTGS, uint32_t linkID, float maxForceScale) {
+  uint32_t stk[kMaxLinks];
+  uint32_t n = 0;
+  stk[n++] = linkID;
+  while (n) {
+    const uint32_t l = stk[--n];
+    setupInternalConstraintsLinkOne(a, stepDt, dt, isTGS, l, maxForceScale);
+    const Link& link = a.links[l];
+    for (uint32_t i = link.numChildren; i > 0; --i) stk[n++] = link.childrenStart + i - 1;
+  }
 }
 
 // 흉내 관절 준비 (DyArticulationMimicJoint.cpp:46-257)
@@ -1065,7 +1077,7 @@ EHD void setupSolverConstraintsTGS(Articulation& a, float stepDt, float invStepD
   const float dt = totalDt;
   const float maxForceScale = (a.flags & AF_DRIVE_LIMITS_ARE_FORCES) ? dt : 1.f;
   const Link& root = a.links[0];
-  for (uint32_t i = 0; i < root.numChildren; ++i) setupInternalConstraintsLink(a, stepDt, dt, true, root.childrenStart + i, maxForceScale);
+  for (uint32_t i = 0; i < root.numChildren; ++i) setupInternalConstraintsSubtree(a, stepDt, dt, true, root.childrenStart + i, maxForceScale);
   setupInternalMimicJointConstraints(a);
 }
 
@@ -1131,14 +1143,16 @@ EHD void accumulateLinkImpulses(float deltaF, const InternalConstraint& c, SV& i
   dv1.bottom += deltaVC.bottom;
 }
 
-// solveInternalJointConstraintRecursive (:4560). 재귀 대신 명시적 스택 (GPU 에서도 되게). 연산 순서는 같다.
+// solveInternalJointConstraintRecursive (:4560). 재귀 대신 명시적 스택 (GPU 호출 스택을 트리 깊이만큼 쓰지 않게). 연산 순서는 같다:
+//   링크마다 [앞부분: 관절 제약·정적 제약·속도 한계 -> 자식들 차례로(자식 충격 누적, 마지막 자식 아니면 응답 반영) -> 뒷부분: 부모로 충격 전파].
+struct SolveFrame {
+  SV i0, i1, i1Internal, dv1, childV;
+  uint32_t linkID, next;
+};
+// 앞부분 (:4560 ~ 자식 루프 앞). 결과는 프레임에.
 template <class Static>
-EHDR SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
-                      uint32_t& dofId, uint32_t& limitId, const Static& st);
-
-template <class Static>
-EHDR SV solveJointLinkBody(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
-                          uint32_t& dofId, uint32_t& limitId, const Static& st) {
+EHD void solveJointLinkPre(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
+                           uint32_t& dofId, uint32_t& limitId, const Static& st, SolveFrame& f) {
   const Link& link = a.links[linkID];
   const uint32_t startDofId = dofId;
   const JointData& jd = a.jointData[linkID];
@@ -1254,27 +1268,52 @@ EHDR SV solveJointLinkBody(Articulation& a, const SolveData& data, uint32_t link
     i1Internal += (i1 - i1BeforeVelLimit);
   }
   dofId = startDofId + jd.nbDof;
-  const uint32_t numChildren = link.numChildren;
-  const uint32_t offset = link.childrenStart;
-  for (uint32_t i = 0; i < numChildren; ++i) {
-    const uint32_t child = offset + i;
-    const SV childImp = solveJointLink(a, data, child, dv1, cfg, dofId, limitId, st);
-    i1 += childImp;
-    if ((numChildren - i) > 1) {
-      const SV deltaV = responseOf(a.responseW[linkID], -childImp);
-      dv1 += deltaV;
-      childV += deltaV;
-    }
-  }
-  SV propagatedImpulseAtParentW = propagateImpulseW(a.rw[linkID], i1, nullptr, &a.isInvStIS[jd.jointOffset], &a.worldMotionMatrix[jd.jointOffset],
-                                                    jd.nbDof, &a.deferredQstZ[jd.jointOffset]);
-  a.solverLinkSpatialImpulses[linkID] += (i1 - i1Internal);
-  return SV{i0.top, i0.bottom} + propagatedImpulseAtParentW;
+  f.i0 = i0;
+  f.i1 = i1;
+  f.i1Internal = i1Internal;
+  f.dv1 = dv1;
+  f.childV = childV;
+  f.linkID = linkID;
+  f.next = 0;
 }
+// 뒷부분 (자식 루프 뒤): 부모 쪽으로 전파한 충격을 돌려준다
+EHD SV solveJointLinkPost(Articulation& a, SolveFrame& f) {
+  const uint32_t linkID = f.linkID;
+  const JointData& jd = a.jointData[linkID];
+  SV propagatedImpulseAtParentW = propagateImpulseW(a.rw[linkID], f.i1, nullptr, &a.isInvStIS[jd.jointOffset], &a.worldMotionMatrix[jd.jointOffset],
+                                                    jd.nbDof, &a.deferredQstZ[jd.jointOffset]);
+  a.solverLinkSpatialImpulses[linkID] += (f.i1 - f.i1Internal);
+  return SV{f.i0.top, f.i0.bottom} + propagatedImpulseAtParentW;
+}
+// 한 부분 트리 (원본 재귀 한 번 = 이 함수 한 번)
 template <class Static>
-EHDR SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
+EHD SV solveJointLink(Articulation& a, const SolveData& data, uint32_t linkID, const SV& parentDeltaV, const ProcessConfig& cfg,
                       uint32_t& dofId, uint32_t& limitId, const Static& st) {
-  return solveJointLinkBody(a, data, linkID, parentDeltaV, cfg, dofId, limitId, st);
+  SolveFrame stk[kMaxLinks];
+  int sp = 0;
+  solveJointLinkPre(a, data, linkID, parentDeltaV, cfg, dofId, limitId, st, stk[0]);
+  while (true) {
+    SolveFrame& f = stk[sp];
+    const Link& link = a.links[f.linkID];
+    if (f.next < link.numChildren) {  // for (i < numChildren) solveJointLink(child, dv1)
+      solveJointLinkPre(a, data, link.childrenStart + f.next, f.dv1, cfg, dofId, limitId, st, stk[sp + 1]);
+      ++sp;
+      continue;
+    }
+    const SV ret = solveJointLinkPost(a, f);
+    if (sp == 0) return ret;
+    --sp;
+    SolveFrame& p = stk[sp];
+    const Link& pl = a.links[p.linkID];
+    const SV childImp = ret;
+    p.i1 += childImp;
+    if ((uint32_t(pl.numChildren) - p.next) > 1) {
+      const SV deltaV = responseOf(a.responseW[p.linkID], -childImp);
+      p.dv1 += deltaV;
+      p.childV += deltaV;
+    }
+    p.next++;
+  }
 }
 
 // solveInternalJointConstraints (:4873)
