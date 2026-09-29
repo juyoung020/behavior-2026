@@ -298,6 +298,59 @@ class Capture:
                                "at_post_count": self.n_post}
         print(f"[capture] 볼록 메시 {len(verts)} 개 (충돌 prim {n_prims}) -> {out}", flush=True)
 
+    # ------------------------------------------------------------------ 이름 대응 (엔진이 BDDL 이름·로봇을 물리 몸체에 잇는 데 필요)
+    def dump_scope(self, ev):
+        """판마다 BDDL 물체 이름 -> prim 경로·링크 경로, 로봇 관절 순서·팔/손끝 링크·센서·제어기 설정을 scope.json 에.
+        prim 경로는 OVD 의 PxActor.name 과 같은 문자열이라 엔진이 OVD 몸체 번호로 잇는다. 읽기만 한다."""
+
+        def plain(v):
+            try:
+                import torch as th
+
+                if isinstance(v, th.Tensor):
+                    return v.detach().cpu().tolist()
+            except Exception:
+                pass
+            if isinstance(v, np.ndarray):
+                return v.tolist()
+            if isinstance(v, dict):
+                return {str(k): plain(x) for k, x in v.items()}
+            if isinstance(v, (list, tuple)):
+                return [plain(x) for x in v]
+            if isinstance(v, (str, int, float, bool)) or v is None:
+                return v
+            return repr(v)
+
+        def links_of(ent):
+            try:
+                return {n: l.prim_path for n, l in ent.links.items()}
+            except Exception:
+                return {}
+
+        out = []
+        for st in ev.instance_eval_states:
+            acc = st.env_accessor
+            objs = {}
+            for name, ent in acc.object_scope.items():
+                if ent is None:
+                    objs[name] = None
+                    continue
+                objs[name] = {"cls": type(ent).__name__, "name": getattr(ent, "name", None),
+                              "prim_path": getattr(ent, "prim_path", None), "links": links_of(ent)}
+            r = acc.robot
+            rob = {"name": r.name, "model": r.model, "prim_path": r.prim_path, "action_dim": int(r.action_dim),
+                   "arm_names": list(getattr(r, "arm_names", [])),
+                   "eef_link_names": plain(getattr(r, "eef_link_names", {})),
+                   "joints": {n: j.prim_path for n, j in r.joints.items()}, "links": links_of(r),
+                   "sensors": {n: getattr(s, "prim_path", None) for n, s in r.sensors.items()},
+                   "controller_order": plain(getattr(r, "controller_order", [])),
+                   "controller_action_idx": plain(getattr(r, "controller_action_idx", {})),
+                   "controller_config": plain(getattr(r, "_controller_config", {}))}
+            out.append({"env_idx": st.env_idx, "instance_id": st.instance_id, "objects": objs, "robot": rob})
+        with open(os.path.join(self.dump_dir, "scope.json"), "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=1)
+        print(f"[capture] 이름 대응 scope.json: 판 {len(out)}, 물체 {sum(len(o['objects']) for o in out)}", flush=True)
+
     # ------------------------------------------------------------------ 끝
     def finish(self):
         import carb
@@ -411,6 +464,10 @@ def install(cap: Capture):
             cap.meta["episode_start_post"] = cap.n_post  # 이 번호 뒤부터가 정책 롤아웃
         except Exception as e:
             print(f"[capture] 거르개 표 기록 실패: {e!r}", flush=True)
+        try:
+            cap.dump_scope(self)
+        except Exception as e:  # 기록 실패가 평가를 바꾸면 안 된다
+            print(f"[capture] 이름 대응 기록 실패: {e!r}", flush=True)
         return r
 
     Ev.load_batch = load_batch
