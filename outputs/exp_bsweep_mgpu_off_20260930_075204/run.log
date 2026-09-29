@@ -1,4 +1,0 @@
-[exp 07:52:04] 실험 bsweep_mgpu_off -> C:\behavior-2026\outputs\exp_bsweep_mgpu_off_20260930_075204 (backend original, reuse False, 반복 5)
-[exp 08:09:21] 평가기(original): python C:\behavior-2026\tools\eval_instrumented.py --black-guard=warn --kit-arg=--/rtx/realtime/mgpu/enabled=false --kit-arg=--/renderer/multiGpu/autoEnable=false --kit-arg=--/renderer/multiGpu/enabled=false -- --task-name turning_on_radio --mode public_test --policy local --host 127.0.0.1 --port 8000 --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --instance-indices 0 --num-envs 1 --output-dir C:\behavior-2026\outputs\exp_bsweep_mgpu_off_20260930_075204\original\mgpu_off\turning_on_radio\r1\i0 --headless --robot-config C:/behavior-2026/src/configs/r1pro_openpi.yaml --max-steps 150
-[exp 08:14:08] mgpu_off / turning_on_radio / 인덱스 0 -> invalid_black (스텝 0 robot:right_realsense_link:Camera:0)
-[exp 08:14:08] 검은 프레임이 나와 남은 반복을 멈춤(stop_on_black)

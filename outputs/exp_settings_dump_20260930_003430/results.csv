@@ -1,2 +1,0 @@
-﻿"backend","setting","task","index","rep","instance_id","status","q_score","success","steps","sim_time_s","wall_s","black","black_counts","note"
-"original","default","turning_on_radio","0","1","301","invalid_black","0.0","False","31","1.0333333333333332","144.6","스텝 0 robot:left_realsense_link:Camera:0","left_realsense 10/31, right_realsense 0/31, zed 11/31",""
