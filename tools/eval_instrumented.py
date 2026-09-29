@@ -743,17 +743,36 @@ def install_native_policy(spec):
 
     from omnigibson.eval import evaluator as E
 
+    fasteval = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "fasteval")
+    if fasteval not in sys.path:
+        sys.path.insert(0, fasteval)  # 기본 공장: src\fasteval\native_policy.py (예: native_policy:pi05)
     mod, fn = spec.split(":", 1)
     factory = getattr(importlib.import_module(mod), fn)
+    held = {}
 
     def load_policy(self):
         policy = factory(self.cfg)
         if hasattr(policy, "set_action_dim"):
             policy.set_action_dim(self.instance_eval_states[0].env_accessor.robot.action_dim)
+        held["p"] = policy
         print(f"[native-policy] {spec} 를 평가기 프로세스 안 정책으로 씀", flush=True)
         return policy
 
     E.BatchedEvaluator.load_policy = load_policy
+
+    # 정책 쪽 기록(예: 네이티브 엔진의 스텝 CSV)을 og.shutdown 전에 내보낸다
+    prev_exit = E.BatchedEvaluator.__exit__
+
+    def ev_exit(self, *a):
+        inner = getattr(held.get("p"), "policy", None) or held.get("p")
+        if inner is not None and hasattr(inner, "flush"):
+            try:
+                inner.flush()
+            except Exception as e:
+                print(f"[native-policy] flush 실패: {e!r}", flush=True)
+        return prev_exit(self, *a)
+
+    E.BatchedEvaluator.__exit__ = ev_exit
 
 
 def _og_profilers(og):

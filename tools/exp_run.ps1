@@ -7,8 +7,9 @@
 #   compare : ... exp_run.ps1 compare -A <실험 폴더 또는 판 폴더> -B <...>   (같은 설정\과제\인덱스끼리 짝지어 물리·판정·JSON 비트 비교)
 #
 # -Backend original : 공식 v3.9.3 평가기 그대로(BEHAVIOR-1K 무수정) + 계측·검은 프레임 검출만(tools\eval_instrumented.py). 제출 수치는 이것으로만.
-# -Backend ported   : 포팅 평가기(src\engine + 네이티브 π0.5 + 가속 부품) -- 아직 없음. 진입점이 생기면 환경변수 BEHAVIOR_PORTED_EVAL 에
-#                     파이썬 모듈 경로를 넣는다. 약속: 공식 eval.py 와 같은 인자, 같은 결과 형식(json\*.json, trace.npz).
+# -Backend ported   : 포팅 평가기(엔진 리드 src\engine\eval\ported_eval.py --backend engine|dummy [--scene-root D] [--instrument=...] -- <공식 인자>).
+#                     공식 eval.py 와 같은 인자, 같은 결과 형식(json\*.json, trace.npz). 행렬의 ported 블록: backend(engine|dummy, 기본 engine),
+#                     host(windows|wsl, 기본 windows), python(wsl 일 때, 기본 python3), scene_root. dummy 는 GPU 잠금 없이 돈다.
 # -Reuse            : 한 프로세스에서 인스턴스를 차례로(장면 로딩 한 번). 공식 evaluator.run() 을 인스턴스마다 다시 부른다.
 #                     새 프로세스 결과와 비트 동일 확인 전까지는 개발용. 검은 프레임으로 끊기면 남은 인스턴스는 새 프로세스로 이어 간다.
 # -DryRun           : 명령만 찍고 안 돈다.
@@ -20,7 +21,8 @@
 #               chunk(--replay-action-chunk-size), port, extra_eval_args[],
 #               replay: actions(행동열 npz), quickack(기본 true), server(wsl|windows, 기본 wsl)
 #               websocket: server.start(명령, {port}·{task} 치환), server.kind(wsl|windows), server.ready_s(기본 600)
-#               native: module("패키지.모듈:함수", 평가기 프로세스 안 정책)
+#               native: module(기본 native_policy:pi05 = 네이티브 π0.5, src\fasteval\native_policy.py), weights, prompt, replan(16), seed(0)
+#                       -- 공식 LocalPolicy 안에서 돈다(src\pi05_native\glue\run_eval_native.py 와 같은 연결), 엔진 스텝 기록은 판 폴더 native_steps.csv
 param(
     [Parameter(Position = 0, Mandatory = $true)][ValidateSet('run', 'table', 'compare')][string]$Cmd,
     [string]$Matrix = '', [ValidateSet('original', 'ported')][string]$Backend = 'original',
@@ -127,8 +129,18 @@ function Invoke-Eval($m, $s, [string]$task, [int[]]$idx, [string]$outDir, [strin
     if ($guard -ne 'off') { $ours += "--black-guard=$guard" }
     if ([bool](P $m 'trace' $true)) { $ours += '--trace' }
     if ($Reuse) { $ours += "--instances-seq=$($idx -join ',')" }
+    # Kit 시작 인자(진단·환경 대응용, 예: 검은 화면 (B) 대응). 공식 파일은 안 바꾸고 이 프로세스의 Kit 시작에만 덧붙는다(eval_instrumented --kit-arg)
+    foreach ($ka in @(@(P $m 'kit_args' @()) + @(P $s 'kit_args' @()))) { if ($ka) { $ours += "--kit-arg=$ka" } }
     $evalPol = if ($pol -eq 'local' -or $pol -eq 'native') { 'local' } else { 'websocket' }
-    if ($pol -eq 'native') { $ours += "--native-policy=$(P $s 'module' '')" }
+    if ($pol -eq 'native') {
+        # 평가기 프로세스 안 정책. 기본 = 네이티브 π0.5(src\fasteval\native_policy.py:pi05 -> src\pi05_native 의 Pi05NativePolicy 를 공식 LocalPolicy 에)
+        $ours += "--native-policy=$(P $s 'module' 'native_policy:pi05')"
+        $env:PI05_NATIVE_WEIGHTS = P $s 'weights' 'C:/behavior-2026/data/pi05_native/pi05_radio.pi05w'
+        $env:PI05_NATIVE_PROMPT = P $s 'prompt' ''
+        $env:PI05_NATIVE_REPLAN = "$(P $s 'replan' 16)"
+        $env:PI05_NATIVE_SEED = "$(P $s 'seed' 0)"
+        $env:PI05_NATIVE_LOG = "$outDir\native_steps.csv"
+    }
     $srv = $null
     if ($pol -eq 'replay' -or $pol -eq 'websocket') {
         if ($DryRun) { $srv = @{ Port = [int](P $s 'port' 8010) } } else { $srv = Start-PolicyServer $s $task $outDir $tag }
@@ -144,19 +156,37 @@ function Invoke-Eval($m, $s, [string]$task, [int[]]$idx, [string]$outDir, [strin
     if ($chunk -gt 1) { $ea += @('--replay-action-chunk-size', "$chunk") }
     if ([bool](P $m 'write_video' $false)) { $ea += '--write-video' }
     $ea += @(P $s 'extra_eval_args' @())
+    $log = "$script:Exp\logs\eval_$tag.log"
+    $pt = P $m 'ported' $null
+    $wslPorted = ($Backend -eq 'ported' -and (P $pt 'host' 'windows') -eq 'wsl')
     if ($Backend -eq 'ported') {
-        $entry = $env:BEHAVIOR_PORTED_EVAL
-        $argv = @('-m', $entry) + $ea
+        # 포팅 평가기(엔진 리드): src\engine\eval\ported_eval.py --backend engine|dummy [--scene-root D] [--instrument=<eval_instrumented 선택지>] -- <공식 인자>
+        $pa = @('--backend', (P $pt 'backend' 'engine'))
+        $sr = P $pt 'scene_root' ''
+        if ($sr) { $pa += @('--scene-root', $sr) }
+        $pa += @($ours | ForEach-Object { "--instrument=$_" })
+        if ($wslPorted) {
+            $wea = @($ea | ForEach-Object { if ($_ -match '^[A-Za-z]:[\\/]') { To-Wsl $_ } else { $_ } })
+            $wpy = P $pt 'python' 'python3'
+            $argv = @('/mnt/c/behavior-2026/src/engine/eval/ported_eval.py') + $pa + @('--') + $wea
+        } else {
+            $argv = @("$Root\src\engine\eval\ported_eval.py") + $pa + @('--') + $ea
+        }
     } else {
         $argv = @("$Root\tools\eval_instrumented.py") + $ours + @('--') + $ea
     }
-    $log = "$script:Exp\logs\eval_$tag.log"
-    Say "평가기: python $($argv -join ' ')"
+    Say "평가기($Backend$(if ($wslPorted) { ', WSL' })): python $($argv -join ' ')"
     if ($DryRun) { return @{ Code = 0; Log = $log; Wall = 0; Dry = $true } }
     New-Item -ItemType Directory -Force $outDir | Out-Null
     $t0 = Get-Date
-    $p = Start-Process $script:Py -ArgumentList ($argv | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -WorkingDirectory $OgDir `
-        -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    if ($wslPorted) {
+        $cmd = "cd /mnt/c/behavior-2026/BEHAVIOR-1K/OmniGibson && $wpy " + (($argv | ForEach-Object { if ($_ -match '\s') { "'$_'" } else { $_ } }) -join ' ')
+        $p = Start-Process wsl -ArgumentList @('-d', 'Ubuntu-22.04', '-u', 'juyoung', '--', 'bash', '-lc', "`"$cmd`"") `
+            -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    } else {
+        $p = Start-Process $script:Py -ArgumentList ($argv | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -WorkingDirectory $OgDir `
+            -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    }
     $null = $p.Handle  # PowerShell 5.1: 핸들을 먼저 잡아 두지 않으면 끝난 뒤 ExitCode 가 비어 있다
     $tmo = [int](P $m 'timeout_min' 0)
     if ($tmo -gt 0) { if (-not $p.WaitForExit($tmo * 60000)) { try { $p.Kill() } catch {}; Say "시간 초과 $tmo 분: $tag" } } else { $p.WaitForExit() }
@@ -198,30 +228,34 @@ function Invoke-RunMatrix {
     Copy-Item $Matrix "$script:Exp\matrix.json"
     $script:RunLog = "$script:Exp\run.log"
     $script:StatusPath = "$script:Exp\status.jsonl"
-    if ($Backend -eq 'ported' -and -not $env:BEHAVIOR_PORTED_EVAL) {
-        Say "ported 평가기가 아직 없다 (src\engine 이 준비되면 BEHAVIOR_PORTED_EVAL 에 진입 모듈을 넣는다). 멈춤."
+    if ($Backend -eq 'ported' -and -not (Test-Path "$Root\src\engine\eval\ported_eval.py")) {
+        Say "포팅 평가기 진입점(src\engine\eval\ported_eval.py)이 없다. 멈춤."
         return
     }
     $busy = [int](P $m 'gpu_busy_mib' 3500)
-    Say "실험 $name -> $script:Exp (backend $Backend, reuse $([bool]$Reuse))"
+    # 포팅 평가기 dummy 백엔드는 GPU 를 안 쓴다 -> 잠금 없이
+    $needGpu = -not ($Backend -eq 'ported' -and (P (P $m 'ported' $null) 'backend' 'engine') -eq 'dummy')
+    $R = [int](P $m 'repeats' 1)  # 같은 판을 R 번(검은 화면 (B) 처럼 판마다 운인 것을 셀 때). 반복이 바깥 고리라 설정끼리 번갈아 돈다
+    Say "실험 $name -> $script:Exp (backend $Backend, reuse $([bool]$Reuse), 반복 $R)"
+    foreach ($rep in 1..$R) {
     foreach ($s in $m.settings) {
         foreach ($task in $m.tasks) {
             $byTask = P $m 'instances_by_task' $null
             $idxAll = @(P $byTask $task (P $m 'instances' @(0)))
-            $base = "$script:Exp\$Backend\$($s.name)\$task"
+            $base = "$script:Exp\$Backend\$($s.name)\$task" + $(if ($R -gt 1) { "\r$rep" } else { '' })
             $todo = [Collections.ArrayList]::new(); $idxAll | ForEach-Object { [void]$todo.Add([int]$_) }
             $reuseN = [int](P $m 'reuse_batch' 5)  # 재사용 때 한 프로세스(= 한 잠금)에 넣는 인스턴스 수 -- 잠금 30 분 이내
             $lockMin = [int](P $m 'lock_minutes' 30)
             while ($todo.Count -gt 0) {
                 $batch = if ($Reuse) { @($todo.ToArray() | Select-Object -First $reuseN) } else { @($todo[0]) }
                 $outDir = if ($Reuse) { $base } else { "$base\i$($batch[0])" }
-                $tag = "$($s.name)_${task}_i$($batch -join '-')_$(Get-Date -Format HHmmss)"
-                $gpu = if ($DryRun) { 0 } else { Enter-EvalGpu $busy "exp_run $name $($s.name) $task i$($batch -join ',')" $lockMin }
+                $tag = "$($s.name)_${task}_i$($batch -join '-')$(if ($R -gt 1) { "_r$rep" })_$(Get-Date -Format HHmmss)"
+                $gpu = if ($DryRun -or -not $needGpu) { 0 } else { Enter-EvalGpu $busy "exp_run $name $($s.name) $task i$($batch -join ',')" $lockMin }
                 if ($gpu -lt 0) {
                     foreach ($ix in $batch) { Add-Status @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; status = 'skipped_gpu_busy'; note = "GPU $(-$gpu) MiB 또는 잠금 못 잡음" } }
                     break
                 }
-                try { $res = Invoke-Eval $m $s $task $batch $outDir $tag } finally { if (-not $DryRun) { [void](Exit-GpuLock 'exp_run') } }
+                try { $res = Invoke-Eval $m $s $task $batch $outDir $tag } finally { if (-not $DryRun -and $needGpu) { [void](Exit-GpuLock 'exp_run') } }
                 if ($res.Dry) { foreach ($ix in $batch) { Add-Status @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; status = 'dry' } }; break }
                 $info = Read-EvalLog $res.Log
                 $progress = $false
@@ -230,7 +264,7 @@ function Invoke-RunMatrix {
                     $js = @(Get-ChildItem "$d\json\*.json" -ErrorAction SilentlyContinue)
                     $bk = if ($info.Black.ContainsKey($ix)) { $info.Black[$ix] } elseif (-not $Reuse -and $info.Black.ContainsKey(-1)) { $info.Black[-1] } else { $null }
                     $wall = if ($Reuse -and $info.Start.ContainsKey($ix) -and $info.End.ContainsKey($ix)) { $info.End[$ix] - $info.Start[$ix] } elseif (-not $Reuse) { $res.Wall } else { $null }
-                    $rec = @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; dir = $d; log = $res.Log; exit = $res.Code; wall_s = $wall; gpu_mib_before = $gpu }
+                    $rec = @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; rep = $rep; dir = $d; log = $res.Log; exit = $res.Code; wall_s = $wall; gpu_mib_before = $gpu }
                     if ($bk) {
                         $rec.status = 'invalid_black'; $rec.black_step = $bk.Step; $rec.black_cam = $bk.Cam
                     } elseif ($js.Count -gt 0) {
@@ -244,9 +278,10 @@ function Invoke-RunMatrix {
                     [void]$todo.Remove($ix); $progress = $true
                     Say "$($s.name) / $task / 인덱스 $ix -> $($rec.status)$(if ($bk) { " (스텝 $($bk.Step) $($bk.Cam))" })"
                 }
-                if (-not $progress) { foreach ($ix in @($todo.ToArray())) { Add-Status @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; status = 'error'; note = "진행 없음: $($info.Tail)" } }; break }
+                if (-not $progress) { foreach ($ix in @($todo.ToArray())) { Add-Status @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; rep = $rep; status = 'error'; note = "진행 없음: $($info.Tail)" } }; break }
             }
         }
+    }
     }
     Invoke-Table $script:Exp
 }
@@ -268,9 +303,17 @@ function Invoke-Table([string]$exp) {
                 $q = $o.q_score.final; $succ = $o.success; $steps = $o.steps; $simt = $o.time.simulator_time; $iid = $o.instance_id
             }
         }
-        $rows += [pscustomobject]@{ backend = $r.backend; setting = $r.setting; task = $r.task; index = $r.index; instance_id = $iid; status = $r.status
+        # 검은 프레임 수(카메라별, eval_instrumented 의 black_frames.json): black_guard=warn 이면 판 전체 수, abort 면 끊긴 곳까지
+        $bc = ''
+        if ($d -and (Test-Path "$d\black_frames.json")) {
+            try {
+                $bj = [IO.File]::ReadAllText("$d\black_frames.json", $Utf8) | ConvertFrom-Json
+                $bc = (@($bj.black.PSObject.Properties | ForEach-Object { "$(($_.Name -split ':')[1] -replace '_link', '') $($_.Value)/$($bj.total.($_.Name))" })) -join ', '
+            } catch {}
+        }
+        $rows += [pscustomobject]@{ backend = $r.backend; setting = $r.setting; task = $r.task; index = $r.index; rep = (P $r 'rep' 1); instance_id = $iid; status = $r.status
             q_score = $q; success = $succ; steps = $steps; sim_time_s = $simt; wall_s = $(if ($null -ne (P $r 'wall_s' $null)) { [math]::Round([double]$r.wall_s, 1) } else { $null })
-            black = $(if ($r.status -eq 'invalid_black') { "스텝 $($r.black_step) $($r.black_cam)" } else { '' }); note = (P $r 'note' '') }
+            black = $(if ($r.status -eq 'invalid_black') { "스텝 $($r.black_step) $($r.black_cam)" } else { '' }); black_counts = $bc; note = (P $r 'note' '') }
     }
     $rows | Export-Csv "$exp\results.csv" -NoTypeInformation -Encoding UTF8
     $md = @("# 실험 결과 $(Split-Path $exp -Leaf)", '', '## 설정 x 과제', '',
@@ -287,8 +330,8 @@ function Invoke-Table([string]$exp) {
         $f = $g.Group[0]
         $md += "| $($f.backend) | $($f.setting) | $($f.task) | $($g.Count) | $($v.Count) | $nb | $ne | $mq | $sc | $ms | $mw |"
     }
-    $md += @('', '## 판마다', '', '| backend | 설정 | 과제 | 인덱스 | 인스턴스 | 상태 | q_score | 성공 | 스텝 | 시뮬 시간 s | 벽시계 s | 검은 프레임 | 메모 |', '|---|---|---|---:|---:|---|---:|---|---:|---:|---:|---|---|')
-    foreach ($r in $rows) { $md += "| $($r.backend) | $($r.setting) | $($r.task) | $($r.index) | $($r.instance_id) | $($r.status) | $($r.q_score) | $($r.success) | $($r.steps) | $($r.sim_time_s) | $($r.wall_s) | $($r.black) | $($r.note -replace '\|', '/') |" }
+    $md += @('', '## 판마다', '', '| backend | 설정 | 과제 | 인덱스 | 반복 | 인스턴스 | 상태 | q_score | 성공 | 스텝 | 시뮬 시간 s | 벽시계 s | 첫 검은 프레임 | 검은 프레임 수 | 메모 |', '|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---:|---|---|---|')
+    foreach ($r in $rows) { $md += "| $($r.backend) | $($r.setting) | $($r.task) | $($r.index) | $($r.rep) | $($r.instance_id) | $($r.status) | $($r.q_score) | $($r.success) | $($r.steps) | $($r.sim_time_s) | $($r.wall_s) | $($r.black) | $($r.black_counts) | $($r.note -replace '\|', '/') |" }
     [IO.File]::WriteAllLines("$exp\summary.md", $md, $Utf8)
     Write-Host ($md -join "`n")
     Write-Host "`n표: $exp\summary.md, $exp\results.csv"
@@ -301,8 +344,9 @@ function Get-RunDirs([string]$root) {
     Get-ChildItem $root -Recurse -Filter trace.npz -ErrorAction SilentlyContinue | ForEach-Object {
         $rel = $_.DirectoryName.Substring($root.TrimEnd('\').Length).TrimStart('\')
         $parts = $rel -split '\\'
-        # <backend>\<설정>\<과제>\i<n> -> 설정\과제\i<n> 로 짝짓는다(백엔드끼리 비교가 되게)
-        $key = if ($parts.Count -ge 4) { ($parts[-3..-1] -join '\') } else { $rel }
+        # 실험 폴더면 <backend>\ 를 뗀 나머지(설정\과제[\r<k>]\i<n>)로 짝짓는다(백엔드끼리 비교가 되게)
+        $isExp = Test-Path "$root\status.jsonl"
+        $key = if ($isExp -and $parts.Count -ge 2) { ($parts[1..($parts.Count - 1)] -join '\') } else { $rel }
         $h[$key] = $_.DirectoryName
     }
     return $h
@@ -314,7 +358,12 @@ function Invoke-Compare {
     $outMd = if ($Out) { $Out } else { Join-Path (Resolve-Path $A).Path 'compare.md' }
     $md = @("# 비교: A = $A", "#       B = $B", '', '물리·판정·지표·결과 JSON 은 비트 동일만 통과, 영상은 RTX 잡음이라 표에만(trace_compare --pixels-report-only).', '',
             '| 짝 | 판정 | 요약 |', '|---|---|---|')
-    $keys = if ($da.ContainsKey('.') -and $db.ContainsKey('.')) { @('.') } else { @($da.Keys | Where-Object { $db.ContainsKey($_) } | Sort-Object) }
+    if ($da.Count -eq 1 -and $db.Count -eq 1) {
+        # 판 하나끼리(예: 원본 판 폴더 vs 포팅 실험 폴더의 판 하나)는 이름이 달라도 짝짓는다
+        $ka = @($da.Keys)[0]; $kb = @($db.Keys)[0]
+        $da = @{ "$ka ~ $kb" = $da[$ka] }; $db = @{ "$ka ~ $kb" = $db[$kb] }
+    }
+    $keys = @($da.Keys | Where-Object { $db.ContainsKey($_) } | Sort-Object)
     if (-not $keys.Count) { Write-Host '짝이 되는 판이 없다(trace.npz 가 있는 같은 설정\과제\인덱스)'; return }
     $fail = 0
     foreach ($k in $keys) {
@@ -323,7 +372,7 @@ function Invoke-Compare {
         if ($code -ne 0) { $fail++ }
         $sum = (($txt | Where-Object { $_ -match '^요약:|^픽셀' }) -join ' / ')
         $md += "| $k | $(if ($code -eq 0) { '통과' } else { '**실패**' }) | $sum |"
-        [IO.File]::WriteAllLines("$(Split-Path $outMd)\compare_$($k -replace '[\\/.]', '_').txt", $txt, $Utf8)
+        [IO.File]::WriteAllLines("$(Split-Path $outMd)\compare_$($k -replace '[\\/.~ ]', '_').txt", $txt, $Utf8)
     }
     $md += @('', "짝 $($keys.Count) 개 중 실패 $fail 개. 항목별 표: compare_*.txt")
     [IO.File]::WriteAllLines($outMd, $md, $Utf8)

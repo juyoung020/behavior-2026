@@ -67,6 +67,8 @@ def compare_key(k, a, b, ea, eb, off_a=None, off_b=None):
         return ("비교 불가", np.nan, None, None, 0)
     x, y = a[:t, ea], b[:t, eb]
     base = k.split("|", 1)[-1]
+    if x.shape != y.shape:  # 예: 포팅 평가기 dummy 의 proprio 차원이 다름 -> 모양부터 다르면 다름(스텝 0)
+        return ("다름", np.inf, 0, 0, t)
     if x.dtype.kind in "US" or base.startswith(EXACT_PREFIX) or x.dtype == bool:
         neq = np.array([not np.array_equal(x[i], y[i]) for i in range(t)])
         first = int(np.argmax(neq)) if neq.any() else None
