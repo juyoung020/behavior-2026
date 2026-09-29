@@ -51,7 +51,7 @@ plan.md               plan and decisions
 ```
 /opt/ros/humble          ROS 2 Humble (meridian)
 ~/openpi                 π0.5 reference server (wensi-ai/openpi, behavior branch)
-~/openpi-comet           2025 2nd-place code adapted to the 2026 evaluator (private mirror: juyoung020/openpi-comet-behavior2026)
+~/openpi-comet           2025 2nd-place code adapted to the 2026 evaluator (our changes: src/comet/patches, applied by tools/setup/setup_comet_wsl.sh)
 ~/checkpoints/           π0.5 radio, GR00T N1.7 radio, 2025 1st-place submission, Comet pt50
 ~/meridian_ws/           meridian build tree (sources come from meridian_ws/src here via src/meridian/build_meridian_ws.sh)
 ~/engine-deps/           PhysX 5.6.1 source + build (engine oracle)
