@@ -11,6 +11,8 @@
 
 #include "px_art_internal.h"
 #include "random_art.h"
+#include "core/articulation/art_static.h"
+#include "foundation/PxSort.h"
 
 using namespace physx;
 using namespace artest;
@@ -199,8 +201,35 @@ int main(int argc, char** argv) {
       }
     }
   }
-  printf("\n관절체 %zu 개, %d 스텝, 시도 %d (상태 자세 다름 %" PRIu64 ")\n", arts.size(), steps, trials, stateMismatch);
-  bool ok = stateMismatch == 0;
+  // PxSort 이식 (정적 제약 목록 정렬, 불안정 정렬이라 같은 키 안 순서까지): 무작위 배열 x 여러 크기
+  uint64_t sortCmp = 0, sortBad = 0;
+  {
+    struct D {
+      uint16_t key;
+      uint32_t id;
+    };
+    struct PxLessD {
+      bool operator()(const D& a, const D& b) const { return a.key < b.key; }
+    };
+    for (int t = 0; t < 2000; ++t) {
+      const uint32_t cnt = 1 + uint32_t((U(rng) * 0.5f + 0.5f) * 300.0f);
+      const uint32_t nk = 1 + uint32_t((U(rng) * 0.5f + 0.5f) * 12.0f);
+      std::vector<D> x(cnt), y;
+      for (uint32_t i = 0; i < cnt; ++i) x[i] = D{uint16_t(uint32_t((U(rng) * 0.5f + 0.5f) * float(nk)) % nk), i};
+      y = x;
+      PxSort(x.data(), cnt, PxLessD());
+      A::pxSort(y.data(), cnt, [](const D& a, const D& b) { return a.key < b.key; });
+      sortCmp++;
+      for (uint32_t i = 0; i < cnt; ++i)
+        if (x[i].id != y[i].id) {
+          sortBad++;
+          break;
+        }
+    }
+  }
+  printf("\nPxSort 이식: 무작위 배열 %" PRIu64 " 개 (같은 키 많음) 순서 다름 %" PRIu64 "\n", sortCmp, sortBad);
+  printf("관절체 %zu 개, %d 스텝, 시도 %d (상태 자세 다름 %" PRIu64 ")\n", arts.size(), steps, trials, stateMismatch);
+  bool ok = stateMismatch == 0 && sortBad == 0;
   for (int k = 0; k < 11; ++k) {
     printf("  %-36s 비교 %8" PRIu64 "  비트 다름 %6" PRIu64 "\n", gNames[k], gCmp[k], gBad[k]);
     ok = ok && gBad[k] == 0;

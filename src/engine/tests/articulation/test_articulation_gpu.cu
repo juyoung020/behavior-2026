@@ -5,7 +5,7 @@
 // GPU 배치: 스레드 하나 = (관절체, 판) 하나. 판 안 관절체들은 서로 독립(접촉 없는 섬)이라 순서가 결과에 영향이 없다.
 //   같은 워프 = 같은 관절체의 이웃 판들 -> 제어 흐름이 거의 같다.
 //   test_articulation_gpu [--arts K] [--links N] [--steps S] [--seed S] [--pos P] [--vel V] [--envs E] [--check C] [--benchenvs E2]
-//                         [--spherical 0|1] (구면 관절은 atan2f 이식본이 없어 기본 0)
+//                         [--spherical 0|1] (구면 관절: GPU 는 joints 의 glibc atan2f 이식본)
 #include <cuda_runtime.h>
 #include <xmmintrin.h>
 
@@ -105,7 +105,7 @@ static bool sameBits(const float* x, const float* y, uint32_t n, bool& anyNan) {
 
 int main(int argc, char** argv) {
   BuildOpts o;
-  o.spherical = 0;
+  o.spherical = 1;
   o.nArts = 8;
   int steps = 600, E = 64, C = 8, benchEnvs = 2048;
   for (int i = 1; i < argc; ++i) {
