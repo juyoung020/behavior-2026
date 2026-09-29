@@ -11,7 +11,7 @@
 //! 각 줄의 출처: openpi policies/b1k_policy.py:22-41, transforms.py:115-139·294-312·374-383, models/tokenizer.py:22-48,
 //! lerobot datasets/dataset_reader.py:187-223, video_utils.py:299-322. 원래와 같은지는 tools/ft_verify.py 가 전수 대조한다.
 //!
-//! 스펙(spec.json)은 파이썬 접착부(src/fasttrain/native.py)가 openpi 설정에서 뽑아 쓴다(로봇 인덱스·델타 대응·정규화 통계
+//! 스펙(spec.json)은 파이썬 접착부(src/fasttrain/fast.py)가 openpi 설정에서 뽑아 쓴다(로봇 인덱스·델타 대응·정규화 통계
 //! 원본 float64 바이트·과제 문장·토크나이저 경로). 데이터 파일 하나씩 읽고 쓰므로 100과제 규모에서도 메모리가 일정하다.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -122,7 +122,7 @@ struct VFile {
 }
 
 fn index_path(idx_dir: &str, root: &str, video: &str) -> String {
-    // src/fasttrain/native.py 의 ensure_index 와 같은 이름: videos/ 아래 상대 경로의 / 를 . 으로
+    // src/fasttrain/fast.py 의 ensure_index 와 같은 이름: videos/ 아래 상대 경로의 / 를 . 으로
     let rel = video.strip_prefix(&format!("{root}/videos/")).unwrap_or(video);
     format!("{idx_dir}/{}.ftidx", rel.replace('/', "."))
 }
