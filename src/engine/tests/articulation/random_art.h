@@ -63,6 +63,15 @@ EHD void stepInputsEng(A::Articulation& a, const ArtInputs& in, int s, int env, 
     c.jointPosition = buf;
     A::applyCache(a, c, A::CF_POSITION);
   }
+  if (s == 200) {  // setRootGlobalPose: 뿌리 행위자 자세를 옮김 (고정 바닥도)
+    eng::Tf rt = A::linkGlobalPose(a, 0);
+    rt.p = rt.p + eng::V3{0.1f, -0.05f, 0.02f};
+    A::artSetRootGlobalPose(a, rt);
+  }
+  if (s == 220 && !(a.flags & A::AF_FIX_BASE)) {
+    A::artSetRootLinearVelocity(a, eng::V3{-0.2f, 0.1f, 0.3f});
+    A::artSetRootAngularVelocity(a, eng::V3{0.1f, -0.2f, 0.05f});
+  }
   if (s == 250 && nd) {
     for (uint32_t i = 0; i < nd; ++i) buf[i] = 0.2f * sinE(float(i));
     A::CacheIn c{};
@@ -230,6 +239,15 @@ struct Mirror {
       px->copyInternalStateToCache(*cache, PxArticulationCacheFlag::ePOSITION);
       for (uint32_t i = 0; i < nd; ++i) cache->jointPosition[i] = cache->jointPosition[i] + 0.05f;
       px->applyCache(*cache, PxArticulationCacheFlag::ePOSITION);
+    }
+    if (s == 200) {
+      PxTransform rt = px->getRootGlobalPose();
+      rt.p += PxVec3(0.1f, -0.05f, 0.02f);
+      px->setRootGlobalPose(rt);
+    }
+    if (s == 220 && !(e->flags & A::AF_FIX_BASE)) {
+      px->setRootLinearVelocity(PxVec3(-0.2f, 0.1f, 0.3f));
+      px->setRootAngularVelocity(PxVec3(0.1f, -0.2f, 0.05f));
     }
     if (s == 250 && nd) {
       for (uint32_t i = 0; i < nd; ++i) cache->jointVelocity[i] = 0.2f * sinE(float(i));

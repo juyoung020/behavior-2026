@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
   BuildOpts o;
   o.spherical = 1;
   o.nArts = 8;
-  int steps = 600, E = 64, C = 8, benchEnvs = 2048;
+  int steps = 600, E = 64, C = 8, benchEnvs = 2048, carveout = 0;
   for (int i = 1; i < argc; ++i) {
     auto arg = [&](const char* k) { return !strcmp(argv[i], k) && i + 1 < argc; };
     if (arg("--arts")) o.nArts = atoi(argv[++i]);
@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
     else if (arg("--check")) C = atoi(argv[++i]);
     else if (arg("--benchenvs")) benchEnvs = atoi(argv[++i]);
     else if (arg("--spherical")) o.spherical = atoi(argv[++i]);
+    else if (arg("--carveout")) carveout = atoi(argv[++i]);
     else if (arg("--r1pro")) o.r1pro = argv[++i];
     else if (arg("--r1copies")) o.r1copies = atoi(argv[++i]);
   }
@@ -169,6 +170,17 @@ int main(int argc, char** argv) {
     for (int e = 0; e < C; ++e) cpu[size_t(k) * size_t(C) + size_t(e)] = tmpl[size_t(k)];
 
   CK(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
+  // 공유 메모리를 안 쓰므로 L1 을 최대로 (관절체 자료·스택이 L1 에 더 머문다). 점유율도 찍는다.
+  CK(cudaFuncSetAttribute(kStep, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
+  {
+    int blocksPerSm = 0, nSm = 0;
+    CK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kStep, 64, 0));
+    CK(cudaDeviceGetAttribute(&nSm, cudaDevAttrMultiProcessorCount, 0));
+    cudaFuncAttributes fa{};
+    CK(cudaFuncGetAttributes(&fa, kStep));
+    printf("kStep: 레지스터 %d/스레드, 지역 메모리 %zu B, SM %d 개 x 블록(64) %d 개 = 동시 스레드 %d (L1 선호 carveout %d)\n", fa.numRegs,
+           fa.localSizeBytes, nSm, blocksPerSm, nSm * blocksPerSm * 64, carveout);
+  }
   A::Articulation* dArts = nullptr;
   ArtInputs* dIn = nullptr;
   float* dRec = nullptr;

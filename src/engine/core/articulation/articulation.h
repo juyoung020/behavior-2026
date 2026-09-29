@@ -954,6 +954,77 @@ EHD void applyCache(Articulation& a, const CacheIn& c, uint32_t flag, bool autow
   wakeUpInternal(a, shouldWake, autowake);
 }
 
+// teleportRootLink (DyFeatherstoneArticulation.cpp:5368): 뿌리를 옮긴 뒤 관절 위치로 나머지 링크 자세 (구면만 teleportLinks 와 다름)
+EHD void teleportRootLink(Articulation& a) {
+  for (uint32_t linkID = 1; linkID < a.nLinks; ++linkID) {
+    const Link& link = a.links[linkID];
+    const Tf oldTransform = a.bodies[linkID].body2World;
+    const Tf pBody2World = a.bodies[link.parent].body2World;
+    const JointCore& joint = a.joints[linkID];
+    const JointData& jd = a.jointData[linkID];
+    const float* jPosition = &a.jointPosition[jd.jointOffset];
+    Q newParentToChild = qid();
+    V3 r{0, 0, 0};
+    const V3 childOffset = -joint.childPose.p;
+    const V3 parentOffset = joint.parentPose.p;
+    const Q relativeQuat = a.relativeQuat[linkID];
+    switch (joint.jointType) {
+      case JT_PRISMATIC: {
+        newParentToChild = relativeQuat;
+        const V3 e = rotate(newParentToChild, parentOffset);
+        const V3& u = a.motionMatrix[jd.jointOffset].bottom;
+        r = e + childOffset + u * jPosition[0];
+        break;
+      }
+      case JT_REVOLUTE:
+      case JT_REVOLUTE_UNWRAPPED: {
+        const V3& u = a.motionMatrix[jd.jointOffset].top;
+        Q jointRotation = quatAA(-jPosition[0], u);
+        if (jointRotation.w < 0) jointRotation = qneg(jointRotation);
+        newParentToChild = normalized(jointRotation * relativeQuat);
+        const V3 e = rotate(newParentToChild, parentOffset);
+        r = e + childOffset;
+        break;
+      }
+      case JT_SPHERICAL: {
+        const V3 worldAngVel = a.motionVelocities[linkID].top;
+        const Q newWorldQ = pxExp(worldAngVel) * oldTransform.q;
+        newParentToChild = normalized(conj(newWorldQ) * relativeQuat * pBody2World.q);
+        const V3 e = rotate(newParentToChild, parentOffset);
+        r = e + childOffset;
+        break;
+      }
+      case JT_FIX: {
+        newParentToChild = relativeQuat;
+        const V3 e = rotate(newParentToChild, parentOffset);
+        r = e + childOffset;
+        break;
+      }
+      default:
+        break;
+    }
+    Tf& body2World = a.bodies[linkID].body2World;
+    body2World.q = normalized(pBody2World.q * conj(newParentToChild));
+    body2World.p = pBody2World.p + rotate(body2World.q, r);
+  }
+}
+// setRootGlobalPose (NpArticulationReducedCoordinate.cpp:483 -> NpArticulationLink.cpp:343)
+EHD void artSetRootGlobalPose(Articulation& a, const Tf& pose, bool autowake = true) {
+  const Tf newPose = normalized(pose);
+  a.bodies[0].body2World = newPose * a.bodies[0].body2Actor;
+  if (a.inScene && autowake) wakeUpInternal(a, false, true);
+  if (a.inScene) teleportRootLink(a);
+}
+// setRootLinearVelocity / setRootAngularVelocity (:506, :528): 뿌리 몸체 속도만 (링크 속도는 다음 simulate 에서)
+EHD void artSetRootLinearVelocity(Articulation& a, const V3& v, bool autowake = true) {
+  a.bodies[0].linVel = v;
+  if (a.inScene) wakeUpInternal(a, !isZero(v), autowake);
+}
+EHD void artSetRootAngularVelocity(Articulation& a, const V3& v, bool autowake = true) {
+  a.bodies[0].angVel = v;
+  if (a.inScene) wakeUpInternal(a, !isZero(v), autowake);
+}
+
 // 링크 행위자 자세 (PxRigidActor::getGlobalPose = body2World * body2Actor^-1)
 EHD Tf linkGlobalPose(const Articulation& a, uint32_t creationIdx) {
   const LinkBody& b = a.bodies[a.ll[creationIdx]];
