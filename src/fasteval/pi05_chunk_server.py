@@ -18,6 +18,9 @@ receding horizon 16 이면 16 스텝 중 15 스텝은 서버가 관측을 쓰지
   (src\\fasteval\\verify_chunk_equivalence.py 가 같은 관측열에서 두 경로의 행동을 비트 단위로 비교한다.)
 - K 가 재계획 경계를 넘으면 거부한다 (공식 문서: "choose K so replay never crosses the policy's replanning boundary").
 
+검은 화면 방어(--black_fill last, 기본): 카메라 RGB 가 전부 0 이면 그 카메라의 직전 정상 프레임으로 바꿔 정책에 넣는다
+(BlackFrameFiller). --black_fill off 면 openpi 공식 서버와 똑같이 받은 그대로 쓴다.
+
 언어: 파이썬 -- 정책이 JAX 파이썬 객체라서 붙는 얇은 접착부(버퍼 인덱싱 몇 줄)만 여기 있다. 무거운 계산은 JAX/XLA(C++/CUDA).
 """
 from __future__ import annotations
@@ -42,17 +45,67 @@ from openpi.training import config as _config
 CHUNK_KEY = "__action_chunk_size__"  # omnigibson/eval/utils/network_utils.py ACTION_CHUNK_REQUEST_KEY
 
 
+class BlackFrameFiller:
+    """정책 쪽 방어: 카메라 RGB 가 전부 0(검은 화면)이면 그 카메라·그 환경의 직전 정상 프레임으로 바꿔 넣는다.
+
+    - 과거에 받은 RGB 만 쓰므로 관측 제한(RGB·depth·proprio) 안이다. 평가기·중계는 관측을 안 바꾸고, 바꾸는 것은 정책(우리 제출물)이다.
+    - 에피소드 첫 프레임부터 검으면 채울 과거가 없다 -> 그대로 넘기고 센다(지어낸 영상을 넣지 않는다).
+    - depth 는 바꾸지 않는다(이 PC 실측: RGB 가 검을 때도 depth 는 0 이 아니었다).
+    - 묶음 재생(K=16)이면 서버는 16 스텝마다의 프레임만 보므로 채우는 프레임도 16 스텝 전 것이다.
+    """
+
+    def __init__(self, mode: str = "last"):
+        self.mode = mode
+        self.last = {}  # (키, 환경) -> 마지막 정상 프레임
+        self.stats = {"frames": 0, "black": 0, "filled": 0, "no_history": 0}
+
+    def reset(self):
+        self.last = {}
+
+    def __call__(self, obs: dict) -> dict:
+        for key in [k for k in obs if k.endswith("::rgb")]:
+            arr = np.asarray(obs[key])
+            batched = arr.ndim == 4
+            frames = arr if batched else arr[None]
+            out = None
+            for b in range(frames.shape[0]):
+                self.stats["frames"] += 1
+                if frames[b].any():
+                    self.last[(key, b)] = frames[b].copy()
+                    continue
+                self.stats["black"] += 1
+                if self.mode != "last":
+                    continue
+                prev = self.last.get((key, b))
+                if prev is None:
+                    self.stats["no_history"] += 1
+                    continue
+                if out is None:
+                    out = frames.copy()
+                out[b] = prev
+                self.stats["filled"] += 1
+            if out is not None:
+                obs[key] = out if batched else out[0]
+        if self.stats["black"] and self.stats["black"] % 50 == 1:
+            logging.warning(f"[black-fill] 검은 RGB 프레임 누적 {self.stats}")
+        return obs
+
+
 class ChunkedB1KPolicy:
     """B1KPolicyWrapper 를 감싸 묶음 요청이면 (첫 행동, 묶음) 을, 아니면 (행동, None) 을 돌려준다."""
 
-    def __init__(self, inner: B1KPolicyWrapper):
+    def __init__(self, inner: B1KPolicyWrapper, black_fill: str = "last"):
         self.inner = inner
+        self.filler = BlackFrameFiller(black_fill)
 
     def reset(self):
+        logging.info(f"[black-fill] 에피소드 끝 통계 {self.filler.stats}")
+        self.filler.reset()
         self.inner.reset()
 
     def act(self, obs: dict):
         k = int(np.asarray(obs.pop(CHUNK_KEY, 0)))
+        obs = self.filler(obs)
         a0 = self.inner.act(obs)
         if k <= 1:
             return a0, None
@@ -128,6 +181,8 @@ class Args:
     control_mode: str = "receding_horizon"
     action_horizon: int = 16
     port: int = 8000
+    # 검은 RGB 프레임 방어: last = 직전 정상 프레임으로 바꿈, off = 공식 서버와 똑같이 그대로
+    black_fill: str = "last"
 
 
 def build_policy(args: Args) -> tuple[B1KPolicyWrapper, dict]:
@@ -153,7 +208,8 @@ def build_policy(args: Args) -> tuple[B1KPolicyWrapper, dict]:
 def main(args: Args) -> None:
     wrapper, metadata = build_policy(args)
     logging.info("Creating chunk-capable server (host: %s)", socket.gethostname())
-    ChunkServer(policy=ChunkedB1KPolicy(wrapper), host="0.0.0.0", port=args.port, metadata=metadata).serve_forever()
+    policy = ChunkedB1KPolicy(wrapper, black_fill=args.black_fill)
+    ChunkServer(policy=policy, host="0.0.0.0", port=args.port, metadata=metadata).serve_forever()
 
 
 if __name__ == "__main__":
