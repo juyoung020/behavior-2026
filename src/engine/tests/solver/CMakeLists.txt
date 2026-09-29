@@ -22,3 +22,40 @@ engine_test(test_contact_solver test_contact_solver.cpp PHYSX)
 target_include_directories(test_contact_solver PRIVATE ${PX_INTERNAL_INCS})
 target_compile_definitions(test_contact_solver PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
 target_compile_options(test_contact_solver PRIVATE -Wno-everything)
+
+# 층 2: 입력 흐름 파일(test_contact_solver --dump)로 판 N 개를 GPU 에서 (PhysX 링크 없음)
+engine_test(test_contact_solver_gpu test_contact_solver_gpu.cu)
+
+# 섬 관리: Sc 층이 섬 관리자에 하는 호출을 링커 --wrap 으로 기록해 손으로 짠 섬 관리에 재생하고 내부 상태를 비교
+engine_test(test_islands test_islands.cpp PHYSX)
+target_include_directories(test_islands PRIVATE ${PX_INTERNAL_INCS})
+target_compile_definitions(test_islands PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_compile_options(test_islands PRIVATE -Wno-everything)
+target_link_options(test_islands PRIVATE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager10removeNodeENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager10setDynamicENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager12activateNodeENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager12setKinematicENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager13addConstraintEPNS_2Dy10ConstraintENS_11PxNodeIndexES5_PNS_2Sc11InteractionE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14putNodeToSleepENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCMEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16removeConnectionEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager18firstPassIslandGenEv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager18thirdPassIslandGenEPNS_10PxBaseTaskE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager19secondPassIslandGenEv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager24secondPassIslandGenPart1Ev
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager24secondPassIslandGenPart2Ev
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager26preallocateContactManagersEjPj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager31additionalSpeculativeActivationEv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager7addNodeEbbNS0_4Node8NodeTypeEPv
+  -Wl,--wrap=_ZN5physx2IG9IslandSim16processLostEdgesERKNS_7PxArrayINS_11PxNodeIndexENS_21PxReflectionAllocatorIS3_EEEEbbj
+  -Wl,--wrap=_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj
+  -Wl,--wrap=_ZN5physx2IG9IslandSim20removeDestroyedEdgesEv
+)

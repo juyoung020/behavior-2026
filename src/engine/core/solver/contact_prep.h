@@ -45,7 +45,7 @@ SV_HD void initContactPatch(CorrelationBuffer::ContactPatchData& patch, uint16_t
   patch.dynamicFriction = dynamicFriction;
 }
 
-SV_HD bool createContactPatches(CorrelationBuffer& fb, const ContactPoint* cb, uint32_t contactCount, float normalTolerance) {
+SV_HDN bool createContactPatches(CorrelationBuffer& fb, const ContactPoint* cb, uint32_t contactCount, float normalTolerance) {
   uint32_t contactPatchCount = fb.contactPatchCount;
   if (contactPatchCount == MAX_CONTACTS) return false;
   if (contactCount > 0) {
@@ -101,7 +101,7 @@ SV_HD void initFrictionPatch(FrictionPatch& p, const V3& worldNormal, const Tf& 
   p.materialFlags = materialFlags;
 }
 
-SV_HD bool correlatePatches(CorrelationBuffer& fb, const ContactPoint* cb, const Tf& bodyFrame0, const Tf& bodyFrame1,
+SV_HDN bool correlatePatches(CorrelationBuffer& fb, const ContactPoint* cb, const Tf& bodyFrame0, const Tf& bodyFrame1,
                             float normalTolerance, uint32_t startContactPatchIndex, uint32_t startFrictionPatchIndex) {
   bool overflow = false;
   uint32_t frictionPatchCount = fb.frictionPatchCount;
@@ -136,7 +136,7 @@ SV_HD bool correlatePatches(CorrelationBuffer& fb, const ContactPoint* cb, const
   return overflow;
 }
 
-SV_HD void growPatches(CorrelationBuffer& fb, const ContactPoint* cb, const Tf& bodyFrame0, const Tf& bodyFrame1,
+SV_HDN void growPatches(CorrelationBuffer& fb, const ContactPoint* cb, const Tf& bodyFrame0, const Tf& bodyFrame1,
                        uint32_t frictionPatchStartIndex, float frictionOffsetThreshold) {
   for (uint32_t i = frictionPatchStartIndex; i < fb.frictionPatchCount; i++) {
     FrictionPatch& fp = fb.frictionPatches[i];
@@ -209,7 +209,7 @@ SV_HD bool isSeparated(const FrictionPatch& patch, const Tf& body1ToBody0, float
   return false;
 }
 // frictionCookie = 지난 스텝 arena 의 패치 배열(없으면 nullptr)
-SV_HD bool getFrictionPatches(CorrelationBuffer& c, const FrictionPatch* frictionCookie, uint32_t frictionPatchCount, const Tf& bodyFrame0,
+SV_HDN bool getFrictionPatches(CorrelationBuffer& c, const FrictionPatch* frictionCookie, uint32_t frictionPatchCount, const Tf& bodyFrame0,
                               const Tf& bodyFrame1, float correlationDistance) {
   if (frictionCookie == nullptr || frictionPatchCount == 0) return true;
   const FrictionPatch* patches = frictionCookie;
@@ -249,7 +249,7 @@ struct CMOutput {
 };
 
 // extractContacts (DyContactPrepShared.h:133). 단순 스트림만(수정 가능 스트림은 overflow 로 알린다).
-SV_HD uint32_t extractContacts(ContactPoint* buffer, uint32_t& bufferCount, const CMOutput& np, bool& hasMaxImpulse, bool& hasTargetVelocity,
+SV_HDN uint32_t extractContacts(ContactPoint* buffer, uint32_t& bufferCount, const CMOutput& np, bool& hasMaxImpulse, bool& hasTargetVelocity,
                                float& invMassScale0, float& invMassScale1, float& invInertiaScale0, float& invInertiaScale1,
                                float defaultMaxImpulse) {
   uint32_t numContacts = bufferCount, origContactCount = bufferCount;
@@ -403,7 +403,7 @@ SV_HD M33V m33v(const M33& m) {  // Mat33V(V3LoadU_SafeReadW(col0), V3LoadU_Safe
 }
 
 // DyTGSContactPrep.cpp:426 setupFinalizeSolverConstraints (강체-강체/정적)
-SV_HD void setupFinalizeSolverConstraints(const PrepCtx& P, const TGSContactDesc& contactDesc, const CorrelationBuffer& c, uint8_t* workspace,
+SV_HDN void setupFinalizeSolverConstraints(const PrepCtx& P, const TGSContactDesc& contactDesc, const CorrelationBuffer& c, uint8_t* workspace,
                                           const SBodyVel& b0, const SBodyVel& b1, float invDtF32, float totalDtF32, float invTotalDtF32,
                                           float dtF32, float bounceThresholdF32, bool hasForceThreshold, bool staticOrKinematicBody,
                                           uint32_t frictionDataPtr, bool disableStrongFriction, float biasCoefficient) {
@@ -646,7 +646,7 @@ SV_HD void computeBlockStreamByteSizesStep(const CorrelationBuffer& c, uint32_t&
 }
 
 // DyTGSContactPrep.cpp:1297 createFinalizeSolverContactsStep (상관 버퍼판)
-SV_HD bool createFinalizeSolverContactsStepCorr(PrepCtx& P, TGSContactDesc& contactDesc, CorrelationBuffer& c, float invDtF32, float invTotalDtF32,
+SV_HDN bool createFinalizeSolverContactsStepCorr(PrepCtx& P, TGSContactDesc& contactDesc, CorrelationBuffer& c, float invDtF32, float invTotalDtF32,
                                                 float totalDtF32, float dtF32, float bounceThresholdF32, float frictionOffsetThreshold,
                                                 float correlationDistance, float biasCoefficient) {
   c.frictionPatchCount = 0;
@@ -702,7 +702,7 @@ SV_HD bool createFinalizeSolverContactsStepCorr(PrepCtx& P, TGSContactDesc& cont
 }
 
 // DyTGSContactPrep.cpp:1441 createFinalizeSolverContactsStep (접촉 관리자 출력판)
-SV_HD bool createFinalizeSolverContactsStep(PrepCtx& P, TGSContactDesc& contactDesc, const CMOutput& output, float invDtF32, float invTotalDt,
+SV_HDN bool createFinalizeSolverContactsStep(PrepCtx& P, TGSContactDesc& contactDesc, const CMOutput& output, float invDtF32, float invTotalDt,
                                             float totalDtF32, float dt, float bounceThresholdF32, float frictionOffsetThreshold,
                                             float correlationDistance, float biasCoefficient) {
   P.contactBufferCount = 0;

@@ -98,6 +98,7 @@ struct SolverBoard {
   uint32_t error;  // 넘침 등 (0 = 정상)
   // 통계 (시험·보고용, 결과에 영향 없음)
   uint64_t statBatches, statBlock4, statSingle, statHeaders, statMaxPartitions, statFreeBatches;
+  uint32_t statMaxArena, statMaxFriction, statMaxDescs;
 };
 
 enum : uint32_t {
@@ -132,7 +133,7 @@ SV_HD bool computeAvailablePartition(uint32_t& availablePartition, uint32_t& par
 }
 
 // 반환: maxPartition. counts = 분할별 끝 위치(누적). 결과 순서는 ordered.
-SV_HD uint32_t partitionContactConstraints(const PartitionView& pv, const SDesc* descs, uint32_t numDescs, SDesc* ordered, SDesc* overflowTmp,
+SV_HDN uint32_t partitionContactConstraints(const PartitionView& pv, const SDesc* descs, uint32_t numDescs, SDesc* ordered, SDesc* overflowTmp,
                                            uint32_t* counts, uint32_t& countsSize, uint32_t countsCap, uint32_t maxPartitions,
                                            uint32_t& numOverflows, uint32_t& numStaticConstraints, uint32_t& numOrdered, uint32_t& err) {
   const uint32_t MAX_NUM_PARTITIONS = 32;
@@ -318,7 +319,7 @@ struct BatchRange {
   uint32_t solverBodyOffset;     // 운동학 수 + 앞 묶음 몸체 수
 };
 
-SV_HD void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBodyVel* vels, ByteArena& arena, float minPen, float elapsed, uint32_t& err) {
+SV_HDN void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBodyVel* vels, ByteArena& arena, float minPen, float elapsed, uint32_t& err) {
   switch (h.constraintType) {
     case SC_TYPE_RB_CONTACT:
     case SC_TYPE_STATIC_CONTACT:
@@ -333,7 +334,7 @@ SV_HD void solveContactHeader(const BatchHeader& h, const SDesc* ordered, SBodyV
   }
 }
 
-SV_HD void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange& R, uint32_t kinematicCount) {
+SV_HDN void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange& R, uint32_t kinematicCount) {
   (void)kinematicCount;
   const float mDt = prm.dt;
   const float mInvDt = 1.0f / prm.dt;
@@ -489,6 +490,9 @@ SV_HD void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange&
     }
   }
   if (B.constraints.overflow) B.error |= SV_ERR_ARENA;
+  if (B.constraints.size > B.statMaxArena) B.statMaxArena = B.constraints.size;
+  if (B.friction[B.frictionCurIdx].size > B.statMaxFriction) B.statMaxFriction = B.friction[B.frictionCurIdx].size;
+  if (nbDescs > B.statMaxDescs) B.statMaxDescs = nbDescs;
   if (B.friction[B.frictionCurIdx].overflow) B.error |= SV_ERR_FRICTION;
   // SolveIslandTask: 길이 0 인 제약 빼기
   uint32_t jj = 0, ii = 0, numBatches = 0, currIndex = 0, totalCount = 0, totalPartitions = 0;
@@ -580,7 +584,7 @@ SV_HD void solveBatch(SolverBoard& B, const SolverParams& prm, const BatchRange&
 }
 
 // DynamicsTGSContext::update + updatePostKinematic: 이번 스텝 모든 활성 섬을 묶음으로 나눠 푼다.
-SV_HD void solverStep(SolverBoard& B, const SolverParams& prm) {
+SV_HDN void solverStep(SolverBoard& B, const SolverParams& prm) {
   // 마찰 arena 교대: 지난 스텝 패치는 이제 prev
   B.frictionCurIdx ^= 1u;
   B.friction[B.frictionCurIdx].size = 0;
@@ -637,7 +641,7 @@ SV_HD void solverStep(SolverBoard& B, const SolverParams& prm) {
 // Sc::Scene::afterIntegration (ScPipeline.cpp:2640-2690): 이번 스텝 섬 관리자가 재운 몸체는 풀이에서 적분됐더라도
 // 스텝 시작 자세로 되돌리고 깸 카운터·속도를 0 으로 (섬 생성이 풀이보다 먼저 돌던 예전 동작을 흉내 내는 PhysX 규칙).
 // deactivated = 이번 스텝 IslandSim::getNodesToDeactivate(eRIGID_BODY) 의 몸체 번호 (섬 관리가 만든다).
-SV_HD void deactivateBodies(SolverBoard& B, const uint32_t* deactivated, uint32_t n) {
+SV_HDN void deactivateBodies(SolverBoard& B, const uint32_t* deactivated, uint32_t n) {
   for (uint32_t i = 0; i < n; ++i) {
     Body& b = B.bodies[deactivated[i]];
     b.body2World = b.lastTransform;  // rigid->setPose(rigid->getLastCCDTransform())
@@ -649,7 +653,7 @@ SV_HD void deactivateBodies(SolverBoard& B, const uint32_t* deactivated, uint32_
 }
 
 // ScAfterIntegrationTask (ScScene.cpp:176): 활성 몸체의 깸 카운터 확정 + 프레임 플래그 지우기
-SV_HD void afterIntegration(SolverBoard& B) {
+SV_HDN void afterIntegration(SolverBoard& B) {
   for (uint32_t i = 0; i < B.nbIslands; ++i) {
     const IslandIn& I = B.islands[i];
     for (uint32_t k = 0; k < I.bodyCount; ++k) {

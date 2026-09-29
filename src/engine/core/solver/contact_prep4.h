@@ -47,7 +47,7 @@ SV_HD V4 ldcol(const M33& m, int c) {
   return V4{v.x, v.y, v.z, w};
 }
 
-SV_HD void setupFinalizeSolverConstraints4Step(const PrepCtx& P, TGSContactDesc* descs, const CorrelationBuffer& c, uint8_t* workspace,
+SV_HDN void setupFinalizeSolverConstraints4Step(const PrepCtx& P, TGSContactDesc* descs, const CorrelationBuffer& c, uint8_t* workspace,
                                                float invDtF32, float totalDtF32, float invTotalDtF32, float dtF32, float bounceThresholdF32,
                                                float biasCoefficient, V4 invMassScale0, V4 invInertiaScale0, V4 invMassScale1,
                                                V4 invInertiaScale1) {
@@ -517,7 +517,7 @@ SV_HD void setupFinalizeSolverConstraints4Step(const PrepCtx& P, TGSContactDesc*
 }
 
 // DyTGSContactPrepBlock.cpp:1278
-SV_HD void computeBlockStreamByteSizes4(TGSContactDesc* descs, uint32_t& _solverConstraintByteSize, uint32_t* _axisConstraintCount,
+SV_HDN void computeBlockStreamByteSizes4(TGSContactDesc* descs, uint32_t& _solverConstraintByteSize, uint32_t* _axisConstraintCount,
                                         const CorrelationBuffer& c) {
   uint32_t maxPatches = 0;
   uint32_t maxContactCount[CorrelationBuffer::MAX_FRICTION_PATCHES];
@@ -557,7 +557,7 @@ SV_HD void computeBlockStreamByteSizes4(TGSContactDesc* descs, uint32_t& _solver
 }
 
 // DyTGSContactPrepBlock.cpp:1398 (상관 버퍼판)
-SV_HD PrepState createFinalizeSolverContacts4StepCorr(PrepCtx& P, CorrelationBuffer& c, TGSContactDesc* blockDescs, float invDtF32,
+SV_HDN PrepState createFinalizeSolverContacts4StepCorr(PrepCtx& P, CorrelationBuffer& c, TGSContactDesc* blockDescs, float invDtF32,
                                                       float totalDtF32, float invTotalDtF32, float dt, float bounceThresholdF32,
                                                       float frictionOffsetThreshold, float correlationDistance, float biasCoefficient) {
   float invMassScale0[4], invMassScale1[4], invInertiaScale0[4], invInertiaScale1[4];
@@ -641,7 +641,7 @@ SV_HD PrepState createFinalizeSolverContacts4StepCorr(PrepCtx& P, CorrelationBuf
 }
 
 // DyTGSContactPrepBlock.cpp:1550 (접촉 관리자 출력판). 네 칸 접촉은 한 버퍼에 이어 붙인다(최대 64).
-SV_HD PrepState createFinalizeSolverContacts4Step(PrepCtx& P, const CMOutput* const* cmOutputs, TGSContactDesc* blockDescs, float invDtF32,
+SV_HDN PrepState createFinalizeSolverContacts4Step(PrepCtx& P, const CMOutput* const* cmOutputs, TGSContactDesc* blockDescs, float invDtF32,
                                                   float totalDtF32, float invTotalDtF32, float dtF32, float bounceThresholdF32,
                                                   float frictionOffsetThreshold, float correlationDistance, float biasCoefficient) {
   for (uint32_t a = 0; a < 4; ++a) blockDescs[a].desc->constraintLengthOver16 = 0;

@@ -67,7 +67,7 @@ SV_HD FV solveDynamicContactsStep(SolverContactPointStep* contacts, uint32_t nbC
 }
 
 // DyTGSContactPrep.cpp:1581 solveContact
-SV_HD void solveContact(const SDesc& desc, SBodyVel* vels, ByteArena& arena, bool doFriction, float minPenetration, float elapsedTimeF32) {
+SV_HDN void solveContact(const SDesc& desc, SBodyVel* vels, ByteArena& arena, bool doFriction, float minPenetration, float elapsedTimeF32) {
   SBodyVel& b0 = vels[desc.bodyA];
   SBodyVel& b1 = vels[desc.bodyB];
   const FV minPen = FLoad(minPenetration);
@@ -211,7 +211,7 @@ SV_HD void solveContact(const SDesc& desc, SBodyVel* vels, ByteArena& arena, boo
 }
 
 // DyTGSContactPrep.cpp:1863 writeBackContact — 동역학에 남는 부분: broken 이면 이번 스텝 마찰 패치에 표시
-SV_HD void writeBackContact(const SDesc& desc, ByteArena& arena, FrictionArena& frictionCur) {
+SV_HDN void writeBackContact(const SDesc& desc, ByteArena& arena, FrictionArena& frictionCur) {
   uint8_t* cPtr = arenaPtr<uint8_t>(arena, desc.constraint);
   const uint8_t* last = cPtr + (uint32_t(desc.constraintLengthOver16) << 4);
   while (cPtr < last) {
@@ -227,7 +227,7 @@ SV_HD void writeBackContact(const SDesc& desc, ByteArena& arena, FrictionArena& 
 }
 
 // DyTGSContactPrepBlock.cpp:2280 solveContact4_Block
-SV_HD void solveContact4_Block(const SDesc* desc, SBodyVel* vels, ByteArena& arena, float minPenetration, float elapsedTimeF32) {
+SV_HDN void solveContact4_Block(const SDesc* desc, SBodyVel* vels, ByteArena& arena, float minPenetration, float elapsedTimeF32) {
   SBodyVel* b0[4] = {&vels[desc[0].bodyA], &vels[desc[1].bodyA], &vels[desc[2].bodyA], &vels[desc[3].bodyA]};
   SBodyVel* b1[4] = {&vels[desc[0].bodyB], &vels[desc[1].bodyB], &vels[desc[2].bodyB], &vels[desc[3].bodyB]};
   const V4 minPen = V4Load(minPenetration);
@@ -494,7 +494,7 @@ SV_HD void solveContact4_Block(const SDesc* desc, SBodyVel* vels, ByteArena& are
 }
 
 // DyTGSContactPrepBlock.cpp:2775 writeBackContact4_Block — broken 표시만
-SV_HD void writeBackContact4_Block(const SDesc* desc, ByteArena& arena, FrictionArena& frictionCur) {
+SV_HDN void writeBackContact4_Block(const SDesc* desc, ByteArena& arena, FrictionArena& frictionCur) {
   uint8_t* currPtr = arenaPtr<uint8_t>(arena, desc[0].constraint);
   const uint8_t* last = currPtr + (uint32_t(desc[0].constraintLengthOver16) << 4);
   while (currPtr < last) {

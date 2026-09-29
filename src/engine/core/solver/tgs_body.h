@@ -57,7 +57,7 @@ SV_HD void v3store(const V3& v, float* p) { p[0] = v.x; p[1] = v.y; p[2] = v.z; 
 SV_HD V3 v3load(const float* p) { return V3{p[0], p[1], p[2]}; }
 
 // DyTGSDynamics.cpp:154
-SV_HD void copyToSolverBodyDataStep(const V3& linearVelocity, const V3& angularVelocity, float invMass, const V3& invInertia, const Tf& globalPose,
+SV_HDN void copyToSolverBodyDataStep(const V3& linearVelocity, const V3& angularVelocity, float invMass, const V3& invInertia, const Tf& globalPose,
                                     float maxDepenetrationVelocity, float maxContactImpulse, uint32_t nodeIndex, float reportThreshold,
                                     float maxAngVelSq, uint32_t lockFlags, bool isKinematic, SBodyVel& solverVel, SBodyTxI& txI,
                                     SBodyData& solverBodyData, float dt, bool gyroscopicForces) {
@@ -170,7 +170,7 @@ SV_HD void integrateCoreStep(SBodyVel& vel, SBodyTxI& txInertia, float dt) {
 }
 
 // DySleep.cpp:35 updateWakeCounter + :226 sleepCheck
-SV_HD float updateWakeCounter(Body& b, float dt, bool enableStabilization, const V3& motionLin, const V3& motionAng, bool hasStaticTouch) {
+SV_HDN float updateWakeCounter(Body& b, float dt, bool enableStabilization, const V3& motionLin, const V3& motionAng, bool hasStaticTouch) {
   const float wakeCounterResetTime = 20.0f * 0.02f;
   float wc = b.wakeCounter;
   if (enableStabilization) {
@@ -284,7 +284,7 @@ SV_HD void sleepCheck(Body& b, float dt, bool enableStabilization, const V3& mot
 }
 
 // DyTGSDynamics.cpp:1549 copyBackBodies (몸체 하나)
-SV_HD void copyBackBody(Body& b, const SBodyVel& vel, const SBodyTxI& txI, float invDt, float dt, bool enableStabilization, bool hasStaticTouch) {
+SV_HDN void copyBackBody(Body& b, const SBodyVel& vel, const SBodyTxI& txI, float invDt, float dt, bool enableStabilization, bool hasStaticTouch) {
   const V3 motionLin = v3load(vel.deltaLinDt) * invDt;
   const V3 motionAng = txI.sqrtInvInertia * (v3load(vel.deltaAngDt) * invDt);
   b.lastTransform = b.body2World;

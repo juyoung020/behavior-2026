@@ -14,6 +14,7 @@
 
 #include "px_internal.h"
 #include "core/solver/tgs_solver.h"
+#include "solver_stream.h"
 
 using namespace physx;
 namespace sv = eng::sv;
@@ -241,6 +242,7 @@ static PxDefaultErrorCallback gErr;
 int main(int argc, char** argv) {
   std::string scene = "boxes";
   int n = 64, steps = 600, seed = 1, stab = 0, verbose = 1, trace = -1, t0 = 0, t1 = 0;
+  const char* dumpPath = nullptr;
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--scene") && i + 1 < argc) scene = argv[++i];
     else if (!strcmp(argv[i], "--n") && i + 1 < argc) n = atoi(argv[++i]);
@@ -248,6 +250,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--stab") && i + 1 < argc) stab = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--verbose") && i + 1 < argc) verbose = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dumpPath = argv[++i];
     else if (!strcmp(argv[i], "--trace") && i + 3 < argc) { trace = atoi(argv[++i]); t0 = atoi(argv[++i]); t1 = atoi(argv[++i]); }
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
@@ -391,6 +394,8 @@ int main(int argc, char** argv) {
   uint64_t totContacts = 0, totCMs = 0, maxIslands = 0;
   int shown = 0;
   std::vector<uint8_t> wasActive(nb, 1), isActive(nb, 0);
+  std::vector<uint8_t> dumpBody;  // 스텝 블록들 (--dump)
+  const std::vector<eng::Body> bodies0 = eb;
   for (int s = 1; s <= steps; ++s) {
     gSnap.valid = false;
     pscene->simulate(dt);
@@ -401,6 +406,10 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> ib, icm, act;
     std::vector<sv::ContactPatchIn> patches;
     std::vector<sv::ContactIn> contacts;
+    std::vector<sv::SolverCM> cmIn;
+    std::vector<svs::Wake> wakes;
+    std::vector<uint32_t> numCounted(nb, 0);
+    for (int i = 0; i < nb; ++i) numCounted[i] = eb[i].numCountedInteractions;
     if (S.valid) {
       snapErr += S.errors;
       for (auto& si : S.islands) {
@@ -437,6 +446,7 @@ int main(int argc, char** argv) {
           patches.insert(patches.end(), c.patches.begin(), c.patches.end());
           contacts.insert(contacts.end(), c.contacts.begin(), c.contacts.end());
           icm.push_back(idx);
+          cmIn.push_back(m);
           totContacts += c.contacts.size();
         }
         islands.push_back(I);
@@ -448,11 +458,11 @@ int main(int argc, char** argv) {
       totCMs += icm.size();
       maxIslands = std::max<uint64_t>(maxIslands, islands.size());
       for (int i = 0; i < nb; ++i) {
-        eb[i].numCountedInteractions = S.numCounted[i];
+        numCounted[i] = S.numCounted[i];
         // Sc 층 깨움(internalWakeUpBase: 깸 카운터를 올리기만 함, ScBodySim.cpp:541) — 닿음 잃음·새 닿음 이벤트가 만든 입력
         if (S.wakeCounter[i] != eb[i].wakeCounter) {
           if (S.wakeCounter[i] > eb[i].wakeCounter) {
-            eb[i].wakeCounter = S.wakeCounter[i];
+            wakes.push_back(svs::Wake{uint32_t(i), S.wakeCounter[i]});
             wakeEvents++;
           } else
             wakeBad++;
@@ -518,11 +528,44 @@ int main(int argc, char** argv) {
         else snapErr++;
       }
     }
+    svs::StepView v;
+    v.c = svs::StepCounts{uint32_t(islands.size()), uint32_t(ib.size()), uint32_t(icm.size()), uint32_t(act.size()), uint32_t(deact.size()),
+                          uint32_t(wakes.size()), uint32_t(patches.size()), uint32_t(contacts.size())};
+    v.islands = islands.data();
+    v.ib = ib.data();
+    v.icm = icm.data();
+    v.cmIn = cmIn.data();
+    v.act = act.data();
+    v.deact = deact.data();
+    v.wake = wakes.data();
+    v.numCounted = numCounted.data();
+    v.patches = patches.data();
+    v.contacts = contacts.data();
+    B.cms = cms.data();
+    B.nbCMs = uint32_t(cms.size());
     {
       FtzScope f;
-      sv::solverStep(B, prm);
-      sv::afterIntegration(B);
-      sv::deactivateBodies(B, deact.data(), uint32_t(deact.size()));
+      svs::runStep(B, prm, v);
+    }
+    if (dumpPath) {
+      auto put = [&](const void* p, size_t n) { const uint8_t* b = static_cast<const uint8_t*>(p); dumpBody.insert(dumpBody.end(), b, b + n); };
+      put(&v.c, sizeof(v.c));
+      put(islands.data(), islands.size() * sizeof(sv::IslandIn));
+      put(ib.data(), ib.size() * 4);
+      put(icm.data(), icm.size() * 4);
+      put(cmIn.data(), cmIn.size() * sizeof(sv::SolverCM));
+      put(act.data(), act.size() * 4);
+      put(deact.data(), deact.size() * 4);
+      put(wakes.data(), wakes.size() * sizeof(svs::Wake));
+      put(numCounted.data(), size_t(nb) * 4);
+      put(patches.data(), patches.size() * sizeof(sv::ContactPatchIn));
+      put(contacts.data(), contacts.size() * sizeof(sv::ContactIn));
+      for (int i = 0; i < nb; ++i) {  // PhysX 결과
+        const PxTransform tp = px[i]->getGlobalPose();
+        const PxVec3 lp = px[i]->getLinearVelocity(), ap = px[i]->getAngularVelocity();
+        const float r[svs::RES_FLOATS] = {tp.q.x, tp.q.y, tp.q.z, tp.q.w, tp.p.x, tp.p.y, tp.p.z, lp.x, lp.y, lp.z, ap.x, ap.y, ap.z, px[i]->getWakeCounter()};
+        put(r, sizeof(r));
+      }
     }
     if (B.error && shown < 20) {
       printf("[엔진 오류] step %d error=0x%x\n", s, B.error);
@@ -576,6 +619,38 @@ int main(int argc, char** argv) {
          B.statBatches, B.statFreeBatches, B.statHeaders, B.statBlock4, B.statSingle, B.statMaxPartitions);
   printf("Sc 층 깨움 입력 %" PRIu64 " 회, 풀이 직전 우리 깸 카운터가 PhysX 보다 큼(오류) %" PRIu64 "\n", wakeEvents, wakeBad);
   printf("스냅샷 오류 %" PRIu64 ", 엔진 오류 0x%x\n", snapErr, B.error);
+  printf("작업 공간 최대: 제약 자료 %u B/묶음, 마찰 패치 %u 개/스텝, 제약 %u 개/묶음, 접촉 관리자 %zu 개\n", B.statMaxArena, B.statMaxFriction,
+         B.statMaxDescs, cms.size());
+  if (dumpPath) {
+    svs::Header h{};
+    memcpy(h.magic, "SVSTRM1", 8);
+    h.version = 1;
+    h.nb = uint32_t(nb);
+    h.steps = uint32_t(steps);
+    h.stab = uint32_t(stab);
+    h.gravity[0] = 0.0f; h.gravity[1] = 0.0f; h.gravity[2] = -9.81f;
+    h.dt = dt;
+    h.bounce = gSnap.bounce;
+    h.frictionOffset = gSnap.frictionOffset;
+    h.correlation = gSnap.correlation;
+    h.batchSize = gSnap.batchSize;
+    h.articBatchSize = gSnap.articBatchSize;
+    h.maxCMs = uint32_t(cms.size());
+    h.bodySize = sizeof(eng::Body);
+    h.cmSize = sizeof(sv::SolverCM);
+    h.patchSize = sizeof(sv::ContactPatchIn);
+    h.contactSize = sizeof(sv::ContactIn);
+    h.islandSize = sizeof(sv::IslandIn);
+    h.maxArena = B.statMaxArena;
+    h.maxFriction = B.statMaxFriction;
+    h.maxDescs = B.statMaxDescs;
+    FILE* f = fopen(dumpPath, "wb");
+    fwrite(&h, sizeof(h), 1, f);
+    fwrite(bodies0.data(), sizeof(eng::Body), bodies0.size(), f);
+    fwrite(dumpBody.data(), 1, dumpBody.size(), f);
+    fclose(f);
+    printf("입력 흐름 저장: %s (%.1f MB)\n", dumpPath, double(dumpBody.size()) / 1e6);
+  }
   const bool ok = !bad[0] && !bad[1] && !bad[2] && !bad[3] && !fricBad && !snapErr && !B.error && !wakeBad;
   printf("%s\n", ok ? "결과: 전부 비트 동일" : "결과: 불일치 있음");
   pscene->release();
