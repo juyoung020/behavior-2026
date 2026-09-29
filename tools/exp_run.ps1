@@ -22,7 +22,7 @@
 #   stop_on_black(한 판이라도 검은 프레임이면 남은 반복 안 돎), instrument_args[](eval_instrumented 선택지를 그대로, 예: --dump-settings=경로),
 #   settings[]: name, policy(local|replay|websocket|native), robot_config(없으면 공식 기본), wrapper(Default|RGBD|전체 경로), max_steps,
 #               chunk(--replay-action-chunk-size), port, extra_eval_args[],
-#               replay: actions(행동열 npz), quickack(기본 true), server(wsl = WSL 파이썬(기본) | rust = WSL Rust replaysrv | windows), port(기본 8110, 쓰이면 다음 빈 포트)
+#               replay: actions(행동열 npz), quickack(기본 true), server(rust = WSL Rust replaysrv(기본) | wsl = WSL 파이썬 | windows), port(기본 8110, 쓰이면 다음 빈 포트)
 #               websocket: server.start(명령, {port}·{task} 치환), server.kind(wsl|windows), server.ready_s(기본 600)
 #               native: module(기본 native_policy:pi05 = 네이티브 π0.5, src\fasteval\native_policy.py), weights, prompt, replan(16), seed(0)
 #                       -- 공식 LocalPolicy 안에서 돈다(src\pi05_native\glue\run_eval_native.py 와 같은 연결), 엔진 스텝 기록은 판 폴더 native_steps.csv
@@ -90,7 +90,7 @@ function Start-PolicyServer($s, [string]$task, [string]$outDir, [string]$tag) {
         }
         $act = (Resolve-Path (P $s 'actions' '')).Path
         $qa = [bool](P $s 'quickack' $true)
-        $kind = P $s 'server' 'wsl'  # wsl(파이썬, 기본) | rust(WSL Rust replaysrv — 파이썬판과 응답·기록 같음 확인) | windows(파이썬)
+        $kind = P $s 'server' 'rust'  # rust(WSL Rust replaysrv, 기본 — 평가기 판에서 서버 기록·물리·판정·JSON 이 파이썬판과 비트 동일, 09-30) | wsl(WSL 파이썬) | windows(파이썬)
         if ($kind -eq 'windows') {
             $a = @("$Root\tools\replay_policy_server.py", '--actions', $act, '--port', "$port", '--log', "$outDir\server_log.npz", '--once')
             if ($qa) { $a += '--quickack' }
