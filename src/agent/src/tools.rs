@@ -41,8 +41,8 @@ fn all_definitions() -> Vec<Value> {
                 "objects": {"type": "array", "items": {"type": "string"}, "description": "Objects in the skill's slot order, scene-graph ids when known."},
                 "memory": {"type": "string", "enum": ["none", "back", "the other", "the same"], "description": "back = original place of objects[0]; the other = a not-yet-handled object of the same kind."},
                 "spatial": {"type": "array", "items": {"type": "string"}, "description": "Optional spatial modifier per object slot, e.g. [\"\", \"to_the_edge_of\"], [\"right_door\"], [\"left\"]."},
-                "purpose": {"type": "string", "description": "Why this step (one short English clause)."},
-                "expected": {"type": "string", "description": "What the robot should physically do (one short English clause)."},
+                "purpose": {"type": "string", "description": "Why this step (one short English clause, no numbers)."},
+                "expected": {"type": "string", "description": "What the robot should physically do (one short English clause, no numeric distances or angles)."},
                 "budget_steps": {"type": "integer", "description": "Optional step budget (30 steps = 1 s). Default comes from demonstration statistics."}
             }, "required": ["previous", "skill", "objects", "purpose", "expected"]}),
         ),

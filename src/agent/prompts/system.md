@@ -30,4 +30,7 @@ Step rules
   Trust it unless the image clearly shows otherwise. A gripper closed on an object after "pick up" means the pick worked.
 - Retry a failed step at most twice. After that change the approach (re-approach with move to, another object, or set_plan).
 - One instruction = one skill. Keep instructions short and concrete.
+- Never put numeric distances or angles (like "2 m", "30 degrees") in `purpose` or `expected`: the low-level policy does not
+  use them, and they are removed anyway. Use object names and words such as left, right, in front of. Positions and odometry
+  are for your own judgement (is the step done, what is near), not for the instruction.
 - The reference step orders below come from human demonstrations of this task. Follow them unless the scene says otherwise.

@@ -9,7 +9,11 @@
 //! ② subtask 시연 주석 어휘 문장("pick up radio from coffee table")
 //! ③ purpose "Purpose: … . Expected action: … ."(사용자 제안)
 //! ④ metric  ② + 로봇 기준 이동량("go forward 2.1 m, 0.4 m to the left, turn left 30 degrees", 앞 +x, 왼쪽 +y, 반시계 +yaw)
-//!           — 이동량은 LLM 이 아니라 그래프 좌표와 오도메트리로 계산한다.
+//!           — **실험 전용**(사용자 결정 09-29: π0.5 에 숫자 명령을 쓰지 않는다). 지시 형식 오프라인 실험(Comet pt50)에서
+//!           숫자 명령이 이동 방향 일치를 오히려 낮췄다(cos 0.71 → 0.54). `--format metric` 을 명시할 때만 쓰고,
+//!           중계기 agent 모드에서는 거부한다. 그래프 좌표·오도메트리는 계획기 안쪽 판단(완료 판정 등)에만 쓴다.
+//!
+//! ②③ 문장에서는 거리·각도 숫자를 [`strip_numbers`] 로 거른다(LLM 이 purpose/expected 에 숫자를 써도 π0.5 로 안 간다).
 
 use crate::util::tokens_with_margin;
 #[cfg(test)]
@@ -96,6 +100,74 @@ fn clean(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches(['.', ' ']).to_string()
 }
 
+const UNITS: &[&str] = &[
+    "m", "cm", "mm", "km", "meter", "meters", "metre", "metres", "centimeter", "centimeters", "deg", "degree", "degrees", "rad", "radian",
+    "radians", "step", "steps", "s", "sec", "second", "seconds", "ft", "feet", "inch", "inches", "percent", "%",
+];
+
+const PUNCT: [char; 5] = [',', '.', ';', ':', ')'];
+
+fn tail_punct(t: &str) -> String {
+    let n = t.chars().rev().take_while(|c| PUNCT.contains(c)).count();
+    t.chars().skip(t.chars().count() - n).collect()
+}
+
+/// π0.5 문장에서 거리·각도·수치를 뺀다: 숫자가 든 낱말("2.1", "0.4m", "45°")과 바로 뒤 단위 낱말("m", "degrees")을 지우고
+/// 남은 문장부호·매달린 전치사를 정리한다. 수량 낱말("two")은 남긴다.
+pub fn strip_numbers(s: &str) -> String {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    let mut out: Vec<String> = Vec::with_capacity(toks.len());
+    let mut i = 0;
+    while i < toks.len() {
+        let t = toks[i];
+        if !(t.chars().any(|c| c.is_ascii_digit()) || t.contains('°')) {
+            out.push(t.to_string());
+            i += 1;
+            continue;
+        }
+        let mut last = t;
+        i += 1;
+        if i < toks.len() && UNITS.contains(&toks[i].trim_end_matches(PUNCT).to_lowercase().as_str()) {
+            last = toks[i];
+            i += 1;
+        }
+        // 지운 낱말 끝의 쉼표·마침표는 앞 낱말에 붙여 문장 모양을 살린다(소수점 "2." 은 제외)
+        let p = tail_punct(last);
+        if !p.is_empty() && !last.trim_end_matches(PUNCT).is_empty() {
+            if let Some(prev) = out.last_mut() {
+                if !prev.ends_with(PUNCT) {
+                    prev.push_str(&p);
+                }
+            }
+        }
+    }
+    let mut s = out.join(" ");
+    for (a, b) in [(" ,", ","), (",,", ","), ("()", ""), (" :", ":"), (":,", ":"), (",.", "."), (" .", ".")] {
+        while s.contains(a) {
+            s = s.replace(a, b);
+        }
+    }
+    // 숫자 앞에 있던 말이 끝에 매달리면 뗀다("move forward by" → "move forward")
+    let mut s = s.trim().trim_matches([',', ':', ';']).trim().to_string();
+    loop {
+        let before = s.len();
+        let body = s.trim_end_matches(PUNCT).to_string();
+        let end: String = s[body.len()..].to_string();
+        let mut b = body.clone();
+        for w in [" by", " of", " about", " around", " approximately", " roughly", " exactly", " for", " and", " to"] {
+            if let Some(x) = b.strip_suffix(w) {
+                b = x.trim_end().to_string();
+            }
+        }
+        let end: String = end.chars().filter(|c| !matches!(c, ',' | ';' | ':')).collect();
+        s = format!("{}{}", b.trim_end_matches([',', ';', ':']), end);
+        if s.len() == before {
+            break;
+        }
+    }
+    s
+}
+
 impl Instruction {
     pub fn subtask_text(&self) -> String {
         match crate::vocab::lookup(&self.skill) {
@@ -106,13 +178,15 @@ impl Instruction {
 
     /// 형식에 맞춰 문장을 만들고 토큰 예산 안으로 줄인다.
     pub fn render(&self, fmt: Format, task_prompt: &str, max_tokens: usize) -> String {
-        let sub = self.subtask_text();
+        // ②③ 에는 숫자 거리·각도가 들어가지 않는다(과제 문장 ① 은 공식 문장 그대로, ④ 는 실험 전용)
+        let sub = strip_numbers(&self.subtask_text());
         let candidates: Vec<String> = match fmt {
             Format::Task => vec![clean(task_prompt) + "."],
             Format::Subtask => vec![sub.clone()],
             Format::Purpose => {
-                let p = clean(&self.purpose);
-                let e = clean(if self.expected.trim().is_empty() { &sub } else { &self.expected });
+                let p = strip_numbers(&clean(&self.purpose));
+                let e0 = strip_numbers(&clean(&self.expected));
+                let e = if e0.trim().is_empty() { sub.clone() } else { e0 };
                 let mut v = Vec::new();
                 if !p.is_empty() {
                     v.push(format!("Purpose: {p}. Expected action: {e}."));
@@ -180,6 +254,26 @@ mod tests {
             "Purpose: hold the radio so its button can be pressed. Expected action: grasp the radio on the coffee table with one hand and lift it."
         );
         assert_eq!(i.render(Format::Metric, task, 90), "pick up radio from coffee table: go forward 0.6 m, 0.2 m to the right, turn left 12 degrees");
+    }
+
+    #[test]
+    fn numbers_never_reach_pi05_in_subtask_and_purpose() {
+        assert_eq!(strip_numbers("go forward 2.1 m, 0.4 m to the left, turn left 30 degrees"), "go forward, to the left, turn left");
+        assert_eq!(strip_numbers("move forward by 1.5 meters"), "move forward");
+        assert_eq!(strip_numbers("turn 45° to face the radio."), "turn to face the radio.");
+        assert_eq!(strip_numbers("walk 0.4m left then grasp the radio"), "walk left then grasp the radio");
+        assert_eq!(strip_numbers("pick up the two cans"), "pick up the two cans");
+        let mut i = radio_pick();
+        i.purpose = "get within 0.7 m of the radio".into();
+        i.expected = "walk forward 2 meters and turn right 30 degrees".into();
+        let p = i.render(Format::Purpose, "t", 90);
+        assert!(!p.chars().any(|c| c.is_ascii_digit()), "{p}");
+        assert_eq!(p, "Purpose: get within of the radio. Expected action: walk forward and turn right.");
+        // 표시 이름에 숫자가 섞여도(이름표 없는 그래프 노드) 빠진다
+        i.names = vec!["object 17".into(), "coffee table".into()];
+        assert_eq!(i.render(Format::Subtask, "t", 90), "pick up object from coffee table");
+        // 숫자 명령(④)은 실험 전용: 명시했을 때만 숫자가 붙는다
+        assert!(i.render(Format::Metric, "t", 90).contains("0.6 m"));
     }
 
     #[test]

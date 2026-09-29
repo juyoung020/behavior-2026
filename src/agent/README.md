@@ -45,7 +45,7 @@ reference resolution, step budgets and instruction rendering. Deciders: `LlmDeci
 ```bash
 export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/cargo-target/agent
 cd /mnt/c/behavior-2026/src/agent
-cargo test --release                                  # 39 tests
+cargo test --release                                  # 40 tests
 cargo run --release -- sim --scenario trash --llm oracle
 set -a; . ~/.config/behavior-2026/kau.env; set +a     # API key via environment only
 cargo run --release -- sim --scenario radio --llm kau --no-images

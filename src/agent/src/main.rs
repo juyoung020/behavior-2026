@@ -104,6 +104,9 @@ fn planner_cfg(a: &Args) -> Result<PlannerCfg, String> {
     let mut c = PlannerCfg::default();
     if let Some(f) = a.get("format") {
         c.format = Format::parse(f).ok_or_else(|| format!("--format 은 task|subtask|purpose|metric: {f}"))?;
+        if c.format == Format::Metric {
+            eprintln!("경고: --format metric 은 실험 전용이다(π0.5 에 숫자 명령을 쓰지 않기로 함, docs/에이전트_설계.md 1.5)");
+        }
     }
     c.send_images = !a.flag("no-images");
     c.max_prompt_tokens = a.num("max-prompt-tokens", c.max_prompt_tokens);
@@ -197,6 +200,10 @@ fn cmd_relay(a: &Args) -> Result<(), String> {
     cfg.trace_dir = if a.flag("no-trace") { None } else { Some(a.get("trace-dir").map(PathBuf::from).unwrap_or_else(|| default_trace_dir("relay"))) };
     if matches!(mode, Mode::Agent) {
         let pcfg = planner_cfg(a)?;
+        // 사용자 결정(09-29): π0.5 에 숫자 명령을 쓰지 않는다. 실제 평가 경로(중계기 agent)에서는 받지 않는다.
+        if pcfg.format == Format::Metric && !a.flag("allow-metric-experiment") {
+            return Err("relay agent 모드에서 --format metric 은 쓰지 않는다(숫자 명령 금지). 실험이면 --allow-metric-experiment 를 같이 줘라".into());
+        }
         cfg.image_side = pcfg.image_side;
         cfg.jpeg_quality = pcfg.jpeg_quality;
         // 시작할 때 한 번 만들어 보아 설정 오류를 먼저 잡는다
