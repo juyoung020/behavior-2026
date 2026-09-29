@@ -1,5 +1,101 @@
-﻿[gpu_lock] 사용 중: pi05_native / JAX GPU dumps + native layer check (+CPU JAX 19 GB RAM) / 끝 예정까지 24 분 -- 45 초 뒤 다시
-[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 12 분 -- 45 초 뒤 다시
-[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 11 분 -- 45 초 뒤 다시
-[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 10 분 -- 45 초 뒤 다시
-[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag sd (3 runs) / 끝 예정까지 9 분 -- 45 초 뒤 다시
+﻿[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: fasteval-black / black-frame (B) diag h4 (3 runs) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 평가기 radio 시험 기록 (렌더 없이, 5 스텝) 재시도 -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: engine-lead / Linux(WSL) 공식 radio 기록 5 스텝 + 500 스텝 (렌더 없이, 같은 슬롯) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: pi05_native / evaluator + native pi0.5 in-process (turning_on_radio) -- 30 초 뒤 다시
+[gpu_lock] 사용 중: omni-engine / omni state kernel reference (warp) -- 30 초 뒤 다시
+[gpu_lock] 잡음: engine-render (30 분)
+[capture_with_lock] GPU 사용량 1108 MiB (기준 < 3500)
+pid, process_name, used_gpu_memory [MiB]
+2428, [Insufficient Permissions], [N/A]
+12312, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\CrossDeviceResume.exe, [N/A]
+12056, C:\Windows\explorer.exe, [N/A]
+14112, C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe, [N/A]
+13944, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe, [N/A]
+17076, C:\Program Files (x86)\Microsoft\EdgeWebView\Application\153.0.4234.48\msedgewebview2.exe, [N/A]
+17612, C:\Windows\SystemApps\Microsoft.LockApp_cw5n1h2txyewy\LockApp.exe, [N/A]
+15252, C:\Program Files\LogiOptionsPlus\logioptionsplus_agent.exe, [N/A]
+21024, C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TextInputHost.exe, [N/A]
+7028, C:\Users\user one\AppData\Local\Discord\app-1.0.9258\Discord.exe, [N/A]
+2572, C:\Users\user one\AppData\Local\Programs\Kakao Enterprise\KakaoWork\cef\Kakaowork.CefSharp.BrowserSubprocess.exe, [N/A]
+25808, C:\Users\user one\AppData\Local\slack\app-4.51.180\slack.exe, [N/A]
+27244, C:\Users\user one\AppData\Local\slack\app-4.51.180\slack.exe, [N/A]
+28212, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+23708, C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe, [N/A]
+10512, C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.24.11911.0_x64__8wekyb3d8bbwe\WindowsTerminal.exe, [N/A]
+26408, [Insufficient Permissions], [N/A]
+32572, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+58292, C:\Program Files\WindowsApps\Microsoft.MicrosoftOfficeHub_19.2609.52011.0_x64__8wekyb3d8bbwe\M365Copilot.exe, [N/A]
+58000, C:\Program Files (x86)\Microsoft\EdgeWebView\Application\153.0.4234.48\msedgewebview2.exe, [N/A]
+25556, C:\Users\user one\AppData\Local\Programs\Kakao Enterprise\KakaoWork\KakaoWork.exe, [N/A]
+47164, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+45256, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+50080, C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE, [N/A]
+58780, C:\Windows\System32\ShellHost.exe, [N/A]
+54740, C:\Program Files\WindowsApps\Claude_2.9939.4.0_x64__pzs8sxrjxfjjc\app\claude.exe, [N/A]
+53656, C:\Program Files\WindowsApps\Claude_2.9939.4.0_x64__pzs8sxrjxfjjc\app\claude.exe, [N/A]
+44000, C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.2607.14.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe, [N/A]
+51604, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+40064, C:\Program Files\Google\Chrome\Application\chrome.exe, [N/A]
+4, [Insufficient Permissions], [N/A]
+=== 렌더 기준 자료 끝: C:\behavior-2026\src\engine\dumps\render_radio_rgbd ===
+[gpu_lock] 풂: engine-render
+[capture_with_lock] 잠금 풀림

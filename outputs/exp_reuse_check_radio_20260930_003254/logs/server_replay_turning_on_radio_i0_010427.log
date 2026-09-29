@@ -1,0 +1,10 @@
+2026-09-30 01:04:28,859 재생 서버: 행동 (501, 1, 23) 포트 8110 quickack=True
+2026-09-30 01:04:28,859 server listening on 127.0.0.1:8110
+2026-09-30 01:04:29,492 connection rejected (200 OK)
+2026-09-30 01:06:52,266 connection rejected (200 OK)
+2026-09-30 01:06:52,274 connection open
+2026-09-30 01:06:52,274 접속 ('127.0.0.1', 49654)
+2026-09-30 01:07:07,461 접속 종료
+2026-09-30 01:07:07,510 관측 기록 저장: /mnt/c/behavior-2026/outputs/exp_reuse_check_radio_20260930_003254/original/replay/turning_on_radio/i0/server_log.npz (151 스텝)
+2026-09-30 01:07:07,511 server closing
+2026-09-30 01:07:07,511 server closed

@@ -1,0 +1,131 @@
+[0m[00:00:04.746] [INFO] [omnigibson.eval.eval] Seeded Python, NumPy, and Torch with seed=0[0m
+[0m[00:00:04.748] [INFO] [omnigibson.eval.eval] Resolved public_test instance ids for turning_on_radio: [301][0m
+[0m[00:00:04.761] [INFO] [omnigibson.eval.eval] Loaded robot config from C:\behavior-2026\src\configs\r1pro_openpi.yaml[0m
+[0m[00:00:04.795] [INFO] [omnigibson.eval.evaluator] Setting timeout to be 150 steps through config.[0m
+[0m[00:00:04.796] [INFO] [omnigibson.simulator] ----- Starting OmniGibson. This will take 10-30 seconds... -----[0m
+DEBUG:asyncio:Using proactor: IocpProactor
+DEBUG:AutoNode:Defining data type 'any' as 'Any'
+DEBUG:AutoNode:Defining data type 'bool' as 'Bool' and array 'BoolArray
+DEBUG:AutoNode:Defining data type 'bundle' as 'Bundle'
+DEBUG:AutoNode:Defining data type 'colord[3]' as 'Color3d' and array 'Color3dArray
+DEBUG:AutoNode:Defining data type 'colorf[3]' as 'Color3f' and array 'Color3fArray
+DEBUG:AutoNode:Defining data type 'colorh[3]' as 'Color3h' and array 'Color3hArray
+DEBUG:AutoNode:Defining data type 'colord[4]' as 'Color4d' and array 'Color4dArray
+DEBUG:AutoNode:Defining data type 'colorf[4]' as 'Color4f' and array 'Color4fArray
+DEBUG:AutoNode:Defining data type 'colorh[4]' as 'Color4h' and array 'Color4hArray
+DEBUG:AutoNode:Defining data type 'double' as 'Double' and array 'DoubleArray
+DEBUG:AutoNode:Defining data type 'double[2]' as 'Double2' and array 'Double2Array
+DEBUG:AutoNode:Defining data type 'double[3]' as 'Double3' and array 'Double3Array
+DEBUG:AutoNode:Defining data type 'double[4]' as 'Double4' and array 'Double4Array
+DEBUG:AutoNode:Defining data type 'execution' as 'Execution'
+DEBUG:AutoNode:Defining data type 'float' as 'Float' and array 'FloatArray
+DEBUG:AutoNode:Defining data type 'float[2]' as 'Float2' and array 'Float2Array
+DEBUG:AutoNode:Defining data type 'float[3]' as 'Float3' and array 'Float3Array
+DEBUG:AutoNode:Defining data type 'float[4]' as 'Float4' and array 'Float4Array
+DEBUG:AutoNode:Defining data type 'frame[4]' as 'Frame' and array 'FrameArray
+DEBUG:AutoNode:Defining data type 'half' as 'Half' and array 'HalfArray
+DEBUG:AutoNode:Defining data type 'half[2]' as 'Half2' and array 'Half2Array
+DEBUG:AutoNode:Defining data type 'half[3]' as 'Half3' and array 'Half3Array
+DEBUG:AutoNode:Defining data type 'half[4]' as 'Half4' and array 'Half4Array
+DEBUG:AutoNode:Defining data type 'int' as 'Int' and array 'IntArray
+DEBUG:AutoNode:Defining data type 'int[2]' as 'Int2' and array 'Int2Array
+DEBUG:AutoNode:Defining data type 'int[3]' as 'Int3' and array 'Int3Array
+DEBUG:AutoNode:Defining data type 'int[4]' as 'Int4' and array 'Int4Array
+DEBUG:AutoNode:Defining data type 'int64' as 'Int64' and array 'Int64Array
+DEBUG:AutoNode:Defining data type 'matrixd[2]' as 'Matrix2d' and array 'Matrix2dArray
+DEBUG:AutoNode:Defining data type 'matrixd[3]' as 'Matrix3d' and array 'Matrix3dArray
+DEBUG:AutoNode:Defining data type 'matrixd[4]' as 'Matrix4d' and array 'Matrix4dArray
+DEBUG:AutoNode:Defining data type 'normald[3]' as 'Normal3d' and array 'Normal3dArray
+DEBUG:AutoNode:Defining data type 'normalf[3]' as 'Normal3f' and array 'Normal3fArray
+DEBUG:AutoNode:Defining data type 'normalh[3]' as 'Normal3h' and array 'Normal3hArray
+DEBUG:AutoNode:Defining data type 'objectId' as 'ObjectId' and array 'ObjectIdArray
+DEBUG:AutoNode:Defining data type 'path' as 'Path'
+DEBUG:AutoNode:Defining data type 'pointd[3]' as 'Point3d' and array 'Point3dArray
+DEBUG:AutoNode:Defining data type 'pointf[3]' as 'Point3f' and array 'Point3fArray
+DEBUG:AutoNode:Defining data type 'pointh[3]' as 'Point3h' and array 'Point3hArray
+DEBUG:AutoNode:Defining data type 'quatd[4]' as 'Quatd' and array 'QuatdArray
+DEBUG:AutoNode:Defining data type 'quatf[4]' as 'Quatf' and array 'QuatfArray
+DEBUG:AutoNode:Defining data type 'quath[4]' as 'Quath' and array 'QuathArray
+DEBUG:AutoNode:Defining data type 'string' as 'String'
+DEBUG:AutoNode:Defining data type 'target' as 'Target'
+DEBUG:AutoNode:Defining data type 'texcoordd[2]' as 'TexCoord2d' and array 'TexCoord2dArray
+DEBUG:AutoNode:Defining data type 'texcoordf[2]' as 'TexCoord2f' and array 'TexCoord2fArray
+DEBUG:AutoNode:Defining data type 'texcoordh[2]' as 'TexCoord2h' and array 'TexCoord2hArray
+DEBUG:AutoNode:Defining data type 'texcoordd[3]' as 'TexCoord3d' and array 'TexCoord3dArray
+DEBUG:AutoNode:Defining data type 'texcoordf[3]' as 'TexCoord3f' and array 'TexCoord3fArray
+DEBUG:AutoNode:Defining data type 'texcoordh[3]' as 'TexCoord3h' and array 'TexCoord3hArray
+DEBUG:AutoNode:Defining data type 'timecode' as 'Timecode' and array 'TimecodeArray
+DEBUG:AutoNode:Defining data type 'token' as 'Token' and array 'TokenArray
+DEBUG:AutoNode:Defining data type 'uchar' as 'UChar' and array 'UCharArray
+DEBUG:AutoNode:Defining data type 'uint' as 'UInt' and array 'UIntArray
+DEBUG:AutoNode:Defining data type 'uint64' as 'UInt64' and array 'UInt64Array
+DEBUG:AutoNode:Defining data type 'vectord[3]' as 'Vector3d' and array 'Vector3dArray
+DEBUG:AutoNode:Defining data type 'vectorf[3]' as 'Vector3f' and array 'Vector3fArray
+DEBUG:AutoNode:Defining data type 'vectorh[3]' as 'Vector3h' and array 'Vector3hArray
+Windows fatal exception: code 0xc0000139
+
+Thread 0x00002fe4 (most recent call first):
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\concurrent\futures\thread.py", line 81 in _worker
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 982 in run
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1045 in _bootstrap_inner
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1002 in _bootstrap
+
+Thread 0x0000784c (most recent call first):
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\concurrent\futures\thread.py", line 81 in _worker
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 982 in run
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1045 in _bootstrap_inner
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1002 in _bootstrap
+
+Thread 0x0000b2cc (most recent call first):
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\concurrent\futures\thread.py", line 81 in _worker
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 982 in run
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1045 in _bootstrap_inner
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1002 in _bootstrap
+
+Thread 0x0000d328 (most recent call first):
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\concurrent\futures\thread.py", line 81 in _worker
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 982 in run
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1045 in _bootstrap_inner
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1002 in _bootstrap
+
+Thread 0x0000a7d4 (most recent call first):
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\concurrent\futures\thread.py", line 81 in _worker
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 982 in run
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1045 in _bootstrap_inner
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\threading.py", line 1002 in _bootstrap
+
+Thread 0x0000a8e0 (most recent call first):
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\isaacsim\exts\isaacsim.simulation_app\isaacsim\simulation_app\simulation_app.py", line 534 in _start_app
+  File "C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\isaacsim\exts\isaacsim.simulation_app\isaacsim\simulation_app\simulation_app.py", line 270 in __init__
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\simulator.py", line 293 in _launch_app
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\simulator.py", line 403 in _launch_simulator
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\envs\env_base.py", line 104 in __init__
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\utils\python_utils.py", line 92 in wrapper
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\eval\evaluator.py", line 293 in load_env
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\eval\evaluator.py", line 207 in __init__
+  File "C:\behavior-2026\tools\eval_instrumented.py", line 601 in ev_init
+  File "C:\behavior-2026\BEHAVIOR-1K\OmniGibson\omnigibson\eval\eval.py", line 178 in main
+  File "C:\behavior-2026\tools\eval_instrumented.py", line 1029 in main
+  File "C:\behavior-2026\tools\eval_instrumented.py", line 1033 in <module>
+[0m[00:00:13.451] [INFO] [omnigibson.simulator] ---------- Welcome to OmniGibson! ----------[0m
+[33m[00:00:13.632] [WARNING] [omnigibson.scenes.scene_base] Scene file does not contain version information; skipping version compatibility check.[0m
+[0m[00:01:55.662] [INFO] [omnigibson.simulator] Imported scene 0.[0m
+[33m[00:01:55.710] [WARNING] [omnigibson.robots.robot] r1pro is set to floating base but is not a non-holonomic locomotion robot[0m
+[0m[00:02:15.801] [INFO] [omnigibson.eval.evaluator] [0m
+[0m[00:02:15.802] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:02:15.803] [INFO] [omnigibson.eval.evaluator] Loaded 1 policy instance(s) (batched): websocket[0m
+[0m[00:02:15.803] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:02:15.803] [INFO] [omnigibson.eval.evaluator] [0m
+2026-09-29T16:15:08Z [132,925ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+  gym.logger.warn("Casting input x to numpy array.")
+[0m[00:02:17.918] [INFO] [omnigibson.eval.utils.network_utils] Health check passed, attempting websocket connection...[0m
+[0m[00:02:17.926] [INFO] [omnigibson.eval.utils.network_utils] Connected to server![0m
+[0m[00:02:30.105] [INFO] [omnigibson.eval.evaluator] Instance 301 (env 0) finished at step 151: success=False q_score=0.0[0m
+[0m[00:02:44.186] [INFO] [omnigibson.eval.evaluator] Instance 302 (env 0) finished at step 151: success=False q_score=0.0[0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] [0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] Total success trials: 0[0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] Total trials: 2[0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] Success rate: 0.0[0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:02:44.334] [INFO] [omnigibson.eval.evaluator] [0m

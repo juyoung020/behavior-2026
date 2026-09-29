@@ -509,3 +509,118 @@ System.Management.Automation.RemoteException
 
 [6.128s] app ready
 [0m[00:00:14.838] [INFO] [omnigibson.simulator] ---------- Welcome to OmniGibson! ----------[0m
+[8.479s] Simulation App Startup Complete
+[8.670s] [ext: omni.physx.fabric-107.3.26] startup
+2026-09-29T13:59:16Z [9,576ms] [Warning] [omni.fabric.plugin] Warning: attribute physics:filteredGroups not found for path /World/collision_groups/structural_doors
+
+2026-09-29T14:00:52Z [105,184ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,184ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,234ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,235ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,286ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,286ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,287ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,287ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,288ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,288ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,330ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,330ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,331ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,331ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,371ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,371ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,415ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,415ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,415ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,416ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,416ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:52Z [105,416ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,209ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,210ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,210ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,210ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,232ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,233ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,238ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+[0m[00:01:54.600] [INFO] [omnigibson.simulator] Imported scene 0.[0m
+[33m[00:01:54.653] [WARNING] [omnigibson.robots.robot] r1pro is set to floating base but is not a non-holonomic locomotion robot[0m
+2026-09-29T14:00:53Z [106,238ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.Starting kit application with the following args:  ['C:\\Users\\user one\\anaconda3\\envs\\behavior\\Lib\\site-packages\\isaacsim\\exts\\isaacsim.simulation_app\\isaacsim\\simulation_app\\simulation_app.py', 'C:\\Users\\user one\\anaconda3\\envs\\behavior\\Lib\\site-packages\\isaacsim\\apps\\omnigibson_5_1_0.kit', '--/app/tokens/exe-path=C:\\Users\\user one\\anaconda3\\envs\\behavior\\Lib\\site-packages\\isaacsim\\kit', '--/persistent/app/viewport/displayOptions=3094', '--/rtx/materialDb/syncLoads=True', '--/rtx/hydra/materialSyncLoads=True', '--/omni.kit.plugin/syncUsdLoads=True', '--/app/renderer/resolution/width=1280', '--/app/renderer/resolution/height=720', '--/app/window/width=1440', '--/app/window/height=900', '--/renderer/multiGpu/enabled=False', '--/app/fastShutdown=True', '--/app/installSignalHandlers=0', '--ext-folder', 'C:\\Users\\user one\\anaconda3\\envs\\behavior\\Lib\\site-packages\\isaacsim/exts', '--ext-folder', 'C:\\Users\\user one\\anaconda3\\envs\\behavior\\Lib\\site-packages\\isaacsim/apps', '--/rtx-transient/hydra/geometrystreaming/syncLoad=true', '--/rtx/rendering/perViewTlas=false', '--/rtx/raytracing/cached/enabled=false', '--/rtx/raytracing/lightcache/spatialCache/enabled=false', '--/physics/cudaDevice=0', '--/plugins/carb.tasking.plugin/threadCount=32', '--/plugins/omni.tbb.globalcontrol/maxThreadCount=32', '--no-window', '--/app/window/hideUi=1']
+Passing the following args to the base kit application:  ['--portable-root', 'C:\\behavior-2026\\BEHAVIOR-1K\\OmniGibson\\appdata\\local', '--/app/tokens/omni_global_cache=C:\\behavior-2026\\BEHAVIOR-1K\\OmniGibson\\appdata\\global\\cache', '--/app/tokens/omni_global_data=C:\\behavior-2026\\BEHAVIOR-1K\\OmniGibson\\appdata\\global\\data']
+Warp DeprecationWarning: The symbol `warp.types.array` will soon be removed from the public API. Use `warp.array` instead.
+Warp DeprecationWarning: The symbol `warp.types.Array` will soon be removed from the public API. It can still be accessed from `warp._src.types.Array` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.types.launch_bounds_t` will soon be removed from the public API. It can still be accessed from `warp._src.types.launch_bounds_t` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.types.vector_types` will soon be removed from the public API. It can still be accessed from `warp._src.types.vector_types` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.types.scalar_types` will soon be removed from the public API. It can still be accessed from `warp._src.types.scalar_types` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.types.np_dtype_to_warp_type` will soon be removed from the public API. It can still be accessed from `warp._src.types.np_dtype_to_warp_type` but might be changed or removed without notice.
+Warp 1.12.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.1
+   Devices:
+     "cpu"      : "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD"
+     "cuda:0"   : "NVIDIA GeForce RTX 5070 Ti" (16 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     C:\behavior-2026\BEHAVIOR-1K\OmniGibson\appdata\global\warp_cache
+Warp DeprecationWarning: The symbol `warp.utils.warn` will soon be removed from the public API. It can still be accessed from `warp._src.utils.warn` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.types.float32` will soon be removed from the public API. Use `warp.float32` instead.
+Warp DeprecationWarning: The `warp.sim` module is deprecated and will be removed in v1.10. Please transition to using the forthcoming Newton library instead.
+
+                   ____________
+                  /          / \
+                 /          / /__
+                /          / /  /\
+               /__________/ /__/  \
+               \   _____  \ \__\  /
+                \  \  / \  \ \_/ /
+                 \  \/___\  \   /
+                  \__________\_/  
+       ___                  _  ____ _ _                     
+      / _ \ _ __ ___  _ __ (_)/ ___(_) |__  ___  ___  _ __  
+     | | | | '_ ` _ \| '_ \| | |  _| | '_ \/ __|/ _ \| '_ \ 
+     | |_| | | | | | | | | | | |_| | | |_) \__ \ (_) | | | |
+      \___/|_| |_| |_|_| |_|_|\____|_|_.__/|___/\___/|_| |_|
+
+Module omnigibson.utils.usd_utils 57917a4 load on device 'cuda:0' took 1.86 ms  (cached)
+Module omnigibson.object_states.aabb 4de578a load on device 'cuda:0' took 0.95 ms  (cached)
+Module omnigibson.object_states.adjacency 6039c89 load on device 'cuda:0' took 1.35 ms  (cached)
+Module omnigibson.object_states.under ae6dd9f load on device 'cuda:0' took 1.29 ms  (cached)
+Module omnigibson.object_states.touching 3695b1b load on device 'cuda:0' took 1.19 ms  (cached)
+Module omnigibson.object_states.open_state 9f3c76b load on device 'cuda:0' took 1.09 ms  (cached)
+Module omnigibson.object_states.toggle 5172335 load on device 'cuda:0' took 1.46 ms  (cached)
+Module omnigibson.object_states.inside c41ba8f load on device 'cuda:0' took 1.34 ms  (cached)
+Module omnigibson.object_states.heat_source_or_sink 472acd8 load on device 'cuda:0' took 1.02 ms  (cached)
+Module omnigibson.object_states.temperature 10db2b7 load on device 'cuda:0' took 1.44 ms  (cached)
+Module omnigibson.object_states.on_top 52eaeb1 load on device 'cuda:0' took 1.02 ms  (cached)
+Module omnigibson.object_states.on_fire 9bf5add load on device 'cuda:0' took 0.84 ms  (cached)
+Module omnigibson.object_states.next_to f8c23b3 load on device 'cuda:0' took 0.88 ms  (cached)
+[og-repro] 렌더 설정 /app/settings/fabricDefaultStageFrameHistoryCount=3 /app/settings/fabricStageFrameHistoryCount=None /app/gatherRenderResults=True /app/asyncRendering=False /app/hydraEngine/waitIdle=False /rtx/rendermode='RaytracedLighting' /rtx/post/aa/op=3 /rtx-transient/hydra/geometrystreaming/syncLoad=True /rtx/rendering/perViewTlas=False /rtx/raytracing/cached/enabled=False /rtx/raytracing/lightcache/spatialCache/enabled=False
+
+2026-09-29T14:00:53Z [106,245ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,245ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,253ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,253ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,260ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,260ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,268ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,268ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,765ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,765ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,766ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,766ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,796ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,797ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,797ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-09-29T14:00:53Z [106,797ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+2026-09-29T14:01:11Z [124,321ms] [Warning] [rtx.postprocessing.plugin] DLSS increasing input dimensions: Render resolution of (112, 112) is below minimal input resolution of 300.
+2026-09-29T14:01:12Z [125,363ms] [Warning] [carb] Plugin interface for a client: omni.hydratexture.plugin was already released.
+2026-09-29T14:01:12Z [125,365ms] [Warning] [carb] Plugin interface for a client: omni.hydratexture.plugin was already released.
+2026-09-29T14:01:12Z [126,020ms] [Warning] [omni.syntheticdata.plugin] OgnSdPostRenderVarToHost : rendervar copy from texture directly to host buffer is counter-performant. Please use copy from texture to device buffer first.
+2026-09-29T14:01:12Z [126,121ms] [Warning] [omni.syntheticdata.plugin] SdRenderVarPtr missing valid input renderVar LdrColorSDhost
+2026-09-29T14:01:16Z [129,631ms] [Error] [omni.kit.app._impl] [py stderr]: C:\Users\user one\anaconda3\envs\behavior\Lib\site-packages\gymnasium\spaces\box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+  gym.logger.warn("Casting input x to numpy array.")
+[og-repro] scene=radio res=224 steps=200 (16.9 steps/s) set=[] kit=['--/rtx-transient/hydra/geometrystreaming/syncLoad=true', '--/rtx/rendering/perViewTlas=false', '--/rtx/raytracing/cached/enabled=false', '--/rtx/raytracing/lightcache/spatialCache/enabled=false']
+[og-repro] robot_r1:left_realsense_link:Camera:0: RGB 검정 0/200 처음 []
+[og-repro] robot_r1:right_realsense_link:Camera:0: RGB 검정 67/200 처음 [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33]
+[og-repro] robot_r1:zed_link:Camera:0: RGB 검정 0/200 처음 []
+2026-09-29T14:01:20Z [133,470ms] [Warning] [carb] Client gpu.foundation.plugin has acquired [gpu::unstable::IMemoryBudgetManagerFactory v0.1] 100 times. Consider accessing this interface with carb::getCachedInterface() (Performance warning)
+2026-09-29T14:01:30Z [143,255ms] [Warning] [carb] Plugin interface for a client: omni.hydratexture.plugin was already released.
+2026-09-29T14:01:30Z [143,255ms] [Warning] [carb] Plugin interface for a client: omni.hydratexture.plugin was already released.
+[143.499s] Simulation App Shutting Down

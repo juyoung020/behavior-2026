@@ -1,0 +1,7 @@
+Warp 1.12.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.1
+   Devices:
+     "cpu"      : "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD"
+     "cuda:0"   : "NVIDIA GeForce RTX 5070 Ti" (16 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     \\?\C:\Users\user one\AppData\Local\NVIDIA\warp\Cache\1.12.0

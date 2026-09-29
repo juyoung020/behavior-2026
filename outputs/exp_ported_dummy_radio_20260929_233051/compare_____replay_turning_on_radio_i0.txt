@@ -1,0 +1,39 @@
+A = C:\behavior-2026\outputs\eval_turning_on_radio_20260929_195500_nf_a (env 0)
+B = C:\behavior-2026\outputs\exp_ported_dummy_radio_20260929_233051\ported\replay\turning_on_radio\i0 (env 0)
+항목                                                        판정              최대|차이|    첫 비트차    첫 초과    스텝
+action                                                    비트 동일        0.000e+00        -       -     5
+active                                                    비트 동일        0.000e+00        -       -     5
+agent_delta                                               다름           2.306e-03        1       1     5
+goal_satisfied                                            비트 동일        0.000e+00        -       -     5
+obs::robot::cam_rel_poses                                 다름           1.617e+00        0       0     5
+obs::robot::proprio                                       다름                 inf        0       0     5
+obs::task_id                                              비트 동일        0.000e+00        -       -     5
+obs_hash::robot::robot:left_realsense_link:Camera:0::rgb  다름(픽셀)       4.000e+00        1       1     5
+obs_hash::robot::robot:right_realsense_link:Camera:0::rgb 다름(픽셀)       4.000e+00        0       0     5
+obs_hash::robot::robot:zed_link:Camera:0::rgb             다름(픽셀)       4.000e+00        0       0     5
+obs_mean::robot::robot:left_realsense_link:Camera:0::rgb  다름(픽셀)       2.547e+02        1       1     5
+obs_mean::robot::robot:right_realsense_link:Camera:0::rgb 다름(픽셀)       2.548e+02        0       0     5
+obs_mean::robot::robot:zed_link:Camera:0::rgb             다름(픽셀)       2.548e+02        0       0     5
+robot_pose                                                다름                 inf        0       0     5
+robot_qpos                                                다름                 inf        0       0     5
+robot_qvel                                                다름                 inf        0       0     5
+srv|hash::robot::robot:left_realsense_link:Camera:0::rgb  다름(픽셀)       4.000e+00        0       0     5
+srv|hash::robot::robot:right_realsense_link:Camera:0::rgb 다름(픽셀)       3.000e+00        1       1     5
+srv|hash::robot::robot:zed_link:Camera:0::rgb             다름(픽셀)       3.000e+00        1       1     5
+srv|val::robot::cam_rel_poses                             다름           1.618e+00        0       0     5
+srv|val::robot::proprio                                   다름                 inf        0       0     5
+srv|val::task_id                                          비트 동일        0.000e+00        -       -     5
+terminated                                                비트 동일        0.000e+00        -       -     5
+truncated                                                 다름           1.000e+00        4       4     5
+
+결과 JSON
+  turning_on_radio_301_0.json       success                                  False                 False  비트 동일
+  turning_on_radio_301_0.json       steps                                      501                     5  다름
+  turning_on_radio_301_0.json       q_score                                    0.0                   0.0  비트 동일
+  turning_on_radio_301_0.json       agent_distance.base       0.006470457566507548                   0.0  다름
+  turning_on_radio_301_0.json       agent_distance.left        0.32885492951481865                   0.0  다름
+  turning_on_radio_301_0.json       agent_distance.right        0.4425150075585407                   0.0  다름
+
+요약: 비트 동일 6, 허용오차 안 0, 다름 9, 비교 불가 0, JSON 다름 4
+픽셀(판정에서 뺌): 비트 동일 0, 허용오차 안 0, 다름 9
+실패 -- 13 개 항목

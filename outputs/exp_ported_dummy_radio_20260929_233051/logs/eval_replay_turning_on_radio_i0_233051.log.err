@@ -1,0 +1,19 @@
+[0m[00:00:05.045] [INFO] [omnigibson.eval.eval] Seeded Python, NumPy, and Torch with seed=0[0m
+[0m[00:00:05.047] [INFO] [omnigibson.eval.eval] Resolved public_test instance ids for turning_on_radio: [301][0m
+[0m[00:00:05.057] [INFO] [omnigibson.eval.eval] Loaded robot config from C:\behavior-2026\src\configs\r1pro_openpi.yaml[0m
+[0m[00:00:05.094] [INFO] [omnigibson.eval.evaluator] [0m
+[0m[00:00:05.096] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:00:05.098] [INFO] [omnigibson.eval.evaluator] Loaded 1 policy instance(s) (batched): websocket[0m
+[0m[00:00:05.099] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:00:05.099] [INFO] [omnigibson.eval.evaluator] [0m
+[0m[00:00:05.110] [INFO] [omnigibson.eval.utils.network_utils] Health check passed, attempting websocket connection...[0m
+[0m[00:00:05.114] [INFO] [omnigibson.eval.utils.network_utils] Connected to server![0m
+[0m[00:00:05.227] [INFO] [omnigibson.eval.evaluator] Instance 301 (env 0) finished at step 5: success=False q_score=0.0[0m
+[0m[00:00:05.240] [INFO] [omnigibson.eval.evaluator] [0m
+[0m[00:00:05.241] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:00:05.241] [INFO] [omnigibson.eval.evaluator] Total success trials: 0[0m
+[0m[00:00:05.241] [INFO] [omnigibson.eval.evaluator] Total trials: 1[0m
+[0m[00:00:05.241] [INFO] [omnigibson.eval.evaluator] Success rate: 0.0[0m
+[0m[00:00:05.242] [INFO] [omnigibson.eval.evaluator] ==================================================[0m
+[0m[00:00:05.242] [INFO] [omnigibson.eval.evaluator] [0m
+[0m[00:00:05.242] [INFO] [omnigibson.eval.eval] Eval summary: 0/1 success | mean q_score=0.000 | task=turning_on_radio[0m

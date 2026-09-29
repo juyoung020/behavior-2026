@@ -1,0 +1,39 @@
+{
+  "name": "black_fix_radio",
+  "comment": "검은 화면 (B) 대응 시험: 공식 평가기 + 같은 행동열 재생, Kit 시작 인자 fabricDefaultStageFrameHistoryCount 3(기본) vs 4 를 번갈아 3 번씩. 검은 프레임 수(warn 으로 끝까지 셈)와 물리·판정 비트 동일(compare)을 본다. 잠금은 반복 한 바퀴(칸 3 + 칸 4 두 판, 약 7 분)마다 잡고 푼다.",
+  "mode": "public_test",
+  "tasks": [
+    "turning_on_radio"
+  ],
+  "instances": [
+    0
+  ],
+  "max_steps": 150,
+  "repeats": 3,
+  "black_guard": "warn",
+  "trace": true,
+  "write_video": false,
+  "gpu_busy_mib": 3500,
+  "lock_minutes": 12,
+  "timeout_min": 10,
+  "settings": [
+    {
+      "name": "hist3",
+      "policy": "replay",
+      "quickack": true,
+      "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+      "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml"
+    },
+    {
+      "name": "hist4",
+      "policy": "replay",
+      "quickack": true,
+      "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+      "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml",
+      "kit_args": [
+        "--/app/settings/fabricDefaultStageFrameHistoryCount=4"
+      ]
+    }
+  ],
+  "lock_scope": "repeat"
+}

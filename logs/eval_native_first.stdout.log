@@ -1,0 +1,27 @@
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag r1 (3 runs) start_epoch=1790690919 end_epoch=1790691639 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_cbench start_epoch=1790691396 end_epoch=1790692596 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_cbench start_epoch=1790691396 end_epoch=1790692596 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_cbench_step start_epoch=1790691516 end_epoch=1790692716 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_native_step start_epoch=1790691556 end_epoch=1790692756 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_orig start_epoch=1790691594 end_epoch=1790692794 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_orig start_epoch=1790691594 end_epoch=1790692794 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_orig start_epoch=1790691594 end_epoch=1790692794 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_orig start_epoch=1790691594 end_epoch=1790692794 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasttrain purpose=bench_orig start_epoch=1790691594 end_epoch=1790692794 vram_gb=3  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s
+[gpu_lock] busy: owner=fasteval-black purpose=black-frame (B) diag h4 (3 runs) start_epoch=1790691823 end_epoch=1790692543 vram_gb=6  -- retry in 45 s

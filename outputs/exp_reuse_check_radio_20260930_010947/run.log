@@ -1,0 +1,4 @@
+[exp 01:09:47] 실험 reuse_check_radio -> C:\behavior-2026\outputs\exp_reuse_check_radio_20260930_010947 (backend original, reuse True, 반복 1)
+[exp 01:12:50] 평가기(original): python C:\behavior-2026\tools\eval_instrumented.py --black-guard=warn --trace --instances-seq=0,1 -- --task-name turning_on_radio --mode public_test --policy websocket --host 127.0.0.1 --port 8110 --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --instance-indices 0 1 --num-envs 1 --output-dir C:\behavior-2026\outputs\exp_reuse_check_radio_20260930_010947\original\replay\turning_on_radio --headless --robot-config C:/behavior-2026/src/configs/r1pro_openpi.yaml --max-steps 150
+[exp 01:15:39] replay / turning_on_radio / 인덱스 0 -> valid
+[exp 01:15:39] replay / turning_on_radio / 인덱스 1 -> valid

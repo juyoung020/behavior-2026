@@ -1,0 +1,30 @@
+{
+ "name": "bsweep_defer_rg",
+ "mode": "public_test",
+ "tasks": [
+  "turning_on_radio"
+ ],
+ "instances": [
+  0
+ ],
+ "max_steps": 150,
+ "repeats": 5,
+ "stop_on_black": true,
+ "black_guard": "warn",
+ "trace": false,
+ "write_video": false,
+ "gpu_busy_mib": 3500,
+ "lock_scope": "repeat",
+ "lock_minutes": 6,
+ "timeout_min": 8,
+ "kit_args": [
+  "--/app/hydra/deferRenderGraphBeginFrame=true"
+ ],
+ "settings": [
+  {
+   "name": "defer_rg",
+   "policy": "local",
+   "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml"
+  }
+ ]
+}
