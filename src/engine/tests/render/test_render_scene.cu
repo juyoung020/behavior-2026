@@ -1,6 +1,6 @@
 // 렌더 시험 — 공식 기록 장면 (render_capture.py -> convert_scene.py 결과).
 //   test_render_scene <폴더(scene.rsc, frame_*.rfr)> [--gpu 0|1] [--envs E] [--check K] [--reps R] [--res N(모든 카메라 N×N)]
-//                     [--spp S] [--bounces B] [--exposure X] [--ambient a] [--ao 거리] [--tonemap T] [--white W] [--lights 0|1] [--out 폴더 [--ppm]] [--official 0(공식 비교 건너뜀)] [--fit(노출 맞추기)] [--frames 0,10]
+//                     [--spp S] [--bounces B] [--exposure X] [--ambient a] [--ao 거리] [--tonemap T] [--white W] [--lights 0|1] [--out 폴더 [--ppm]] [--official 0(공식 비교 건너뜀)] [--fit(노출 맞추기)] [--dome-tex r,g,b(하늘 텍스처 평균)] [--frames 0,10]
 // 1) 층 1 vs 공식 RTX: depth 는 픽셀마다 차이 분포(공식 depth_linear), RGB 는 채널 평균·히스토그램·SSIM 을 공식 자신의
 //    잡음(같은 상태에서 다시 그린 장)과 나란히.
 // 2) 층 1 = 층 2: 판 e 가 프레임 (e mod 프레임 수) 를 그린다. 판 0..K-1 을 층 1 로 그려 depth 비트·RGB 바이트 전부 비교.
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "사용: test_render_scene <폴더> ...\n"); return 2; }
   const std::string dir = argv[1];
   int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0;
-  float exposure = -1, ambient = -1, ao = -1, white = -1;
+  float exposure = -1, ambient = -1, ao = -1, white = -1, dome_tex[3] = {1.0f, 1.0f, 1.0f};
   std::string out;
   std::vector<int> only_frames;
   for (int i = 2; i < argc; ++i) {
@@ -134,6 +134,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--ppm")) ppm = 1;
     else if (!strcmp(argv[i], "--official") && i + 1 < argc) official = atoi(nx());
     else if (!strcmp(argv[i], "--fit")) fit = 1;
+    else if (!strcmp(argv[i], "--dome-tex") && i + 1 < argc) sscanf(nx(), "%f,%f,%f", &dome_tex[0], &dome_tex[1], &dome_tex[2]);
     else if (!strcmp(argv[i], "--frames") && i + 1 < argc) {
       char* s = nx();
       for (char* t = strtok(s, ","); t; t = strtok(nullptr, ",")) only_frames.push_back(atoi(t));
@@ -149,6 +150,7 @@ int main(int argc, char** argv) {
   if (ambient >= 0) H.sp.ambient[0] = H.sp.ambient[1] = H.sp.ambient[2] = ambient;
   if (ao >= 0) H.sp.ao_range = ao;
   if (white >= 0) H.sp.white_scale = white;
+  for (int k = 0; k < 3; ++k) H.sp.dome[k] *= dome_tex[k];  // 하늘 텍스처 평균(선형) — sky.jpg 위 반구 평균 0.247,0.350,0.778
   if (!lights) H.lights.clear();
   const double t_load = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   const SceneView SV = H.view();

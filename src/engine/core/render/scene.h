@@ -107,8 +107,8 @@ struct EnvView {
 
 EHD bool inst_visible(const EnvView& E, int32_t i) { return (E.vis[i >> 5] >> (i & 31)) & 1u; }
 
-// 두 단계 순회: TLAS(월드) -> 잎의 인스턴스 -> 지역 광선으로 BLAS
-EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, float tmax) {
+// 두 단계 순회: TLAS(월드) -> 잎의 인스턴스 -> 지역 광선으로 BLAS. any = true 면 처음 맞은 것에서 끝(그림자·가림 광선).
+EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, float tmax, bool any = false) {
   Hit h{tmax, 0.0f, 0.0f, -1, -1};
   if (S.n_inst <= 0) return h;
   int32_t stack[kStack];
@@ -141,7 +141,7 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
         const GeomInfo& g = S.geoms[in.geom];
         const Aff& iv = E.inst_inv[id];
         const Ray rl = make_ray(xpoint(iv, r.o), xvec(iv, r.d));
-        blas_trace(S.blas_nodes + g.node_base, S.tris + g.tri_base, g.tri_base, rl, tmin, h, id);
+        if (blas_trace(S.blas_nodes + g.node_base, S.tris + g.tri_base, g.tri_base, rl, tmin, h, id, any)) return h;
       }
     }
     // 꺼내기: 넣을 때의 들어가는 t 가 이미 찾은 것보다 먼 칸은 건너뛴다

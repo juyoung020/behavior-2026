@@ -131,7 +131,8 @@ EHD void probe(const SceneView& S0, const EnvView& E, const Camera& cm, int e, i
   o[23] = flog2(3.0f);
 }
 // shade_pixel 첫 표본을 그대로 따라가며 중간값을 적는다 (튕김마다 32 칸)
-constexpr int kTraceN = 96;
+constexpr int kTraceN = 120;  // 튕김마다 32 칸 + 텍스처 속 8 칸 × 3
+static const char* kTexName[8] = {"tx.u", "tx.v", "tx.lod", "tx.t0", "tx.lin0", "tx.fp", "tx.wa", "tx.ta"};
 static const char* kTraceName[32] = {"t", "inst", "tri", "u", "v", "alb.r", "alb.g", "alb.b", "ns.x", "ns.y", "ns.z",
                                      "li", "u1", "u2", "ls.r", "ls.g", "ls.b", "lsum.r", "lsum.g", "lsum.b", "acc.r", "acc.g",
                                      "acc.b", "thr.r", "thr.g", "thr.b", "nd.x", "nd.y", "nd.z", "po.x", "po.y", "po.z"};
@@ -149,6 +150,40 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
   for (int b = 0; b <= S.sp.bounces && b < 3; ++b) {  // shade_pixel 과 같은 순서 (shadow_lights = 1 가정)
     float* q = o + 32 * b;
     const Surf s = surface(S, E, r, h, cone);
+    {  // 텍스처 속 (surface() 와 같은 식)
+      float* x = o + 96 + 8 * b;
+      const InstInfo& in = S.insts[h.inst];
+      const GeomInfo& g = S.geoms[in.geom];
+      const TriX& T = S.tris[h.tri];
+      const int32_t mi = S.slot_mat[in.slot_base + S.tri_slot[h.tri]];
+      if (mi >= 0 && S.mats[mi].tex_albedo >= 0 && (g.flags & 2)) {
+        const Material& M = S.mats[mi];
+        const Aff& W = E.inst_world[h.inst];
+        const Aff& IV = E.inst_inv[h.inst];
+        const V3 ngl = cross(V3{T.e1[0], T.e1[1], T.e1[2]}, V3{T.e2[0], T.e2[1], T.e2[2]});
+        V3 ng = normalize3(xnormal_inv(IV, ngl));
+        if (dot(ng, r.d) > 0.0f) ng = -ng;
+        const float w0 = 1.0f - h.u - h.v;
+        const float* uv = S.tri_uv + 6 * int64_t(h.tri);
+        float u = uv[0] * w0 + uv[2] * h.u + uv[4] * h.v;
+        float v = uv[1] * w0 + uv[3] * h.u + uv[5] * h.v;
+        u = u * M.uv_scale[0] + M.uv_offset[0];
+        v = v * M.uv_scale[1] + M.uv_offset[1];
+        const TexInfo& T0 = S.texs[M.tex_albedo];
+        const V3 e1w = xvec(W, V3{T.e1[0], T.e1[1], T.e1[2]}), e2w = xvec(W, V3{T.e2[0], T.e2[1], T.e2[2]});
+        const float wa = mag(cross(e1w, e2w));
+        const float du1 = (uv[2] - uv[0]) * M.uv_scale[0] * float(T0.w), dv1 = (uv[3] - uv[1]) * M.uv_scale[1] * float(T0.h);
+        const float du2 = (uv[4] - uv[0]) * M.uv_scale[0] * float(T0.w), dv2 = (uv[5] - uv[1]) * M.uv_scale[1] * float(T0.h);
+        const float ta = fab(du1 * dv2 - dv1 * du2);
+        const float dl = mag(r.d);
+        const float cs = fmx(fab(dot(ng, r.d)) / dl, 0.05f);
+        const float fp = cone / cs;
+        const float lod = wa > 0.0f ? 0.5f * flog2(fp * fp * ta / wa) : 0.0f;
+        float t[4];
+        tex_sample(S, M.tex_albedo, u, v, lod, t);
+        x[0] = u; x[1] = v; x[2] = lod; x[3] = t[0]; x[4] = srgb_to_lin(t[0]); x[5] = fp; x[6] = wa; x[7] = ta;
+      }
+    }
     q[0] = h.t; q[1] = float(h.inst); q[2] = float(h.tri); q[3] = h.u; q[4] = h.v;
     q[5] = s.albedo.x; q[6] = s.albedo.y; q[7] = s.albedo.z; q[8] = s.ns.x; q[9] = s.ns.y; q[10] = s.ns.z;
     acc = acc + mulc(thr, s.emissive);
@@ -456,9 +491,10 @@ int main(int argc, char** argv) {
       uint32_t a, b;
       memcpy(&a, &ht[k], 4);
       memcpy(&b, &gt2[k], 4);
-      if (a != b || k % 32 < 3)
-        printf("  trace b%d %-7s 층1 %.9g (%08x)  층2 %.9g (%08x) %s\n", k / 32, kTraceName[k % 32], ht[k], a, gt2[k], b,
-               a == b ? "" : "<- 다름");
+      const char* nm = k < 96 ? kTraceName[k % 32] : kTexName[(k - 96) % 8];
+      const int bb = k < 96 ? k / 32 : (k - 96) / 8;
+      if (a != b || (k < 96 && k % 32 < 3))
+        printf("  trace b%d %-7s 층1 %.9g (%08x)  층2 %.9g (%08x) %s\n", bb, nm, ht[k], a, gt2[k], b, a == b ? "" : "<- 다름");
     }
   }
   gpu::free_batch(B);

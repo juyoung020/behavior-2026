@@ -137,7 +137,9 @@ struct Hit {
 constexpr int kStack = 64;
 
 // BLAS 순회 (지역 좌표 광선). nodes/tris 는 이 기하의 시작을 가리킨다. 전역 삼각형 번호 = tri_base + 지역 번호.
-EHD void blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, const Ray& r, float tmin, Hit& h, int32_t inst) {
+// any = true: 그림자·가림 광선 — 처음 맞으면 바로 끝(결과는 "맞은 것이 있나" 하나라 순서와 무관). 반환 = 끝냄 여부.
+EHD bool blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, const Ray& r, float tmin, Hit& h, int32_t inst,
+                    bool any = false) {
   int32_t stack[kStack];
   float stack_t[kStack];  // 넣을 때의 들어가는 t: 꺼낼 때 이미 더 가까운 것을 찾았으면 건너뜀
   int sp = 0;
@@ -171,6 +173,7 @@ EHD void blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, cons
           h.v = v;
           h.inst = inst;
           h.tri = tri_base + int32_t(f + k);
+          if (any) return true;
         }
       }
     }
@@ -186,6 +189,7 @@ EHD void blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, cons
     }
     if (!got) break;
   }
+  return false;
 }
 
 }  // namespace rnd

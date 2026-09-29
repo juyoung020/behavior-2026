@@ -223,7 +223,7 @@ EHD V3 cosine_dir(const V3& n, float r1, float r2) {
 
 EHD bool occluded(const SceneView& S, const EnvView& E, const V3& p, const V3& d, float tmax) {
   const Ray r = make_ray(p, d);
-  const Hit h = trace(S, E, r, 1e-4f, tmax);
+  const Hit h = trace(S, E, r, 1e-4f, tmax, true);
   return h.inst >= 0;
 }
 
