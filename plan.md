@@ -59,11 +59,13 @@
   - (가) 시연 주석 단계 구간 + 이동량으로 문장을 자동으로 붙여 재학습 — 외부 GPU 필요(LoRA 도 22.5 GB 초과).
   - (나) 이동만 계산 제어기(위치 추정으로 목표까지 속도 계산), 조작은 π0.5.
 
-### 4.0 검은 화면 — 최우선
-- 이 PC 공식 평가기가 정책 입력에 검은 화면을 섞어 보낸다(재생만 해도 카메라 2대 약 17%, π0.5 와 GPU 공유 시 전부). 지금까지 radio 점수는 무효. 원인: **Isaac Sim 5.1 버그로 보인다** — 공식 이슈 isaac-sim/IsaacSim#367 "Black tiled camera image with RTX renderer in real-time mode"(여러 카메라 + 실시간 RTX 에서 검정), NVIDIA 답 "can confirm the issue in 5.1, it is however fixed in 6.0". 보고 환경이 RTX 3090 이라 **채점 환경에서도 생길 수 있다.** DLSS-G 는 원인 아님(원래 꺼져 있음).
-- 다른 팀은 2026 리더보드에서 π0.5 로 1,000판 Q 0.097 을 냈다 → **우리 환경 문제일 가능성이 크다**(Blackwell, 드라이버 591.86 vs 시험 드라이버 580.88, 16 GB VRAM, Windows).
-- 대응: **근원 해결만.** 검은 프레임을 다른 프레임으로 채우는 우회는 하지 않는다(사용자 지시 — 성능 디버프와 같다). 검출은 남겨 검은 프레임이 섞인 실행은 무효 처리.
-- Windows 의 Docker 로는 Linux 시뮬레이터를 못 돌린다("The Isaac Sim container is only supported on Linux", WSL2 에 NVIDIA Vulkan 없음). Linux 확인은 듀얼 부팅 또는 클라우드(사용자 결정 대기).
+### 4.0 검은 화면 — 원인 확정
+- **원인: 이 Windows PC 에서 다른 프로세스가 GPU 메모리를 약 5~6 GiB 이상 잡고 있으면 Isaac Sim 5.1 RTX 의 컬러 출력만 통째로 빈다**(깊이는 정상). OmniGibson 없이 반복 재현(`tools/isaac_black_repro.py` + `tools/gpu_hog.py`).
+  다른 프로세스 0·4 GiB → 0, 6 GiB → 1600/1800, 8 GiB → 1600~1735/1800(3회), 11·13 GiB(시스템 RAM 으로 넘침) → 0.
+- 설정(DLSS·DLSS-G·경로 추적·렌더 대기·렌더 2회)은 원인 아님. 평가기에서 π0.5(8 GB)·LLM(7 GB)·환경 2개와 같이 돌 때 검었던 것과 맞다.
+- 남은 것: 시뮬레이터 혼자일 때 약 17% — 같은 프로세스 안 CUDA 메모리(torch·warp)도 같은 효과인지 시험 중.
+- 대응: **근원 해결만**(대체 우회 금지, 검출만 유지). 같은 GPU 에 π0.5 서버를 올리지 않는다, 평가 중 다른 GPU 프로그램 최소화. Linux 확인은 장비 생기면 `tools/linux_black_frame_repro.sh`.
+- Windows 의 Docker 로는 시뮬레이터 불가: 컨테이너에 NVIDIA 그래픽(Vulkan/OpenGL) 드라이버가 안 들어온다(실측), 공식 문서 "The Isaac Sim container is only supported on Linux".
 
 ### 4.2 위치 오차
 - 사람 시연 이동거리 중앙 26 m, 최대 86 m. 적분 위치 vs 정답 위치를 한 판 재서 크면 depth 기반 보정.
