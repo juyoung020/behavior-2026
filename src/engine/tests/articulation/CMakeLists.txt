@@ -31,3 +31,9 @@ foreach(r 128 96 64)
   target_compile_definitions(test_articulation_gpu_r1_m${r} PRIVATE ENG_ART_MAX_LINKS=48 ENG_ART_MAX_DOFS=40 ENG_ART_MAX_PATH=640)
   target_compile_options(test_articulation_gpu_r1_m${r} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-maxrregcount=${r}>)
 endforeach()
+
+# PhysX 관절체 -> 우리 관절체 옮겨 담기(art_from_px.h, 통합 S5 비계용) 시험: 아무 simulate 경계에서 옮긴 뒤 PhysX 와 비트 동일?
+engine_test(test_articulation_snapshot test_articulation_snapshot.cpp PHYSX)
+target_include_directories(test_articulation_snapshot PRIVATE ${ART_PX_INTERNAL_INCS})
+target_compile_definitions(test_articulation_snapshot PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_compile_options(test_articulation_snapshot PRIVATE -Wno-everything)
