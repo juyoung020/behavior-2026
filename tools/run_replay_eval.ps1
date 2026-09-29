@@ -16,7 +16,7 @@ $actionsFull = (Resolve-Path $Actions).Path
 function To-Wsl([string]$p) { '/mnt/' + $p.Substring(0, 1).ToLower() + ($p.Substring(2) -replace '\\', '/') }
 $srvLog = "C:\behavior-2026\logs\replay_server_${stamp}_$Tag"
 if ($WindowsServer) {
-    . "$(conda info --base)\shell\condabin\conda-hook.ps1"
+    . "$env:USERPROFILE\anaconda3\shell\condabin\conda-hook.ps1"  # behavior 환경이 있는 사용자 anaconda3 (PATH 에 다른 conda 가 먼저 잡히는 일이 있어 conda info --base 를 안 씀)
     conda activate behavior
     $a = @('C:\behavior-2026\tools\replay_policy_server.py', '--actions', $actionsFull, '--port', '8010',
            '--log', "$out\server_log.npz", '--once')

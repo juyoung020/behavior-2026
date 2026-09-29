@@ -44,7 +44,7 @@ if ($VkNvidiaOnly) {
     $env:VK_DRIVER_FILES = "$icd"; $env:VK_ICD_FILENAMES = "$icd"
     "Vulkan ICD (이 실행만): $icd"
 }
-. "$(conda info --base)\shell\condabin\conda-hook.ps1"
+. "$env:USERPROFILE\anaconda3\shell\condabin\conda-hook.ps1"  # behavior 환경이 있는 사용자 anaconda3 (PATH 에 다른 conda 가 먼저 잡히는 일이 있어 conda info --base 를 안 씀)
 conda activate behavior
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
 $name = "eval_${Task}_$stamp" + $(if ($Tag) { "_$Tag" } else { '' })

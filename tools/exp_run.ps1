@@ -49,7 +49,7 @@ function Add-Status($rec) { [IO.File]::AppendAllText($script:StatusPath, (($rec 
 
 function Use-Conda {
     if ($script:Py) { return }
-    . "$(conda info --base)\shell\condabin\conda-hook.ps1"
+    . "$env:USERPROFILE\anaconda3\shell\condabin\conda-hook.ps1"  # behavior 환경이 있는 사용자 anaconda3 (PATH 에 다른 conda 가 먼저 잡히는 일이 있어 conda info --base 를 안 씀)
     conda activate behavior
     $script:Py = (Get-Command python).Source
     $env:PYTHONUTF8 = '1'; $env:PYTHONIOENCODING = 'utf-8'; $env:OMNI_KIT_ACCEPT_EULA = 'YES'

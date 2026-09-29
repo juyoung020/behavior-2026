@@ -171,7 +171,7 @@ if ($missing.Count) { Warn "누락 $($missing.Count) 판(0 점으로 셈, 규칙
 
 # ---- 영상 검은 칸 (선택) ----
 if ($ScanVideos) {
-    . "$(conda info --base)\shell\condabin\conda-hook.ps1"; conda activate behavior
+    . "$env:USERPROFILE\anaconda3\shell\condabin\conda-hook.ps1"; conda activate behavior  # behavior 환경이 있는 사용자 anaconda3 (PATH 에 다른 conda 가 먼저 잡히는 일이 있어 conda info --base 를 안 씀)
     $runs = @($chosen.Values | ForEach-Object { $_.run } | Sort-Object -Unique)
     $env:PYTHONIOENCODING = 'utf-8'
     $scanTxt = & python "$Root\tools\black_frame_check.py" @runs --max-ratio 0 2>&1 | ForEach-Object { "$_" }  # ($Out 과 이름이 겹치지 않게 -- PowerShell 변수는 대소문자 구분 없음)
