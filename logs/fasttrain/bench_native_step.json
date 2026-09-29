@@ -1,0 +1,16 @@
+[
+ {
+  "decode_threads": 6,
+  "batch": 32,
+  "slots": 6,
+  "step_ms": 100.0,
+  "sec_per_batch": 0.16003253093334327,
+  "samples_per_s": 199.95934459930922,
+  "batches_per_s": 6.248729518728413,
+  "wait_ms_per_batch": 59.212024483258574,
+  "startup_s": 7.948265023998829,
+  "gpu_mem_mb": 731,
+  "frames_per_request": 4.486731391585761,
+  "load": 11.4150390625
+ }
+]
