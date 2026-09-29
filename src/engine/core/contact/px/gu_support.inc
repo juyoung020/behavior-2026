@@ -62,6 +62,7 @@ template <class T> struct PxArray {
   EHD const T& operator[](PxU32) const { return *static_cast<const T*>(nullptr); }
 };
 
+#define EPX_ALWAYS_ASSERT_MESSAGE(...) ((void)0)
 #define E_ALLOCA_N 256  // PxAlloca 대신 쓰는 고정 배열 크기 (볼록 꼭짓점 ≤255, 접촉 버퍼 256)
 
 // include/collision/PxCollisionDefs.h:67
@@ -86,6 +87,13 @@ class PxRenderOutput {
 
 namespace Gu {
 struct SDF;  // GuSDF.h (볼록 메시에는 없음, 포인터만)
+}
+
+// GuConvexSupportTable.cpp:33 boxVertexTable[8] = {BFFFF, BTFFF, BFTFF, BTTFF, BFFTF, BTFTF, BFTTF, BTTTF}
+// (번호의 비트 0·1·2 = x·y·z 칸 참) — 전역 표 대신 같은 값을 만든다 (GPU 에서 읽을 수 있게)
+EHD aos::BoolV boxVertexTable_get(PxU32 i) {
+  const float t = em_u2f(0xFFFFFFFFu);
+  return em128{{(i & 1) ? t : 0.0f, (i & 2) ? t : 0.0f, (i & 4) ? t : 0.0f, 0.0f}};
 }
 
 }  // namespace px

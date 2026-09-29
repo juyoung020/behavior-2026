@@ -1488,7 +1488,7 @@ namespace Gu
 #define TOLERANCE_MIN_MARGIN_RATIO	0.05f
 
 	//This margin is used in Persistent contact manifold
-	EHDI EPX_SUPPORT_FORCE_INLINE aos::FloatV CalculatePCMConvexMargin(const Gu::ConvexHullData* hullData, const aos::Vec3VArg scale, 
+	EPX_SUPPORT_FORCE_INLINE aos::FloatV CalculatePCMConvexMargin(const Gu::ConvexHullData* hullData, const aos::Vec3VArg scale, 
 		const PxReal toleranceLength, const PxReal toleranceRatio = TOLERANCE_MIN_MARGIN_RATIO)
 	{
 		
@@ -1500,7 +1500,7 @@ namespace Gu
 		return FMin(FMul(min, FLoad(0.25f)), toleranceMargin);
 	}
 
-	EHDI EPX_SUPPORT_FORCE_INLINE aos::FloatV CalculateMTDConvexMargin(const Gu::ConvexHullData* hullData, const aos::Vec3VArg scale)
+	EPX_SUPPORT_FORCE_INLINE aos::FloatV CalculateMTDConvexMargin(const Gu::ConvexHullData* hullData, const aos::Vec3VArg scale)
 	{
 		using namespace aos;
 		const Vec3V extents = V3Mul(V3LoadU_SafeReadW(hullData->mInternal.mInternalExtents), scale);
@@ -1510,7 +1510,7 @@ namespace Gu
 	}
 
 	//This minMargin is used in PCM contact gen
-	EHDI EPX_SUPPORT_FORCE_INLINE void CalculateConvexMargin(const InternalObjectsData& internalObject, PxReal& margin, PxReal& minMargin, PxReal& sweepMargin,
+	EPX_SUPPORT_FORCE_INLINE void CalculateConvexMargin(const InternalObjectsData& internalObject, PxReal& margin, PxReal& minMargin, PxReal& sweepMargin,
 		const aos::Vec3VArg scale)
 	{
 		using namespace aos;
@@ -1530,7 +1530,7 @@ namespace Gu
 	}
 
 
-	EHDI EPX_SUPPORT_FORCE_INLINE aos::Mat33V ConstructSkewMatrix(const aos::Vec3VArg scale, const aos::QuatVArg rotation) 
+	EPX_SUPPORT_FORCE_INLINE aos::Mat33V ConstructSkewMatrix(const aos::Vec3VArg scale, const aos::QuatVArg rotation) 
 	{
 		using namespace aos;
 		Mat33V rot;
@@ -1542,7 +1542,7 @@ namespace Gu
 		return M33MulM33(trans, rot);
 	}
 
-	EHDI EPX_SUPPORT_FORCE_INLINE void ConstructSkewMatrix(const aos::Vec3VArg scale, const aos::QuatVArg rotation, aos::Mat33V& vertex2Shape, aos::Mat33V& shape2Vertex, aos::Vec3V& center, const bool idtScale) 
+	EPX_SUPPORT_FORCE_INLINE void ConstructSkewMatrix(const aos::Vec3VArg scale, const aos::QuatVArg rotation, aos::Mat33V& vertex2Shape, aos::Mat33V& shape2Vertex, aos::Vec3V& center, const bool idtScale) 
 	{
 		using namespace aos;
 
@@ -1598,7 +1598,7 @@ namespace Gu
 		}
 	}
 
-	EHDI EPX_SUPPORT_FORCE_INLINE aos::Mat33V ConstructVertex2ShapeMatrix(const aos::Vec3VArg scale, const aos::QuatVArg rotation) 
+	EPX_SUPPORT_FORCE_INLINE aos::Mat33V ConstructVertex2ShapeMatrix(const aos::Vec3VArg scale, const aos::QuatVArg rotation) 
 	{
 		using namespace aos;
 		Mat33V rot;
@@ -1631,11 +1631,11 @@ namespace Gu
 		/**
 		\brief Constructor
 		*/
-		EHDI EPX_SUPPORT_INLINE ConvexHullV() : ConvexV(ConvexType::eCONVEXHULL)
+		EPX_SUPPORT_INLINE ConvexHullV() : ConvexV(ConvexType::eCONVEXHULL)
 		{
 		}
 
-		EHDI EPX_SUPPORT_INLINE ConvexHullV(const Gu::ConvexHullData* _hullData, const aos::Vec3VArg _center, const aos::Vec3VArg scale, const aos::QuatVArg scaleRot,
+		EPX_SUPPORT_INLINE ConvexHullV(const Gu::ConvexHullData* _hullData, const aos::Vec3VArg _center, const aos::Vec3VArg scale, const aos::QuatVArg scaleRot,
 			const bool idtScale) :
 			ConvexV(ConvexType::eCONVEXHULL, _center)
 		{
@@ -1650,7 +1650,7 @@ namespace Gu
 			data = _hullData->mBigConvexRawData;
 		}
 
-		EHDI EPX_SUPPORT_INLINE ConvexHullV(const Gu::ConvexHullData* _hullData, const aos::Vec3VArg _center) :
+		EPX_SUPPORT_INLINE ConvexHullV(const Gu::ConvexHullData* _hullData, const aos::Vec3VArg _center) :
 			ConvexV(ConvexType::eCONVEXHULL, _center)
 		{
 			using namespace aos;
@@ -1662,7 +1662,7 @@ namespace Gu
 		}
 
 		//this is used by CCD system
-		EHDI EPX_SUPPORT_INLINE ConvexHullV(const PxGeometry& geom) : ConvexV(ConvexType::eCONVEXHULL, aos::V3Zero())
+		EPX_SUPPORT_INLINE ConvexHullV(const PxGeometry& geom) : ConvexV(ConvexType::eCONVEXHULL, aos::V3Zero())
 		{
 			using namespace aos;
 			const PxConvexMeshGeometry& convexGeom = static_cast<const PxConvexMeshGeometry&>(geom);
@@ -1683,7 +1683,7 @@ namespace Gu
 		}
 
 		//this is used by convex vs tetrahedron collision
-		EHDI EPX_SUPPORT_INLINE ConvexHullV(const Gu::PolygonalData& polyData, const Cm::FastVertex2ShapeScaling& convexScale) :
+		EPX_SUPPORT_INLINE ConvexHullV(const Gu::PolygonalData& polyData, const Cm::FastVertex2ShapeScaling& convexScale) :
 			ConvexV(ConvexType::eCONVEXHULL, aos::V3LoadU(polyData.mCenter))
 		{
 			using namespace aos;
@@ -1709,7 +1709,7 @@ namespace Gu
 
 		}
 
-		EHDI EPX_SUPPORT_INLINE void initialize(const Gu::ConvexHullData* _hullData, const aos::Vec3VArg _center, const aos::Vec3VArg scale,
+		EPX_SUPPORT_INLINE void initialize(const Gu::ConvexHullData* _hullData, const aos::Vec3VArg _center, const aos::Vec3VArg scale,
 			const aos::QuatVArg scaleRot, const bool idtScale)
 		{
 			using namespace aos;
@@ -1810,7 +1810,7 @@ namespace Gu
 			return index;
 		}
 
-		EHDI EPX_SUPPORT_INLINE PxU32 bruteForceSearch(const aos::Vec3VArg _dir)const 
+		EPX_SUPPORT_INLINE PxU32 bruteForceSearch(const aos::Vec3VArg _dir)const 
 		{
 			using namespace aos;
 			//brute force
@@ -1843,7 +1843,7 @@ namespace Gu
 		}
 
 		//dir is in the vertex space
-		EHDI EPX_SUPPORT_INLINE void bruteForceSearchMinMax(const aos::Vec3VArg _dir, aos::FloatV& min, aos::FloatV& max)const 
+		EPX_SUPPORT_INLINE void bruteForceSearchMinMax(const aos::Vec3VArg _dir, aos::FloatV& min, aos::FloatV& max)const 
 		{
 			using namespace aos;
 
@@ -1866,7 +1866,7 @@ namespace Gu
 
 		//This function is used in the full contact manifold generation code, points are in vertex space.
 		//This function support scaling, _dir is in the shape space	
-		EHDI EPX_SUPPORT_INLINE void supportVertexMinMax(const aos::Vec3VArg _dir, aos::FloatV& min, aos::FloatV& max)const
+		EPX_SUPPORT_INLINE void supportVertexMinMax(const aos::Vec3VArg _dir, aos::FloatV& min, aos::FloatV& max)const
 		{
 			using namespace aos;
 
@@ -1890,7 +1890,7 @@ namespace Gu
 		}  
  
 		//This function is used in the full contact manifold generation code
-		EHDI EPX_SUPPORT_INLINE void populateVerts(const PxU8* inds, PxU32 numInds, const PxVec3* originalVerts, aos::Vec3V* _verts)const
+		EPX_SUPPORT_INLINE void populateVerts(const PxU8* inds, PxU32 numInds, const PxVec3* originalVerts, aos::Vec3V* _verts)const
 		{
 			using namespace aos;
 
@@ -1900,7 +1900,7 @@ namespace Gu
 
 		//This function is used in epa
 		//dir is in the shape space
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir)const
+		EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir)const
 		{
 			using namespace aos;
 			//scale dir and put it in the vertex space
@@ -1910,7 +1910,7 @@ namespace Gu
 		}
 
 		//this is used in the sat test for the full contact gen
-		EHDI EPX_SUPPORT_INLINE void supportLocal(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
+		EPX_SUPPORT_INLINE void supportLocal(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
 		{
 			using namespace aos;
 			//dir is in the shape space
@@ -1918,7 +1918,7 @@ namespace Gu
 		}
 
 		//This function is used in epa
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportRelative(const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob, const aos::PxMatTransformV& aTobT) const
+		EPX_SUPPORT_INLINE aos::Vec3V supportRelative(const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob, const aos::PxMatTransformV& aTobT) const
 		{
 			using namespace aos;
 		
@@ -1931,7 +1931,7 @@ namespace Gu
 		}
 
 		//dir in the shape space, this function is used in gjk	
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir, PxI32& index)const
+		EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir, PxI32& index)const
 		{
 			using namespace aos;
 			//scale dir and put it in the vertex space, for non-uniform scale, we don't want the scale in the dir, therefore, we are using
@@ -1945,7 +1945,7 @@ namespace Gu
 		}
 
 		//this function is used in gjk	
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportRelative(	const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob,
+		EPX_SUPPORT_INLINE aos::Vec3V supportRelative(	const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob,
 															const aos::PxMatTransformV& aTobT, PxI32& index)const
 		{
 			using namespace aos;
@@ -1982,7 +1982,7 @@ namespace Gu
 		/**
 		\brief Constructor
 		*/
-		EHDI EPX_SUPPORT_INLINE ConvexHullNoScaleV(): ConvexHullV()
+		EPX_SUPPORT_INLINE ConvexHullNoScaleV(): ConvexHullV()
 		{
 		}
 
@@ -1993,7 +1993,7 @@ namespace Gu
 		}
 
 		//This funcation is just to load the PxVec3 to Vec3V. However, for GuVecConvexHul.h, this is used to transform all the verts from vertex space to shape space
-		EHDI EPX_SUPPORT_INLINE void populateVerts(const PxU8* inds, PxU32 numInds, const PxVec3* originalVerts, aos::Vec3V* verts_)const
+		EPX_SUPPORT_INLINE void populateVerts(const PxU8* inds, PxU32 numInds, const PxVec3* originalVerts, aos::Vec3V* verts_)const
 		{
 			using namespace aos;
 
@@ -2003,7 +2003,7 @@ namespace Gu
 		
 		//This function is used in epa
 		//dir is in the shape space
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir)const
+		EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir)const
 		{
 			using namespace aos;
 			const PxU32 maxIndex = supportVertexIndex(dir);
@@ -2011,13 +2011,13 @@ namespace Gu
 		}
 
 		//this is used in the sat test for the full contact gen
-		EHDI EPX_SUPPORT_INLINE void supportLocal(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
+		EPX_SUPPORT_INLINE void supportLocal(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
 		{
 			supportVertexMinMax(dir, min, max);
 		}
 
 		//This function is used in epa
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportRelative(const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob, const aos::PxMatTransformV& aTobT) const
+		EPX_SUPPORT_INLINE aos::Vec3V supportRelative(const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob, const aos::PxMatTransformV& aTobT) const
 		{
 			using namespace aos;
 		
@@ -2029,7 +2029,7 @@ namespace Gu
 		}
 
 		//dir in the shape space, this function is used in gjk
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir, PxI32& index)const
+		EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir, PxI32& index)const
 		{
 			using namespace aos;
 			//scale dir and put it in the vertex space, for non-uniform scale, we don't want the scale in the dir, therefore, we are using
@@ -2041,7 +2041,7 @@ namespace Gu
 		}
 
 		//this function is used in gjk
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportRelative(	const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob,
+		EPX_SUPPORT_INLINE aos::Vec3V supportRelative(	const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob,
 														const aos::PxMatTransformV& aTobT, PxI32& index)const
 		{
 			using namespace aos;
@@ -2053,7 +2053,7 @@ namespace Gu
 			return aTob.transform(p);
 		}
 
-		EHDI EPX_SUPPORT_INLINE void bruteForceSearchMinMax(const aos::Vec3VArg _dir, aos::FloatV& min, aos::FloatV& max)const 
+		EPX_SUPPORT_INLINE void bruteForceSearchMinMax(const aos::Vec3VArg _dir, aos::FloatV& min, aos::FloatV& max)const 
 		{
 			using namespace aos;
 			//brute force
@@ -2076,7 +2076,7 @@ namespace Gu
 		}
 
 		//This function support no scaling, dir is in the shape space(the same as vertex space)
-		EHDI EPX_SUPPORT_INLINE void supportVertexMinMax(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
+		EPX_SUPPORT_INLINE void supportVertexMinMax(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
 		{
 			using namespace aos;
 
@@ -2104,7 +2104,7 @@ namespace Gu
 // ===== 원본: physx/source/geomutils/src/gjk/GuVecBox.h
 namespace px
 {
- extern const aos::BoolV boxVertexTable[8];
+ 
 
 namespace Gu
 {
@@ -2222,7 +2222,7 @@ namespace Gu
 		EHD aos::Vec3V supportPoint(const PxI32 index)const
 		{
 			using namespace aos;
-			const BoolV con = boxVertexTable[index];
+			const BoolV con = boxVertexTable_get(index);
 			return V3Sel(con, extents, V3Neg(extents));
 		}  
 
@@ -2239,7 +2239,7 @@ namespace Gu
 		}
 
 		//this is used in the sat test for the full contact gen
-		EHDI EPX_SUPPORT_INLINE void supportLocal(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
+		EPX_SUPPORT_INLINE void supportLocal(const aos::Vec3VArg dir, aos::FloatV& min, aos::FloatV& max)const
 		{
 			using namespace aos;
 			const Vec3V point = V3Sel(V3IsGrtr(dir, V3Zero()), extents, V3Neg(extents));
@@ -2247,7 +2247,7 @@ namespace Gu
 			min = FNeg(max);
 		}
 
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportRelative(const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob, const aos::PxMatTransformV& aTobT) const  
+		EPX_SUPPORT_INLINE aos::Vec3V supportRelative(const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob, const aos::PxMatTransformV& aTobT) const  
 		{
 			//a is the current object, b is the other object, dir is in the local space of b
 			using namespace aos;
@@ -2258,7 +2258,7 @@ namespace Gu
 			return aTob.transform(p);//relTra.transform(p);
 		}
 
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir, PxI32& index)const  
+		EPX_SUPPORT_INLINE aos::Vec3V supportLocal(const aos::Vec3VArg dir, PxI32& index)const  
 		{
 			using namespace aos;
 			const BoolV comp = V3IsGrtr(dir, V3Zero());
@@ -2266,7 +2266,7 @@ namespace Gu
 			return  V3Sel(comp, extents, V3Neg(extents));
 		}
 
-		EHDI EPX_SUPPORT_INLINE aos::Vec3V supportRelative(	const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob,
+		EPX_SUPPORT_INLINE aos::Vec3V supportRelative(	const aos::Vec3VArg dir, const aos::PxMatTransformV& aTob,
 															const aos::PxMatTransformV& aTobT, PxI32& index)const  
 		{
 			//a is the current object, b is the other object, dir is in the local space of b
@@ -2943,7 +2943,7 @@ namespace Gu
 		};
 	}
 
-	EHDI EPX_NOALIAS EPX_GJK_FORCE_INLINE aos::FloatV closestPtPointTriangleBaryCentric(const aos::Vec3VArg a, const aos::Vec3VArg b, const aos::Vec3VArg c, 
+	EPX_NOALIAS EPX_GJK_FORCE_INLINE aos::FloatV closestPtPointTriangleBaryCentric(const aos::Vec3VArg a, const aos::Vec3VArg b, const aos::Vec3VArg c, 
 		PxU32*  indices, PxU32& size, aos::Vec3V& closestPt)
 	{
 		using namespace aos;
@@ -3085,7 +3085,7 @@ namespace Gu
 		return V3Dot(c, c);
 	}
 
-	EHDI EPX_NOALIAS EPX_GJK_FORCE_INLINE aos::Vec3V closestPtPointTriangle(aos::Vec3V*  Q, aos::Vec3V* A, aos::Vec3V* B, PxU32& size)
+	EPX_NOALIAS EPX_GJK_FORCE_INLINE aos::Vec3V closestPtPointTriangle(aos::Vec3V*  Q, aos::Vec3V* A, aos::Vec3V* B, PxU32& size)
 	{
 		using namespace aos;
 
@@ -3127,7 +3127,7 @@ namespace Gu
 		return closestPt;
 	}
 
-	EHDI EPX_NOALIAS EPX_GJK_FORCE_INLINE aos::Vec3V closestPtPointTriangle(aos::Vec3V*  Q, aos::Vec3V* A, aos::Vec3V* B, PxI32*  aInd, PxI32*  bInd, 
+	EPX_NOALIAS EPX_GJK_FORCE_INLINE aos::Vec3V closestPtPointTriangle(aos::Vec3V*  Q, aos::Vec3V* A, aos::Vec3V* B, PxI32*  aInd, PxI32*  bInd, 
 		PxU32& size)
 	{
 		using namespace aos;
@@ -4089,9 +4089,9 @@ namespace px
 
 namespace Gu
 {
-	const PxU32 lookUp[3] = {1, 2, 0};
+	E_GTABLE(PxU32, lookUp, 3, {1, 2, 0})
 	
-	EHD PxU32 incMod3(PxU32 i) { return lookUp[i]; } 
+	EHD PxU32 incMod3(PxU32 i) { return lookUp_p()[i]; } 
 	
 	class EdgeBuffer;
 	class Edge;
@@ -9495,5 +9495,4168 @@ EHDI bool Gu::pcmContactConvexConvex(GU_CONTACT_METHOD_ARGS)
 		return true;
 	}
 
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/gjk/GuVecSphere.h
+/**
+\brief Represents a sphere defined by its center point and radius.
+*/
+namespace px
+{
+namespace Gu
+{
+	class SphereV : public ConvexV
+	{
+	public:
+		/**
+		\brief Constructor
+		*/
+		EHDI SphereV(): ConvexV(ConvexType::eSPHERE)
+		{
+			radius = aos::FZero();
+			bMarginIsRadius = true;
+		}
+
+		EHDI SphereV(const aos::Vec3VArg _center, const aos::FloatV _radius) : ConvexV(ConvexType::eSPHERE, _center)
+		{
+			using namespace aos;
+			radius = _radius;
+			FStore(radius, &margin);
+			FStore(radius, &minMargin);
+			FStore(radius, &sweepMargin);
+			bMarginIsRadius = true;
+		}
+
+
+		/**
+		\brief Copy constructor
+		*/
+		EHDI SphereV(const SphereV& sphere) : ConvexV(ConvexType::eSPHERE), radius(sphere.radius)
+		{
+
+			margin = sphere.margin;
+			minMargin = sphere.minMargin;
+			sweepMargin = sphere.sweepMargin;
+			bMarginIsRadius = true;
+		}
+
+		EHDI SphereV(const PxGeometry& geom) : ConvexV(ConvexType::eSPHERE, aos::V3Zero())
+		{
+			using namespace aos;
+			const PxSphereGeometry& sphereGeom = static_cast<const PxSphereGeometry&>(geom);
+			const FloatV r = FLoad(sphereGeom.radius);
+			radius = r;
+			margin = sphereGeom.radius;
+			minMargin = sphereGeom.radius;
+			sweepMargin = sphereGeom.radius;
+			bMarginIsRadius = true;
+		}
+
+		/**
+		\brief Destructor
+		*/
+		EHDI ~SphereV()
+		{
+		}
+
+		EHDI	void	setV(const aos::Vec3VArg _center, const aos::FloatVArg _radius)		
+		{ 
+			center = _center;
+			radius = _radius;
+		}
+
+		/**
+		\brief Checks the sphere is valid.
+
+		\return		true if the sphere is valid
+		*/
+		EHDI bool isValid() const
+		{
+			// Consistency condition for spheres: Radius >= 0.0f
+			using namespace aos;
+			return BAllEqTTTT(FIsGrtrOrEq(radius, FZero())) != 0;
+		}
+
+		/**
+		\brief Tests if a point is contained within the sphere.
+
+		\param[in] p the point to test
+		\return	true if inside the sphere
+		*/
+		EHDI bool contains(const aos::Vec3VArg p) const
+		{
+			using namespace aos;
+			const FloatV rr = FMul(radius, radius);
+			const FloatV cc =  V3LengthSq(V3Sub(center, p));
+			return FAllGrtrOrEq(rr, cc) != 0;
+		}
+
+		/**
+		\brief Tests if a sphere is contained within the sphere.
+
+		\param		sphere	[in] the sphere to test
+		\return		true if inside the sphere
+		*/
+		EHDI bool contains(const SphereV& sphere)	const
+		{
+			using namespace aos;
+			
+			const Vec3V centerDif = V3Sub(center, sphere.center);
+			const FloatV radiusDif = FSub(radius, sphere.radius);
+			const FloatV cc = V3Dot(centerDif, centerDif);
+			const FloatV rr = FMul(radiusDif, radiusDif); 
+
+			const BoolV con0 = FIsGrtrOrEq(radiusDif, FZero());//might contain
+			const BoolV con1 = FIsGrtr(rr, cc);//return true
+			return BAllEqTTTT(BAnd(con0, con1))==1;
+		}
+
+		/**
+		\brief Tests if a box is contained within the sphere.
+
+		\param		minimum		[in] minimum value of the box
+		\param		maximum		[in] maximum value of the box
+		\return		true if inside the sphere
+		*/
+		EHDI bool contains(const aos::Vec3VArg minimum, const aos::Vec3VArg maximum) const
+		{
+		
+			//compute the sphere which wrap around the box
+			using namespace aos;
+			const FloatV zero = FZero();
+			const FloatV half = FHalf();
+
+			const Vec3V boxSphereCenter = V3Scale(V3Add(maximum, minimum), half);
+			const Vec3V v = V3Scale(V3Sub(maximum, minimum), half);
+			const FloatV boxSphereR = V3Length(v);
+
+			const Vec3V w = V3Sub(center, boxSphereCenter);
+			const FloatV wLength = V3Length(w);
+			const FloatV dif = FSub(FSub(radius, wLength), boxSphereR); 
+
+			return FAllGrtrOrEq(dif, zero) != 0;
+		}           
+                  
+		/**
+		\brief Tests if the sphere intersects another sphere
+
+		\param		sphere	[in] the other sphere
+		\return		true if spheres overlap
+		*/
+		EHDI bool intersect(const SphereV& sphere) const
+		{
+			using namespace aos;
+			const Vec3V centerDif = V3Sub(center, sphere.center);
+			const FloatV cc = V3Dot(centerDif, centerDif);
+			const FloatV r = FAdd(radius, sphere.radius);
+			const FloatV rr = FMul(r, r);
+			return FAllGrtrOrEq(rr, cc) != 0;
+		}
+
+		//return point in local space
+		EHD aos::Vec3V getPoint(const PxU8)
+		{
+			return aos::V3Zero();
+		}
+  //  
+		//sweep code need to have full version
+		EHD aos::Vec3V supportSweep(const aos::Vec3VArg dir)const
+		{
+			using namespace aos;
+			const Vec3V _dir = V3Normalize(dir);
+			return V3ScaleAdd(_dir, radius, center);  
+		}
+
+		//make the support function the same as support margin
+		EHD aos::Vec3V support(const aos::Vec3VArg)const
+		{
+			return center;//_margin is the same as radius
+		}
+  
+
+		EHD aos::Vec3V supportMargin(const aos::Vec3VArg dir, const aos::FloatVArg _margin, aos::Vec3V& support)const
+		{
+			E_UNUSED(_margin);
+			E_UNUSED(dir);
+
+			support = center;
+			return center;//_margin is the same as radius
+		}
+
+		EHD aos::BoolV isMarginEqRadius()const
+		{
+			return aos::BTTTT();
+		}
+
+		EHD aos::FloatV getSweepMargin() const
+		{
+			return aos::FZero();
+		}
+
+
+		aos::FloatV radius;		//!< Sphere's center, w component is radius
+
+	};
+}
+
+}
+
+// ===== 원본: physx/source/geomutils/src/convex/GuConvexHelper.h
+namespace px
+{
+	class PxConvexMeshGeometry;
+namespace Gu
+{
+	///////////////////////////////////////////////////////////////////////////
+
+	EHDV void getScaledConvex(	PxVec3*& scaledVertices, PxU8*& scaledIndices, PxVec3* dstVertices, PxU8* dstIndices,
+							bool idtConvexScale, const PxVec3* srcVerts, const PxU8* srcIndices, PxU32 nbVerts, const Cm::FastVertex2ShapeScaling& convexScaling);
+
+	// PT: calling this correctly isn't trivial so let's macroize it. At least we limit the damage since it immediately calls a real function.
+	#define GET_SCALEX_CONVEX(scaledVertices, stackIndices, idtScaling, nbVerts, scaling, srcVerts, srcIndices)	\
+	getScaledConvex(scaledVertices, stackIndices,																\
+					idtScaling ? NULL : reinterpret_cast<PxVec3*>(PxAlloca(nbVerts * sizeof(PxVec3))),			\
+					idtScaling ? NULL : reinterpret_cast<PxU8*>(PxAlloca(nbVerts * sizeof(PxU8))),				\
+					idtScaling, srcVerts, srcIndices, nbVerts, scaling);
+
+	EHDV bool getConvexData(const PxConvexMeshGeometry& shapeConvex, Cm::FastVertex2ShapeScaling& scaling, PxBounds3& bounds, PolygonalData& polyData);
+
+	struct ConvexEdge
+	{
+		PxU8	vref0;
+		PxU8	vref1;
+		PxVec3	normal;	// warning: non-unit vector!
+	};
+
+	EHDV PxU32 findUniqueConvexEdges(PxU32 maxNbEdges, ConvexEdge*  edges, PxU32 numPolygons, const Gu::HullPolygonData*  polygons, const PxU8*  vertexData);
+}
+}
+
+// ===== 원본: physx/source/geomutils/src/convex/GuConvexHelper.cpp
+using namespace px;
+using namespace Gu;
+
+// PT: we can't call alloca in a function and we want to avoid defines or duplicating the code. This makes it a bit tricky to write.
+EHDI void Gu::getScaledConvex(	PxVec3*& scaledVertices, PxU8*& scaledIndices, PxVec3* dstVertices, PxU8* dstIndices,
+							bool idtConvexScale, const PxVec3* srcVerts, const PxU8* srcIndices, PxU32 nbVerts, const Cm::FastVertex2ShapeScaling& convexScaling)
+{
+	//pretransform convex polygon if we have scaling!
+	if(idtConvexScale)	// PT: the scale is always 1 for boxes so no need to test the type
+	{
+		scaledVertices = const_cast<PxVec3*>(srcVerts);
+		scaledIndices = const_cast<PxU8*>(srcIndices);
+	}
+	else
+	{
+		scaledIndices = dstIndices;
+		scaledVertices = dstVertices;
+		for(PxU32 i=0; i<nbVerts; i++)
+		{
+			scaledIndices[i] = PxTo8(i);	//generate trivial indexing.
+			scaledVertices[i] = convexScaling * srcVerts[srcIndices[i]];
+		}
+	}
+}
+
+EHDI bool Gu::getConvexData(const PxConvexMeshGeometry& shapeConvex, Cm::FastVertex2ShapeScaling& scaling, PxBounds3& bounds, PolygonalData& polyData)
+{
+	const bool idtScale = shapeConvex.scale.isIdentity();
+	if(!idtScale)
+		scaling.init(shapeConvex.scale);
+
+	// PT: this version removes all the FCMPs and almost all LHS. This is temporary until
+	// the legacy 3x3 matrix totally vanishes but meanwhile do NOT do useless matrix conversions,
+	// it's a perfect recipe for LHS.
+	const ConvexHullData* hullData = _getHullData(shapeConvex);
+	E_ASSERT(!hullData->mAABB.isEmpty());
+	bounds = hullData->mAABB.transformFast(scaling.getVertex2ShapeSkew());
+
+	getPolygonalData_Convex(&polyData, hullData, scaling);
+
+	// PT: non-uniform scaling invalidates the "internal objects" optimization, since our internal sphere
+	// might become an ellipsoid or something. Just disable the optimization if scaling is used...
+	if(!idtScale)
+		polyData.mInternal.reset();
+
+	return idtScale;
+}
+
+EHDI PxU32 Gu::findUniqueConvexEdges(PxU32 maxNbEdges, ConvexEdge*  edges, PxU32 numPolygons, const Gu::HullPolygonData*  polygons, const PxU8*  vertexData)
+{
+	PxU32 nbEdges = 0;
+
+	while(numPolygons--)
+	{
+		const HullPolygonData& polygon = *polygons++;
+		const PxU8* vRefBase = vertexData + polygon.mVRef8;
+		PxU32 numEdges = polygon.mNbVerts;
+
+		PxU32 a = numEdges - 1;
+		PxU32 b = 0;
+		while(numEdges--)
+		{
+			PxU8 vi0 =  vRefBase[a];
+			PxU8 vi1 =	vRefBase[b];
+
+			if(vi1 < vi0)
+			{
+				PxU8 tmp = vi0;
+				vi0 = vi1;
+				vi1 = tmp;
+			}
+
+			bool found=false;
+			for(PxU32 i=0;i<nbEdges;i++)
+			{
+				if(edges[i].vref0==vi0 && edges[i].vref1==vi1)
+				{
+					found = true;
+					edges[i].normal += polygon.mPlane.n;
+					break;
+				}
+			}
+			if(!found)
+			{
+				if(nbEdges==maxNbEdges)
+				{
+					EPX_ALWAYS_ASSERT_MESSAGE("Internal error: max nb edges reached. This shouldn't be possible...");
+					return nbEdges;
+				}
+
+				edges[nbEdges].vref0	= vi0;
+				edges[nbEdges].vref1	= vi1;
+				edges[nbEdges].normal	= polygon.mPlane.n;
+				nbEdges++;
+			}
+
+			a = b;
+			b++;
+		}
+	}
+	return nbEdges;
+}
+
+// ===== 원본: physx/source/geomutils/include/GuSegment.h
+namespace px
+{
+namespace Gu
+{
+
+	/**
+	\brief Represents a line segment.
+
+	Line segment geometry
+	In some cases this structure will be used to represent the infinite line that passes point0 and point1.
+	*/
+	class Segment
+	{
+	public:
+		/**
+		\brief Constructor
+		*/
+		EHDI Segment()
+		{
+		}
+
+		/**
+		\brief Constructor
+		*/
+		EHDI Segment(const PxVec3& _p0, const PxVec3& _p1) : p0(_p0), p1(_p1)
+		{
+		}
+
+		/**
+		\brief Copy constructor
+		*/
+		EHDI Segment(const Segment& seg) : p0(seg.p0), p1(seg.p1)
+		{
+		}
+
+		/**
+		\brief Destructor
+		*/
+		EHDI ~Segment()
+		{
+		}
+
+		//! Assignment operator
+		EHDI Segment& operator=(const Segment& other)
+		{
+			p0 = other.p0; 
+			p1 = other.p1; 
+			return *this;
+		}
+
+		//! Equality operator
+		EHDI bool operator==(const Segment& other) const
+		{
+			return (p0==other.p0 && p1==other.p1);
+		}
+
+		//! Inequality operator
+		EHDI bool operator!=(const Segment& other) const
+		{
+			return (p0!=other.p0 || p1!=other.p1);
+		}
+
+		EHDI const PxVec3& getOrigin() const
+		{
+			return p0;
+		}
+
+		//! Return the vector from point0 to point1
+		EHDI PxVec3 computeDirection() const
+		{
+			return p1 - p0;
+		}
+
+		//! Return the vector from point0 to point1
+		EHDI void computeDirection(PxVec3& dir) const
+		{
+			dir = p1 - p0;
+		}
+
+		//! Return the center of the segment segment
+		EHDI PxVec3 computeCenter() const
+		{
+			return (p0 + p1)*0.5f;
+		}
+
+		EHDI PxF32 computeLength() const
+		{
+			return (p1-p0).magnitude();
+		}
+
+		EHDI PxF32 computeSquareLength() const
+		{
+			return (p1-p0).magnitudeSquared();
+		}
+
+		// PT: TODO: remove this one
+		//! Return the square of the length of vector from point0 to point1
+		EHDI PxReal lengthSquared() const
+		{
+			return ((p1 - p0).magnitudeSquared());
+		}
+
+		// PT: TODO: remove this one
+		//! Return the length of vector from point0 to point1
+		EHDI PxReal length() const
+		{
+			return ((p1 - p0).magnitude());
+		}
+
+		/*		EHDI void setOriginDirection(const PxVec3& origin, const PxVec3& direction)
+		{
+		p0 = p1 = origin;
+		p1 += direction;
+		}*/
+
+		/**
+		\brief Computes a point on the segment
+
+		\param[out] pt point on segment
+		\param[in] t point's parameter [t=0 => pt = mP0, t=1 => pt = mP1]
+		*/
+		EHDI void computePoint(PxVec3& pt, PxF32 t) const
+		{
+			pt = p0 + t * (p1 - p0);
+		}
+
+		// PT: TODO: remove this one
+		//! Return the point at parameter t along the line: point0 + t*(point1-point0)
+		EHDI PxVec3 getPointAt(PxReal t) const
+		{
+			return (p1 - p0)*t + p0;
+		}
+
+		PxVec3	p0;		//!< Start of segment
+		PxVec3	p1;		//!< End of segment
+	};
+	E_STATIC_ASSERT(sizeof(Gu::Segment) == 24);
+}
+
+}
+
+// ===== 원본: physx/source/geomutils/include/GuDistanceSegmentSegment.h
+namespace px
+{
+namespace Gu
+{
+	// This version fixes accuracy issues (e.g.  TTP 4617), but needs to do 2 square roots in order
+	// to find the normalized direction and length of the segments, and then
+	// a division in order to renormalize the output
+
+		EHDV PxReal	distanceSegmentSegmentSquared(	const PxVec3& origin0, const PxVec3& dir0, PxReal extent0,
+																const PxVec3& origin1, const PxVec3& dir1, PxReal extent1,
+																PxReal* s=NULL, PxReal* t=NULL);
+
+	 EHDV PxReal	distanceSegmentSegmentSquared(	const PxVec3& origin0, const PxVec3& extent0,
+																const PxVec3& origin1, const PxVec3& extent1,
+																PxReal* s=NULL, PxReal* t=NULL);
+
+	EHD	PxReal	distanceSegmentSegmentSquared(	const Gu::Segment& segment0,
+															const Gu::Segment& segment1,
+															PxReal* s=NULL, PxReal* t=NULL)
+	{
+		return distanceSegmentSegmentSquared(	segment0.p0, segment0.computeDirection(),
+												segment1.p0, segment1.computeDirection(),
+												s, t);
+	}
+
+	 EHDV aos::FloatV distanceSegmentSegmentSquared(	const aos::Vec3VArg p1, const aos::Vec3VArg d1, const aos::Vec3VArg p2, const aos::Vec3VArg d2,
+					 								aos::FloatV& param0, 
+					 								aos::FloatV& param1);
+
+	// This function do four segment segment closest point test in one go
+	EHDV aos::Vec4V distanceSegmentSegmentSquared4(  const aos::Vec3VArg p, const aos::Vec3VArg d, 
+												const aos::Vec3VArg p02, const aos::Vec3VArg d02, 
+												const aos::Vec3VArg p12, const aos::Vec3VArg d12, 
+												const aos::Vec3VArg p22, const aos::Vec3VArg d22,
+												const aos::Vec3VArg p32, const aos::Vec3VArg d32,
+												aos::Vec4V& s, aos::Vec4V& t);
+
+} // namespace Gu
+}
+
+// ===== 원본: physx/source/geomutils/src/distance/GuDistanceSegmentSegment.cpp
+using namespace px;
+using namespace aos;
+
+static const float ZERO_TOLERANCE = 1e-06f;
+
+// S0 = origin + extent * dir;
+// S1 = origin - extent * dir;
+EHDI PxReal Gu::distanceSegmentSegmentSquared(	const PxVec3& origin0, const PxVec3& dir0, PxReal extent0,
+											const PxVec3& origin1, const PxVec3& dir1, PxReal extent1,
+											PxReal* param0, PxReal* param1)
+{
+    const PxVec3 kDiff	= origin0 - origin1;
+    const PxReal fA01	= -dir0.dot(dir1);
+    const PxReal fB0	= kDiff.dot(dir0);
+    const PxReal fB1	= -kDiff.dot(dir1);
+	const PxReal fC		= kDiff.magnitudeSquared();
+	const PxReal fDet	= PxAbs(1.0f - fA01*fA01);
+    PxReal fS0, fS1, fSqrDist, fExtDet0, fExtDet1, fTmpS0, fTmpS1;
+
+    if (fDet >= ZERO_TOLERANCE)
+    {
+        // segments are not parallel
+        fS0 = fA01*fB1-fB0;
+        fS1 = fA01*fB0-fB1;
+        fExtDet0 = extent0*fDet;
+        fExtDet1 = extent1*fDet;
+
+        if (fS0 >= -fExtDet0)
+        {
+            if (fS0 <= fExtDet0)
+            {
+                if (fS1 >= -fExtDet1)
+                {
+                    if (fS1 <= fExtDet1)  // region 0 (interior)
+                    {
+                        // minimum at two interior points of 3D lines
+                        PxReal fInvDet = 1.0f/fDet;
+                        fS0 *= fInvDet;
+                        fS1 *= fInvDet;
+                        fSqrDist = fS0*(fS0+fA01*fS1+2.0f*fB0) + fS1*(fA01*fS0+fS1+2.0f*fB1)+fC;
+                    }
+                    else  // region 3 (side)
+                    {
+                        fS1 = extent1;
+                        fTmpS0 = -(fA01*fS1+fB0);
+                        if (fTmpS0 < -extent0)
+                        {
+                            fS0 = -extent0;
+                            fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                        }
+                        else if (fTmpS0 <= extent0)
+                        {
+                            fS0 = fTmpS0;
+                            fSqrDist = -fS0*fS0+fS1*(fS1+2.0f*fB1)+fC;
+                        }
+                        else
+                        {
+                            fS0 = extent0;
+                            fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                        }
+                    }
+                }
+                else  // region 7 (side)
+                {
+                    fS1 = -extent1;
+                    fTmpS0 = -(fA01*fS1+fB0);
+                    if (fTmpS0 < -extent0)
+                    {
+                        fS0 = -extent0;
+                        fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                    else if (fTmpS0 <= extent0)
+                    {
+                        fS0 = fTmpS0;
+                        fSqrDist = -fS0*fS0+fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                    else
+                    {
+                        fS0 = extent0;
+                        fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                }
+            }
+            else
+            {
+                if (fS1 >= -fExtDet1)
+                {
+                    if (fS1 <= fExtDet1)  // region 1 (side)
+                    {
+                        fS0 = extent0;
+                        fTmpS1 = -(fA01*fS0+fB1);
+                        if (fTmpS1 < -extent1)
+                        {
+                            fS1 = -extent1;
+                            fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                        else if (fTmpS1 <= extent1)
+                        {
+                            fS1 = fTmpS1;
+                            fSqrDist = -fS1*fS1+fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                        else
+                        {
+                            fS1 = extent1;
+                            fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                    }
+                    else  // region 2 (corner)
+                    {
+                        fS1 = extent1;
+                        fTmpS0 = -(fA01*fS1+fB0);
+                        if (fTmpS0 < -extent0)
+                        {
+                            fS0 = -extent0;
+                            fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                        }
+                        else if (fTmpS0 <= extent0)
+                        {
+                            fS0 = fTmpS0;
+                            fSqrDist = -fS0*fS0+fS1*(fS1+2.0f*fB1)+fC;
+                        }
+                        else
+                        {
+                            fS0 = extent0;
+                            fTmpS1 = -(fA01*fS0+fB1);
+                            if (fTmpS1 < -extent1)
+                            {
+                                fS1 = -extent1;
+                                fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                            }
+                            else if (fTmpS1 <= extent1)
+                            {
+                                fS1 = fTmpS1;
+                                fSqrDist = -fS1*fS1+fS0*(fS0+2.0f*fB0) + fC;
+                            }
+                            else
+                            {
+                                fS1 = extent1;
+                                fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                            }
+                        }
+                    }
+                }
+                else  // region 8 (corner)
+                {
+                    fS1 = -extent1;
+                    fTmpS0 = -(fA01*fS1+fB0);
+                    if (fTmpS0 < -extent0)
+                    {
+                        fS0 = -extent0;
+                        fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                    else if (fTmpS0 <= extent0)
+                    {
+                        fS0 = fTmpS0;
+                        fSqrDist = -fS0*fS0+fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                    else
+                    {
+                        fS0 = extent0;
+                        fTmpS1 = -(fA01*fS0+fB1);
+                        if (fTmpS1 > extent1)
+                        {
+                            fS1 = extent1;
+                            fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                        else if (fTmpS1 >= -extent1)
+                        {
+                            fS1 = fTmpS1;
+                            fSqrDist = -fS1*fS1+fS0*(fS0+2.0f*fB0) + fC;
+                        }
+                        else
+                        {
+                            fS1 = -extent1;
+                            fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                    }
+                }
+            }
+        }
+        else 
+        {
+            if (fS1 >= -fExtDet1)
+            {
+                if (fS1 <= fExtDet1)  // region 5 (side)
+                {
+                    fS0 = -extent0;
+                    fTmpS1 = -(fA01*fS0+fB1);
+                    if (fTmpS1 < -extent1)
+                    {
+                        fS1 = -extent1;
+                        fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                    }
+                    else if (fTmpS1 <= extent1)
+                    {
+                        fS1 = fTmpS1;
+                        fSqrDist = -fS1*fS1+fS0*(fS0+2.0f*fB0)+fC;
+                    }
+                    else
+                    {
+                        fS1 = extent1;
+                        fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                    }
+                }
+                else  // region 4 (corner)
+                {
+                    fS1 = extent1;
+                    fTmpS0 = -(fA01*fS1+fB0);
+                    if (fTmpS0 > extent0)
+                    {
+                        fS0 = extent0;
+                        fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                    else if (fTmpS0 >= -extent0)
+                    {
+                        fS0 = fTmpS0;
+                        fSqrDist = -fS0*fS0+fS1*(fS1+2.0f*fB1)+fC;
+                    }
+                    else
+                    {
+                        fS0 = -extent0;
+                        fTmpS1 = -(fA01*fS0+fB1);
+                        if (fTmpS1 < -extent1)
+                        {
+                            fS1 = -extent1;
+                            fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                        else if (fTmpS1 <= extent1)
+                        {
+                            fS1 = fTmpS1;
+                            fSqrDist = -fS1*fS1+fS0*(fS0+2.0f*fB0) + fC;
+                        }
+                        else
+                        {
+                            fS1 = extent1;
+                            fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                        }
+                    }
+                }
+            }
+            else   // region 6 (corner)
+            {
+                fS1 = -extent1;
+                fTmpS0 = -(fA01*fS1+fB0);
+                if (fTmpS0 > extent0)
+                {
+                    fS0 = extent0;
+                    fSqrDist = fS0*(fS0-2.0f*fTmpS0) + fS1*(fS1+2.0f*fB1)+fC;
+                }
+                else if (fTmpS0 >= -extent0)
+                {
+                    fS0 = fTmpS0;
+                    fSqrDist = -fS0*fS0+fS1*(fS1+2.0f*fB1)+fC;
+                }
+                else
+                {
+                    fS0 = -extent0;
+                    fTmpS1 = -(fA01*fS0+fB1);
+                    if (fTmpS1 < -extent1)
+                    {
+                        fS1 = -extent1;
+                        fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                    }
+                    else if (fTmpS1 <= extent1)
+                    {
+                        fS1 = fTmpS1;
+                        fSqrDist = -fS1*fS1+fS0*(fS0+2.0f*fB0) + fC;
+                    }
+                    else
+                    {
+                        fS1 = extent1;
+                        fSqrDist = fS1*(fS1-2.0f*fTmpS1) + fS0*(fS0+2.0f*fB0)+fC;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+		// The segments are parallel.
+		PxReal fE0pE1 = extent0 + extent1;
+		PxReal fSign = (fA01 > 0.0f ? -1.0f : 1.0f);
+		PxReal b0Avr = 0.5f*(fB0 - fSign*fB1);
+		PxReal fLambda = -b0Avr;
+		if(fLambda < -fE0pE1)
+		{
+			fLambda = -fE0pE1;
+		}
+		else if(fLambda > fE0pE1)
+		{
+			fLambda = fE0pE1;
+		}
+
+		fS1 = -fSign*fLambda*extent1/fE0pE1;
+		fS0 = fLambda + fSign*fS1;
+		fSqrDist = fLambda*(fLambda + 2.0f*b0Avr) + fC;
+	}
+
+	if(param0)
+		*param0 = fS0;
+	if(param1)
+		*param1 = fS1;
+
+	// account for numerical round-off error
+	return px::intrinsics::selectMax(0.0f, fSqrDist);
+}
+
+EHDI PxReal Gu::distanceSegmentSegmentSquared(	const PxVec3& origin0, const PxVec3& extent0,
+											const PxVec3& origin1, const PxVec3& extent1,
+											PxReal* param0, 
+											PxReal* param1)
+{
+	// Some conversion is needed between the old & new code
+	// Old:
+	// segment (s0, s1)
+	// origin = s0
+	// extent = s1 - s0
+	//
+	// New:
+	// s0 = origin + extent * dir;
+	// s1 = origin - extent * dir;
+
+	// dsequeira: is this really sensible? We use a highly optimized Wild Magic routine, 
+	// then use a segment representation that requires an expensive conversion to/from...
+
+	PxVec3 dir0 = extent0;
+	const PxVec3 center0 = origin0 + extent0*0.5f;
+	PxReal length0 = extent0.magnitude();	//AM: change to make it work for degenerate (zero length) segments.
+	const bool b0 = length0 != 0.0f;
+	PxReal oneOverLength0 = 0.0f;
+	if(b0)
+	{
+		oneOverLength0 = 1.0f / length0;
+		dir0 *= oneOverLength0;
+		length0 *= 0.5f;
+	}
+
+	PxVec3 dir1 = extent1;
+	const PxVec3 center1 = origin1 + extent1*0.5f;
+	PxReal length1 = extent1.magnitude();
+	const bool b1 = length1 != 0.0f;
+	PxReal oneOverLength1 = 0.0f;
+	if(b1)
+	{
+		oneOverLength1 = 1.0f / length1;
+		dir1 *= oneOverLength1;
+		length1 *= 0.5f;
+	}
+
+	// the return param vals have -extent = s0, extent = s1
+
+	const PxReal d2 = distanceSegmentSegmentSquared(center0, dir0, length0,
+													center1, dir1, length1,
+													param0, param1);
+
+	//ML : This is wrong for some reason, I guess it has precision issue
+	//// renormalize into the 0 = s0, 1 = s1 range
+	//if (param0)
+	//	*param0 = b0 ? ((*param0) * oneOverLength0 * 0.5f + 0.5f) : 0.0f;
+	//if (param1)
+	//	*param1 = b1 ? ((*param1) * oneOverLength1 * 0.5f + 0.5f) : 0.0f;
+
+	if(param0)
+		*param0 = b0 ? ((length0 + (*param0))*oneOverLength0) : 0.0f;
+	if(param1)
+		*param1 = b1 ? ((length1 + (*param1))*oneOverLength1) : 0.0f;
+
+	return d2;
+}
+
+/*
+	S0 = origin + extent * dir;
+	S1 = origin + extent * dir;
+	dir is the vector from start to end point
+	p1 is the start point of segment1
+	d1 is the direction vector(q1 - p1)
+	p2 is the start point of segment2
+	d2 is the direction vector(q2 - p2) 
+*/
+
+EHDI FloatV Gu::distanceSegmentSegmentSquared(	const Vec3VArg p1, 
+											const Vec3VArg d1,
+											const Vec3VArg p2, 
+											const Vec3VArg d2,
+											FloatV& s, 
+											FloatV& t)
+{
+	const FloatV zero = FZero();
+	const FloatV one = FOne();
+	const FloatV eps = FEps();
+
+	const Vec3V r = V3Sub(p1, p2);
+	const Vec4V combinedDot = V3Dot4(d1, d1, d2, d2, d1, d2, d1, r);
+	const Vec4V combinedRecip = V4Sel(V4IsGrtr(combinedDot, V4Splat(eps)), V4Recip(combinedDot), V4Splat(zero));
+	const FloatV a = V4GetX(combinedDot);
+	const FloatV e = V4GetY(combinedDot);
+	const FloatV b = V4GetZ(combinedDot);
+	const FloatV c = V4GetW(combinedDot);
+	const FloatV aRecip = V4GetX(combinedRecip);//FSel(FIsGrtr(a, eps), FRecip(a), zero);
+	const FloatV eRecip = V4GetY(combinedRecip);//FSel(FIsGrtr(e, eps), FRecip(e), zero);
+
+	const FloatV f = V3Dot(d2, r);
+
+	/*
+		s = (b*f - c*e)/(a*e - b*b);
+		t = (a*f - b*c)/(a*e - b*b);
+
+		s = (b*t - c)/a;
+		t = (b*s + f)/e;
+	*/
+	
+	//if segments not parallel, the general non-degenerated case, compute closest point on two segments and clamp to segment1
+	const FloatV denom = FSub(FMul(a, e), FMul(b, b));
+	const FloatV temp = FSub(FMul(b, f), FMul(c, e));
+	const FloatV s0 = FClamp(FDiv(temp, denom), zero, one);
+	
+	//if segment is parallel, demon < eps
+	const BoolV con2 = FIsGrtr(eps, denom);//FIsEq(denom, zero);
+	const FloatV sTmp = FSel(con2, FHalf(), s0);
+	
+	//compute point on segment2 closest to segment1
+	//const FloatV tTmp = FMul(FAdd(FMul(b, sTmp), f), eRecip);
+	const FloatV tTmp = FMul(FScaleAdd(b, sTmp, f), eRecip);
+
+	//if t is in [zero, one], done. otherwise clamp t
+	const FloatV t2 = FClamp(tTmp, zero, one);
+
+	//recompute s for the new value
+	const FloatV comp = FMul(FSub(FMul(b,t2), c), aRecip);
+	const FloatV s2 = FClamp(comp, zero, one);
+
+	s = s2;
+	t = t2;
+
+	const Vec3V closest1 = V3ScaleAdd(d1, s2, p1);//V3Add(p1, V3Scale(d1, tempS));
+	const Vec3V closest2 = V3ScaleAdd(d2, t2, p2);//V3Add(p2, V3Scale(d2, tempT));
+	const Vec3V vv = V3Sub(closest1, closest2);
+	return V3Dot(vv, vv);
+}
+
+
+
+
+/*
+	segment (p, d) and segment (p02, d02)
+	segment (p, d) and segment (p12, d12)
+	segment (p, d) and segment (p22, d22)
+	segment (p, d) and segment (p32, d32)
+*/
+EHDI Vec4V Gu::distanceSegmentSegmentSquared4(	const Vec3VArg p, const Vec3VArg d0, 
+											const Vec3VArg p02, const Vec3VArg d02, 
+											const Vec3VArg p12, const Vec3VArg d12, 
+											const Vec3VArg p22, const Vec3VArg d22,
+											const Vec3VArg p32, const Vec3VArg d32,
+											Vec4V& s, Vec4V& t)
+{
+	const Vec4V zero = V4Zero();
+	const Vec4V one = V4One();
+	const Vec4V eps = V4Eps();
+	const Vec4V half = V4Splat(FHalf());
+
+	const Vec4V d0X = V4Splat(V3GetX(d0));
+	const Vec4V d0Y = V4Splat(V3GetY(d0));
+	const Vec4V d0Z = V4Splat(V3GetZ(d0));
+	const Vec4V pX  = V4Splat(V3GetX(p));
+	const Vec4V pY  = V4Splat(V3GetY(p));
+	const Vec4V pZ  = V4Splat(V3GetZ(p));
+
+	Vec4V d024 = Vec4V_From_Vec3V(d02);
+	Vec4V d124 = Vec4V_From_Vec3V(d12);
+	Vec4V d224 = Vec4V_From_Vec3V(d22);
+	Vec4V d324 = Vec4V_From_Vec3V(d32);
+
+	Vec4V p024 = Vec4V_From_Vec3V(p02);
+	Vec4V p124 = Vec4V_From_Vec3V(p12);
+	Vec4V p224 = Vec4V_From_Vec3V(p22);
+	Vec4V p324 = Vec4V_From_Vec3V(p32);
+
+	Vec4V d0123X, d0123Y, d0123Z;
+	Vec4V p0123X, p0123Y, p0123Z;
+
+	E_TRANSPOSE_44_34(d024, d124, d224, d324, d0123X, d0123Y, d0123Z);
+	E_TRANSPOSE_44_34(p024, p124, p224, p324, p0123X, p0123Y, p0123Z);
+
+	const Vec4V rX = V4Sub(pX, p0123X);
+	const Vec4V rY = V4Sub(pY, p0123Y);
+	const Vec4V rZ = V4Sub(pZ, p0123Z);
+
+	//TODO - store this in a transposed state and avoid so many dot products?
+
+	const FloatV dd = V3Dot(d0, d0);
+
+	const Vec4V e = V4MulAdd(d0123Z, d0123Z, V4MulAdd(d0123X, d0123X, V4Mul(d0123Y, d0123Y)));
+	const Vec4V b = V4MulAdd(d0Z, d0123Z, V4MulAdd(d0X, d0123X, V4Mul(d0Y, d0123Y)));
+	const Vec4V c = V4MulAdd(d0Z, rZ, V4MulAdd(d0X, rX, V4Mul(d0Y, rY)));
+	const Vec4V f = V4MulAdd(d0123Z, rZ, V4MulAdd(d0123X, rX, V4Mul(d0123Y, rY))); 
+
+	const Vec4V a(V4Splat(dd));
+
+	const Vec4V aRecip(V4Recip(a));
+	const Vec4V eRecip(V4Recip(e));
+
+	//if segments not parallell, compute closest point on two segments and clamp to segment1
+	const Vec4V denom = V4Sub(V4Mul(a, e), V4Mul(b, b));
+	const Vec4V temp = V4Sub(V4Mul(b, f), V4Mul(c, e));
+	const Vec4V s0 = V4Clamp(V4Div(temp, denom), zero, one);
+
+	//test whether segments are parallel
+	const BoolV con2 = V4IsGrtrOrEq(eps, denom);     
+	const Vec4V sTmp = V4Sel(con2, half, s0);
+
+	//compute point on segment2 closest to segment1
+	const Vec4V tTmp = V4Mul(V4Add(V4Mul(b, sTmp), f), eRecip);
+
+	//if t is in [zero, one], done. otherwise clamp t
+	const Vec4V t2 = V4Clamp(tTmp, zero, one);
+
+	//recompute s for the new value
+	const Vec4V comp = V4Mul(V4Sub(V4Mul(b,t2), c), aRecip);
+	const BoolV aaNearZero = V4IsGrtrOrEq(eps, a); // check if aRecip is valid (aa>eps)
+	const Vec4V s2 = V4Sel(aaNearZero, V4Zero(), V4Clamp(comp, zero, one));
+
+	/*  s = V4Sel(con0, zero, V4Sel(con1, cd, s2));
+	t = V4Sel(con1, zero, V4Sel(con0, cg, t2));  */
+	s = s2;
+	t = t2;
+
+	const Vec4V closest1X = V4MulAdd(d0X, s2, pX);
+	const Vec4V closest1Y = V4MulAdd(d0Y, s2, pY);
+	const Vec4V closest1Z = V4MulAdd(d0Z, s2, pZ);
+
+	const Vec4V closest2X = V4MulAdd(d0123X, t2, p0123X);
+	const Vec4V closest2Y = V4MulAdd(d0123Y, t2, p0123Y);
+	const Vec4V closest2Z = V4MulAdd(d0123Z, t2, p0123Z);
+
+	const Vec4V vvX = V4Sub(closest1X, closest2X);
+	const Vec4V vvY = V4Sub(closest1Y, closest2Y);
+	const Vec4V vvZ = V4Sub(closest1Z, closest2Z);
+
+	const Vec4V vd = V4MulAdd(vvX, vvX, V4MulAdd(vvY, vvY, V4Mul(vvZ, vvZ)));
+
+	return vd;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactGenSphereCapsule.cpp
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+//ML: this function is shared by the sphere/capsule vs convex hulls full contact gen, capsule in the local space of polyData
+EHDI static bool testPolyDataAxis(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, const FloatVArg contactDist, FloatV& minOverlap, Vec3V& separatingAxis)
+{
+	FloatV _minOverlap = FMax();//minOverlap;
+	FloatV min0, max0;
+	FloatV min1, max1;
+	Vec3V tempAxis = V3UnitY();
+
+	//capsule in the local space of polyData
+	for(PxU32 i=0; i<polyData.mNbPolygons; ++i)
+	{
+		const HullPolygonData& polygon = polyData.mPolygons[i];
+
+		const Vec3V minVert = V3LoadU_SafeReadW(polyData.mVerts[polygon.mMinIndex]);	// PT: safe because of the way vertex memory is allocated in ConvexHullData
+		const FloatV planeDist = FLoad(polygon.mPlane.d);
+		const Vec3V vertexSpacePlaneNormal = V3LoadU_SafeReadW(polygon.mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+
+		//transform plane n to shape space
+		const Vec3V shapeSpacePlaneNormal = M33TrnspsMulV3(map->shape2Vertex, vertexSpacePlaneNormal);
+
+		const FloatV magnitude = FRecip(V3Length(shapeSpacePlaneNormal));
+		//normalize shape space normal
+		const Vec3V planeN = V3Scale(shapeSpacePlaneNormal, magnitude);
+		//ML::use this to avoid LHS
+		min0 = FMul(V3Dot(vertexSpacePlaneNormal, minVert), magnitude);
+		max0 = FMul(FNeg(planeDist), magnitude);
+
+		const FloatV tempMin = V3Dot(capsule.p0, planeN);
+		const FloatV tempMax = V3Dot(capsule.p1, planeN);
+		min1 = FMin(tempMin, tempMax);
+		max1 = FMax(tempMin, tempMax);
+
+		min1 = FSub(min1, capsule.radius);
+		max1 = FAdd(max1, capsule.radius);
+
+		const BoolV con = BOr(FIsGrtr(min1, FAdd(max0, contactDist)), FIsGrtr(min0, FAdd(max1, contactDist)));
+
+		if(BAllEqTTTT(con))
+			return false;
+
+		const FloatV tempOverlap = FSub(max0, min1);
+
+		if(FAllGrtr(_minOverlap, tempOverlap))
+		{
+			_minOverlap = tempOverlap;
+			tempAxis = planeN;
+		}
+	}
+
+	separatingAxis = tempAxis;
+	minOverlap = _minOverlap;
+
+	return true;
+}  
+
+//ML: this function is shared by sphere/capsule. Point a and direction d need to be in the local space of polyData
+EHDI static bool intersectRayPolyhedron(const Vec3VArg a, const Vec3VArg dir, const PolygonalData& polyData, FloatV& tEnter, FloatV& tExit)
+{
+	const FloatV zero = FZero();
+	const FloatV eps = FLoad(1e-7f);
+	FloatV tFirst = zero;
+	FloatV tLast = FMax();
+
+	for(PxU32 k=0; k<polyData.mNbPolygons; ++k)
+	{
+		const HullPolygonData& data = polyData.mPolygons[k];
+		const Vec3V n = V3LoadU_SafeReadW(data.mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+
+		FloatV d = FLoad(data.mPlane.d);
+	
+		const FloatV denominator = V3Dot(n, dir);
+		const FloatV distToPlane = FAdd(V3Dot(n, a), d);
+		
+		if(FAllGrtr(eps, FAbs(denominator)))
+		{
+			if(FAllGrtr(distToPlane, zero))
+				return false;
+		}
+		else
+		{
+			FloatV tTemp = FNeg(FDiv(distToPlane, denominator));
+
+			//ML: denominator < 0 means the ray is entering halfspace; denominator > 0 means the ray is exiting halfspace
+			const BoolV con = FIsGrtr(zero, denominator);
+			const BoolV con0 = FIsGrtr(tTemp, tFirst); 
+			const BoolV con1 = FIsGrtr(tLast, tTemp);
+	
+			tFirst = FSel(BAnd(con, con0), tTemp, tFirst);
+			tLast = FSel(BAndNot(con1, con), tTemp, tLast);
+		}
+			
+		if(FAllGrtr(tFirst, tLast))
+			return false;
+	}
+
+	//calculate the intersect p in the local space
+	tEnter = tFirst;
+	tExit = tLast;
+	
+	return true;
+}
+
+//Precompute the convex data
+//     7+------+6			0 = ---
+//     /|     /|			1 = +--
+//    / |    / |			2 = ++-
+//   / 4+---/--+5			3 = -+-
+// 3+------+2 /    y   z	4 = --+
+//  | /    | /     |  /		5 = +-+
+//  |/     |/      |/		6 = +++
+// 0+------+1      *---x	7 = -++
+
+EHDI static bool testSATCapsulePoly(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, const FloatVArg contactDist, FloatV& minOverlap, Vec3V& separatingAxis)
+{
+	FloatV _minOverlap = FMax();//minOverlap;
+	FloatV min0, max0;
+	FloatV min1, max1;
+	Vec3V tempAxis = V3UnitY();
+	const FloatV eps = FEps();
+
+	//ML: project capsule to polydata axis 
+	if(!testPolyDataAxis(capsule, polyData, map, contactDist, _minOverlap, tempAxis))
+		return false;
+
+	const Vec3V capsuleAxis = V3Sub(capsule.p1, capsule.p0);
+	
+	for(PxU32 i=0;i<polyData.mNbPolygons;i++)
+	{
+		const HullPolygonData& polygon = polyData.mPolygons[i];
+		const PxU8* inds1 = polyData.mPolygonVertexRefs + polygon.mVRef8;
+
+		for(PxU32 lStart = 0, lEnd = PxU32(polygon.mNbVerts-1); lStart<polygon.mNbVerts; lEnd = lStart++)
+		{
+			//in the vertex space
+			const Vec3V p10 = V3LoadU_SafeReadW(polyData.mVerts[inds1[lStart]]);	// PT: safe because of the way vertex memory is allocated in ConvexHullData
+			const Vec3V p11 = V3LoadU_SafeReadW(polyData.mVerts[inds1[lEnd]]);		// PT: safe because of the way vertex memory is allocated in ConvexHullData
+				
+			const Vec3V vertexSpaceV = V3Sub(p11, p10);
+
+			//transform v to shape space
+			const Vec3V shapeSpaceV = M33TrnspsMulV3(map->shape2Vertex, vertexSpaceV);
+			
+			const Vec3V dir = V3Cross(capsuleAxis, shapeSpaceV);
+			const FloatV lenSq = V3Dot(dir, dir);
+			if(FAllGrtr(eps, lenSq))
+				continue;
+			const Vec3V normal = V3ScaleInv(dir, FSqrt(lenSq));
+
+			map->doSupport(normal, min0, max0);
+
+			const FloatV tempMin = V3Dot(capsule.p0, normal);
+			const FloatV tempMax = V3Dot(capsule.p1, normal);
+			min1 = FMin(tempMin, tempMax);
+			max1 = FMax(tempMin, tempMax);
+
+			min1 = FSub(min1, capsule.radius);
+			max1 = FAdd(max1, capsule.radius);
+
+			const BoolV con = BOr(FIsGrtr(min1, FAdd(max0, contactDist)), FIsGrtr(min0, FAdd(max1, contactDist)));
+
+			if(BAllEqTTTT(con))
+				return false;
+	
+			const FloatV tempOverlap = FSub(max0, min1);
+
+			if(FAllGrtr(_minOverlap, tempOverlap))
+			{
+				_minOverlap = tempOverlap;
+				tempAxis = normal;
+			}
+		}
+	}
+		
+	separatingAxis = tempAxis;
+	minOverlap = _minOverlap;
+
+	return true;
+}
+
+EHDI static void generatedCapsuleBoxFaceContacts(const CapsuleV& capsule, const PolygonalData& polyData, const HullPolygonData& referencePolygon, const SupportLocal* map, const PxMatTransformV& aToB, PersistentContact* manifoldContacts, PxU32& numContacts, 
+	const FloatVArg contactDist, const Vec3VArg normal)
+{
+	const FloatV radius = FAdd(capsule.radius, contactDist);
+
+	//calculate the intersect point of ray to plane
+	const Vec3V planeNormal = V3Normalize(M33TrnspsMulV3(map->shape2Vertex, V3LoadU(referencePolygon.mPlane.n)));
+	const PxU8* inds = polyData.mPolygonVertexRefs + referencePolygon.mVRef8;
+	const Vec3V a = M33MulV3(map->vertex2Shape, V3LoadU_SafeReadW(polyData.mVerts[inds[0]]));	// PT: safe because of the way vertex memory is allocated in ConvexHullData
+	
+	const FloatV denom0 = V3Dot(planeNormal, V3Sub(capsule.p0, a)); 
+	const FloatV denom1 = V3Dot(planeNormal, V3Sub(capsule.p1, a)); 
+	const FloatV projPlaneN = V3Dot(planeNormal, normal);
+	const FloatV numer = FSel(FIsGrtr(projPlaneN, FZero()), FRecip(projPlaneN), FZero());
+	const FloatV t0 = FMul(denom0, numer);
+	const FloatV t1 = FMul(denom1, numer);
+
+	const BoolV con0 = FIsGrtrOrEq(radius, t0);
+	const BoolV con1 = FIsGrtrOrEq(radius, t1);
+	if(BAllEqTTTT(BOr(con0, con1)))
+	{
+		const Mat33V rot = findRotationMatrixFromZAxis(planeNormal);
+		Vec3V points0In0_buf[E_ALLOCA_N]; Vec3V* points0In0 = points0In0_buf;
+		map->populateVerts(inds, referencePolygon.mNbVerts, polyData.mVerts, points0In0);
+
+		Vec3V rPolygonMin = V3Splat(FMax());
+		Vec3V rPolygonMax = V3Neg(rPolygonMin);
+		for(PxU32 i=0; i<referencePolygon.mNbVerts; ++i)
+		{
+			points0In0[i] = M33MulV3(rot, points0In0[i]);
+			rPolygonMin = V3Min(rPolygonMin, points0In0[i]);
+			rPolygonMax = V3Max(rPolygonMax, points0In0[i]);
+		}
+
+		if(BAllEqTTTT(con0))
+		{
+			//add contact
+			const Vec3V proj = V3NegScaleSub(normal, t0, capsule.p0);//V3ScaleAdd(t0, normal, capsule.p0);
+			//transform proj0 to 2D
+			const Vec3V point = M33MulV3(rot, proj);
+
+			if(contains(points0In0, referencePolygon.mNbVerts, point, rPolygonMin, rPolygonMax))
+			{
+				manifoldContacts[numContacts].mLocalPointA = aToB.transformInv(capsule.p0);
+				manifoldContacts[numContacts].mLocalPointB = proj;
+				manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(normal), t0);
+			}
+		}
+
+		if(BAllEqTTTT(con1))
+		{
+			const Vec3V proj = V3NegScaleSub(normal, t1, capsule.p1);//V3ScaleAdd(t1, normal, capsule.p1);
+			//transform proj0 to 2D
+			const Vec3V point = M33MulV3(rot, proj);
+
+			if(contains(points0In0, referencePolygon.mNbVerts, point, rPolygonMin, rPolygonMax))
+			{
+				manifoldContacts[numContacts].mLocalPointA = aToB.transformInv(capsule.p1);
+				manifoldContacts[numContacts].mLocalPointB = proj;
+				manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(normal),t1);
+			}
+		}
+	}
+}
+
+EHDI static void generatedFaceContacts(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, const PxMatTransformV& aToB, PersistentContact* manifoldContacts, PxU32& numContacts, 
+	const FloatVArg contactDist, const Vec3VArg normal)
+{
+	const FloatV zero = FZero();
+	FloatV tEnter = zero, tExit = zero;
+	const FloatV inflatedRadius = FAdd(capsule.radius, contactDist);
+	const Vec3V dir = V3Neg(normal);
+	const Vec3V vertexSpaceDir = M33MulV3(map->shape2Vertex, dir);
+	const Vec3V p0 = M33MulV3(map->shape2Vertex, capsule.p0);
+
+	if(intersectRayPolyhedron(p0, vertexSpaceDir, polyData, tEnter, tExit) && FAllGrtrOrEq(inflatedRadius, tEnter))
+	{
+		manifoldContacts[numContacts].mLocalPointA = aToB.transformInv(capsule.p0);
+		manifoldContacts[numContacts].mLocalPointB = V3ScaleAdd(dir, tEnter, capsule.p0);
+		manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(normal), tEnter);
+	}
+
+	const Vec3V p1 = M33MulV3(map->shape2Vertex, capsule.p1);
+	if(intersectRayPolyhedron(p1, vertexSpaceDir, polyData, tEnter, tExit) && FAllGrtrOrEq(inflatedRadius, tEnter))
+	{
+		manifoldContacts[numContacts].mLocalPointA = aToB.transformInv(capsule.p1);
+		manifoldContacts[numContacts].mLocalPointB = V3ScaleAdd(dir, tEnter, capsule.p1);
+		manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(normal), tEnter);
+	}	
+}
+
+EHDI static void generateEE(const Vec3VArg p, const Vec3VArg q, const Vec3VArg normal, const Vec3VArg a, const Vec3VArg b, const PxMatTransformV& aToB, 
+	PersistentContact* manifoldContacts, PxU32& numContacts, const FloatVArg inflatedRadius)
+{
+	const FloatV zero = FZero();
+	const FloatV expandedRatio = FLoad(0.005f);
+	const Vec3V ab = V3Sub(b, a);
+	const Vec3V n = V3Cross(ab, normal);
+	const FloatV d = V3Dot(n, a);
+	const FloatV np = V3Dot(n, p);
+	const FloatV nq = V3Dot(n,q);
+	const FloatV signP = FSub(np, d);
+	const FloatV signQ = FSub(nq, d);
+	const FloatV temp = FMul(signP, signQ);
+	if(FAllGrtr(temp, zero)) return;//If both points in the same side as the plane, no intersect points
+		
+	// if colliding edge (p3,p4) and plane are parallel return no collision
+	const Vec3V pq = V3Sub(q, p);
+	const FloatV npq = V3Dot(n, pq); 
+	if(FAllEq(npq, zero))	return;
+
+	//calculate the intersect point in the segment pq with plane n(x - a).
+	const FloatV segTValue = FDiv(FSub(d, np), npq);
+	const Vec3V localPointA = V3ScaleAdd(pq, segTValue, p);
+
+	//ML: ab, localPointA and normal is in the same plane, so that we can do 2D segment segment intersection
+	//calculate a normal perpendicular to ray localPointA + normal*t, then do 2D segment segment intersection
+	const Vec3V perNormal = V3Cross(normal, pq);
+	const Vec3V ap = V3Sub(localPointA, a);
+	const FloatV nom = V3Dot(perNormal, ap);
+	const FloatV denom = V3Dot(perNormal, ab);
+
+	const FloatV tValue = FDiv(nom, denom);
+
+	const FloatV max = FAdd(FOne(), expandedRatio);
+	const FloatV min = FSub(zero, expandedRatio);
+	if(FAllGrtr(tValue, max) || FAllGrtr(min, tValue))
+		return;
+
+	const Vec3V v = V3NegScaleSub(ab, tValue, ap);
+	const FloatV signedDist = V3Dot(v, normal);
+	if(FAllGrtrOrEq(inflatedRadius, signedDist))
+	{
+		const Vec3V localPointB = V3Sub(localPointA, v);
+		manifoldContacts[numContacts].mLocalPointA = aToB.transformInv(localPointA);
+		manifoldContacts[numContacts].mLocalPointB = localPointB;
+		manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(normal), signedDist);	
+	}
+}
+
+EHDI static void generatedContactsEEContacts(const CapsuleV& capsule, const PolygonalData& polyData, const HullPolygonData& referencePolygon, const SupportLocal* map, const PxMatTransformV& aToB, 
+	PersistentContact* manifoldContacts, PxU32& numContacts, const FloatVArg contactDist, const Vec3VArg contactNormal)
+{
+	const PxU8* inds = polyData.mPolygonVertexRefs + referencePolygon.mVRef8;
+
+	Vec3V points0In0_buf[E_ALLOCA_N]; Vec3V* points0In0 = points0In0_buf;
+
+	//Transform all the verts from vertex space to shape space
+	map->populateVerts(inds, referencePolygon.mNbVerts, polyData.mVerts, points0In0);
+
+	const FloatV inflatedRadius = FAdd(capsule.radius, contactDist);
+
+	for (PxU32 rStart = 0, rEnd = PxU32(referencePolygon.mNbVerts - 1); rStart < referencePolygon.mNbVerts; rEnd = rStart++) 
+	{
+		generateEE(capsule.p0, capsule.p1, contactNormal,points0In0[rStart], points0In0[rEnd], aToB, manifoldContacts, numContacts, inflatedRadius);
+	}
+}
+
+EHDI bool Gu::generateCapsuleBoxFullContactManifold(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, const PxMatTransformV& aToB, PersistentContact* manifoldContacts, PxU32& numContacts,
+	const FloatVArg contactDist, Vec3V& normal, const Vec3VArg closest, PxReal margin, bool doOverlapTest, PxReal toleranceScale, PxRenderOutput* renderOutput)
+{
+	E_UNUSED(renderOutput);
+	const PxU32 originalContacts = numContacts;
+
+	const HullPolygonData* referencePolygon = NULL;
+
+	if(doOverlapTest)
+	{
+		FloatV minOverlap;
+		//overwrite the normal
+		if(!testSATCapsulePoly(capsule, polyData, map, contactDist, minOverlap, normal))
+			return false;
+
+		referencePolygon = &polyData.mPolygons[getPolygonIndex(polyData, map, V3Neg(normal))];
+	}
+	else
+	{
+		const PxReal lowerEps = toleranceScale * PCM_WITNESS_POINT_LOWER_EPS;
+		const PxReal upperEps = toleranceScale * PCM_WITNESS_POINT_UPPER_EPS;
+		const PxReal tolerance = PxClamp(margin, lowerEps, upperEps);
+
+		const PxU32 featureIndex = getWitnessPolygonIndex(polyData, map, V3Neg(normal), closest, tolerance);
+		referencePolygon = &polyData.mPolygons[featureIndex];	
+	}
+
+	generatedCapsuleBoxFaceContacts(capsule, polyData, *referencePolygon, map, aToB, manifoldContacts, numContacts, contactDist, normal);
+	const PxU32 faceContacts = numContacts - originalContacts;
+	if(faceContacts < 2)
+	{
+		generatedContactsEEContacts(capsule, polyData, *referencePolygon, map, aToB, manifoldContacts, numContacts, contactDist, normal);
+	}
+
+	return true;
+}
+
+//capsule is in the local space of polyData
+EHDI bool Gu::generateFullContactManifold(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, const PxMatTransformV& aToB, PersistentContact* manifoldContacts, PxU32& numContacts,
+	const FloatVArg contactDist, Vec3V& normal, const Vec3VArg closest, PxReal margin, bool doOverlapTest, PxReal toleranceLength)
+{
+	const PxU32 originalContacts = numContacts;
+
+	Vec3V tNormal = normal;
+	
+	if(doOverlapTest)
+	{	
+		FloatV minOverlap;
+			
+		//overwrite the normal with the sperating axis
+		if(!testSATCapsulePoly(capsule, polyData, map, contactDist, minOverlap, tNormal))
+			return false;
+
+		generatedFaceContacts(capsule, polyData, map, aToB, manifoldContacts, numContacts, contactDist, tNormal);
+
+		const PxU32 faceContacts = numContacts - originalContacts;
+		if(faceContacts < 2)
+		{
+			const HullPolygonData& referencePolygon = polyData.mPolygons[getPolygonIndex(polyData, map, V3Neg(tNormal))];
+			generatedContactsEEContacts(capsule, polyData,referencePolygon, map, aToB, manifoldContacts, numContacts, contactDist, tNormal);
+		}
+	}
+	else
+	{
+		generatedFaceContacts(capsule, polyData, map, aToB, manifoldContacts, numContacts, contactDist, tNormal);
+
+		const PxU32 faceContacts = numContacts - originalContacts;
+		if(faceContacts < 2)
+		{
+			const PxReal lowerEps = toleranceLength * PCM_WITNESS_POINT_LOWER_EPS;
+			const PxReal upperEps = toleranceLength * PCM_WITNESS_POINT_UPPER_EPS;
+			const PxReal tolerance = PxClamp(margin, lowerEps, upperEps);
+
+			const PxU32 featureIndex = getWitnessPolygonIndex(polyData, map, V3Neg(tNormal), closest, tolerance);
+			const HullPolygonData& referencePolygon = polyData.mPolygons[featureIndex];
+			generatedContactsEEContacts(capsule, polyData,referencePolygon, map, aToB, manifoldContacts, numContacts, contactDist, tNormal);
+		}
+	}
+
+	normal = tNormal;
+
+	return true;
+}
+
+//sphere is in the local space of polyData, we treate sphere as capsule
+EHDI bool Gu::generateSphereFullContactManifold(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, PersistentContact* manifoldContacts, PxU32& numContacts,
+	const FloatVArg contactDist, Vec3V& normal, bool doOverlapTest)
+{
+	if(doOverlapTest)
+	{	
+		FloatV minOverlap;
+		//overwrite the normal with the sperating axis
+		if(!testPolyDataAxis(capsule, polyData, map, contactDist, minOverlap, normal))
+			return false;
+	}
+
+	const FloatV zero = FZero();
+	FloatV tEnter = zero, tExit = zero;
+	const FloatV inflatedRadius = FAdd(capsule.radius, contactDist);
+	const Vec3V dir = V3Neg(normal);
+	const Vec3V vertexSpaceDir = M33MulV3(map->shape2Vertex, dir);
+	const Vec3V p0 = M33MulV3(map->shape2Vertex, capsule.p0);
+	if(intersectRayPolyhedron(p0, vertexSpaceDir, polyData, tEnter, tExit) && FAllGrtrOrEq(inflatedRadius, tEnter))
+	{
+		//ML: for sphere, the contact point A is always zeroV in its local space
+		manifoldContacts[numContacts].mLocalPointA = V3Zero();
+		manifoldContacts[numContacts].mLocalPointB = V3ScaleAdd(dir, tEnter, capsule.p0);
+		manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(normal), tEnter);
+	}
+
+	return true;
+}
+
+//capsule is in the shape space of polyData 
+EHDI bool Gu::computeMTD(const CapsuleV& capsule, const PolygonalData& polyData, const SupportLocal* map, FloatV& penDepth, Vec3V& normal)
+{
+	const FloatV contactDist = FZero();
+	Vec3V separatingAxis;
+	FloatV minOverlap;
+	if(!testSATCapsulePoly(capsule, polyData, map, contactDist, minOverlap, separatingAxis))
+		return false;
+
+	//transform normal in to the worl space
+	normal = map->transform.rotate(separatingAxis);
+	penDepth = minOverlap;
+		
+	return true;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactBoxBox.cpp
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+EHDI static void getIncidentPolygon(Vec3V* pts, Vec3V& faceNormal, const Vec3VArg axis, const PxMatTransformV& transf1To0, const Vec3VArg extents)
+{
+	const FloatV zero = FZero();
+
+	FloatV ex = V3GetX(extents);
+	FloatV ey = V3GetY(extents);
+	FloatV ez = V3GetZ(extents);
+
+	const Vec3V u0 = transf1To0.getCol0();
+	const Vec3V u1 = transf1To0.getCol1();
+	const Vec3V u2 = transf1To0.getCol2();
+
+	//calculate the insident face for b
+	const FloatV d0 = V3Dot(u0, axis);
+	const FloatV d1 = V3Dot(u1, axis);
+	const FloatV d2 = V3Dot(u2, axis);
+
+	const FloatV absd0 = FAbs(d0);
+	const FloatV absd1 = FAbs(d1);
+	const FloatV absd2 = FAbs(d2);
+
+	if(FAllGrtrOrEq(absd0, absd1) && FAllGrtrOrEq(absd0, absd2))
+	{
+		//the incident face is on u0
+		const BoolV con = FIsGrtr(d0, zero);
+		faceNormal = V3Sel(con, V3Neg(u0), u0);
+		ex = FSel(con, FNeg(ex), ex);
+		const Vec3V r0 = V3Scale(u0, ex);
+		const Vec3V r1 = V3Scale(u1, ey);
+		const Vec3V r2 = V3Scale(u2, ez);
+
+		const Vec3V temp0 = V3Add(transf1To0.p, r0);
+		const Vec3V temp1 = V3Add(r1, r2);
+		const Vec3V temp2 = V3Sub(r1, r2);
+			
+		pts[0] = V3Add(temp0, temp1);	// (-x/x,  y,  z)
+		pts[1] = V3Add(temp0, temp2);	// (-x/x,  y, -z)
+		pts[2] = V3Sub(temp0, temp1);	// (-x/x, -y, -z)
+		pts[3] = V3Sub(temp0, temp2);	// (-x/x, -y,  z)
+	}
+	else if(FAllGrtrOrEq(absd1, absd2))
+	{
+		//the incident face is on u1
+		const BoolV con = FIsGrtr(d1, zero);
+		faceNormal = V3Sel(con, V3Neg(u1), u1);
+		ey = FSel(con, FNeg(ey), ey);
+		const Vec3V r0 = V3Scale(u0, ex);
+		const Vec3V r1 = V3Scale(u1, ey);
+		const Vec3V r2 = V3Scale(u2, ez);
+
+		const Vec3V temp0 = V3Add(transf1To0.p, r1);
+		const Vec3V temp1 = V3Add(r0, r2);
+		const Vec3V temp2 = V3Sub(r0, r2);
+			
+		pts[0] = V3Add(temp0, temp1);	// (x,  -y/y,  z)
+		pts[1] = V3Add(temp0, temp2);	// (x,  -y/y, -z)
+		pts[2] = V3Sub(temp0, temp1);	// (-x, -y/y, -z)
+		pts[3] = V3Sub(temp0, temp2);	// (-x, -y/y,  z)
+	}
+	else
+	{
+		//the incident face is on u2
+		const BoolV con = FIsGrtr(d2, zero);
+		faceNormal = V3Sel(con, V3Neg(u2), u2);
+		ez = FSel(con, FNeg(ez), ez);
+		const Vec3V r0 = V3Scale(u0, ex);
+		const Vec3V r1 = V3Scale(u1, ey);
+		const Vec3V r2 = V3Scale(u2, ez);
+
+		const Vec3V temp0 = V3Add(transf1To0.p, r2);
+		const Vec3V temp1 = V3Add(r0, r1);
+		const Vec3V temp2 = V3Sub(r0, r1);
+			
+		pts[0] = V3Add(temp0, temp1);	// ( x,   y,  z)
+		pts[1] = V3Add(temp0, temp2);	// ( x,  -y,  z)
+		pts[2] = V3Sub(temp0, temp1);	// (-x,  -y,  z)
+		pts[3] = V3Sub(temp0, temp2);	// (-x,   y,  z)
+	}
+}
+
+//p0 and p1 is in the local space of AABB
+EHDI static bool intersectSegmentAABB(const Vec3VArg p0, const Vec3VArg d, const Vec3VArg max, const Vec3VArg min, FloatV& tmin, FloatV& tmax)
+{
+	const Vec3V eps = V3Load(1e-6f);
+	const Vec3V absV = V3Abs(d);
+	const FloatV one = FOne();
+	const Vec3V zero = V3Zero();
+	const Vec3V fMax = Vec3V_From_FloatV(FMax());
+
+	FloatV tminf = FZero();
+	FloatV tmaxf = one;
+	const BoolV isParallel = V3IsGrtr(eps, absV);
+	const BoolV isOutsideOfRange = BOr(V3IsGrtr(p0, max), V3IsGrtr(min, p0));
+	//const BoolV isParallelAndOutOfRange = BAnd(isParallel, isOutsideOfRange);
+
+	if(!BAllEqFFFF(BAnd(isParallel, isOutsideOfRange)))
+		return false;
+
+	const Vec3V odd = V3RecipFast(d);
+	const Vec3V t1 = V3Sel(isParallel, zero, V3Mul(V3Sub(min, p0), odd));
+	const Vec3V t2 = V3Sel(isParallel, fMax, V3Mul(V3Sub(max, p0), odd));
+		
+	const Vec3V tt1 = V3Min(t1, t2);
+	const Vec3V tt2 = V3Max(t1, t2);
+
+	const FloatV ft1 = V3ExtractMax(tt1);
+	const FloatV ft2 = V3ExtractMin(tt2);
+
+	tminf = FMax(ft1, tminf);
+	tmaxf = FMin(tmaxf, ft2);
+
+	tmin = tminf;
+	tmax = tmaxf;
+
+	const BoolV con0 = FIsGrtr(tminf, tmaxf);
+	const BoolV con1 = FIsGrtr(tminf, one);
+	const BoolV isNotIntersect = BOr(con0, con1);
+	return BAllEqFFFF(isNotIntersect) == 1;
+}
+
+//pts, faceNormal and contact normal are in the local space of new space
+EHDI static void calculateContacts(const FloatVArg extentX_, const FloatVArg extentY_, Vec3V* pts, const Vec3VArg incidentFaceNormalInNew, const Vec3VArg localNormal, PersistentContact* manifoldContacts, PxU32& numContacts, const FloatVArg contactDist)
+{
+	const FloatV zero = FZero();
+	const FloatV max = FMax();
+	const FloatV eps = FLoad(1.0001f);
+
+	const FloatV extentX = FMul(extentX_, eps);
+	const FloatV extentY = FMul(extentY_, eps);
+
+	const FloatV nExtentX = FNeg(extentX);
+	const FloatV nExtentY = FNeg(extentY);
+		
+	bool pPenetration[4];
+	bool pArea[4];
+
+	Vec3V bmin = V3Splat(max);
+	Vec3V bmax = V3Neg(bmin);
+
+	const Vec3V bound = V3Merge(extentX, extentY, max);
+
+	//get the projection point of pts
+	for(PxU32 i=0; i< 4; ++i)
+	{
+		bmin = V3Min(bmin, pts[i]);
+		bmax = V3Max(bmax, pts[i]);
+		const FloatV z = FNeg(V3GetZ(pts[i]));
+		if(FAllGrtr(contactDist, z))
+		{
+			pPenetration[i] = true;
+
+			const Vec3V absPt = V3Abs(pts[i]);
+			const BoolV con = V3IsGrtrOrEq(bound, absPt);
+			if(BAllEqTTTT(con))
+			{
+				pArea[i] = true;
+				
+				//Add the point to the manifold
+				manifoldContacts[numContacts].mLocalPointA = V3SetZ(pts[i], zero); //transformNewTo0.transform(localPointA);
+				manifoldContacts[numContacts].mLocalPointB = pts[i];//transform1ToNew.transformInv(pts[i]);
+				manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), z);
+			}
+			else
+			{
+				pArea[i] = false;
+			}
+		}
+		else
+		{
+			pPenetration[i] = false;
+			pArea[i] = false;
+		}
+	}
+
+	if(numContacts == 4)
+		return;
+
+	//if(pPenetration[0] && pPenetration[1] && pPenetration[2] && pPenetration[3])
+	{
+		//if(!pArea[0] || !pArea[1] || !pArea[2] || !pArea[3])
+		{
+			const FloatV denom = V3GetZ(incidentFaceNormalInNew);
+			{
+				const Vec3V q0 = V3Merge(extentX, extentY, zero);
+
+				if(contains(pts, 4, q0, bmin, bmax))
+				{
+					const FloatV nom = V3Dot(incidentFaceNormalInNew, V3Sub(pts[0], q0));
+					const FloatV t = FDiv(nom, denom);
+					const FloatV pen = FNeg(t);
+					if(FAllGrtr(contactDist, pen))
+					{
+						manifoldContacts[numContacts].mLocalPointA = q0;
+						manifoldContacts[numContacts].mLocalPointB = V3SetZ(q0, t); 
+						manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+					}
+				}
+			}
+			
+			{
+				const Vec3V q0 = V3Merge(extentX, nExtentY, zero);
+				if(contains(pts, 4, q0, bmin, bmax))
+				{
+					const FloatV nom = V3Dot(incidentFaceNormalInNew, V3Sub(pts[0], q0));
+					const FloatV t = FDiv(nom, denom);
+					const FloatV pen = FNeg(t);
+					if(FAllGrtr(contactDist, pen))
+					{
+						manifoldContacts[numContacts].mLocalPointA = q0;
+						manifoldContacts[numContacts].mLocalPointB = V3SetZ(q0, t);
+						manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+					}
+				}
+			}
+				
+			{
+				const Vec3V q0 = V3Merge( nExtentX, extentY, zero);
+				if(contains(pts, 4, q0, bmin, bmax))
+				{
+					const FloatV nom = V3Dot(incidentFaceNormalInNew, V3Sub(pts[0], q0));
+					const FloatV t = FDiv(nom, denom);
+					const FloatV pen = FNeg(t);
+					if(FAllGrtr(contactDist, pen))
+					{
+						manifoldContacts[numContacts].mLocalPointA = q0;
+						manifoldContacts[numContacts].mLocalPointB = V3SetZ(q0, t);
+						manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+					}
+				}
+			}
+			
+			{
+				const Vec3V q0 = V3Merge(nExtentX, nExtentY, zero);
+					
+				if(contains(pts, 4, q0, bmin, bmax))
+				{
+					const FloatV nom = V3Dot(incidentFaceNormalInNew, V3Sub(pts[0], q0));
+					const FloatV t = FDiv(nom, denom);
+					const FloatV pen = FNeg(t);
+					if(FAllGrtr(contactDist, pen))
+					{
+						manifoldContacts[numContacts].mLocalPointA = q0;
+						manifoldContacts[numContacts].mLocalPointB = V3SetZ(q0, t);
+						manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+					}
+				}
+			}
+		}
+	}
+
+	const Vec3V ext = V3Merge(extentX, extentY, max);
+	const Vec3V negExt = V3Merge(nExtentX, nExtentY, FNeg(FAdd(contactDist, FEps())));
+
+	for (PxU32 rStart = 0, rEnd = 3; rStart < 4; rEnd = rStart++)
+	{
+		const Vec3V p0 = pts[rStart];	
+		const Vec3V p1 = pts[rEnd];
+
+		if(!pPenetration[rStart] &&  !pPenetration[rEnd])
+			continue;
+
+		const bool con0 = pPenetration[rStart] && pArea[rStart];
+		const bool con1 = pPenetration[rEnd] && pArea[rEnd];
+		if(con0 && con1)
+			continue;
+
+		//intersect t value with x plane
+		const Vec3V p0p1 = V3Sub(p1, p0);
+
+		FloatV tmin, tmax;
+		if(intersectSegmentAABB(p0, p0p1, ext, negExt, tmin, tmax))
+		{
+			if(!con0)
+			{
+				const Vec3V intersectP = V3ScaleAdd(p0p1, tmin, p0);
+				manifoldContacts[numContacts].mLocalPointA = V3SetZ(intersectP, zero);
+				manifoldContacts[numContacts].mLocalPointB = intersectP;
+				manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), FNeg(V3GetZ(intersectP)));
+			}
+			if(!con1)
+			{
+				const Vec3V intersectP = V3ScaleAdd(p0p1, tmax, p0);
+				manifoldContacts[numContacts].mLocalPointA = V3SetZ(intersectP, zero);
+				manifoldContacts[numContacts].mLocalPointB = intersectP;
+				manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), FNeg(V3GetZ(intersectP)));
+			}
+		}
+	}
+}
+
+EHDI static PxU32 doBoxBoxGenerateContacts(const Vec3VArg box0Extent, const Vec3VArg box1Extent, const PxMatTransformV& transform0, const PxMatTransformV& transform1, const FloatVArg contactDist, PersistentContact* manifoldContacts, PxU32& numContacts)
+{
+	const FloatV ea0 = V3GetX(box0Extent);
+	const FloatV ea1 = V3GetY(box0Extent);
+	const FloatV ea2 = V3GetZ(box0Extent);
+
+	const FloatV eb0 = V3GetX(box1Extent);
+	const FloatV eb1 = V3GetY(box1Extent);
+	const FloatV eb2 = V3GetZ(box1Extent);
+
+	const PxMatTransformV transform1To0 = transform0.transformInv(transform1);
+	const Mat33V rot0To1 = M33Trnsps(transform1To0.rot);
+
+	const Vec3V uEps = V3Load(1e-6f); 
+
+	const FloatV zero = FZero();
+
+	const FloatV tx = V3GetX(transform1To0.p);
+	const FloatV ty = V3GetY(transform1To0.p);
+	const FloatV tz = V3GetZ(transform1To0.p);
+	const Vec3V col0 = transform1To0.getCol0();
+	const Vec3V col1 = transform1To0.getCol1();
+	const Vec3V col2 = transform1To0.getCol2();
+
+	const Vec3V abs1To0Col0 = V3Add(V3Abs(col0), uEps);
+	const Vec3V abs1To0Col1 = V3Add(V3Abs(col1), uEps);
+	const Vec3V abs1To0Col2 = V3Add(V3Abs(col2), uEps);
+
+	const Vec3V abs0To1Col0 = V3Add(V3Abs(rot0To1.col0), uEps);
+	const Vec3V abs0To1Col1 = V3Add(V3Abs(rot0To1.col1), uEps);
+	const Vec3V abs0To1Col2 = V3Add(V3Abs(rot0To1.col2), uEps);
+
+	FloatV sign[6];
+	FloatV overlap[6];
+
+	FloatV ra, rb, radiusSum;
+	//ua0
+	{
+		sign[0] = tx;
+
+		const Vec3V vtemp3 = V3Mul(abs0To1Col0, box1Extent);
+		rb = FAdd(V3GetX(vtemp3), FAdd(V3GetY(vtemp3), V3GetZ(vtemp3)));
+
+		radiusSum = FAdd(ea0, rb);
+		overlap[0] = FAdd(FSub(radiusSum, FAbs(sign[0])), contactDist);
+		if(FAllGrtr(zero, overlap[0]))
+			return false;
+	}
+
+	//ua1
+	{
+		sign[1] = ty;
+
+		const Vec3V vtemp3 = V3Mul(abs0To1Col1, box1Extent);
+		rb = FAdd(V3GetX(vtemp3), FAdd(V3GetY(vtemp3), V3GetZ(vtemp3)));
+
+		radiusSum = FAdd(ea1, rb);
+		overlap[1] = FAdd(FSub(radiusSum, FAbs(sign[1])), contactDist);
+		if(FAllGrtr(zero, overlap[1]))
+			return false;
+	}
+
+	//ua2	
+	{
+		sign[2] = tz;
+		ra = ea2;
+
+		const Vec3V vtemp3 = V3Mul(abs0To1Col2, box1Extent);
+		rb = FAdd(V3GetX(vtemp3), FAdd(V3GetY(vtemp3), V3GetZ(vtemp3)));
+
+		radiusSum = FAdd(ea2, rb);
+		overlap[2] = FAdd(FSub(radiusSum, FAbs(sign[2])), contactDist);
+		if(FAllGrtr(zero, overlap[2]))
+			return false;
+	}
+   
+	//ub0 
+	{
+		sign[3] = V3Dot(transform1To0.p, col0);
+
+		const Vec3V vtemp3 = V3Mul(abs1To0Col0, box0Extent);
+		ra = FAdd(V3GetX(vtemp3), FAdd(V3GetY(vtemp3), V3GetZ(vtemp3)));
+
+		radiusSum = FAdd(ra, eb0);
+		overlap[3] = FAdd(FSub(radiusSum, FAbs(sign[3])), contactDist);
+		if(FAllGrtr(zero, overlap[3]))
+			return false;
+	}
+
+	//ub1
+	{
+		sign[4] = V3Dot(transform1To0.p, col1);
+
+		const Vec3V vtemp3 = V3Mul(abs1To0Col1, box0Extent);
+		ra = FAdd(V3GetX(vtemp3), FAdd(V3GetY(vtemp3), V3GetZ(vtemp3)));
+
+		radiusSum = FAdd(ra, eb1);
+		overlap[4] = FAdd(FSub(radiusSum, FAbs(sign[4])), contactDist);
+		if(FAllGrtr(zero, overlap[4]))
+			return false;
+	}
+
+	//ub2
+	{
+		sign[5] = V3Dot(transform1To0.p, col2);
+
+		const Vec3V vtemp3 = V3Mul(abs1To0Col2, box0Extent);
+		ra = FAdd(V3GetX(vtemp3), FAdd(V3GetY(vtemp3), V3GetZ(vtemp3)));
+		
+		radiusSum = FAdd(ra, eb2);
+		overlap[5] = FAdd(FSub(radiusSum, FAbs(sign[5])), contactDist);
+		if(FAllGrtr(zero, overlap[5]))
+			return false;
+	}
+
+	//ua0 X ub0
+	{
+		//B into A's space, ua0Xub0[0,-b3, b2]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetY(col0), tz), FMul(V3GetZ(col0), ty)));
+
+		//B into A's space, ua0Xub0[0,-b3, b2]
+		const FloatV vtemp0 = FMul(V3GetZ(abs1To0Col0), ea1);
+		const FloatV vtemp1 = FMul(V3GetY(abs1To0Col0), ea2);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub0[0, a3, -a2]
+		const FloatV vtemp01 = FMul(V3GetZ(abs0To1Col0), eb1);
+		const FloatV vtemp02 = FMul(V3GetY(abs0To1Col0), eb2);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum)) return false;
+	}
+
+	//ua0 X ub1
+	{
+		//B into A's space, ua0Xub0[0, -b3, b2]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetY(col1), tz), FMul(V3GetZ(col1), ty)));
+
+		//B into A's space, ua0Xub0[0, -b3, b2]
+		const FloatV vtemp0 = FMul(V3GetZ(abs1To0Col1), ea1);
+		const FloatV vtemp1 = FMul(V3GetY(abs1To0Col1), ea2);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[-a3, 0, a1]
+		const FloatV vtemp01 = FMul(V3GetZ(abs0To1Col0), eb0);
+		const FloatV vtemp02 = FMul(V3GetX(abs0To1Col0), eb2);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+
+		if(FAllGrtr(absSign, radiusSum)) return false;
+	}
+
+	//ua0 X ub2
+	{
+		//B into A's space, ua0Xub0[0, -b3, b2]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetY(col2), tz), FMul(V3GetZ(col2), ty)));
+
+		//B into A's space, ua0Xub0[0, -b3, b2]
+		const FloatV vtemp0 = FMul(V3GetZ(abs1To0Col2), ea1);
+		const FloatV vtemp1 = FMul(V3GetY(abs1To0Col2), ea2);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[a2, -a1, 0]
+		const FloatV vtemp01 = FMul(V3GetY(abs0To1Col0), eb0);
+		const FloatV vtemp02 = FMul(V3GetX(abs0To1Col0), eb1);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum)) return false;
+	}
+
+	//ua1 X ub0
+	{
+		//B into A's space, ua0Xub0[b3, 0, -b1]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetZ(col0), tx), FMul(V3GetX(col0), tz)));
+
+		//B into A's space, ua0Xub0[b3, 0, -b1]
+		const FloatV vtemp0 = FMul(V3GetZ(abs1To0Col0), ea0);
+		const FloatV vtemp1 = FMul(V3GetX(abs1To0Col0), ea2);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[0, a3, -a2]
+		const FloatV vtemp01 = FMul(V3GetZ(abs0To1Col1), eb1);
+		const FloatV vtemp02 = FMul(V3GetY(abs0To1Col1), eb2);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum))return false;
+	}
+
+	//ua1 X ub1
+	{
+		//B into A's space, ua0Xub0[b3, 0, -b1]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetZ(col1), tx), FMul(V3GetX(col1), tz)));
+
+		//B into A's space, ua0Xub0[b3, 0, -b1]
+		const FloatV vtemp0 = FMul(V3GetZ(abs1To0Col1), ea0);
+		const FloatV vtemp1 = FMul(V3GetX(abs1To0Col1), ea2);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[-a3, 0, -a1]
+		const FloatV vtemp01 = FMul(V3GetZ(abs0To1Col1), eb0);
+		const FloatV vtemp02 = FMul(V3GetX(abs0To1Col1), eb2);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum))return false;
+	}
+
+	//ua1 X ub2
+	{
+		//B into A's space, ua0Xub0[b3, 0, -b1]
+		const FloatV absSign=FAbs(FSub(FMul(V3GetZ(col2), tx), FMul(V3GetX(col2), tz)));
+
+		//B into A's space, ua0Xub0[b3, 0, -b1]
+		const FloatV vtemp0 = FMul(V3GetZ(abs1To0Col2), ea0);
+		const FloatV vtemp1 = FMul(V3GetX(abs1To0Col2), ea2);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[a2, -a1, 0]
+		const FloatV vtemp01 = FMul(V3GetY(abs0To1Col1), eb0);
+		const FloatV vtemp02 = FMul(V3GetX(abs0To1Col1), eb1);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum))return false;
+	}
+
+	//ua2 X ub0
+	{
+		//B into A's space, ua2Xub0[-b2, b1, 0]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetX(col0), ty), FMul(V3GetY(col0), tx)));
+
+
+		//B into A's space, ua2Xub0[-b2, b1, 0]
+		const FloatV vtemp0 = FMul(V3GetY(abs1To0Col0), ea0);
+		const FloatV vtemp1 = FMul(V3GetX(abs1To0Col0), ea1);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[0, a3, -a2]
+		const FloatV vtemp01 = FMul(V3GetZ(abs0To1Col2), eb1);
+		const FloatV vtemp02 = FMul(V3GetY(abs0To1Col2), eb2);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum))return false;
+	}
+
+	//ua2 X ub1
+	{
+		//B into A's space, ua2Xub0[-b2, b1, 0]
+		const FloatV absSign = FAbs(FSub(FMul(V3GetX(col1), ty), FMul(V3GetY(col1), tx)));
+
+		//B into A's space, ua2Xub0[-b2, b1, 0]
+		const FloatV vtemp0 = FMul(V3GetY(abs1To0Col1), ea0);
+		const FloatV vtemp1 = FMul(V3GetX(abs1To0Col1), ea1);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[-a3, 0, a1]
+		const FloatV vtemp01 = FMul(V3GetZ(abs0To1Col2), eb0);
+		const FloatV vtemp02 = FMul(V3GetX(abs0To1Col2), eb2);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum))return false;
+	}
+
+	//ua2 X ub2
+	{
+		//B into A's space, ua2Xub0[-b2, b1, 0]
+		const FloatV absSign=FAbs(FSub(FMul(V3GetX(col2), ty), FMul(V3GetY(col2), tx)));
+
+		//B into A's space, ua2Xub0[-b2, b1, 0]
+		const FloatV vtemp0 = FMul(V3GetY(abs1To0Col2), ea0);
+		const FloatV vtemp1 = FMul(V3GetX(abs1To0Col2), ea1);
+		ra = FAdd(vtemp0, vtemp1);
+
+		//A into B's space, ua0Xub1[a2, -a1, 0]
+		const FloatV vtemp01 = FMul(V3GetY(abs0To1Col2), eb0);
+		const FloatV vtemp02 = FMul(V3GetX(abs0To1Col2), eb1);
+		rb = FAdd(vtemp01, vtemp02);
+		
+		radiusSum = FAdd(FAdd(ra, rb), contactDist);
+		if(FAllGrtr(absSign, radiusSum))return false;
+	}
+
+	Vec3V mtd;
+
+	PxU32 feature = 0;
+	FloatV minOverlap = overlap[0];
+
+	for(PxU32 i=1; i<6; ++i)
+	{
+		if(FAllGrtr(minOverlap, overlap[i]))
+		{
+			minOverlap = overlap[i];
+			feature = i;
+		}
+	}
+
+	PxMatTransformV newTransformV;
+	const Vec3V axis00 = transform0.getCol0();
+	const Vec3V axis01 = transform0.getCol1();
+	const Vec3V axis02 = transform0.getCol2();
+	const Vec3V axis10 = transform1.getCol0();
+	const Vec3V axis11 = transform1.getCol1();
+	const Vec3V axis12 = transform1.getCol2();
+
+	Vec3V incidentFaceNormalInNew;
+	Vec3V pts[4];
+	bool flip = false;
+	switch(feature)
+	{
+	case 0: //ua0
+		{
+			if(FAllGrtrOrEq(zero, sign[0]))	
+			{
+				mtd = axis00;
+				newTransformV.rot.col0 = V3Neg(axis02);
+				newTransformV.rot.col1 = axis01;
+				newTransformV.rot.col2 = axis00;
+				newTransformV.p = V3NegScaleSub(axis00, ea0, transform0.p);
+			}
+			else		
+			{
+				const Vec3V nAxis00 = V3Neg(axis00);
+				mtd = nAxis00;
+				newTransformV.rot.col0 = axis02;
+				newTransformV.rot.col1 = axis01;
+				newTransformV.rot.col2 = nAxis00;
+				newTransformV.p = V3ScaleAdd(axis00, ea0, transform0.p);
+			}
+	
+			const PxMatTransformV transform1ToNew = newTransformV.transformInv(transform1);
+			const Vec3V localNormal = newTransformV.rotateInv(mtd);
+			getIncidentPolygon(pts, incidentFaceNormalInNew, V3Neg(localNormal), transform1ToNew, box1Extent);
+		
+			calculateContacts(ea2, ea1, pts, incidentFaceNormalInNew, localNormal, manifoldContacts, numContacts, contactDist);
+			
+			break;
+		};
+	case 1: //ua1
+		{
+			if(FAllGrtrOrEq(zero, sign[1]))	
+			{
+				mtd = axis01;
+				newTransformV.rot.col0 = axis00;
+				newTransformV.rot.col1 = V3Neg(axis02);
+				newTransformV.rot.col2 = axis01;	
+				newTransformV.p = V3NegScaleSub(axis01, ea1, transform0.p); 
+			}
+			else		
+			{
+				const Vec3V nAxis01 = V3Neg(axis01);
+				mtd = nAxis01;
+				newTransformV.rot.col0 = axis00;
+				newTransformV.rot.col1 = axis02;
+				newTransformV.rot.col2 = nAxis01;	
+				newTransformV.p = V3ScaleAdd(axis01, ea1, transform0.p);
+			}
+
+			const PxMatTransformV transform1ToNew = newTransformV.transformInv(transform1);
+			const Vec3V localNormal = newTransformV.rotateInv(mtd);
+			getIncidentPolygon(pts, incidentFaceNormalInNew, V3Neg(localNormal), transform1ToNew, box1Extent);
+
+			calculateContacts(ea0, ea2, pts, incidentFaceNormalInNew, localNormal, manifoldContacts, numContacts, contactDist);
+
+			break;
+		};
+	case 2: //ua2
+		{
+			if(FAllGrtrOrEq(zero, sign[2]))	
+			{
+				mtd = axis02;
+				newTransformV.rot.col0 = axis00;
+				newTransformV.rot.col1 = axis01;
+				newTransformV.rot.col2 = axis02;	
+				
+				newTransformV.p = V3NegScaleSub(axis02, ea2, transform0.p); 
+			}
+			else		
+			{
+				const Vec3V nAxis02 = V3Neg(axis02);
+				mtd = nAxis02;
+				newTransformV.rot.col0 = axis00;
+				newTransformV.rot.col1 = V3Neg(axis01);
+				newTransformV.rot.col2 = nAxis02;
+				newTransformV.p = V3ScaleAdd(axis02, ea2, transform0.p);
+			}
+
+			const PxMatTransformV transform1ToNew = newTransformV.transformInv(transform1);
+			const Vec3V localNormal = newTransformV.rotateInv(mtd);
+			getIncidentPolygon(pts, incidentFaceNormalInNew, V3Neg(localNormal), transform1ToNew, box1Extent);
+
+			calculateContacts(ea0, ea1, pts, incidentFaceNormalInNew, localNormal, manifoldContacts, numContacts, contactDist);
+
+			break;
+		};
+	case 3: //ub0
+		{
+			flip = true;
+			if(FAllGrtrOrEq(zero, sign[3]))	
+			{
+				mtd = axis10;
+				newTransformV.rot.col0 = axis12;
+				newTransformV.rot.col1 = axis11;
+				newTransformV.rot.col2 = V3Neg(axis10);
+				newTransformV.p = V3ScaleAdd(axis10, eb0, transform1.p); //transform0.p - extents0.x*axis00;
+			}
+			else		
+			{
+				mtd = V3Neg(axis10);
+				newTransformV.rot.col0 = V3Neg(axis12);
+				newTransformV.rot.col1 = axis11;
+				newTransformV.rot.col2 = axis10;
+				newTransformV.p = V3NegScaleSub(axis10, eb0, transform1.p);//transform0.p + extents0.x*axis00;
+			}
+
+			const PxMatTransformV transform1ToNew = newTransformV.transformInv(transform0);
+			const Vec3V localNormal = newTransformV.rotateInv(mtd);
+			getIncidentPolygon(pts, incidentFaceNormalInNew, localNormal, transform1ToNew, box0Extent);
+
+			calculateContacts(eb2, eb1, pts, incidentFaceNormalInNew, localNormal, manifoldContacts, numContacts, contactDist);
+			
+			break;
+		};
+	case 4: //ub1;
+		{
+			flip = true;
+			if(FAllGrtrOrEq(zero, sign[4]))	
+			{
+				mtd = axis11;
+				newTransformV.rot.col0 = axis10;
+				newTransformV.rot.col1 = axis12;
+				newTransformV.rot.col2 = V3Neg(axis11);
+			
+				newTransformV.p = V3ScaleAdd(axis11, eb1, transform1.p);
+			}
+			else		
+			{
+				mtd = V3Neg(axis11);
+
+				newTransformV.rot.col0 = axis10;
+				newTransformV.rot.col1 = V3Neg(axis12);
+				newTransformV.rot.col2 = axis11;
+				newTransformV.p = V3NegScaleSub(axis11, eb1, transform1.p); //transform0.p + extents0.x*axis00;
+			}
+
+			const PxMatTransformV transform1ToNew = newTransformV.transformInv(transform0);
+			const Vec3V localNormal = newTransformV.rotateInv(mtd);
+			getIncidentPolygon(pts, incidentFaceNormalInNew, localNormal, transform1ToNew, box0Extent);
+			calculateContacts(eb0, eb2, pts, incidentFaceNormalInNew, localNormal, manifoldContacts, numContacts, contactDist);
+			break;
+		}
+	case 5: //ub2;
+		{
+
+			flip = true;
+			if(FAllGrtrOrEq(zero, sign[5]))	
+			{
+				mtd = axis12;
+				newTransformV.rot.col0 = axis10;
+				newTransformV.rot.col1 = V3Neg(axis11);
+				newTransformV.rot.col2 = V3Neg(axis12);
+				newTransformV.p = V3ScaleAdd(axis12, eb2, transform1.p);
+			}
+			else		
+			{
+				mtd = V3Neg(axis12);
+				
+				newTransformV.rot.col0 = axis10;
+				newTransformV.rot.col1 = axis11;
+				newTransformV.rot.col2 = axis12;
+				newTransformV.p = V3NegScaleSub(axis12, eb2, transform1.p);
+			}
+
+			const PxMatTransformV transform1ToNew = newTransformV.transformInv(transform0);
+			const Vec3V localNormal = newTransformV.rotateInv(mtd);
+			getIncidentPolygon(pts, incidentFaceNormalInNew, localNormal, transform1ToNew, box0Extent);
+		
+			calculateContacts(eb0, eb1, pts, incidentFaceNormalInNew, localNormal, manifoldContacts, numContacts, contactDist);
+			break;
+		};
+	default:
+		return false;
+	}
+
+	if(numContacts != 0)
+	{
+		if(flip)
+		{
+			for(PxU32 i=0; i<numContacts; ++i)
+			{
+				const Vec3V localB = manifoldContacts[i].mLocalPointB;
+				manifoldContacts[i].mLocalPointB = manifoldContacts[i].mLocalPointA;
+				manifoldContacts[i].mLocalPointA = localB;
+			}
+		}
+		const PxMatTransformV transformNewTo1 = transform1.transformInv(newTransformV);
+		const PxMatTransformV transformNewTo0 = transform0.transformInv(newTransformV);
+		//transform points to the local space of transform0 and transform1
+		const Vec3V localNormalInB = transformNewTo1.rotate(Vec3V_From_Vec4V(manifoldContacts[0].mLocalNormalPen));
+
+		for(PxU32 i=0; i<numContacts; ++i)
+		{
+			manifoldContacts[i].mLocalPointA = transformNewTo0.transform(manifoldContacts[i].mLocalPointA);
+			manifoldContacts[i].mLocalPointB = transformNewTo1.transform(manifoldContacts[i].mLocalPointB);
+			manifoldContacts[i].mLocalNormalPen = V4SetW(localNormalInB, V4GetW(manifoldContacts[i].mLocalNormalPen));
+		}
+	}
+
+	return true;
+}  
+
+EHDI bool Gu::pcmContactBoxBox(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(renderOutput);
+	E_ASSERT(transform1.q.isSane());
+	E_ASSERT(transform0.q.isSane());
+
+	const PxBoxGeometry& shapeBox0 = checkedCast<PxBoxGeometry>(shape0);
+	const PxBoxGeometry& shapeBox1 = checkedCast<PxBoxGeometry>(shape1);
+
+	// Get actual shape data
+	PersistentContactManifold& manifold = cache.getManifold();
+	PxPrefetchLine(&manifold, 256);
+
+	const FloatV contactDist = FLoad(params.mContactDistance);
+	const Vec3V boxExtents0 = V3LoadU(shapeBox0.halfExtents);
+	const Vec3V boxExtents1 = V3LoadU(shapeBox1.halfExtents);
+	
+	//Transfer A into the local space of B
+	const PxTransformV transf0 = loadTransformA(transform0);
+	const PxTransformV transf1 = loadTransformA(transform1);
+	const PxTransformV curRTrans(transf1.transformInv(transf0));
+	const PxMatTransformV aToB(curRTrans);
+
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV boxMargin0 = CalculatePCMBoxMargin(boxExtents0, toleranceLength);
+	const FloatV boxMargin1 = CalculatePCMBoxMargin(boxExtents1, toleranceLength);
+	const FloatV minMargin = FMin(boxMargin0, boxMargin1);
+
+	const PxU32 initialContacts = manifold.mNumContacts;
+	const FloatV projectBreakingThreshold = FMul(minMargin, FLoad(0.8f));
+	
+	manifold.refreshContactPoints(aToB, projectBreakingThreshold, contactDist);
+
+	const PxU32 newContacts = manifold.mNumContacts;
+
+	const bool bLostContacts = (newContacts != initialContacts);
+  
+	const FloatV radiusA = V3Length(boxExtents0);
+	const FloatV radiusB = V3Length(boxExtents1);
+	if(bLostContacts || manifold.invalidate_BoxConvex(curRTrans, transf0.q, transf1.q, minMargin, radiusA, radiusB))
+	{
+		manifold.setRelativeTransform(curRTrans, transf0.q, transf1.q);
+		
+		PxMatTransformV transfV0(transf0);
+		PxMatTransformV transfV1(transf1);
+
+		transfV0.rot.col0 = V3Normalize(transfV0.rot.col0);
+		transfV0.rot.col1 = V3Normalize(transfV0.rot.col1);
+		transfV0.rot.col2 = V3Normalize(transfV0.rot.col2);
+
+		transfV1.rot.col0 = V3Normalize(transfV1.rot.col0);
+		transfV1.rot.col1 = V3Normalize(transfV1.rot.col1);
+		transfV1.rot.col2 = V3Normalize(transfV1.rot.col2);
+
+		PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+		PxU32 numContacts = 0;
+	
+		if(doBoxBoxGenerateContacts(boxExtents0, boxExtents1, transfV0, transfV1, contactDist, manifoldContacts, numContacts)) 
+		{
+			if(numContacts > 0)
+			{
+				manifold.addBatchManifoldContacts(manifoldContacts, numContacts, toleranceLength);
+				const Vec3V worldNormal = V3Normalize(transfV1.rotate(Vec3V_From_Vec4V(manifold.mContactPoints[0].mLocalNormalPen)));
+				manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transfV1);
+				return true;
+			}
+			else
+			{
+				const Vec3V zeroV = V3Zero();
+				const BoxV box0(zeroV, boxExtents0);
+				const BoxV box1(zeroV, boxExtents1);
+
+				manifold.mNumWarmStartPoints = 0;
+				const RelativeConvex<BoxV> convexA(box0, aToB);
+				const LocalConvex<BoxV> convexB(box1);
+				GjkOutput output;
+
+				GjkStatus status = gjkPenetration<RelativeConvex<BoxV>, LocalConvex<BoxV> >(convexA, convexB, aToB.p, contactDist, true,
+					manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+
+				if(status == EPA_CONTACT)
+				{			
+					const RelativeConvex<BoxV> convexA1(box0, aToB);
+					const LocalConvex<BoxV> convexB1(box1);
+
+					status = epaPenetration(convexA1, convexB1, manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, 
+						true, FLoad(toleranceLength), output);
+				}
+
+				if(status == GJK_CONTACT || status == EPA_CONTACT)
+				{
+					const FloatV replaceBreakingThreshold = FMul(minMargin, FLoad(0.05f));
+					const Vec3V localPointA = aToB.transformInv(output.closestA);//curRTrans.transformInv(closestA);
+					const Vec3V localPointB = output.closestB;
+					const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+					numContacts += manifold.addManifoldPoint(localPointA, localPointB, localNormalPen, replaceBreakingThreshold);
+
+					//transform the normal back to world space
+					const Vec3V worldNormal = V3Normalize(transf1.rotate(output.normal));
+
+					manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transf1, contactDist);
+
+					return true;
+				}
+			}
+		}
+	}
+	else if(manifold.getNumContacts() > 0)
+	{
+		const Vec3V worldNormal = manifold.getWorldNormal(transf1);
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transf1, contactDist);
+		return true;
+	}
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactBoxConvex.cpp
+#define PCM_BOX_HULL_DEBUG 0
+
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+EHDI static bool fullContactsGenerationBoxConvex(const GjkConvex* relativeConvex, const GjkConvex* localConvex, const PxTransformV& transf0, const PxTransformV& transf1,
+											PersistentContact* manifoldContacts, PxContactBuffer& contactBuffer, PersistentContactManifold& manifold, Vec3VArg normal, 
+											const Vec3VArg closestA, const Vec3VArg closestB, const FloatVArg contactDist, bool idtScale, bool doOverlapTest, PxRenderOutput* renderOutput,
+											PxReal toleranceLength)
+{
+	PolygonalData polyData0;
+
+	const BoxV& box = relativeConvex->getConvex<BoxV>();
+	const ConvexHullV& convexHull = localConvex->getConvex<ConvexHullV>();
+
+	PxVec3 halfExtents;
+	V3StoreU(box.extents, halfExtents);
+	PCMPolygonalBox polyBox0(halfExtents);
+	polyBox0.getPolygonalData(&polyData0);
+	polyData0.mPolygonVertexRefs = gPCMBoxPolygonData_p();
+	
+	PolygonalData polyData1;
+	getPCMConvexData(convexHull, idtScale, polyData1);
+	
+	const Mat33V identity = M33Identity();
+	SupportLocalImpl<BoxV> map0(box, transf0, identity, identity, true);
+
+	alignas(16) PxU8 buff1[sizeof(SupportLocalImpl<ConvexHullV>)];
+
+	SupportLocal* map1 = (idtScale ? static_cast<SupportLocal*>(E_PLACEMENT_NEW(buff1, SupportLocalImpl<ConvexHullNoScaleV>)(static_cast<const ConvexHullNoScaleV&>(convexHull), transf1, convexHull.vertex2Shape, convexHull.shape2Vertex, idtScale)) : 
+		static_cast<SupportLocal*>(E_PLACEMENT_NEW(buff1, SupportLocalImpl<ConvexHullV>)(convexHull, transf1, convexHull.vertex2Shape, convexHull.shape2Vertex, idtScale)));
+
+	PxU32 numContacts = 0;
+	if(generateFullContactManifold(polyData0, polyData1, &map0, map1, manifoldContacts, numContacts, contactDist, normal, closestA, closestB, box.getMarginF(), convexHull.getMarginF(), 
+		doOverlapTest, renderOutput, toleranceLength))
+	{
+		if (numContacts > 0)
+		{
+			//reduce contacts
+			manifold.addBatchManifoldContacts(manifoldContacts, numContacts, toleranceLength);
+
+			const Vec3V worldNormal = manifold.getWorldNormal(transf1);
+
+			manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transf1, contactDist);
+		}
+		else
+		{
+			//if doOverlapTest is true, which means GJK/EPA degenerate so we won't have any contact in the manifoldContacts array
+			if (!doOverlapTest)
+			{
+				const Vec3V worldNormal = manifold.getWorldNormal(transf1);
+
+				manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transf1, contactDist);
+			}
+		}
+		
+		return true;
+	}
+	return false;
+}
+
+EHDI static bool generateOrProcessContactsBoxConvex(	const GjkConvex* relativeConvex, const GjkConvex* localConvex, const PxTransformV& transf0, const PxTransformV& transf1, 
+												const PxMatTransformV& aToB, GjkStatus status, GjkOutput& output, PersistentContactManifold& manifold, PxContactBuffer& contactBuffer, 
+												PxU32 initialContacts, const FloatV minMargin, const FloatV contactDist,
+												bool idtScale, PxReal toleranceLength, PxRenderOutput* renderOutput)
+{
+	if (status == GJK_NON_INTERSECT)
+	{
+		return false;
+	}
+	else
+	{
+		PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+
+		const Vec3V localNor = manifold.mNumContacts ? manifold.getLocalNormal() : V3Zero();
+
+		const FloatV replaceBreakingThreshold = FMul(minMargin, FLoad(0.05f));
+
+		//addGJKEPAContacts will increase the number of contacts in manifold. If status == EPA_CONTACT, we need to run epa algorithm and generate closest points, normal and
+		//pentration. If epa doesn't degenerate, we will store the contacts information in the manifold. Otherwise, we will return true to do the fallback test
+		const bool doOverlapTest = addGJKEPAContacts(relativeConvex, localConvex, aToB, status, manifoldContacts, replaceBreakingThreshold, FLoad(toleranceLength), output, manifold);
+
+		//ML: after we refresh the contacts(newContacts) and generate a GJK/EPA contacts(we will store that in the manifold), if the number of contacts is still less than the original contacts,
+		//which means we lose too mang contacts and we should regenerate all the contacts in the current configuration
+		//Also, we need to look at the existing contacts, if the existing contacts has very different normal than the GJK/EPA contacts,
+		//which means we should throw away the existing contacts and do full contact gen
+		const bool fullContactGen = FAllGrtr(FLoad(0.707106781f), V3Dot(localNor, output.normal)) || (manifold.mNumContacts < initialContacts);
+
+		if (fullContactGen || doOverlapTest)
+		{
+			return fullContactsGenerationBoxConvex(relativeConvex, localConvex, transf0, transf1, manifoldContacts, contactBuffer,
+				manifold, output.normal, output.closestA, output.closestB, contactDist, idtScale, doOverlapTest, renderOutput, toleranceLength);
+		}
+		else
+		{
+			const Vec3V newLocalNor = V3Add(localNor, output.normal);
+			const Vec3V worldNormal = V3Normalize(transf1.rotate(newLocalNor));
+			//const Vec3V worldNormal = transf1.rotate(normal);
+			manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transf1, contactDist);
+			return true;
+		}
+	}
+}
+
+EHDI bool Gu::pcmContactBoxConvex(GU_CONTACT_METHOD_ARGS)
+{
+	E_ASSERT(transform1.q.isSane());
+	E_ASSERT(transform0.q.isSane());
+
+	const PxConvexMeshGeometry& shapeConvex = checkedCast<PxConvexMeshGeometry>(shape1);
+	const PxBoxGeometry& shapeBox = checkedCast<PxBoxGeometry>(shape0);
+	
+	PersistentContactManifold& manifold = cache.getManifold();
+	const ConvexHullData* hullData = _getHullData(shapeConvex);
+	PxPrefetchLine(hullData);
+	
+	const FloatV contactDist = FLoad(params.mContactDistance);
+	const Vec3V boxExtents = V3LoadU(shapeBox.halfExtents);
+
+	const Vec3V vScale = V3LoadU_SafeReadW(shapeConvex.scale.scale);	// PT: safe because 'rotation' follows 'scale' in PxMeshScale
+	
+	const PxTransformV transf0 = loadTransformA(transform0);
+	const PxTransformV transf1 = loadTransformA(transform1);
+	const PxTransformV curRTrans(transf1.transformInv(transf0));
+	const PxMatTransformV aToB(curRTrans);
+
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV convexMargin = CalculatePCMConvexMargin(hullData, vScale, toleranceLength);
+	const FloatV boxMargin = CalculatePCMBoxMargin(boxExtents, toleranceLength);
+
+
+	const FloatV minMargin = FMin(convexMargin, boxMargin);//FMin(boxMargin, convexMargin);
+	const FloatV projectBreakingThreshold = FMul(minMargin, FLoad(0.8f));
+	const PxU32 initialContacts = manifold.mNumContacts;
+
+	manifold.refreshContactPoints(aToB, projectBreakingThreshold, contactDist);  
+
+	const Vec3V extents = V3Mul(V3LoadU_SafeReadW(hullData->mInternal.mInternalExtents), vScale);
+	const FloatV radiusA = V3Length(boxExtents);
+	const FloatV radiusB = V3Length(extents);
+	
+	//After the refresh contact points, the numcontacts in the manifold will be changed
+	const bool bLostContacts = (manifold.mNumContacts != initialContacts);
+
+	if(bLostContacts || manifold.invalidate_BoxConvex(curRTrans, transf0.q, transf1.q, minMargin, radiusA, radiusB))
+	{
+		manifold.setRelativeTransform(curRTrans, transf0.q, transf1.q);
+	
+		GjkStatus status = manifold.mNumContacts > 0 ? GJK_UNDEFINED : GJK_NON_INTERSECT;
+
+		const QuatV vQuat = QuatVLoadU(&shapeConvex.scale.rotation.x);
+		const bool idtScale = shapeConvex.scale.isIdentity();
+		const ConvexHullV convexHull(hullData, V3LoadU(hullData->mCenterOfMass), vScale, vQuat, idtScale);
+		const BoxV box(V3Zero(), boxExtents);
+		GjkOutput output;
+		
+		const RelativeConvex<BoxV> relativeConvex(box, aToB);
+
+		if(idtScale)
+		{
+			const LocalConvex<ConvexHullNoScaleV> localConvex(static_cast<const ConvexHullNoScaleV&>(convexHull));
+			
+			status = gjkPenetration<RelativeConvex<BoxV>, LocalConvex<ConvexHullNoScaleV> >(relativeConvex, localConvex, aToB.p, contactDist, true,
+				manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+
+			return generateOrProcessContactsBoxConvex(&relativeConvex, &localConvex, transf0, transf1, aToB,
+				status, output, manifold, contactBuffer, initialContacts,
+				minMargin, contactDist, idtScale, toleranceLength, renderOutput);	
+		}
+		else
+		{
+			const LocalConvex<ConvexHullV> localConvex(convexHull);
+
+			status = gjkPenetration<RelativeConvex<BoxV>, LocalConvex<ConvexHullV> >(relativeConvex, localConvex, aToB.p, contactDist, true,
+				manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+
+			return generateOrProcessContactsBoxConvex(&relativeConvex, &localConvex, transf0, transf1, aToB,
+				status, output, manifold, contactBuffer, initialContacts,
+				minMargin, contactDist, idtScale, toleranceLength, renderOutput);
+		} 
+	}
+	else if(manifold.getNumContacts()>0)
+	{
+		const Vec3V worldNormal = manifold.getWorldNormal(transf1);
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, transf1, contactDist);
+		return true;
+	}
+
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactCapsuleBox.cpp
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+EHDI static bool fullContactsGenerationCapsuleBox(const CapsuleV& capsule, const BoxV& box, const PxVec3& halfExtents, const PxMatTransformV& aToB, const PxTransformV& transf0, const PxTransformV& transf1,
+											PersistentContact* manifoldContacts, PxU32& numContacts, PxContactBuffer& contactBuffer, PersistentContactManifold& manifold, Vec3V& normal, const Vec3VArg closest,
+											PxReal boxMargin, const FloatVArg contactDist, bool doOverlapTest, PxReal toleranceScale, PxRenderOutput* renderOutput)
+{
+	PolygonalData polyData;
+	PCMPolygonalBox polyBox(halfExtents);
+	polyBox.getPolygonalData(&polyData);
+
+	const Mat33V identity = M33Identity();
+	SupportLocalImpl<BoxV> map(box, transf1, identity, identity);
+
+	PxU32 origContacts = numContacts;
+	if(!generateCapsuleBoxFullContactManifold(capsule, polyData, &map, aToB, manifoldContacts, numContacts, contactDist, normal, closest, boxMargin, doOverlapTest, toleranceScale, renderOutput))
+		return false;
+
+	//EPA has contacts and we have new contacts, we discard the EPA contacts
+	if(origContacts != 0 && numContacts != origContacts)
+	{
+		numContacts--;
+		manifoldContacts++;
+	}
+
+	manifold.addBatchManifoldContacts2(manifoldContacts, numContacts);
+		
+	normal = transf1.rotate(normal);
+		
+	manifold.addManifoldContactsToContactBuffer(contactBuffer, normal, normal, transf0, capsule.radius, contactDist);
+	
+	return true;	
+}
+
+EHDI bool Gu::pcmContactCapsuleBox(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(renderOutput);
+	E_ASSERT(transform1.q.isSane());
+	E_ASSERT(transform0.q.isSane());
+
+	const PxCapsuleGeometry& shapeCapsule = checkedCast<PxCapsuleGeometry>(shape0);
+	const PxBoxGeometry& shapeBox = checkedCast<PxBoxGeometry>(shape1);
+
+	PersistentContactManifold& manifold = cache.getManifold();
+	PxPrefetchLine(&manifold, 256);
+
+	const Vec3V boxExtents = V3LoadU(shapeBox.halfExtents);
+
+	const FloatV contactDist = FLoad(params.mContactDistance);
+
+	const PxTransformV transf0 = loadTransformA(transform0);
+	const PxTransformV transf1 = loadTransformA(transform1);
+
+	const PxTransformV curRTrans = transf1.transformInv(transf0);
+	const PxMatTransformV aToB_(curRTrans);
+
+	const FloatV capsuleRadius = FLoad(shapeCapsule.radius);
+	const FloatV capsuleHalfHeight = FLoad(shapeCapsule.halfHeight);
+
+	const PxU32 initialContacts = manifold.mNumContacts;
+
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV boxMargin = CalculatePCMBoxMargin(boxExtents, toleranceLength);
+	
+	const FloatV minMargin = FMin(boxMargin, capsuleRadius);
+
+	const FloatV projectBreakingThreshold = FMul(minMargin, FLoad(0.8f));
+	
+	const FloatV refreshDist = FAdd(contactDist, capsuleRadius);
+	//refreshContactPoints remove invalid contacts from the manifold and update the number correspondingly
+	manifold.refreshContactPoints(aToB_, projectBreakingThreshold, refreshDist);
+
+	const bool bLostContacts = (manifold.mNumContacts != initialContacts);
+
+	if(bLostContacts || manifold.invalidate_SphereCapsule(curRTrans, minMargin))	
+	{
+		GjkStatus status = manifold.mNumContacts > 0 ? GJK_UNDEFINED : GJK_NON_INTERSECT;
+
+		manifold.setRelativeTransform(curRTrans);
+		const PxMatTransformV aToB(curRTrans);
+		
+		const BoxV box(transf1.p, boxExtents);
+		//transform capsule into the local space of box
+		const CapsuleV capsule(aToB.p, aToB.rotate(V3Scale(V3UnitX(), capsuleHalfHeight)), capsuleRadius);
+		const LocalConvex<CapsuleV> convexA(capsule);
+		const LocalConvex<BoxV> convexB(box);
+		GjkOutput output;
+
+		const Vec3V initialSearchDir = V3Sub(capsule.getCenter(), box.getCenter());
+		status = gjkPenetration<LocalConvex<CapsuleV>, LocalConvex<BoxV> >(convexA, convexB, initialSearchDir, contactDist, true, 
+			manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+
+		PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+		PxU32 numContacts = 0;
+		bool doOverlapTest = false;
+		if(status == GJK_NON_INTERSECT)
+		{
+			return false;
+		}
+		else if(status == GJK_DEGENERATE)
+		{
+			return fullContactsGenerationCapsuleBox(capsule, box, shapeBox.halfExtents, aToB, transf0, transf1, manifoldContacts, numContacts, contactBuffer,
+				manifold, output.normal, output.closestB, box.getMarginF(), contactDist, true, params.mToleranceLength, renderOutput);
+		}
+		else 
+		{
+			if(status == GJK_CONTACT)
+			{
+				const Vec3V localPointA = aToB.transformInv(output.closestA);//curRTrans.transformInv(closestA);
+				const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+				//Add contact to contact stream
+				manifoldContacts[numContacts].mLocalPointA = localPointA;
+				manifoldContacts[numContacts].mLocalPointB = output.closestB;
+				manifoldContacts[numContacts++].mLocalNormalPen = localNormalPen;
+			}
+			else
+			{
+				E_ASSERT(status == EPA_CONTACT);
+	
+				status = epaPenetration(convexA, convexB, manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, 
+					 true, FLoad(toleranceLength), output);
+				if(status == EPA_CONTACT)
+				{
+					const Vec3V localPointA = aToB.transformInv(output.closestA);//curRTrans.transformInv(closestA);
+					const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+					//Add contact to contact stream
+					manifoldContacts[numContacts].mLocalPointA = localPointA;
+					manifoldContacts[numContacts].mLocalPointB = output.closestB;
+					manifoldContacts[numContacts++].mLocalNormalPen = localNormalPen;
+				}
+				else
+				{
+					doOverlapTest = true;
+				}
+			}
+			
+			if(initialContacts == 0 || bLostContacts || doOverlapTest)
+			{
+				return fullContactsGenerationCapsuleBox(capsule, box, shapeBox.halfExtents, aToB, transf0, transf1, manifoldContacts, numContacts, contactBuffer, manifold, output.normal, 
+					output.closestB, box.getMarginF(), contactDist, doOverlapTest, params.mToleranceLength, renderOutput);
+			}
+			else
+			{
+				//The contacts is either come from GJK or EPA
+				const FloatV replaceBreakingThreshold = FMul(minMargin, FLoad(0.1f));
+				const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+				manifold.addManifoldPoint2(curRTrans.transformInv(output.closestA), output.closestB, localNormalPen, replaceBreakingThreshold);
+				
+				const Vec3V normal = transf1.rotate(output.normal);
+				manifold.addManifoldContactsToContactBuffer(contactBuffer, normal, normal, transf0, capsuleRadius, contactDist);
+			
+				return true;
+			}
+		}	
+	}
+	else if(manifold.getNumContacts() > 0)
+	{
+		const Vec3V worldNormal = manifold.getWorldNormal(transf1);
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, worldNormal, worldNormal, transf0, capsuleRadius, contactDist);
+		return true;
+	}
+
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactCapsuleCapsule.cpp
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+EHDI static Vec4V pcmDistancePointSegmentTValue22(	const Vec3VArg a0, const Vec3VArg b0, 
+												const Vec3VArg a1, const Vec3VArg b1,
+												const Vec3VArg p0, const Vec3VArg p1,
+												const Vec3VArg p2, const Vec3VArg p3)
+{
+	const Vec4V zero = V4Zero();
+	const Vec3V ap00 = V3Sub(p0, a0);
+	const Vec3V ap10 = V3Sub(p1, a0);
+	const Vec3V ap01 = V3Sub(p2, a1);
+	const Vec3V ap11 = V3Sub(p3, a1);
+
+	const Vec3V ab0 = V3Sub(b0, a0);
+	const Vec3V ab1 = V3Sub(b1, a1);
+
+/*	const FloatV nom00 = V3Dot(ap00, ab0);
+	const FloatV nom10 = V3Dot(ap10, ab0);
+	const FloatV nom01 = V3Dot(ap01, ab1);
+	const FloatV nom11 = V3Dot(ap11, ab1);*/
+
+	const Vec4V combinedDot = V3Dot4(ap00, ab0, ap10, ab0, ap01, ab1, ap11, ab1);
+	const FloatV nom00 = V4GetX(combinedDot);
+	const FloatV nom10 = V4GetY(combinedDot);
+	const FloatV nom01 = V4GetZ(combinedDot);
+	const FloatV nom11 = V4GetW(combinedDot);
+	
+	const FloatV denom0 = V3Dot(ab0, ab0);
+	const FloatV denom1 = V3Dot(ab1, ab1);
+
+	const Vec4V nom = V4Merge(nom00, nom10, nom01, nom11);
+	const Vec4V denom = V4Merge(denom0, denom0, denom1, denom1);
+
+	const Vec4V tValue = V4Div(nom, denom);
+	return V4Sel(V4IsEq(denom, zero), zero, tValue);
+}
+
+EHDI static void storeContact(const Vec3VArg contact, const Vec3VArg normal, const FloatVArg separation, PxContactBuffer& buffer)
+{
+	outputSimplePCMContact(buffer, contact, normal, separation);
+}
+
+EHDI bool Gu::pcmContactCapsuleCapsule(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(renderOutput);
+	E_UNUSED(cache);
+	E_ASSERT(transform1.q.isSane());
+	E_ASSERT(transform0.q.isSane());
+
+	// Get actual shape data
+	const PxCapsuleGeometry& shapeCapsule0 = checkedCast<PxCapsuleGeometry>(shape0);
+	const PxCapsuleGeometry& shapeCapsule1 = checkedCast<PxCapsuleGeometry>(shape1);
+
+	const Vec3V _p0 = V3LoadA(&transform0.p.x);
+	const QuatV q0 = QuatVLoadA(&transform0.q.x);
+
+	const Vec3V _p1 = V3LoadA(&transform1.p.x);
+	const QuatV q1 = QuatVLoadA(&transform1.q.x);
+
+	/*PsTransformV transf0(p0, q0);
+	PsTransformV transf1(p1, q1);*/
+	
+	const FloatV r0 = FLoad(shapeCapsule0.radius);
+	const FloatV halfHeight0 = FLoad(shapeCapsule0.halfHeight);
+
+	const FloatV r1 = FLoad(shapeCapsule1.radius);
+	const FloatV halfHeight1 = FLoad(shapeCapsule1.halfHeight);
+
+	const FloatV cDist = FLoad(params.mContactDistance);
+
+	const Vec3V positionOffset = V3Scale(V3Add(_p0, _p1), FHalf());
+	const Vec3V p0 = V3Sub(_p0, positionOffset);
+	const Vec3V p1 = V3Sub(_p1, positionOffset);
+
+	const FloatV zero = FZero();
+	//const FloatV one = FOne();
+	const Vec3V zeroV = V3Zero();
+
+	/*const Vec3V positionOffset = V3Scale(V3Add(transf0.p, transf1.p), FloatV_From_F32(0.5f));
+	transf0.p = V3Sub(transf0.p, positionOffset);
+	transf1.p = V3Sub(transf1.p, positionOffset);*/
+
+	const Vec3V basisVector0 = QuatGetBasisVector0(q0);
+	const Vec3V tmp0 = V3Scale(basisVector0, halfHeight0);
+	const Vec3V s0 = V3Add(p0, tmp0);
+	const Vec3V e0 = V3Sub(p0, tmp0);
+	const Vec3V d0 = V3Sub(e0, s0);
+
+	const Vec3V basisVector1 = QuatGetBasisVector0(q1);
+	const Vec3V tmp1 = V3Scale(basisVector1, halfHeight1);
+	const Vec3V s1 = V3Add(p1, tmp1);
+	const Vec3V e1 = V3Sub(p1, tmp1); 
+
+	const Vec3V d1 = V3Sub(e1, s1);
+
+	const FloatV sumRadius = FAdd(r0, r1);
+	const FloatV inflatedSum = FAdd(sumRadius, cDist);
+	const FloatV inflatedSumSquared = FMul(inflatedSum, inflatedSum);
+	const FloatV a = V3Dot(d0, d0);//squared length of segment1
+	const FloatV e = V3Dot(d1, d1);//squared length of segment2
+	const FloatV eps = FLoad(1e-6f);//FEps();
+
+	FloatV t0, t1;
+	const FloatV sqDist0 = distanceSegmentSegmentSquared(s0, d0, s1, d1, t0, t1);
+
+	if(FAllGrtrOrEq(inflatedSumSquared, sqDist0))
+	{
+		const Vec4V zeroV4 = V4Zero();
+		const Vec4V oneV4 = V4One();
+		//check to see whether these two capsule are paralle
+		const FloatV parallelTolerance  = FLoad(0.9998f);
+		
+		const BoolV con0 = FIsGrtr(eps, a);
+		const BoolV con1 = FIsGrtr(eps, e);
+		const Vec3V dir0 = V3Sel(con0, zeroV, V3ScaleInv(d0, FSqrt(a)));
+		const Vec3V dir1 = V3Sel(con1, zeroV, V3ScaleInv(d1, FSqrt(e)));
+
+		const FloatV cos = FAbs(V3Dot(dir0, dir1));
+		if(FAllGrtr(cos, parallelTolerance))//paralle
+		{
+			//project s, e into s1e1
+			const Vec4V t = pcmDistancePointSegmentTValue22(s0, e0, s1, e1,
+															s1, e1, s0, e0);
+
+			const BoolV con = BAnd(V4IsGrtrOrEq(t, zeroV4), V4IsGrtrOrEq(oneV4, t));
+			const BoolV con00 = BGetX(con);
+			const BoolV con01 = BGetY(con);
+			const BoolV con10 = BGetZ(con);
+			const BoolV con11 = BGetW(con);
+
+		/*	PxU32 conditions[4];
+			F32Array_Aligned_From_Vec4V(con, (PxF32*)conditions);*/
+		
+			PxU32 numContact=0;
+
+			if(BAllEqTTTT(con00))
+			{
+				const Vec3V projS1 = V3ScaleAdd(d0, V4GetX(t), s0);
+				const Vec3V v = V3Sub(projS1, s1);
+				const FloatV sqDist = V3Dot(v, v);
+				const BoolV bCon = BAnd(FIsGrtr(sqDist, eps), FIsGrtr(inflatedSumSquared, sqDist));
+				
+				if(BAllEqTTTT(bCon))
+				{
+					const FloatV dist = FSqrt(sqDist);
+					const FloatV pen = FSub(dist, sumRadius);
+					const Vec3V normal = V3ScaleInv(v, dist);
+					E_ASSERT(isFiniteVec3V(normal));
+					const Vec3V _p = V3NegScaleSub(normal, r0, projS1);
+					const Vec3V p = V3Add(_p, positionOffset);
+					
+					storeContact(p, normal, pen, contactBuffer);
+					numContact++;
+				}
+			}
+			if(BAllEqTTTT(con01))
+			{
+				const Vec3V projE1 = V3ScaleAdd(d0, V4GetY(t), s0);
+				const Vec3V v = V3Sub(projE1, e1);
+				const FloatV sqDist = V3Dot(v, v);
+				const BoolV bCon = BAnd(FIsGrtr(sqDist, eps), FIsGrtr(inflatedSumSquared, sqDist));
+				
+				if(BAllEqTTTT(bCon))
+				{
+					const FloatV dist = FSqrt(sqDist);
+					const FloatV pen = FSub(dist, sumRadius);
+					const Vec3V normal = V3ScaleInv(v, dist);
+					E_ASSERT(isFiniteVec3V(normal));
+					const Vec3V _p = V3NegScaleSub(normal, r0, projE1);
+					const Vec3V p = V3Add(_p, positionOffset);
+					storeContact(p, normal, pen, contactBuffer);
+					numContact++;
+				}
+			}
+
+			if(BAllEqTTTT(con10))
+			{
+				const Vec3V projS0 = V3ScaleAdd(d1, V4GetZ(t), s1);
+				const Vec3V v = V3Sub(s0, projS0);
+				const FloatV sqDist = V3Dot(v, v);
+				const BoolV bCon = BAnd(FIsGrtr(sqDist, eps), FIsGrtr(inflatedSumSquared, sqDist));
+				
+				if(BAllEqTTTT(bCon))
+				{
+					const FloatV dist = FSqrt(sqDist);
+					const FloatV pen = FSub(dist, sumRadius);
+					const Vec3V normal = V3ScaleInv(v, dist);
+				 	E_ASSERT(isFiniteVec3V(normal));
+					const Vec3V _p = V3NegScaleSub(normal, r0, s0);
+					const Vec3V p = V3Add(_p, positionOffset);
+					//const Vec3V p = V3ScaleAdd(normal, r0, s0);
+					storeContact(p, normal, pen, contactBuffer);
+					numContact++;
+				}
+			}
+
+			if(BAllEqTTTT(con11))
+			{
+				const Vec3V projE0 = V3ScaleAdd(d1, V4GetW(t), s1);
+				const Vec3V v = V3Sub(e0, projE0);
+				const FloatV sqDist = V3Dot(v, v);
+				const BoolV bCon = BAnd(FIsGrtr(sqDist, eps), FIsGrtr(inflatedSumSquared, sqDist));
+				
+				if(BAllEqTTTT(bCon))
+				{
+					const FloatV dist = FSqrt(sqDist);
+					const FloatV pen = FSub(dist, sumRadius);
+					const Vec3V normal = V3ScaleInv(v, dist);
+					E_ASSERT(isFiniteVec3V(normal));
+					const Vec3V _p = V3NegScaleSub(normal, r0, e0);
+					const Vec3V p = V3Add(_p, positionOffset);
+					//const Vec3V p = V3ScaleAdd(normal, r0, e0);
+					storeContact(p, normal, pen, contactBuffer);
+					numContact++;
+				}
+			}
+
+			if(numContact)
+				return true;
+		}  
+
+		const Vec3V closestA = V3ScaleAdd(d0, t0, s0);
+		const Vec3V closestB = V3ScaleAdd(d1, t1, s1);
+		
+		const BoolV con = FIsGrtr(eps, sqDist0);
+		//const Vec3V normal = V3Sel(FIsEq(dist, zero), V3Sel(FIsGrtr(a, eps), V3Normalise(d0), V3Scale(V3Sub(closestA, closestB), FRecip(dist)));
+		const Vec3V _normal = V3Sel(con, V3Sel(FIsGrtr(a, eps), d0, V3UnitX()), V3Sub(closestA, closestB));
+		const Vec3V normal = V3Normalize(_normal);
+		E_ASSERT(isFiniteVec3V(normal));
+		const Vec3V _point = V3NegScaleSub(normal, r0, closestA);
+		const Vec3V p = V3Add(_point, positionOffset);
+		const FloatV dist = FSel(con, zero, FSqrt(sqDist0));
+		const FloatV pen = FSub(dist, sumRadius);
+		//E_ASSERT(FAllGrtrOrEq(zero, pen));
+		storeContact(p, normal, pen, contactBuffer);
+		return true;
+	}
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactCapsuleConvex.cpp
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+EHDI static bool fullContactsGenerationCapsuleConvex(const CapsuleV& capsule, const ConvexHullV& convexHull, const PxMatTransformV& aToB, const PxTransformV& transf0,const PxTransformV& transf1,
+												PersistentContact* manifoldContacts, PxContactBuffer& contactBuffer, bool idtScale, PersistentContactManifold& manifold, Vec3VArg normal, 
+												const Vec3VArg closest, PxReal tolerance, const FloatVArg contactDist, bool doOverlapTest, PxRenderOutput* renderOutput, PxReal toleranceLength)
+{
+	E_UNUSED(renderOutput);
+	PolygonalData polyData;
+	getPCMConvexData(convexHull,idtScale, polyData);
+
+	alignas(16) PxU8 buff[sizeof(SupportLocalImpl<ConvexHullV>)];
+	SupportLocal* map = (idtScale ? static_cast<SupportLocal*>(E_PLACEMENT_NEW(buff, SupportLocalImpl<ConvexHullNoScaleV>)(static_cast<const ConvexHullNoScaleV&>(convexHull), transf1, convexHull.vertex2Shape, convexHull.shape2Vertex, idtScale)) : 
+	static_cast<SupportLocal*>(E_PLACEMENT_NEW(buff, SupportLocalImpl<ConvexHullV>)(convexHull, transf1, convexHull.vertex2Shape, convexHull.shape2Vertex, idtScale)));
+
+	PxU32 numContacts = 0;
+	if(!generateFullContactManifold(capsule, polyData, map, aToB, manifoldContacts, numContacts, contactDist, normal, closest, tolerance, doOverlapTest, toleranceLength))
+		return false;
+
+	if (numContacts > 0)
+	{
+		manifold.addBatchManifoldContacts2(manifoldContacts, numContacts);
+		//transform normal into the world space
+		normal = transf1.rotate(normal);
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, normal, normal, transf0, capsule.radius, contactDist);
+	}
+	else
+	{
+		if (!doOverlapTest)
+		{
+			normal = transf1.rotate(normal);
+			manifold.addManifoldContactsToContactBuffer(contactBuffer, normal, normal, transf0, capsule.radius, contactDist);
+		}
+	}
+
+	return true;
+}
+
+EHDI bool Gu::pcmContactCapsuleConvex(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(renderOutput);
+	E_ASSERT(transform1.q.isSane());
+	E_ASSERT(transform0.q.isSane());
+
+	const PxConvexMeshGeometry& shapeConvex = checkedCast<PxConvexMeshGeometry>(shape1);
+	const PxCapsuleGeometry& shapeCapsule = checkedCast<PxCapsuleGeometry>(shape0);
+
+	PersistentContactManifold& manifold = cache.getManifold();
+
+	const ConvexHullData* hullData = _getHullData(shapeConvex);
+	PxPrefetchLine(hullData);
+
+	const Vec3V vScale = V3LoadU_SafeReadW(shapeConvex.scale.scale);	// PT: safe because 'rotation' follows 'scale' in PxMeshScale
+
+	const FloatV contactDist = FLoad(params.mContactDistance);
+	const FloatV capsuleHalfHeight = FLoad(shapeCapsule.halfHeight);
+	const FloatV capsuleRadius = FLoad(shapeCapsule.radius);
+	
+	//Transfer A into the local space of B
+	const PxTransformV transf0 = loadTransformA(transform0);
+	const PxTransformV transf1 = loadTransformA(transform1);
+	const PxTransformV curRTrans(transf1.transformInv(transf0));
+	const PxMatTransformV aToB(curRTrans);
+	
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV convexMargin = CalculatePCMConvexMargin(hullData, vScale, toleranceLength);
+	const FloatV capsuleMinMargin = CalculateCapsuleMinMargin(capsuleRadius);
+	const FloatV minMargin = FMin(convexMargin, capsuleMinMargin);
+	
+	const PxU32 initialContacts = manifold.mNumContacts;
+	const FloatV projectBreakingThreshold = FMul(minMargin, FLoad(1.25f));
+	const FloatV refreshDist = FAdd(contactDist, capsuleRadius);
+
+	manifold.refreshContactPoints(aToB, projectBreakingThreshold, refreshDist);
+
+	//ML: after refreshContactPoints, we might lose some contacts
+	const bool bLostContacts = (manifold.mNumContacts != initialContacts);
+
+	GjkStatus status = manifold.mNumContacts > 0 ? GJK_UNDEFINED : GJK_NON_INTERSECT;
+
+	if(bLostContacts || manifold.invalidate_SphereCapsule(curRTrans, minMargin))
+	{
+		const bool idtScale = shapeConvex.scale.isIdentity();
+
+		manifold.setRelativeTransform(curRTrans);
+		const QuatV vQuat = QuatVLoadU(&shapeConvex.scale.rotation.x);  
+		const ConvexHullV convexHull(hullData, V3LoadU(hullData->mCenterOfMass), vScale, vQuat, idtScale);
+	
+		//transform capsule(a) into the local space of convexHull(b)
+		const CapsuleV capsule(aToB.p, aToB.rotate(V3Scale(V3UnitX(), capsuleHalfHeight)), capsuleRadius);
+	
+		GjkOutput output;
+		const LocalConvex<CapsuleV> convexA(capsule);
+		const Vec3V initialSearchDir = V3Sub(capsule.getCenter(), convexHull.getCenter());
+		if(idtScale)
+		{
+			const LocalConvex<ConvexHullNoScaleV> convexB(*EPX_CONVEX_TO_NOSCALECONVEX(&convexHull));
+			status = gjkPenetration<LocalConvex<CapsuleV>, LocalConvex<ConvexHullNoScaleV> >(convexA, convexB, initialSearchDir, contactDist, true,
+				manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+		}
+		else
+		{
+			const LocalConvex<ConvexHullV> convexB(convexHull);
+			status = gjkPenetration<LocalConvex<CapsuleV>, LocalConvex<ConvexHullV> >(convexA, convexB, initialSearchDir, contactDist, true,
+				manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+		}
+
+		PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+		bool doOverlapTest = false;
+		if(status == GJK_NON_INTERSECT)
+		{
+			return false;
+		}
+		else if(status == GJK_DEGENERATE)
+		{
+			return fullContactsGenerationCapsuleConvex(capsule, convexHull, aToB, transf0, transf1, manifoldContacts, contactBuffer, idtScale, manifold, output.normal, 
+				output.closestB, convexHull.getMarginF(), contactDist, true, renderOutput, toleranceLength);
+		}
+		else 
+		{
+			const FloatV replaceBreakingThreshold = FMul(minMargin, FLoad(0.05f));
+
+			if(status == GJK_CONTACT)
+			{
+				const Vec3V localPointA = aToB.transformInv(output.closestA);//curRTrans.transformInv(closestA);
+				const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+				//Add contact to contact stream
+				manifoldContacts[0].mLocalPointA = localPointA;
+				manifoldContacts[0].mLocalPointB = output.closestB;
+				manifoldContacts[0].mLocalNormalPen = localNormalPen;
+
+				//Add contact to manifold
+				manifold.addManifoldPoint2(localPointA, output.closestB, localNormalPen, replaceBreakingThreshold);
+			}
+			else
+			{
+				E_ASSERT(status == EPA_CONTACT);
+				
+				if(idtScale)
+				{
+					const LocalConvex<ConvexHullNoScaleV> convexB(*EPX_CONVEX_TO_NOSCALECONVEX(&convexHull));
+					status = epaPenetration(convexA, convexB, manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints,
+					 true, FLoad(toleranceLength), output);
+				}
+				else
+				{
+					const LocalConvex<ConvexHullV> convexB(convexHull);
+					status = epaPenetration(convexA, convexB, manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints,
+					true, FLoad(toleranceLength), output);
+				}
+				
+				if(status == EPA_CONTACT)
+				{
+					const Vec3V localPointA = aToB.transformInv(output.closestA);//curRTrans.transformInv(closestA);
+					const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+					//Add contact to contact stream
+					manifoldContacts[0].mLocalPointA = localPointA;
+					manifoldContacts[0].mLocalPointB = output.closestB;
+					manifoldContacts[0].mLocalNormalPen = localNormalPen;
+
+					//Add contact to manifold
+					manifold.addManifoldPoint2(localPointA, output.closestB, localNormalPen, replaceBreakingThreshold);
+				}
+				else
+				{
+					doOverlapTest = true;   
+				}
+			}
+		
+			if(initialContacts == 0 || bLostContacts || doOverlapTest)
+			{
+				return fullContactsGenerationCapsuleConvex(capsule, convexHull, aToB, transf0, transf1, manifoldContacts, contactBuffer, idtScale, manifold, output.normal, 
+					output.closestB, convexHull.getMarginF(), contactDist, doOverlapTest, renderOutput, toleranceLength);
+			}
+			else
+			{
+				//This contact is either come from GJK or EPA
+				const Vec3V normal = transf1.rotate(output.normal);
+				manifold.addManifoldContactsToContactBuffer(contactBuffer, normal, normal, transf0, capsuleRadius, contactDist);
+				return true;
+			}
+		}	
+	}
+	else if (manifold.getNumContacts() > 0)
+	{
+		const Vec3V normal = manifold.getWorldNormal(transf1);
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, normal, normal, transf0, capsuleRadius, contactDist);
+		return true;
+	}
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactPlaneBox.cpp
+using namespace px;
+
+EHDI bool Gu::pcmContactPlaneBox(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(shape0);
+	E_UNUSED(renderOutput);
+
+	using namespace aos;
+
+	PersistentContactManifold& manifold = cache.getManifold();
+	PxPrefetchLine(&manifold, 256);
+
+	// Get actual shape data
+	const PxBoxGeometry& shapeBox = checkedCast<PxBoxGeometry>(shape1);
+
+	const PxTransformV transf0 = loadTransformA(transform1);//box transform
+	const PxTransformV transf1 = loadTransformA(transform0);//plane transform
+
+	//box to plane
+	const PxTransformV curTransf(transf1.transformInv(transf0));
+
+	//in world space
+	const Vec3V negPlaneNormal = V3Normalize(V3Neg(QuatGetBasisVector0(transf1.q)));
+	
+	const FloatV contactDist = FLoad(params.mContactDistance);
+
+	const Vec3V boxExtents = V3LoadU(shapeBox.halfExtents);
+
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV boxMargin = CalculatePCMBoxMargin(boxExtents, toleranceLength);
+	const FloatV projectBreakingThreshold = FMul(boxMargin, FLoad(0.2f));
+	const PxU32 initialContacts = manifold.mNumContacts;
+	
+	manifold.refreshContactPoints(curTransf, projectBreakingThreshold, contactDist);
+
+	const PxU32 newContacts = manifold.mNumContacts;
+	const bool bLostContacts = (newContacts != initialContacts);//((initialContacts == 0) || (newContacts != initialContacts));
+
+	if(bLostContacts || manifold.invalidate_PrimitivesPlane(curTransf, boxMargin, FLoad(0.2f)))
+	{
+		//ML:localNormal is the local space of plane normal, however, because shape1 is box and shape0 is plane, we need to use the reverse of contact normal(which will be the plane normal) to make the refreshContactPoints
+		//work out the correct pentration for points
+		const Vec3V localNormal = V3UnitX();
+
+		manifold.mNumContacts = 0;
+		manifold.setRelativeTransform(curTransf);
+
+		const PxMatTransformV aToB(curTransf);
+		const FloatV bx = V3GetX(boxExtents);
+		const FloatV by = V3GetY(boxExtents);
+		const FloatV bz = V3GetZ(boxExtents);
+
+		const FloatV nbx = FNeg(bx);
+		const FloatV nby = FNeg(by);
+		const FloatV nbz = FNeg(bz);
+
+		const Vec3V temp0 = V3Scale(aToB.getCol0(), bx);
+		const Vec3V temp1 = V3Scale(aToB.getCol1(), by);
+		const Vec3V temp2 = V3Scale(aToB.getCol2(), bz);
+
+		const Vec3V ntemp2 = V3Neg(temp2);
+
+		const FloatV px = V3GetX(aToB.p);
+
+		//box's points in the local space of plane
+		const Vec3V temp01 = V3Add(temp0, temp1);//(x, y)
+		const Vec3V temp02 = V3Sub(temp0, temp1);//(x, -y)
+
+		const FloatV s0 = V3GetX(V3Add(temp2,	temp01));//(x, y, z)
+		const FloatV s1 = V3GetX(V3Add(ntemp2,	temp01));//(x, y, -z)
+		const FloatV s2 = V3GetX(V3Add(temp2,	temp02));//(x, -y, z)
+		const FloatV s3 = V3GetX(V3Add(ntemp2,	temp02));//(x, -y, -z)
+		const FloatV s4 = V3GetX(V3Sub(temp2,	temp02));//(-x, y, z)
+		const FloatV s5 = V3GetX(V3Sub(ntemp2,	temp02));//(-x, y, -z)
+		const FloatV s6 = V3GetX(V3Sub(temp2,	temp01));//(-x, -y, z)
+		const FloatV s7 = V3GetX(V3Sub(ntemp2,	temp01));//(-x, -y, -z)
+
+		const FloatV acceptanceDist = FSub(contactDist, px);
+
+		PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+		PxU32 numContacts = 0;
+
+		if(FAllGrtr(acceptanceDist, s0))
+		{
+			const FloatV pen = FAdd(s0, px);
+			//(x, y, z)
+			manifoldContacts[numContacts].mLocalPointA = boxExtents;//aToB.transformInv(p); 
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(boxExtents)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+	
+		if(FAllGrtr(acceptanceDist, s1))
+		{
+			const FloatV pen = FAdd(s1, px);
+			//(x, y, -z)
+			const Vec3V p = V3Merge(bx, by, nbz);
+			//add to contact stream
+			manifoldContacts[numContacts].mLocalPointA = p;//aToB.transformInv(p); 
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+
+		if(FAllGrtr(acceptanceDist, s2))
+		{
+			const FloatV pen = FAdd(s2, px);
+			//(x, -y, z)
+			const Vec3V p = V3Merge(bx, nby, bz);
+			manifoldContacts[numContacts].mLocalPointA = p;//aToB.transformInv(p); 
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+
+		if(FAllGrtr(acceptanceDist, s3))
+		{
+			const FloatV pen = FAdd(s3, px);
+			//(x, -y, -z)
+			const Vec3V p = V3Merge(bx, nby, nbz);
+			manifoldContacts[numContacts].mLocalPointA = p; 
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+	
+		if(FAllGrtr(acceptanceDist, s4))
+		{
+			const FloatV pen = FAdd(s4, px);
+			//(-x, y, z)
+			const Vec3V p = V3Merge(nbx, by, bz);
+			manifoldContacts[numContacts].mLocalPointA = p;
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+
+		if(FAllGrtr(acceptanceDist, s5))
+		{
+			const FloatV pen = FAdd(s5, px);
+			//(-x, y, -z)
+			const Vec3V p = V3Merge(nbx, by, nbz);
+			manifoldContacts[numContacts].mLocalPointA = p;//aToB.transformInv(p); 
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+	
+		if(FAllGrtr(acceptanceDist, s6))
+		{
+			const FloatV pen = FAdd(s6, px);
+			//(-x, -y, z)
+			const Vec3V p = V3Merge(nbx, nby, bz);
+			manifoldContacts[numContacts].mLocalPointA = p;//aToB.transformInv(p); 
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+	
+		if(FAllGrtr(acceptanceDist, s7))
+		{
+			const FloatV pen = FAdd(s7, px);
+			//(-x, -y, -z)
+			const Vec3V p = V3Merge(nbx, nby, nbz);
+			manifoldContacts[numContacts].mLocalPointA = p;
+			manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, pen, aToB.transform(p)); 
+			manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), pen);
+		}
+		
+		//reduce contacts
+		manifold.addBatchManifoldContactsCluster(manifoldContacts, numContacts);
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, negPlaneNormal, transf1, contactDist);
+
+		return manifold.getNumContacts() > 0;
+	}
+	else
+	{
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, negPlaneNormal, transf1, contactDist);
+		
+		//manifold.drawManifold(*gRenderOutPut, transf0, transf1);
+		return manifold.getNumContacts() > 0;
+	}	
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactPlaneCapsule.cpp
+using namespace px;
+
+EHDI bool Gu::pcmContactPlaneCapsule(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(shape0);
+	E_UNUSED(renderOutput);
+
+	using namespace aos;
+
+	PersistentContactManifold& manifold = cache.getManifold();
+	PxPrefetchLine(&manifold, 256);
+
+	// Get actual shape data
+	const PxCapsuleGeometry& shapeCapsule = checkedCast<PxCapsuleGeometry>(shape1);
+
+	const PxTransformV transf0 = loadTransformA(transform1);//capsule transform
+	const PxTransformV transf1 = loadTransformA(transform0);//plane transform
+	//capsule to plane
+	const PxTransformV aToB(transf1.transformInv(transf0));
+
+	//in world space
+	const Vec3V planeNormal = V3Normalize(QuatGetBasisVector0(transf1.q));
+	const Vec3V contactNormal = V3Neg(planeNormal);
+	
+	//ML:localNormal is the local space of plane normal, however, because shape1 is capulse and shape0 is plane, we need to use the reverse of contact normal(which will be the plane normal) to make the refreshContactPoints
+	//work out the correct pentration for points
+	const Vec3V localNormal = V3UnitX();
+
+	const FloatV contactDist = FLoad(params.mContactDistance);
+
+	const FloatV radius = FLoad(shapeCapsule.radius);
+	const FloatV halfHeight = FLoad(shapeCapsule.halfHeight);
+
+	//capsule is in the local space of plane(n = (1.f, 0.f, 0.f), d=0.f)
+	const Vec3V basisVector = QuatGetBasisVector0(aToB.q);
+	const Vec3V tmp = V3Scale(basisVector, halfHeight);
+	const Vec3V s = V3Add(aToB.p, tmp);
+	const Vec3V e = V3Sub(aToB.p, tmp);
+
+	const FloatV inflatedRadius = FAdd(radius, contactDist);
+	const FloatV replaceBreakingThreshold = FMul(radius, FLoad(0.001f));
+	const FloatV projectBreakingThreshold = FMul(radius, FLoad(0.05f));
+	const PxU32 initialContacts = manifold.mNumContacts;
+
+	//manifold.refreshContactPoints(curRTrans, projectBreakingThreshold, contactDist);
+	const FloatV refreshDist = FAdd(contactDist, radius);
+	manifold.refreshContactPoints(aToB, projectBreakingThreshold, refreshDist);
+
+	const PxU32 newContacts = manifold.mNumContacts;
+	const bool bLostContacts = (newContacts != initialContacts);//((initialContacts == 0) || (newContacts != initialContacts));
+
+	if(bLostContacts || manifold.invalidate_PrimitivesPlane(aToB, radius, FLoad(0.02f)))  
+	{
+		manifold.mNumContacts = 0;
+		manifold.setRelativeTransform(aToB);
+		//calculate the distance from s to the plane
+		const FloatV signDist0 = V3GetX(s);//V3Dot(localNormal, s);
+		if(FAllGrtr(inflatedRadius, signDist0))
+		{
+			const Vec3V localPointA = aToB.transformInv(s);
+			const Vec3V localPointB = V3NegScaleSub(localNormal, signDist0, s);
+			const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), signDist0);
+			//add to manifold
+			manifold.addManifoldPoint2(localPointA, localPointB, localNormalPen, replaceBreakingThreshold); 
+		}
+
+		const FloatV signDist1 = V3GetX(e);//V3Dot(localNormal, e);
+		if(FAllGrtr(inflatedRadius, signDist1))
+		{
+			const Vec3V localPointA = aToB.transformInv(e);
+			const Vec3V localPointB = V3NegScaleSub(localNormal, signDist1, e);
+			const Vec4V localNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), signDist1);
+			//add to manifold
+			manifold.addManifoldPoint2(localPointA, localPointB, localNormalPen, replaceBreakingThreshold); 
+		}
+
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, contactNormal, planeNormal, transf0, radius, contactDist);
+
+
+		return manifold.getNumContacts() > 0;
+	}
+	else
+	{
+		manifold.addManifoldContactsToContactBuffer(contactBuffer, contactNormal, planeNormal, transf0, radius, contactDist);
+		return manifold.getNumContacts() > 0;
+	}
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactPlaneConvex.cpp
+using namespace px;
+
+EHDI bool Gu::pcmContactPlaneConvex(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(shape0);
+	E_UNUSED(renderOutput);
+
+	using namespace aos;
+
+	PersistentContactManifold& manifold = cache.getManifold();
+	PxPrefetchLine(&manifold, 256);
+
+	// Get actual shape data
+	const PxConvexMeshGeometry& shapeConvex = checkedCast<PxConvexMeshGeometry>(shape1);
+
+	const PxTransformV transf0 = loadTransformA(transform1);//convex transform
+	const PxTransformV transf1 = loadTransformA(transform0);//plane transform
+	//convex to plane
+	const PxTransformV curTransf(transf1.transformInv(transf0));
+	
+	const Vec3V vScale = V3LoadU_SafeReadW(shapeConvex.scale.scale);	// PT: safe because 'rotation' follows 'scale' in PxMeshScale
+	const ConvexHullData* hullData = _getHullData(shapeConvex);
+
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV convexMargin = CalculatePCMConvexMargin(hullData, vScale, toleranceLength);
+	
+	//in world space
+	const Vec3V planeNormal = V3Normalize(QuatGetBasisVector0(transf1.q));
+	const Vec3V negPlaneNormal = V3Neg(planeNormal);
+	
+	const FloatV contactDist = FLoad(params.mContactDistance);
+
+	//const FloatV replaceBreakingThreshold = FMul(convexMargin, FLoad(0.001f));
+	const FloatV projectBreakingThreshold = FMul(convexMargin, FLoad(0.2f));
+	const PxU32 initialContacts = manifold.mNumContacts;
+	
+	manifold.refreshContactPoints(curTransf, projectBreakingThreshold, contactDist);
+
+	const PxU32 newContacts = manifold.mNumContacts;
+	const bool bLostContacts = (newContacts != initialContacts);//((initialContacts == 0) || (newContacts != initialContacts));
+
+	if(bLostContacts || manifold.invalidate_PrimitivesPlane(curTransf, convexMargin, FLoad(0.2f)))
+	{
+		const PxMatTransformV aToB(curTransf);
+		const QuatV vQuat = QuatVLoadU(&shapeConvex.scale.rotation.x);
+
+		const Mat33V vertex2Shape = ConstructVertex2ShapeMatrix(vScale, vQuat);
+		
+		//ML:localNormal is the local space of plane normal, however, because shape1 is box and shape0 is plane, we need to use the reverse of contact normal(which will be the plane normal) to make the refreshContactPoints
+		//work out the correct pentration for points
+		const Vec3V localNormal = V3UnitX();
+
+		manifold.mNumContacts = 0;
+		manifold.setRelativeTransform(curTransf);
+		const PxVec3*  verts = hullData->getHullVertices();
+
+		const PxU32 nbPolygons = hullData->mNbPolygons;
+
+		const Vec3V n = V3Normalize(M33MulV3(vertex2Shape, aToB.rotateInv(localNormal)));
+		const Vec3V nnormal = V3Neg(n);
+		const FloatV zero = FZero();
+
+		PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+		PxU32 numContacts = 0;
+
+		const PxMatTransformV aToBVertexSpace(aToB.p, M33MulM33(aToB.rot, vertex2Shape));
+
+		FloatV minProj = FMax();
+		PxU32 closestFaceIndex = 0;
+		PxU32 polyIndex2 = 0xFFFFFFFF;
+
+		for (PxU32 i = 0; i < nbPolygons; ++i)
+		{
+			const HullPolygonData& polyData = hullData->mPolygons[i];
+			const Vec3V planeN = V3LoadU_SafeReadW(polyData.mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+			const FloatV proj = V3Dot(n, planeN);
+			if (FAllGrtr(minProj, proj))
+			{
+				minProj = proj;
+				closestFaceIndex = PxI32(i);
+			}
+		}
+
+		const PxU32 numEdges = hullData->mNbEdges;
+		const PxU8* const edgeToFace = hullData->getFacesByEdges8();
+
+		//Loop through edges
+		PxU32 closestEdge = 0xffffffff;
+		//We subtract a small bias to increase the chances of selecting an edge below
+		minProj = FSub(minProj, FLoad(5e-4f));
+		FloatV maxDpSq = FMul(minProj, minProj);
+
+		for (PxU32 i = 0; i < numEdges; ++i)//, inc = VecI32V_Add(inc, vOne))
+		{
+			const PxU32 index = i * 2;
+			const PxU8 f0 = edgeToFace[index];
+			const PxU8 f1 = edgeToFace[index + 1];
+
+			const Vec3V planeNormal0 = V3LoadU_SafeReadW(hullData->mPolygons[f0].mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+			const Vec3V planeNormal1 = V3LoadU_SafeReadW(hullData->mPolygons[f1].mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+
+			// unnormalized edge normal
+			const Vec3V edgeNormal = V3Add(planeNormal0, planeNormal1);//polys[f0].mPlane.n + polys[f1].mPlane.n;
+			const FloatV enMagSq = V3Dot(edgeNormal, edgeNormal);//edgeNormal.magnitudeSquared();
+			//Test normal of current edge - squared test is valid if dp and maxDp both >= 0
+			const FloatV dp = V3Dot(edgeNormal, nnormal);//edgeNormal.dot(normal);
+			const FloatV sqDp = FMul(dp, dp);
+
+			const BoolV con0 = FIsGrtrOrEq(dp, zero);
+			const BoolV con1 = FIsGrtr(sqDp, FMul(maxDpSq, enMagSq));
+			const BoolV con = BAnd(con0, con1);
+			if (BAllEqTTTT(con))
+			{
+				maxDpSq = FDiv(sqDp, enMagSq);
+				closestEdge = i;
+			}
+		}
+
+		if (closestEdge != 0xffffffff)
+		{
+			const PxU8* FBE = edgeToFace;
+
+			const PxU32 index = closestEdge * 2;
+			const PxU32 f0 = FBE[index];
+			const PxU32 f1 = FBE[index + 1];
+
+			const Vec3V planeNormal0 = V3LoadU_SafeReadW(hullData->mPolygons[f0].mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+			const Vec3V planeNormal1 = V3LoadU_SafeReadW(hullData->mPolygons[f1].mPlane.n);	// PT: safe because 'd' follows 'n' in the plane class
+
+			const FloatV dp0 = V3Dot(planeNormal0, nnormal);
+			const FloatV dp1 = V3Dot(planeNormal1, nnormal);
+			if (FAllGrtr(dp0, dp1))
+			{
+				closestFaceIndex = PxI32(f0);
+				polyIndex2 = PxI32(f1);
+			}
+			else
+			{
+				closestFaceIndex = PxI32(f1);
+				polyIndex2 = PxI32(f0);
+			}
+		}
+
+		for (PxU32 index = closestFaceIndex; index != 0xFFFFFFFF; index = polyIndex2, polyIndex2 = 0xFFFFFFFF)
+		{
+			const HullPolygonData& face = hullData->mPolygons[closestFaceIndex];
+			const PxU32 nbFaceVerts = face.mNbVerts;
+
+			const PxU8* vertInds = hullData->getVertexData8() + face.mVRef8;
+
+			for (PxU32 i = 0; i < nbFaceVerts; ++i)
+			{
+				const Vec3V pInVertexSpace = V3LoadU(verts[vertInds[i]]);
+
+				//transform p into plane space
+				const Vec3V pInPlaneSpace = aToBVertexSpace.transform(pInVertexSpace);//V3Add(aToB.p, M33MulV3(temp1, pInVertexSpace));
+
+				const FloatV signDist = V3GetX(pInPlaneSpace);
+
+				if (FAllGrtr(contactDist, signDist))
+				{
+					//transform p into shape space
+					const Vec3V pInShapeSpace = M33MulV3(vertex2Shape, pInVertexSpace);
+					//add to manifold
+
+					manifoldContacts[numContacts].mLocalPointA = pInShapeSpace;
+					manifoldContacts[numContacts].mLocalPointB = V3NegScaleSub(localNormal, signDist, pInPlaneSpace);
+					manifoldContacts[numContacts++].mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(localNormal), signDist);
+
+					if (numContacts == 64)
+					{
+						manifold.reduceBatchContactsCluster(manifoldContacts, numContacts);
+						numContacts = GU_MANIFOLD_CACHE_SIZE;
+
+						for (PxU32 c = 0; c < GU_MANIFOLD_CACHE_SIZE; ++c)
+							manifoldContacts[c] = manifold.mContactPoints[c];
+					}
+				}
+			}
+		}
+
+		//reduce contacts
+		//manifold.addBatchManifoldContactsCluster(manifoldContacts, numContacts);
+
+		manifold.addBatchManifoldContacts(manifoldContacts, numContacts, toleranceLength);
+	}
+	
+	manifold.addManifoldContactsToContactBuffer(contactBuffer, negPlaneNormal, transf1, contactDist);
+	return manifold.getNumContacts() > 0;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactSphereBox.cpp
+using namespace px;
+
+EHDI bool Gu::pcmContactSphereBox(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(renderOutput);
+	E_UNUSED(cache);
+
+	using namespace aos;
+	// Get actual shape data
+	const PxSphereGeometry& shapeSphere = checkedCast<PxSphereGeometry>(shape0);
+	const PxBoxGeometry& shapeBox = checkedCast<PxBoxGeometry>(shape1);
+
+	//const PsTransformV transf0(transform0);
+	const Vec3V sphereOrigin = V3LoadA(&transform0.p.x);
+	//const PsTransformV transf1(transform1);
+
+	const QuatV q1 = QuatVLoadA(&transform1.q.x);
+	const Vec3V p1 = V3LoadA(&transform1.p.x);
+
+	const FloatV radius = FLoad(shapeSphere.radius);
+	
+	const PxTransformV transf1(p1, q1);
+	
+	const FloatV cDist = FLoad(params.mContactDistance);
+
+	const Vec3V boxExtents = V3LoadU(shapeBox.halfExtents);
+
+	//translate sphere center into the box space
+	const Vec3V sphereCenter = transf1.transformInv(sphereOrigin);
+
+	const Vec3V nBoxExtents = V3Neg(boxExtents);
+
+	//const FloatV radSq = FMul(radius, radius);
+
+	const FloatV inflatedSum = FAdd(radius, cDist);
+	const FloatV sqInflatedSum = FMul(inflatedSum, inflatedSum);
+
+	const Vec3V p = V3Clamp(sphereCenter, nBoxExtents, boxExtents);
+	const Vec3V v = V3Sub(sphereCenter, p);
+	const FloatV lengthSq = V3Dot(v, v);
+
+	E_ASSERT(contactBuffer.count < PxContactBuffer::MAX_CONTACTS);
+
+	if(FAllGrtr(sqInflatedSum, lengthSq))//intersect
+	{
+		//check whether the spherCenter is inside the box
+		const BoolV bInsideBox = V3IsGrtrOrEq(boxExtents, V3Abs(sphereCenter));
+		// PT: TODO: ??? revisit this, why do we have both BAllEqTTTT and BAllTrue3?
+		if(BAllEqTTTT(BAllTrue3(bInsideBox)))//sphere center inside the box
+		{
+			//Pick directions and sign
+			const Vec3V absP = V3Abs(p);
+			const Vec3V distToSurface = V3Sub(boxExtents, absP);//dist from embedded center to box surface along 3 dimensions.
+			
+			const FloatV x = V3GetX(distToSurface);
+			const FloatV y = V3GetY(distToSurface);
+			const FloatV z = V3GetZ(distToSurface);
+
+			const Vec3V xV = V3Splat(x);
+			const Vec3V zV = V3Splat(z);
+
+			//find smallest element of distToSurface
+			const BoolV con0 = BAllTrue3(V3IsGrtrOrEq(distToSurface, zV));
+			const BoolV con1 = BAllTrue3(V3IsGrtrOrEq(distToSurface, xV));
+			const Vec3V sign = V3Sign(p);
+	
+			const Vec3V tmpX = V3Mul(V3UnitX(), sign);
+			const Vec3V tmpY = V3Mul(V3UnitY(), sign);
+			const Vec3V tmpZ = V3Mul(V3UnitZ(), sign);
+			
+			const Vec3V locNorm = V3Sel(con0, tmpZ, V3Sel(con1, tmpX, tmpY));////local coords contact normal
+			const FloatV dist = FNeg(FSel(con0, z, FSel(con1, x, y)));
+
+			//separation so far is just the embedding of the center point; we still have to push out all of the radius.
+			const Vec3V normal = transf1.rotate(locNorm);
+			const FloatV penetration = FSub(dist, radius);
+			const Vec3V point = V3Sub(sphereOrigin , V3Scale(normal, dist));
+
+			outputSimplePCMContact(contactBuffer, point, normal, penetration);
+		}
+		else
+		{
+			//get the closest point from the center to the box surface
+			const FloatV recipLength = FRsqrt(lengthSq);
+			const FloatV length = FRecip(recipLength);
+			const Vec3V locNorm = V3Scale(v, recipLength);
+			const FloatV penetration = FSub(length, radius);
+			const Vec3V normal = transf1.rotate(locNorm);
+			const Vec3V point = transf1.transform(p);
+
+			outputSimplePCMContact(contactBuffer, point, normal, penetration);
+		}
+		return true;
+	}
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactSphereCapsule.cpp
+using namespace px;
+using namespace aos;
+
+static EHD FloatV distancePointSegmentSquared(const Vec3VArg a, const Vec3VArg b, const Vec3VArg p, FloatV& param)
+{
+	const FloatV zero = FZero();
+	const FloatV one = FOne();
+
+	const Vec3V ap = V3Sub(p, a);
+	const Vec3V ab = V3Sub(b, a);
+	const FloatV nom = V3Dot(ap, ab);
+	
+	const FloatV denom = V3Dot(ab, ab);
+	const FloatV tValue = FClamp(FDiv(nom, denom), zero, one);
+
+	const FloatV t = FSel(FIsEq(denom, zero), zero, tValue);
+	const Vec3V v = V3NegScaleSub(ab, t, ap);
+	param = t;
+	return V3Dot(v, v);
+}
+
+EHDI bool Gu::pcmContactSphereCapsule(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(cache);
+	E_UNUSED(renderOutput);
+
+	const PxSphereGeometry& shapeSphere = checkedCast<PxSphereGeometry>(shape0);
+	const PxCapsuleGeometry& shapeCapsule = checkedCast<PxCapsuleGeometry>(shape1);
+
+	//Sphere in world space
+	const Vec3V sphereCenter = V3LoadA(&transform0.p.x);
+	const QuatV q1 = QuatVLoadA(&transform1.q.x);
+	const Vec3V p1 = V3LoadA(&transform1.p.x);
+
+	const FloatV sphereRadius = FLoad(shapeSphere.radius);
+	const FloatV capsuleRadius = FLoad(shapeCapsule.radius);
+	const FloatV cDist = FLoad(params.mContactDistance);
+
+	//const FloatV r0 = FloatV_From_F32(shapeCapsule.radius);
+	const FloatV halfHeight0 = FLoad(shapeCapsule.halfHeight);
+	const Vec3V basisVector0 = QuatGetBasisVector0(q1);
+	const Vec3V tmp0 = V3Scale(basisVector0, halfHeight0);
+	const Vec3V s = V3Add(p1, tmp0);
+	const Vec3V e = V3Sub(p1, tmp0);
+
+	const FloatV radiusSum = FAdd(sphereRadius, capsuleRadius);
+	const FloatV inflatedSum = FAdd(radiusSum, cDist);
+
+	// Collision detection
+	FloatV t;
+	const FloatV squareDist = distancePointSegmentSquared(s, e, sphereCenter, t);
+	const FloatV sqInflatedSum = FMul(inflatedSum, inflatedSum);
+
+	if(FAllGrtr(sqInflatedSum, squareDist))//BAllEq(con, bTrue))
+	{
+		const Vec3V p = V3ScaleAdd(V3Sub(e, s), t, s);
+		const Vec3V dir = V3Sub(sphereCenter, p);
+		const Vec3V normal = V3NormalizeSafe(dir, V3UnitX());
+		const Vec3V point = V3NegScaleSub(normal, sphereRadius, sphereCenter);//transform back to the world space
+
+		const FloatV dist = FSub(FSqrt(squareDist), radiusSum);
+		//context.mContactBuffer.contact(point, normal, FSub(FSqrt(squareDist), radiusSum));
+
+		return outputSimplePCMContact(contactBuffer, point, normal, dist);
+	}
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactSphereConvex.cpp
+using namespace px;
+using namespace Gu;
+using namespace aos;
+
+EHDI static void addToContactBuffer(PxContactBuffer& contactBuffer, const Vec3VArg worldNormal, const Vec3VArg worldPoint, const FloatVArg penDep)
+{
+	outputSimplePCMContact(contactBuffer, worldPoint, worldNormal, penDep);
+}
+
+EHDI static bool fullContactsGenerationSphereConvex(const CapsuleV& capsule, const ConvexHullV& convexHull, const PxTransformV& transf0, const PxTransformV& transf1,
+								PersistentContact* manifoldContacts, PxContactBuffer& contactBuffer, const bool idtScale, PersistentContactManifold& manifold, 
+								Vec3VArg normal, const FloatVArg contactDist, bool doOverlapTest, PxRenderOutput* renderOutput)
+{
+	E_UNUSED(renderOutput);
+
+	PolygonalData polyData;
+	getPCMConvexData(convexHull,idtScale, polyData);
+
+	alignas(16) PxU8 buff[sizeof(SupportLocalImpl<ConvexHullV>)];
+	SupportLocal* map = (idtScale ? static_cast<SupportLocal*>(E_PLACEMENT_NEW(buff, SupportLocalImpl<ConvexHullNoScaleV>)(static_cast<const ConvexHullNoScaleV&>(convexHull), transf1, convexHull.vertex2Shape, convexHull.shape2Vertex, idtScale)) : 
+	static_cast<SupportLocal*>(E_PLACEMENT_NEW(buff, SupportLocalImpl<ConvexHullV>)(convexHull, transf1, convexHull.vertex2Shape, convexHull.shape2Vertex, idtScale)));
+
+	PxU32 numContacts = 0;
+	if(generateSphereFullContactManifold(capsule, polyData, map, manifoldContacts, numContacts, contactDist, normal, doOverlapTest))
+	{
+		if(numContacts > 0)
+		{
+			PersistentContact& p = manifold.getContactPoint(0);
+
+			p.mLocalPointA = manifoldContacts[0].mLocalPointA;
+			p.mLocalPointB = manifoldContacts[0].mLocalPointB;
+			p.mLocalNormalPen = manifoldContacts[0].mLocalNormalPen;
+			manifold.mNumContacts =1;
+
+			//transform normal to world space
+			const Vec3V worldNormal = transf1.rotate(normal);
+			const Vec3V worldP = V3NegScaleSub(worldNormal, capsule.radius, transf0.p);
+			const FloatV penDep = FSub(V4GetW(manifoldContacts[0].mLocalNormalPen), capsule.radius);
+
+			addToContactBuffer(contactBuffer, worldNormal, worldP, penDep);
+
+			return true;
+		}
+	}
+
+	return false;
+}
+
+EHDI bool Gu::pcmContactSphereConvex(GU_CONTACT_METHOD_ARGS)
+{
+	E_ASSERT(transform1.q.isSane());
+	E_ASSERT(transform0.q.isSane());
+	
+	const PxConvexMeshGeometry& shapeConvex = checkedCast<PxConvexMeshGeometry>(shape1);
+	const PxSphereGeometry& shapeSphere = checkedCast<PxSphereGeometry>(shape0);
+
+	PersistentContactManifold& manifold = cache.getManifold();
+
+	const Vec3V zeroV = V3Zero();
+
+	const ConvexHullData* hullData = _getHullData(shapeConvex);
+	PxPrefetchLine(hullData);
+	const Vec3V vScale = V3LoadU_SafeReadW(shapeConvex.scale.scale);	// PT: safe because 'rotation' follows 'scale' in PxMeshScale
+	const FloatV sphereRadius = FLoad(shapeSphere.radius);
+	const FloatV contactDist = FLoad(params.mContactDistance);
+	
+	//Transfer A into the local space of B
+	const PxTransformV transf0 = loadTransformA(transform0);
+	const PxTransformV transf1 = loadTransformA(transform1);
+	const PxTransformV curRTrans(transf1.transformInv(transf0));
+	const PxMatTransformV aToB(curRTrans);
+	
+	const PxReal toleranceLength = params.mToleranceLength;
+	const FloatV convexMargin = CalculatePCMConvexMargin(hullData, vScale, toleranceLength);
+
+	const PxU32 initialContacts = manifold.mNumContacts;
+	const FloatV minMargin = FMin(convexMargin, sphereRadius);
+	const FloatV projectBreakingThreshold = FMul(minMargin, FLoad(0.05f));
+	
+	const FloatV refreshDistance = FAdd(sphereRadius, contactDist);
+	manifold.refreshContactPoints(aToB, projectBreakingThreshold, refreshDistance);
+	//ML: after refreshContactPoints, we might lose some contacts
+	const bool bLostContacts = (manifold.mNumContacts != initialContacts);
+
+	if(bLostContacts || manifold.invalidate_SphereCapsule(curRTrans, minMargin))
+	{
+		GjkStatus status = manifold.mNumContacts > 0 ? GJK_UNDEFINED : GJK_NON_INTERSECT;
+
+		manifold.setRelativeTransform(curRTrans);
+		
+		const QuatV vQuat = QuatVLoadU(&shapeConvex.scale.rotation.x);  
+	
+		const bool idtScale = shapeConvex.scale.isIdentity();
+		//use the original shape
+		const ConvexHullV convexHull(hullData, V3LoadU(hullData->mCenterOfMass), vScale, vQuat, idtScale);
+		//transform capsule into the local space of convexHull
+		const CapsuleV capsule(aToB.p, sphereRadius);
+
+		GjkOutput output;
+		const LocalConvex<CapsuleV> convexA(capsule);
+		const Vec3V initialSearchDir = V3Sub(capsule.getCenter(), convexHull.getCenter());
+		if(idtScale)
+		{
+			const LocalConvex<ConvexHullNoScaleV> convexB(*EPX_CONVEX_TO_NOSCALECONVEX(&convexHull));
+			status = gjkPenetration<LocalConvex<CapsuleV>, LocalConvex<ConvexHullNoScaleV> >(convexA, convexB, initialSearchDir, contactDist, true,
+				manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+		}
+		else
+		{
+			const LocalConvex<ConvexHullV> convexB(convexHull);
+			status = gjkPenetration<LocalConvex<CapsuleV>, LocalConvex<ConvexHullV> >(convexA, convexB, initialSearchDir, contactDist, true,
+				manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints, output);
+		}
+
+		if(status == GJK_NON_INTERSECT)
+		{
+			return false;
+		}
+		else if(status == GJK_CONTACT)
+		{
+			PersistentContact& p = manifold.getContactPoint(0);
+			p.mLocalPointA = zeroV;//sphere center
+			p.mLocalPointB = output.closestB;
+			p.mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+			manifold.mNumContacts =1;
+
+			
+			//transform normal to world space
+			const Vec3V worldNormal = transf1.rotate(output.normal);
+			const Vec3V worldP = V3NegScaleSub(worldNormal, sphereRadius, transf0.p);
+			const FloatV penDep = FSub(output.penDep, sphereRadius);
+			addToContactBuffer(contactBuffer, worldNormal, worldP, penDep);
+			return true;
+		}
+		else if(status == GJK_DEGENERATE)
+		{
+			PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+			
+			return fullContactsGenerationSphereConvex(capsule, convexHull, transf0, transf1, manifoldContacts, contactBuffer, idtScale, 
+				manifold, output.normal, contactDist, true, renderOutput);
+		}
+		else if (status == EPA_CONTACT)
+		{
+			if (idtScale)
+			{
+				const LocalConvex<ConvexHullNoScaleV> convexB(*EPX_CONVEX_TO_NOSCALECONVEX(&convexHull));
+				status = epaPenetration(convexA, convexB, manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints,
+						true, FLoad(toleranceLength), output);
+			}
+			else
+			{
+				const LocalConvex<ConvexHullV> convexB(convexHull);			
+				status = epaPenetration(convexA, convexB, manifold.mAIndice, manifold.mBIndice, manifold.mNumWarmStartPoints,
+						true, FLoad(toleranceLength), output);
+			}
+
+			if (status == EPA_CONTACT)
+			{
+				PersistentContact& p = manifold.getContactPoint(0);
+				p.mLocalPointA = zeroV;//sphere center
+				p.mLocalPointB = output.closestB;
+				p.mLocalNormalPen = V4SetW(Vec4V_From_Vec3V(output.normal), output.penDep);
+				manifold.mNumContacts = 1;
+
+				//transform normal to world space
+				const Vec3V worldNormal = transf1.rotate(output.normal);
+				const Vec3V worldP = V3NegScaleSub(worldNormal, sphereRadius, transf0.p);
+				const FloatV penDep = FSub(output.penDep, sphereRadius);
+
+				addToContactBuffer(contactBuffer, worldNormal, worldP, penDep);
+				return true;
+			}
+			else
+			{
+				PersistentContact* manifoldContacts = EPX_CP_TO_PCP(contactBuffer.contacts);
+				return fullContactsGenerationSphereConvex(capsule, convexHull, transf0, transf1, manifoldContacts, contactBuffer, idtScale,
+					manifold, output.normal, contactDist, true, renderOutput);
+			}
+		}
+	}
+	else if(manifold.mNumContacts > 0)
+	{
+		//ML:: the manifold originally has contacts
+		PersistentContact& p = manifold.getContactPoint(0);
+		const Vec3V worldNormal = transf1.rotate(Vec3V_From_Vec4V(p.mLocalNormalPen));
+		const Vec3V worldP = V3NegScaleSub(worldNormal, sphereRadius, transf0.p);
+		const FloatV penDep = FSub(V4GetW(p.mLocalNormalPen), sphereRadius);
+
+		addToContactBuffer(contactBuffer, worldNormal, worldP, penDep);
+		return true;
+	}
+
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactSpherePlane.cpp
+using namespace px;
+
+EHDI bool Gu::pcmContactSpherePlane(GU_CONTACT_METHOD_ARGS)
+{
+	using namespace aos;
+	E_UNUSED(renderOutput);
+	E_UNUSED(cache);
+	E_UNUSED(shape1);
+
+	// Get actual shape data
+	const PxSphereGeometry& shapeSphere = checkedCast<PxSphereGeometry>(shape0);
+
+	//sphere transform
+	const Vec3V p0 = V3LoadU_SafeReadW(transform0.p);	// PT: safe because 'mRefCount' follows 'mTransform' in PxsTransform
+
+	//plane transform
+	const Vec3V p1 = V3LoadU_SafeReadW(transform1.p);	// PT: safe because 'mRefCount' follows 'mTransform' in PxsTransform
+	const QuatV q1 = QuatVLoadU(&transform1.q.x);
+
+	const FloatV radius = FLoad(shapeSphere.radius);
+	const FloatV contactDist = FLoad(params.mContactDistance);
+
+	const PxTransformV transf1(p1, q1);
+	//Sphere in plane space
+	const Vec3V sphereCenterInPlaneSpace = transf1.transformInv(p0);
+	
+	//Separation
+	const FloatV separation = FSub(V3GetX(sphereCenterInPlaneSpace), radius);
+
+	if(FAllGrtrOrEq(contactDist, separation))
+	{
+		//get the plane normal
+		const Vec3V worldNormal = QuatGetBasisVector0(q1);
+		const Vec3V worldPoint = V3NegScaleSub(worldNormal, radius, p0);
+
+		return outputSimplePCMContact(contactBuffer, worldPoint, worldNormal, separation);
+	}
+	return false;
+}
+
+// ===== 원본: physx/source/geomutils/src/pcm/GuPCMContactSphereSphere.cpp
+using namespace px;
+
+EHDI bool Gu::pcmContactSphereSphere(GU_CONTACT_METHOD_ARGS)
+{
+	E_UNUSED(cache);
+	E_UNUSED(renderOutput);
+
+	using namespace aos;
+	const PxSphereGeometry& shapeSphere0 = checkedCast<PxSphereGeometry>(shape0);
+	const PxSphereGeometry& shapeSphere1 = checkedCast<PxSphereGeometry>(shape1);
+	
+	const FloatV cDist = FLoad(params.mContactDistance);
+	const Vec3V p0 = V3LoadA(&transform0.p.x);
+	const Vec3V p1 = V3LoadA(&transform1.p.x);
+
+	const FloatV r0	= FLoad(shapeSphere0.radius);
+	const FloatV r1	= FLoad(shapeSphere1.radius);
+	
+	const Vec3V _delta = V3Sub(p0, p1);
+	const FloatV distanceSq = V3Dot(_delta, _delta);
+	const FloatV radiusSum = FAdd(r0, r1);
+	const FloatV inflatedSum = FAdd(radiusSum, cDist);
+	
+	if(FAllGrtr(FMul(inflatedSum, inflatedSum), distanceSq))
+	{
+		const FloatV eps = FLoad(0.00001f);
+		const FloatV dist = FSqrt(distanceSq);
+		const BoolV bCon = FIsGrtrOrEq(eps, dist);
+		const Vec3V normal = V3Sel(bCon, V3UnitX(), V3ScaleInv(_delta, dist));
+		const Vec3V point = V3ScaleAdd(normal, r1, p1);
+		const FloatV pen = FSub(dist, radiusSum);
+		
+		return outputSimplePCMContact(contactBuffer, point, normal, pen);
+	}
 	return false;
 }

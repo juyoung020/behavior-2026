@@ -267,6 +267,11 @@ POST_RULES = [
     (r'const PxF32 gMaskXYZ\[4\] = \{[^}]*\};', ''),
     (r'reinterpret_cast<const Vec3V&>\(f\)', 'em_loadu_ps(&f.x)'),
     (r'#define EPX_GLOBALCONST extern const __attribute__\(\(weak\)\)', '#define EPX_GLOBALCONST static constexpr'),
+    # 원본 .cpp 의 전역 이름공간 static 함수를 ::f 로 부르는 곳 (우리 번역은 전부 eng 안이라 :: 를 뗀다)
+    (r'(?<![\w>])::(intersectSegmentAABB)\(', r'\1('),
+    # GuConvexSupportTable.cpp:33 boxVertexTable (함수 호출로 초기화되는 전역 표) -> 같은 값을 번호로 만드는 함수
+    (r'EPX_PHYSX_COMMON_API\s+extern const aos::BoolV boxVertexTable\[8\];|extern const aos::BoolV boxVertexTable\[8\];', ''),
+    (r'\bboxVertexTable\[(\w+)\]', r'boxVertexTable_get(\1)'),
     # 스택 할당(alloca) -> 고정 크기 지역 배열 (GPU 에 alloca 없음). 개수 상한 E_ALLOCA_N (볼록 꼭짓점 255, 접촉 256)
     (r'(\w+)\*\s*(\w+)\s*=\s*reinterpret_cast<\w+\*>\(PxAlloca(?:Aligned)?\(sizeof\((\w+)\)\s*\*\s*([\w.]+)(?:\s*,\s*16)?\)\);',
      r'\1 \2_buf[E_ALLOCA_N]; \1* \2 = \2_buf;'),
@@ -294,20 +299,46 @@ def leftover_px(text):
     return sorted(set(re.findall(r'\bPX_\w+', text)))
 
 
-GTABLE = re.compile(r'^(?:static\s+)?const\s+(\w+)\s+(\w+)\s*\[\s*(\w*)\s*\]\s*=\s*(\{.*?\})\s*;', re.S | re.M)
+GTABLE = re.compile(r'^[ \t]*(?:static\s+)?const\s+(\w+)\s+(\w+)\s*\[\s*(\w*)\s*\]\s*=\s*(\{.*?\})\s*;', re.S | re.M)
+
+
+def ns_level_positions(text):
+    """각 글자 위치가 이름공간 수준(함수·클래스 밖)인지: 괄호 짝으로 센다."""
+    sh = shadow_code(text)
+    flags = bytearray(len(sh))
+    stack = []
+    head_start = 0
+    for i, c in enumerate(sh):
+        flags[i] = 1 if all(k == 'ns' for k in stack) else 0
+        if c == '{':
+            top_ns = all(k == 'ns' for k in stack)
+            stack.append(classify(sh[head_start:i]) if top_ns else 'blk')
+            head_start = i + 1
+        elif c == '}':
+            if stack:
+                stack.pop()
+            head_start = i + 1
+        elif c == ';':
+            head_start = i + 1
+    return flags
 
 
 def device_tables(text):
-    """이름공간 수준 상수 표(맨 앞 칸에서 시작하는 const T name[N] = {...};)를 호스트·장치 둘 다 읽을 수 있게 바꾼다.
+    """이름공간 수준 상수 표(const T name[N] = {...};)를 호스트·장치 둘 다 읽을 수 있게 바꾼다.
     E_GTABLE 가 호스트 표 + __constant__ 표 + 고르는 함수 name_p() 를 만들고, 쓰는 곳 name[ 는 name_p()[ 로."""
     names = []
     holders = []  # 정의·extern 선언은 자리표로 빼 두었다가 쓰는 곳 이름을 바꾼 뒤 되돌린다
+    nsflags = ns_level_positions(text)
 
     def rep(m):
         t, name, n, body = m.group(1), m.group(2), m.group(3), m.group(4)
+        k = m.start(1)
+        if not nsflags[k]:
+            return m.group(0)  # 함수 안 지역 표는 그대로
         names.append(name)
         n = n or str(body.count(',') + 1)
-        holders.append(f'E_GTABLE({t}, {name}, {n}, {" ".join(body.split())})')
+        indent = re.match(r'[ \t]*', m.group(0)).group(0)
+        holders.append(f'{indent}E_GTABLE({t}, {name}, {n}, {" ".join(body.split())})')
         return f'@@GT{len(holders) - 1}@@'
     text = GTABLE.sub(rep, text)
     for name in names:
@@ -443,7 +474,7 @@ def annotate_functions(text):
                 kind = classify(head[off:])
                 if kind == 'fn':
                     body = head[off:]
-                    if not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|PX_\w*INLINE\w*)\b', body):
+                    if not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|E?PX_\w*INLINE\w*)\b', body):
                         ins = after_template(head, off)
                         while ins < len(head) and head[ins] in ' \t\n':
                             ins += 1
@@ -460,7 +491,7 @@ def annotate_functions(text):
             head = sh[head_start:i]
             off = skip_prefix(head)
             body = head[off:].strip()
-            if body and classify(body) == 'fn' and not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|friend|PX_\w*INLINE\w*)\b', body) \
+            if body and classify(body) == 'fn' and not re.search(r'\b(EHD|EHDI|EHDV|__host__|__device__|friend|E?PX_\w*INLINE\w*)\b', body) \
                     and not re.match(r'E_', body):
                 ins = after_template(head, off)
                 while ins < len(head) and head[ins] in ' \t\n':

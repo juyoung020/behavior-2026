@@ -22,7 +22,11 @@ EHD float acosf(float x) {
     if (hx > 0) return 0.0f;
     else return pi + (float)2.0 * pio2_lo;
   } else if (ix > 0x3f800000) {  // |x| > 1 -> NaN
-    return px::em_div1(x - x, x - x);
+    // 실측(Ubuntu glibc 2.35 libm): NaN 입력은 조용한 NaN 으로 그대로(부호·꼬리 유지), 그 밖(|x|>1, ±inf)은 +qNaN 0x7fc00000
+    // (원본 식 (x-x)/(x-x) 는 0xffc00000 를 내므로 쓰지 않는다 — 공개 acosf 는 오류 처리 감싸개를 거쳐 +NaN 을 돌려줌).
+    // GPU 는 NaN 연산이 꼬리를 버리므로 식 대신 비트로 만든다.
+    if (ix > 0x7f800000) return px::em_u2f(uint32_t(hx) | 0x00400000u);
+    return px::em_u2f(0x7fc00000u);
   }
   if (ix < 0x3f000000) {  // |x| < 0.5
     if (ix <= 0x32800000) return pio2_hi + pio2_lo;

@@ -11,7 +11,16 @@ set(PX_INTERNAL_INC
 function(contact_test name)
   engine_test(${name} ${ARGN})
   target_include_directories(${name} PRIVATE ${PX_INTERNAL_INC})
-  target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-strict-aliasing -Wno-macro-redefined>)
+  target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-strict-aliasing> $<$<COMPILE_LANGUAGE:CXX>:-Wno-macro-redefined>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fno-strict-aliasing>)
 endfunction()
 
 contact_test(test_pcm_convex test_pcm_convex.cpp PHYSX)
+contact_test(test_pcm_prims test_pcm_prims.cpp PHYSX)
+contact_test(test_pcm_convex_gpu test_pcm_convex_gpu.cpp pcm_gpu_launch.cu PHYSX)
+find_package(CUDAToolkit REQUIRED)
+target_link_libraries(test_pcm_convex_gpu CUDA::cudart)
+target_compile_options(test_pcm_convex_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-v -Xcudafe=--diag_suppress=177>)
+target_compile_options(test_pcm_convex_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe=--diag_suppress=550>)
+engine_test(test_acosf_exhaustive test_acosf_exhaustive.cpp)
+target_compile_options(test_acosf_exhaustive PRIVATE -fno-builtin)
