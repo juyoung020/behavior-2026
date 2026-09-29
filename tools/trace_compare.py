@@ -13,6 +13,8 @@
     허용오차 안 최대 |차이| <= 임계 (임계는 TOL, 공식 평가기 자기 자신과의 비교(노이즈 바닥)를 보고 정한다)
     다름       임계를 넘는 스텝이 있다 -> 처음 넘은 스텝을 적는다
 --strict 면 '비트 동일' 만 통과. 결과 JSON 은 항상 정확히 같아야 통과(q_score·success·steps), 거리 지표는 상대 1e-6.
+--pixels-report-only 면 영상 해시·채널 평균(RTX 잡음으로 실행마다 다름, 5.1 노이즈 바닥)은 표에만 적고 통과/실패에서 뺀다
+  -- 물리·판정·지표·JSON 만으로 판정할 때(tools\\exp_run.ps1 compare).
 """
 import argparse
 import glob
@@ -145,6 +147,7 @@ def main():
     ap.add_argument("--strict", action="store_true", help="비트 동일만 통과")
     ap.add_argument("--negative", action="store_true", help="B 를 일부러 조금 바꿔 도구가 잡는지 본다")
     ap.add_argument("--show", default="", help="이 항목의 스텝별 차이를 몇 스텝 찍는다 (쉼표로 여러 개)")
+    ap.add_argument("--pixels-report-only", action="store_true", help="영상 해시·채널 평균은 판정에서 뺀다(표에는 적음)")
     a = ap.parse_args()
 
     ra, ja = load_run(a.a)
@@ -175,9 +178,14 @@ def main():
     print(f"A = {a.a} (env {a.env_a})\nB = {a.b} (env {a.env_b})")
     print(f"{'항목':<58}{'판정':<10}{'최대|차이|':>12}{'첫 비트차':>9}{'첫 초과':>8}{'스텝':>6}")
     counts = {"비트 동일": 0, "허용오차 안": 0, "다름": 0, "비교 불가": 0}
+    pix = {"비트 동일": 0, "허용오차 안": 0, "다름": 0, "비교 불가": 0}
     for k in sorted(keys):
         v, m, fb, fo, t = compare_key(k, ra[k], rb[k], a.env_a, a.env_b, oa, ob)
-        counts[v] += 1
+        if a.pixels_report_only and k.split("|", 1)[-1].startswith(("obs_hash::", "hash::", "obs_mean::")):
+            pix[v] += 1
+            v = v + "(픽셀)"
+        else:
+            counts[v] += 1
         fb_s = "-" if fb is None else str(fb)
         fo_s = "-" if fo is None else str(fo)
         name = k if len(k) <= 57 else "…" + k[-56:]
@@ -196,6 +204,8 @@ def main():
         print(f"  {name:<34}{key:<24}{str(va):>22}{str(vb):>22}  {v}")
     print(f"\n요약: 비트 동일 {counts['비트 동일']}, 허용오차 안 {counts['허용오차 안']}, 다름 {counts['다름']}"
           f", 비교 불가 {counts['비교 불가']}, JSON 다름 {jbad}")
+    if a.pixels_report_only:
+        print(f"픽셀(판정에서 뺌): 비트 동일 {pix['비트 동일']}, 허용오차 안 {pix['허용오차 안']}, 다름 {pix['다름']}")
     bad = counts["다름"] + jbad + (counts["허용오차 안"] if a.strict else 0)
     if a.negative:
         print("음성 대조: " + ("잡았다 (정상)" if bad else "못 잡았다 -- 비교가 무디다"))

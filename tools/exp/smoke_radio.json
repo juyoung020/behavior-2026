@@ -1,0 +1,23 @@
+{
+  "name": "smoke_radio",
+  "comment": "실행기 자체 시험: 0 행동 / 재생(quickack 켬·끔) x radio 인스턴스 0·1, 150 스텝. quickack 켬·끔은 compare 로 물리·판정·JSON 비트 동일이어야 한다.",
+  "mode": "public_test",
+  "tasks": ["turning_on_radio"],
+  "instances": [0, 1],
+  "max_steps": 150,
+  "black_guard": "abort",
+  "trace": true,
+  "write_video": false,
+  "gpu_busy_mib": 3500,
+  "lock_minutes": 10,
+  "timeout_min": 15,
+  "settings": [
+    {"name": "zero", "policy": "local"},
+    {"name": "replay_qa", "policy": "replay", "quickack": true,
+     "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+     "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml"},
+    {"name": "replay_noqa", "policy": "replay", "quickack": false,
+     "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+     "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml"}
+  ]
+}

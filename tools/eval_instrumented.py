@@ -684,6 +684,78 @@ def install(timing: bool, trace: TraceRecorder, out_dir: str, gpu: GpuMonitor, d
     Ev.__exit__ = ev_exit
 
 
+def install_instance_seq(indices, eval_args, trace):
+    """--instances-seq=0,1,2 : 한 프로세스에서 인스턴스를 차례로 (장면 로딩 한 번).
+
+    공식 main 은 --num-envs 1 과 첫 인스턴스 하나로 돈다. main 이 부르는 첫 evaluator.run() 을 가로채,
+    공식 run() 을 인스턴스마다 한 번씩 부른다(공식 --num-rollouts 가 같은 evaluator 로 run() 을 거듭 부르는 것과 같은 경로).
+    결과는 인스턴스마다 <output-dir>\\i<번호>\\ (json\\, videos\\, trace.npz, actions.npz) -- 새 프로세스로 돈 판과 같은 모양.
+    새 프로세스 결과와 비트 동일인지 확인하기 전까지는 개발용이다(tools\\exp_run.ps1 -Reuse).
+    """
+    from omnigibson.eval import evaluator as E
+    from omnigibson.eval.evaluator import resolve_instance_ids
+
+    task = eval_args[eval_args.index("--task-name") + 1]
+    mode = eval_args[eval_args.index("--mode") + 1] if "--mode" in eval_args else "public_test"
+    out_dir = eval_args[eval_args.index("--output-dir") + 1]
+    ids = resolve_instance_ids(task, indices, mode=mode)
+    Ev = E.BatchedEvaluator
+    inner_run = Ev.run  # 계측 겉싸개(install)까지 포함
+    done = {"flag": False}
+
+    @functools.wraps(inner_run)
+    def seq_run(self, instances_to_run, write_video=False, video_path=None, metrics_dir=None, rollout_id=0, video_fps=30):
+        if done["flag"]:  # --num-rollouts > 1 이면 두 번째부터는 공식 그대로
+            return inner_run(self, instances_to_run, write_video=write_video, video_path=video_path,
+                             metrics_dir=metrics_dir, rollout_id=rollout_id, video_fps=video_fps)
+        done["flag"] = True
+        merged = {}
+        for k, (ix, iid) in enumerate(zip(indices, ids)):
+            d = os.path.join(out_dir, f"i{ix}")
+            os.makedirs(os.path.join(d, "json"), exist_ok=True)
+            vd = os.path.join(d, "videos")
+            if write_video:
+                os.makedirs(vd, exist_ok=True)
+            print(f"[instances-seq] 시작 인덱스 {ix} 인스턴스 {iid} ({k + 1}/{len(ids)}) t={time.time():.3f}", flush=True)
+            r = inner_run(self, [int(iid)], write_video=write_video, video_path=vd, metrics_dir=os.path.join(d, "json"),
+                          rollout_id=rollout_id, video_fps=video_fps)
+            merged.update(r)
+            print(f"[instances-seq] 끝 인덱스 {ix} 인스턴스 {iid} t={time.time():.3f}", flush=True)
+            if trace.rows:
+                trace.save(os.path.join(d, "trace.npz"), os.path.join(d, "actions.npz"))
+                trace.rows, trace.images = [], {}
+            if BLACK is not None:
+                with open(os.path.join(d, "black_frames.json"), "w", encoding="utf-8") as f:
+                    json.dump(BLACK.summary(), f)
+                BLACK.n_black.clear(), BLACK.n_total.clear(), BLACK.rows.clear(), BLACK.times.clear()
+        return merged
+
+    Ev.run = seq_run
+
+
+def install_native_policy(spec):
+    """--native-policy=모듈:함수 : 평가기 프로세스 안에서 도는 정책(네이티브 π0.5 엔진 등)을 공식 load_policy 자리에 넣는다.
+
+    함수(cfg) 는 공식 정책과 같은 모양의 객체를 돌려줘야 한다: forward(obs=배치 관측) -> (num_envs, action_dim) 텐서, reset(),
+    (있으면) set_action_dim(n). 평가기 쪽 코드는 그대로다 -- 정책은 우리 제출물이지 평가기가 아니다.
+    """
+    import importlib
+
+    from omnigibson.eval import evaluator as E
+
+    mod, fn = spec.split(":", 1)
+    factory = getattr(importlib.import_module(mod), fn)
+
+    def load_policy(self):
+        policy = factory(self.cfg)
+        if hasattr(policy, "set_action_dim"):
+            policy.set_action_dim(self.instance_eval_states[0].env_accessor.robot.action_dim)
+        print(f"[native-policy] {spec} 를 평가기 프로세스 안 정책으로 씀", flush=True)
+        return policy
+
+    E.BatchedEvaluator.load_policy = load_policy
+
+
 def _og_profilers(og):
     out = {}
     for k in ("_step_profiler", "_pre_physics_step_profiler", "_post_physics_step_profiler", "_non_physics_step_profiler"):
@@ -839,6 +911,19 @@ def main():
         return
     ours, eval_args = (argv[: argv.index("--")], argv[argv.index("--") + 1:]) if "--" in argv else ([], argv)
     timing, full_trace = "--timing" in ours, "--trace" in ours
+    seq = next((o.split("=", 1)[1] for o in ours if o.startswith("--instances-seq=")), "")
+    native = next((o.split("=", 1)[1] for o in ours if o.startswith("--native-policy=")), "")
+    if seq:
+        # 장면 재사용: 공식 main 에는 첫 인스턴스 하나(--num-envs 1)만 넘기고, 공식 evaluator.run() 을 인스턴스마다 다시 부른다
+        # (공식 --num-rollouts 가 같은 evaluator 로 run() 을 거듭 부르는 것과 같은 경로). 결과는 인스턴스마다 하위 폴더에.
+        idx = [int(x) for x in seq.split(",") if x.strip()]
+        i = eval_args.index("--instance-indices")
+        j = i + 1
+        while j < len(eval_args) and not eval_args[j].startswith("--"):
+            j += 1
+        eval_args = eval_args[: i + 1] + [str(idx[0])] + eval_args[j:]
+        if "--num-envs" in eval_args:
+            eval_args[eval_args.index("--num-envs") + 1] = "1"
     global BLACK
     guard = ""
     for g in ("warn", "abort"):
@@ -862,7 +947,12 @@ def main():
         T.oneoff["gpu_mib_before"] = _gpu_used_mib()
         gpu = GpuMonitor()
         gpu.start()
-    install(timing, TraceRecorder(full_trace), out_dir, gpu, deep="--deep" in ours)
+    trace = TraceRecorder(full_trace)
+    install(timing, trace, out_dir, gpu, deep="--deep" in ours)
+    if seq:
+        install_instance_seq(idx, eval_args, trace)
+    if native:
+        install_native_policy(native)
     if "--reset-user" in KIT_ARGS:
         # Kit 사용자 설정을 지우는 인자 -- 복원을 보장할 수 없어 받지 않는다(다른 Isaac Sim 환경에 영향 가능).
         KIT_ARGS.remove("--reset-user")

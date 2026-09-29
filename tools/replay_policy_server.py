@@ -10,6 +10,8 @@
   (msgpack + 넘파이 확장, 접속하면 metadata 먼저, {"reset": True} 는 응답 없음, /healthz).
 - --perturb STEP:DIM:DELTA  STEP 번째 요청의 행동 DIM 에 DELTA 를 더한다(음성 대조: 비교 도구가 이 차이를 잡는지).
 - 기록된 환경 수와 요청의 환경 수가 다르면 0 번 환경의 행동을 모든 환경에 준다. 기록이 끝나면 0 행동.
+- --quickack : 서버 소켓에 TCP_NODELAY 를 켜고, 받을 때마다 TCP_QUICKACK 을 다시 켠다(리눅스). 큰 요청(0.6 MB)의 마지막 조각에
+  리눅스 지연 ACK(약 40 ms)가 걸려 보내는 쪽이 멈추는 것을 없애는 시험. 바이트는 그대로다(응답 내용 불변).
 """
 import argparse
 import asyncio
@@ -17,6 +19,7 @@ import functools
 import hashlib
 import http
 import logging
+import socket
 import time
 
 import msgpack
@@ -46,6 +49,26 @@ def unpack_data(obj):
 
 Packer = functools.partial(msgpack.Packer, default=pack_data)
 unpackb = functools.partial(msgpack.unpackb, object_hook=unpack_data)
+
+
+TCP_QUICKACK = getattr(socket, "TCP_QUICKACK", None)  # 리눅스만
+
+
+class QuickAckConnection(_server.ServerConnection):
+    """받을 때마다 TCP_QUICKACK 을 다시 켜는 연결(리눅스는 이 표시를 한 번 쓰고 되돌린다, man 7 tcp)."""
+
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        self._qa_sock = transport.get_extra_info("socket")
+        if self._qa_sock is not None:
+            self._qa_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            if TCP_QUICKACK is not None:
+                self._qa_sock.setsockopt(socket.IPPROTO_TCP, TCP_QUICKACK, 1)
+
+    def data_received(self, data):
+        super().data_received(data)
+        if self._qa_sock is not None and TCP_QUICKACK is not None:
+            self._qa_sock.setsockopt(socket.IPPROTO_TCP, TCP_QUICKACK, 1)
 
 
 def _health_check(connection, request):
@@ -143,9 +166,10 @@ async def main_async(a):
         s, d, v = a.perturb.split(":")
         perturb = (int(s), int(d), float(v))
     r = Replay(actions, a.log, perturb, a.once)
-    log.info(f"재생 서버: 행동 {actions.shape} 포트 {a.port}")
+    log.info(f"재생 서버: 행동 {actions.shape} 포트 {a.port} quickack={a.quickack}")
+    extra = {"create_connection": QuickAckConnection} if a.quickack else {}
     async with _server.serve(r.handler, "127.0.0.1", a.port, compression=None, max_size=None,
-                             process_request=_health_check):
+                             process_request=_health_check, **extra):
         if a.once:
             await r.done.wait()
         else:
@@ -159,4 +183,5 @@ if __name__ == "__main__":
     ap.add_argument("--log", default="")
     ap.add_argument("--once", action="store_true", help="첫 접속이 끝나면 종료")
     ap.add_argument("--perturb", default="", help="STEP:DIM:DELTA")
+    ap.add_argument("--quickack", action="store_true", help="TCP_NODELAY + 받을 때마다 TCP_QUICKACK(리눅스)")
     asyncio.run(main_async(ap.parse_args()))
