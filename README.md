@@ -18,7 +18,12 @@ BEHAVIOR-1K\          대회 프레임워크 (StanfordVL, 태그 v3.9.3-post1) �
     omnigibson.key                   에셋 복호화 키
 data\
   2026-challenge-demos\   데모 (LeRobot 형식) — 메타 + 0번 과제 turning_on_radio 만 (전체 3.27 TB)
-src\                  우리 구현 (정책 래퍼, meridian 연동 등)
+meridian_ws\src\      meridian 동적 씬그래프 (연구실 neoul-ro 코드를 우리 사슬에 맞게 포팅 — 원본은 여기 하나)
+  meridian_frontend\    RGB-D → FastSAM·CLIP(TensorRT) → 추적 → episode 출구(/tracklet) + C++ 핵심(meridian_frontend_native)
+  meridian_graphcore\   DA + 물체 그래프(Spark-DSG, third_party\spark_dsg 는 서브모듈 3c40997)
+  meridian_engine\      DA 라이브러리 · meridian_msgs\ 메시지
+  meridian_behavior\    meridian_scene(scene_server: 계획기 질의 TCP JSON, 통합 launch) · obs_player(Rust 관측 재생기)
+src\                  우리 구현 (정책 래퍼, meridian 도구·시험은 src\meridian\ — 설계 docs\meridian_통합설계.md)
   configs\r1pro_openpi.yaml   평가기 로봇 설정 (공식 r1pro.yaml 에서 로봇 이름만 openpi 에 맞춤)
 tools\                개발 도구 (run_pi05_server.sh = 정책 서버, run_eval_radio.ps1 = 평가기, -Gui 로 뷰어)
   setup\              설치·다운로드에 한 번 쓴 스크립트 (기록용, 다시 돌려도 이어받기)
@@ -43,12 +48,12 @@ logs\                 설치·다운로드·실행 로그
   behavior_submission          2025 1위 제출 체크포인트 4개 (50.6 GB, 과제 0~49 한 모델)
   openpi_comet/pi05-b1kpt50-cs32   2025 2위 공개 가중치 (12.4 GB)  ← tools/setup/download_top_ckpts_wsl.sh
 ~/.cache/huggingface     토큰(juyoung02) · Cosmos-Reason2-2B (GR00T 백본, 게이트 동의 완료)
-~/meridian_ws/src/       연구실 meridian 인식 모듈 (neoul-ro, 시뮬레이터에는 이것만 필요)
-  meridian_msgs            메시지 정의
-  meridian_frontend        Frontend: RGB-D → SAM → CLIP → 추적 → tracklet (seg·clip·geotracker 통합본, 정리 중)
-  meridian_associator      DA 노드
-  meridian_engine          DA 라이브러리 (graphcore 가 링크)
-  meridian_graphcore       물체 그래프 저장소 (Spark-DSG)
+~/meridian_ws/            meridian 빌드 (소스 원본은 Windows 쪽 meridian_ws\src — src/meridian/build_meridian_ws.sh 가 rsync 후 빌드)
+  b26_src/                 빌드용 복사본(고치지 않음) · build/ install/ (colcon, Rust 재생기 build/obs_player)
+  src/                     연구실 저장소 원본 클론(neoul-ro, 참고용 — 더는 고치지 않음, behavior-integration 브랜치에 초기 작업)
+~/meridian_venv          frontend 용 torch 2.8 cu128 + TensorRT 10.13 (ROS 파이썬 3.10, system-site-packages)
+~/meridian_export_venv   ONNX export 전용 (CPU torch, ultralytics, open_clip)
+~/meridian_models/       ONNX 와 x86 TensorRT 엔진 (저장소에 안 올림)
 ```
 
 meridian 의 sensor·slam 은 쓰지 않는다 — 시뮬레이터가 RGB-D 를 주고, 위치는 학습 데이터에선 정답 pose,
