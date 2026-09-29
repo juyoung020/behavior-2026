@@ -59,6 +59,8 @@ SV_HD float fdiv(float a, float b) {
 }
 SV_HD float fmaxps(float a, float b) { return a > b ? a : b; }  // maxps: 같거나 NaN 이면 두 번째
 SV_HD float fminps(float a, float b) { return a < b ? a : b; }  // minps
+SV_HD uint32_t pmaxu(uint32_t a, uint32_t b) { return a < b ? b : a; }  // PxMax<PxU32> (PxMath.h:75)
+SV_HD uint32_t pminu(uint32_t a, uint32_t b) { return a < b ? a : b; }
 
 struct FV { float f; };
 struct V4 { float x, y, z, w; };

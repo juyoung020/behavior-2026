@@ -14,6 +14,12 @@ namespace eng {
 namespace sv {
 
 constexpr uint32_t NONE = 0xffffffffu;
+
+// PxVec3 <-> Vec3V 로드/저장 (V3LoadA/V3LoadU/V3LoadU_SafeReadW 는 W = +0, V4LoadA(&v.x) 는 W = 다음 필드)
+SV_HD V4 ld4(const V3& v, float w) { return V4{v.x, v.y, v.z, w}; }
+SV_HD V4 ldv(const V3& v) { return V4{v.x, v.y, v.z, 0.0f}; }
+SV_HD V4 ldv3(const V3& v) { return V4{v.x, v.y, v.z, 0.0f}; }
+SV_HD void stv(V4 a, V3& v) { v.x = a.x; v.y = a.y; v.z = a.z; }
 constexpr uint32_t RIGID_BODY = 0xffffu;  // PxSolverConstraintDesc::RIGID_BODY
 
 // DySolverConstraintTypes.h
