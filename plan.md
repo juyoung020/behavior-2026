@@ -36,7 +36,8 @@
 - π0.5 문장 입력은 토큰 200개, 로봇 상태도 그 안에 들어간다 → 지시는 한두 문장, 씬그래프는 Qwen 만 본다.
 - π0.5 서버 난수는 `jax.random.key(0)` 고정 → 같은 요청 순서면 같은 출력.
 - 2위 Comet 은 π0.5 를 4단계 문장(전체 과제 / 기술 "move to" / 하위과제 설명 / 세부 동작)으로 학습했고, 계획기 반복문(계획 → 점검 → 다음 하위과제 문장)도 코드에 있다(`refs/openpi-comet/src/openpi/shared/client.py:273-314`).
-- 채점 Docker 는 24 GB GPU 1장. π0.5 약 9 GB + Qwen 9B 4비트 약 6 GB(추정) + meridian → 실측 필요. 이 PC(16 GB)에선 개발 중 Qwen 을 CPU 로.
+- **Qwen 은 GPU 에서 돌린다(CPU 는 안 씀).** 채점 Docker 는 24 GB GPU 1장(시뮬레이터는 컨테이너 밖)에 π0.5 약 9 GB + Qwen 9B 4비트 약 6 GB(추정) + meridian.
+  이 PC(16 GB)는 시뮬레이터까지 같이 올라가야 해서 실측 후 맞춘다(π0.5 메모리 선점 끄기, 작은 양자화, 계획할 때만 Qwen 올리기, 다른 GPU 머신).
 
 ## 4. 쟁점
 
@@ -61,7 +62,7 @@
 |---|---|---|
 | 시뮬(평가) 환경 가속 | 병목 실측 → 공식과 같은지 검증 도구(JSBSim 방식) → C++/CUDA·여러 판 묶기 설계, 가능한 것 1개 시제품 | `docs/평가기_가속설계.md` |
 | 학습 환경 가속 | 데이터 파이프라인(영상 디코딩·크기 조정·변환) 실측 → GPU 처리, 원래 파이프라인과 같은 텐서인지 검증 | `docs/학습환경_가속.md` |
-| 스펙 있는 그대로 돌려 보기 | Comet 계획기 반복문 + 로컬 Qwen3.5-9B(CPU) + Comet pt50 으로 radio 한 판. meridian 은 통합 후 | `docs/실행기록_스펙_있는그대로.md` |
+| 스펙 있는 그대로 돌려 보기 | Comet 계획기 반복문 + 로컬 Qwen3.5-9B(GPU) + Comet pt50 으로 radio 한 판. meridian 은 통합 후 | `docs/실행기록_스펙_있는그대로.md` |
 | meridian 통합 | Frontend → DA → Graphcore, 물체 등록 = 그래프 노드 | `docs/meridian_통합설계.md` |
 
 GPU 1장이라 시뮬레이터는 한 번에 하나만.
@@ -70,7 +71,7 @@ GPU 1장이라 시뮬레이터는 한 번에 하나만.
 
 - π0.5 + meridian 은 단계 지시로 연결, 이동도 π0.5 에 지시.
 - meridian 은 Frontend + DA + Graphcore(+ msgs) 만.
-- 계획기 LLM 은 로컬 Qwen3.5-9B 양자화(외부 API 는 규칙상 허용이지만 비용 자부담).
+- 계획기 LLM 은 로컬 Qwen3.5-9B 양자화, **GPU 에서**(외부 API 는 규칙상 허용이지만 비용 자부담).
 - 지시는 모호하지 않게. 형식은 4.1 비교로 정한다.
 - 가속은 대회 벤치마크 결과가 달라지면 안 된다.
 - 작업 공간은 GitHub 비공개 `juyoung020/behavior-2026`.
