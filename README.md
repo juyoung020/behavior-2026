@@ -1,5 +1,7 @@
 # behavior-2026 — BEHAVIOR Challenge 2026 작업 폴더
 
+우리 아이디어: **동적 3D 씬그래프 + AI 에이전트(또는 강화학습) + VLA 의 결합** ([plan.md](plan.md) 0절).
+
 제출 마감: 10/16 AoE (한국시간 10/17 토 20:59). 대회 요약·규칙은 [docs/](docs/README.md). 구현 계획·결정 기록은 [plan.md](plan.md).
 
 저장소: GitHub 비공개 `juyoung020/behavior-2026`. 외부 저장소(BEHAVIOR-1K, refs/)는 서브모듈이라 `git submodule update --init` 으로 받고,
