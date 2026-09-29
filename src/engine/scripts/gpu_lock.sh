@@ -20,15 +20,24 @@ _gpu_lock_get() {  # 키 값 읽기
   grep -m1 "^$1=" "$GPU_LOCK_DIR/owner.txt" 2>/dev/null | cut -d= -f2- | tr -d '\r'
 }
 
-_gpu_queue_prune() {  # end_epoch 가 지난 표 지우기 (내 표는 방금 갱신했으므로 안 걸린다). end_epoch 를 못 읽으면 지우지 않는다
-  local t now e
+_gpu_queue_prune() {  # end_epoch 가 지난 표 지우기 (내 표는 방금 갱신했으므로 안 걸린다)
+  # end_epoch 가 없는 옛 형식 표(19자리, 옛 gpu_lock.sh)는 파일 수정 시각으로: 300 초 넘게 갱신 없으면 지운다(옛 도구도 기다리는 동안 touch 한다)
+  local t now e age
   now=$(date +%s)
   for t in "$GPU_QUEUE_DIR"/*; do
     [ -f "$t" ] || continue
     e=$(grep -m1 "^end_epoch=" "$t" 2>/dev/null | cut -d= -f2- | tr -d '\r')
-    if [[ "$e" =~ ^[0-9]+$ ]] && [ "$now" -gt "$e" ]; then
-      echo "[gpu_lock] 오래된 대기표 지움(end_epoch 지남): $(basename "$t")"
-      rm -f "$t"
+    if [[ "$e" =~ ^[0-9]+$ ]]; then
+      if [ "$now" -gt "$e" ]; then
+        echo "[gpu_lock] 오래된 대기표 지움(end_epoch 지남): $(basename "$t")"
+        rm -f "$t"
+      fi
+    else
+      age=$((now - $(stat -c %Y "$t" 2>/dev/null || echo "$now")))
+      if [ "$age" -gt 300 ]; then
+        echo "[gpu_lock] 옛 형식 대기표 지움(${age}초 갱신 없음): $(basename "$t")"
+        rm -f "$t"
+      fi
     fi
   done
 }
