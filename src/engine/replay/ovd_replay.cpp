@@ -295,6 +295,7 @@ class Replayer {
   // --dump-art <관절체 이름> <파일>: 첫 simulate 직전 그 관절체의 PhysX 값을 텍스트로 (공식 쪽 텐서 뷰 덤프 state_pre<N>.npz 와 비교용).
   //   한 줄 = "키 번호 값..." (링크 번호 = PhysX 링크 순서, dof 번호 = 링크 순서 x 풀린 축 = 텐서 API 순서, 모양 번호 = 링크 순서 x 모양 순서)
   std::string dump_art_name, dump_art_file;
+  int64_t dump_art_at = -1;  // 전체 simulate 번호 (곁기록·공식 --dump-at-pre 와 같은 셈). 기본: 이 파일 첫 simulate
   void dump_art() {
     PxArticulationReducedCoordinate* art = nullptr;
     auto ia = art_by_name.find(dump_art_name);
@@ -495,6 +496,22 @@ class Replayer {
       }
     }
     C.rec.clear();
+  }
+  // OVD 에 안 남는 단일 액터 플래그: PxActor::setActorFlag(한 개)는 OVD 에 기록하지 않는다(NpActorTemplate.h:193 setActorFlagInternal —
+  // OMNI_PVD_SET 은 setActorFlags(여러 개) 쪽에만). omni 는 physxRigidBody:disableGravity 를 setActorFlag(eDISABLE_GRAVITY) 로 넣는다
+  // (UsdInterface.cpp:487, PhysXRigidBodyPropertiesUpdate.cpp:904). 곁 파일(이름 목록)로 첫 simulate 전에 넣는다.
+  std::vector<std::string> gravity_off;
+  bool gravity_applied = false;
+  void apply_gravity_off() {
+    size_t n = 0, miss = 0;
+    for (auto& name : gravity_off) {
+      auto it = actor_by_name.find(name);
+      if (it == actor_by_name.end()) { miss++; continue; }
+      it->second->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, true);
+      n++;
+    }
+    gravity_applied = true;
+    printf("중력 끔(곁 파일): %zu 액터, 못 찾음 %zu\n", n, miss);
   }
   void trace_flush() {
     for (auto& t : trace_buf) {
@@ -1826,7 +1843,8 @@ class Replayer {
             if (filters_dirty) resolve_filters();
             float dt; memcpy(&dt, F.data(e), 4);
             if (sims == 0 && !trace_sub.empty()) dump_state_before_first_sim();
-            if (sims == 0 && !dump_art_name.empty()) dump_art();
+            if (!gravity_off.empty() && !gravity_applied) apply_gravity_off();
+            if (int64_t(sims + side_offset + 1) == dump_art_at && !dump_art_name.empty()) dump_art();
             ctrl_before_simulate();
             so.scene->simulate(dt);
             so.scene->fetchResults(true);
@@ -1954,8 +1972,10 @@ int main(int argc, char** argv) {
     else if (a == "--trace-obj" && i + 1 < argc) R.trace_sub = argv[++i];
     else if (a == "--diag-no-self-collision") R.diag_no_self_collision = true;
     else if (a == "--contact-report-all") R.contact_report_all = true;
+    else if (a == "--gravity-off" && i + 1 < argc) { std::ifstream gf(argv[++i]); std::string ln; while (std::getline(gf, ln)) if (!ln.empty()) R.gravity_off.push_back(ln); }
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
     else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }
+    else if (a == "--dump-art-at" && i + 1 < argc) R.dump_art_at = atoll(argv[++i]);
     else if (a == "--filter-history") { while (i + 1 < argc && argv[i + 1][0] != '-') filter_hist.push_back(argv[++i]); }
     else if (a == "--side-offset" && i + 1 < argc) R.side_offset = strtoull(argv[++i], nullptr, 10);
   }
@@ -1964,6 +1984,7 @@ int main(int argc, char** argv) {
   if (!sidelog.empty() && !engine::read_sidelog(sidelog, R.sviews, R.scalls)) fprintf(stderr, "sidelog 를 못 읽음: %s\n", sidelog.c_str());
   if (!csv.empty()) { R.csv = fopen(csv.c_str(), "w"); if (R.csv) fprintf(R.csv, "simulate,compared,bitdiff,maxabs\n"); }
   if (!R.init(threads)) return 1;
+  if (R.dump_art_at < 0) R.dump_art_at = int64_t(R.side_offset) + 1;
   for (auto& h : filter_hist) printf("거른 쌍 역사 %s: +%zu 쌍\n", h.c_str(), R.add_filter_history(h));
   // 앞선 PhysX 인스턴스(omni.physx 는 stop/play 때 장면을 통째로 다시 만든다) 몫의 곁기록은 버린다:
   // 그 쓰기의 결과는 USD 에 되쓰여(updateToUsd) 이 OVD 의 생성 값에 이미 들어 있다.
