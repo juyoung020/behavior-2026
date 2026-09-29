@@ -3,6 +3,7 @@
 판정: "비트 동일" / "허용오차 안 (최대 |오차|)" / "다름". 기준은 원래 파이프라인이 같은 인덱스에서 낸 텐서다.
 
     bash tools/ft_run.sh tools/ft_verify.py index                 # Rust mp4 색인 == libavformat(PyAV) 패킷 (GPU 안 씀)
+    JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES= bash tools/ft_run.sh tools/ft_verify.py nonimage   # 이미지 외 텐서만 (GPU 안 씀)
     bash tools/ft_run.sh tools/ft_verify.py stage                 # 구간별: NVDEC+색표 == torchcodec RGB, 커널 == JAX 크기 조정
     bash tools/ft_run.sh tools/ft_verify.py ref --tag a           # 원래 파이프라인 기준 저장 (고정 인덱스)
     bash tools/ft_run.sh tools/ft_verify.py ref --tag b           # 다른 프로세스에서 한 번 더
@@ -102,6 +103,36 @@ def cmd_index(a):
         print(f"  {v.split('videos/')[1]:<62} 패킷 {n:>7} (PyAV {len(cols['pos']):>7})  다른 것 {bad}")
     print(f"패킷 {n_total} 개: " + ("통과" if bad_total == 0 else f"실패 {bad_total}"))
     return 1 if bad_total else 0
+
+
+# ------------------------------------------------------------------ 이미지 외 텐서 (GPU 없이)
+def cmd_nonimage(a):
+    """상태·행동·토큰·마스크: 원래 ds[i] vs 가속판 FastDataset[i] (고정 인덱스). 이미지는 빼고 본다 — 원래의 크기 조정만
+    JAX 를 쓰고 나머지 변환은 JAX 장치와 무관하므로 CPU 에서도 같은 값이 나온다."""
+    from fasttrain import fast, orig
+
+    cfg = orig.train_config()
+    ds, dc = orig.dataset(cfg)
+    idx = fixed_indices(orig.lerobot_of(ds), a.n)
+    fds = fast.FastDataset(cfg)
+    R, F = {}, {}
+    for i in idx:
+        for k, v in flat(ds[i]).items():
+            R.setdefault(k, []).append(v)
+        x = fds[i]
+        x.pop("_ft_req")
+        for k, v in flat(x).items():
+            F.setdefault(k, []).append(v)
+    print(f"이미지 외 텐서: 원래 vs 가속판 ({len(idx)} 샘플, 무작위 {a.n} + 경계 사례)")
+    bad = 0
+    for k in sorted(R):
+        if k.startswith("image/"):
+            continue
+        v, why, err = verdict(np.stack(F[k]), np.stack(R[k]))
+        bad += v != "비트 동일"
+        print(f"  {k:<34}{v:<12}{why}")
+    print("통과 — 전부 비트 동일" if not bad else f"실패 — {bad}")
+    return 1 if bad else 0
 
 
 # ------------------------------------------------------------------ 구간별
@@ -281,6 +312,8 @@ def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("index")
+    s = sp.add_parser("nonimage")
+    s.add_argument("--n", type=int, default=224)
     s = sp.add_parser("stage")
     s.add_argument("--n", type=int, default=16)
     s.add_argument("--seed", type=int, default=0)
@@ -298,7 +331,7 @@ def main():
     s.add_argument("--batch", type=int, default=32)
     s.add_argument("--workers", type=int, default=2)
     a = ap.parse_args()
-    sys.exit({"index": cmd_index, "stage": cmd_stage, "ref": cmd_ref, "same": cmd_same, "check": cmd_check,
+    sys.exit({"index": cmd_index, "nonimage": cmd_nonimage, "stage": cmd_stage, "ref": cmd_ref, "same": cmd_same, "check": cmd_check,
               "loader": cmd_loader}[a.cmd](a) or 0)
 
 
