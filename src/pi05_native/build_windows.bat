@@ -1,7 +1,7 @@
 @echo off
 rem Build the pi0.5 native engine on Windows: MSVC 2022 + CUDA 12.8 nvcc (conda env "pi05build", no admin install).
 rem   build_windows.bat            -> build_win\_pi05native.pyd (Python 3.11 extension for the evaluator process)
-rem                                   build_win\pi05_verify.exe, build_win\tok_test.exe
+rem                                   build_win\pi05_verify.exe, build_win\pi05_verify_pb.exe, build_win\tok_test.exe
 rem Static CUDA runtime (no cudart DLL clash with torch in the evaluator). No CMake, no third-party libraries.
 setlocal
 set HERE=%~dp0
@@ -28,5 +28,6 @@ cl /nologo /O2 /MD /utf-8 /DPI05_STATIC /c pi05native_module.c /I"%PY%\include" 
 %NVCC% -shared -o "%B%\_pi05native.pyd" "%B%\obj\pi05native_module.obj" "%B%\pi05.lib" -L"%PY%\libs" -lpython311 || exit /b 1
 cd /d "%HERE%tools"
 %NVCC% -o "%B%\pi05_verify.exe" verify.cpp "%B%\pi05.lib" || exit /b 1
+%NVCC% -o "%B%\pi05_verify_pb.exe" verify_pb.cpp "%B%\pi05.lib" || exit /b 1
 cl /nologo /O2 /std:c++20 /EHsc /utf-8 tok_test.cpp ..\src\tokenizer.cpp ..\src\weights.cpp /Fe"%B%\tok_test.exe" /Fo"%B%\objtok\\" || exit /b 1
 echo built into %B%

@@ -97,20 +97,24 @@ __global__ void kv_transform_kernel(const bf16* __restrict__ kc, const bf16* __r
   __syncthreads();
   const int T = *d_T;
   const size_t per = (size_t)sc * 256;
+  // K cache [layer][pos][256]: dim fastest; V cache (transposed) [layer][256][pos]: position fastest (coalesced)
   for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < T * 256; idx += gridDim.x * blockDim.x) {
     const int t = idx / 256, j = idx % 256;
-    float ks[18], vs[18];
-    for (int s = 0; s < depth; ++s) {
-      ks[s] = b2f(kc[s * per + (size_t)t * 256 + j]);
-      vs[s] = b2f(vt[s * per + (size_t)j * sc + t]);
-    }
+    float ks[18];
+    for (int s = 0; s < depth; ++s) ks[s] = b2f(kc[s * per + (size_t)t * 256 + j]);
     for (int d = 0; d < depth; ++d) {
-      float a = 0.f, b = 0.f;
-      for (int s = 0; s < depth; ++s) {
-        a = fmaf(ck[d * depth + s], ks[s], a);
-        b = fmaf(cv[d * depth + s], vs[s], b);
-      }
+      float a = 0.f;
+      for (int s = 0; s < depth; ++s) a = fmaf(ck[d * depth + s], ks[s], a);
       kc2[d * per + (size_t)t * 256 + j] = f2b(bfr(a) + b2f(kbias[d * 256 + j]));
+    }
+  }
+  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < T * 256; idx += gridDim.x * blockDim.x) {
+    const int j = idx / T, t = idx % T;
+    float vs[18];
+    for (int s = 0; s < depth; ++s) vs[s] = b2f(vt[s * per + (size_t)j * sc + t]);
+    for (int d = 0; d < depth; ++d) {
+      float b = 0.f;
+      for (int s = 0; s < depth; ++s) b = fmaf(cv[d * depth + s], vs[s], b);
       vt2[d * per + (size_t)j * sc + t] = f2b(bfr(b) + b2f(vbias[d * 256 + j]));
     }
   }

@@ -161,12 +161,24 @@ def main():
 
         # ---- inpainting + correlated noise through the policy RNG ------------------------------------------
         policy._rng = jax.random.key(1234 + i)
+        # openpi DeltaActions subtracts the state from "actions" in place, so every consumer gets its own copy
         kept = np.asarray(res["actions"], np.float64)[26:30].copy()
-        r2 = policy.infer(dict(obs), initial_actions=kept)
-        W.t("inp.kept", kept)
+        r2 = policy.infer(dict(obs), initial_actions=kept.copy())
+        W.t("inp.kept", kept)  # robot units, before the delta transform
         W.t("inp.seed", np.array([1234 + i], np.int32))
         W.t("inp.actions", np.asarray(r2["actions"], np.float64))
         W.t("inp.stage_logits", np.asarray(r2["subtask_logits"], np.float32))
+        # the pieces of that call, recomputed with the same keys (pi_behavior_policy.py:34-95, pi_behavior.py:957-966)
+        _, sample_rng = jax.random.split(jax.random.key(1234 + i))
+        _, noise_rng = jax.random.split(sample_rng)
+        W.t("inp.noise", npy(model.generate_correlated_noise(noise_rng, 1))[0].astype(np.float32))
+        tb = policy._input_transform({**dict(obs), "actions": kept.copy()})
+        x0 = np.asarray(tb["actions"], np.float32)
+        W.t("inp.x0", x0)
+        raw_i, _ = policy._sample_actions(sample_rng, observation, initial_actions=jnp.asarray(x0)[None])
+        W.t("inp.raw", npy(raw_i)[0].astype(np.float32))
+        raw_n, _ = policy._sample_actions(sample_rng, observation)  # same key, no inpainting
+        W.t("inp.raw_noinp", npy(raw_n)[0].astype(np.float32))
         W.write(out_dir / f"{args.tag}_{i:03d}.pi05d", manifest_copy=False)
         print(f"[{args.tag}] sample {i}: stage {stage} steps {step} |chain-official| "
               f"{np.abs(npy(x_t)[0] - npy(raw)[0]).max():.3g}", flush=True)

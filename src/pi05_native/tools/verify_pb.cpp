@@ -229,6 +229,20 @@ int main(int argc, char** argv) {
       jax_normal(nk, z.data(), n);
       pb_correlate(spec, z.data(), noise.data());
       pb_initial_actions(spec, kept.data(), 4, st23, x0O.data());
+      Arr jn = read_arr(R, "inp.noise"), jx0 = read_arr(R, "inp.x0"), jraw = read_arr(R, "inp.raw"),
+          jrawn = read_arr(R, "inp.raw_noinp");
+      if (jn.ok) add(rows, "inp: correlated noise (JAX keys)", compare(noise.data(), jn.v.data(), n), nullptr);
+      if (jx0.ok) add(rows, "inp: initial actions (model space)", compare(x0O.data(), jx0.v.data(), 4 * ad), nullptr);
+      if (jn.ok && jx0.ok && jraw.ok && jrawn.ok) {  // model alone with JAX's own noise / targets
+        for (int with = 0; with < 2; ++with) {
+          m.set_pb_inputs(task, stage, with ? jx0.v.data() : nullptr, with ? jn.v.data() : nullptr, 4 * ad, st);
+          m.upload_inputs(img.data(), tok, jn.v.data(), st);
+          m.forward_eager(st);
+          m.download_actions(raw.data(), st);
+          add(rows, with ? "inp: raw with inpainting (JAX noise+x0)" : "inp: raw same noise, no inpainting",
+              compare(raw.data(), with ? jraw.v.data() : jrawn.v.data(), n), nullptr);
+        }
+      }
       m.set_pb_inputs(task, stage, x0O.data(), noise.data(), 4 * ad, st);
       m.upload_inputs(img.data(), tok, noise.data(), st);
       m.forward_eager(st);

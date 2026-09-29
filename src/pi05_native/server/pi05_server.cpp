@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -292,9 +293,56 @@ struct Server {
   Pi05Info info{};
   std::mutex mu;
   std::string prompt;
-  int replan = 16;
+  int replan = 16, device = 0;
   std::atomic<int> next_conn{0};
+  // PiBehavior (2025 1st place): one weight file per checkpoint, chosen by the task id of the request
+  std::map<int, std::string> task_weights;
+  std::string cur_weights;
+  bool ensure_task(int task, std::string* err) {  // caller holds mu
+    auto it = task_weights.find(task);
+    if (it == task_weights.end() || it->second == cur_weights) return true;
+    fprintf(stderr, "pi05_server: task %d -> %s\n", task, it->second.c_str());
+    if (eng) pi05_destroy(eng);
+    char e[512];
+    eng = pi05_create(it->second.c_str(), device, e, sizeof e);
+    if (!eng) { *err = e; cur_weights.clear(); return false; }
+    pi05_info(eng, &info);
+    cur_weights = it->second;
+    return true;
+  }
 };
+
+// task_checkpoint_mapping.json of the 1st place: {"checkpoints": {"checkpoint_N": {"path": ..., "tasks": [..]}, ..}}
+// -> task -> <dir>/pb2025_ckptN.pi05w
+std::map<int, std::string> read_task_map(const std::string& json_path, const std::string& dir) {
+  std::map<int, std::string> m;
+  FILE* f = fopen(json_path.c_str(), "rb");
+  if (!f) return m;
+  std::string s;
+  char buf[4096];
+  size_t k;
+  while ((k = fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, k);
+  fclose(f);
+  size_t p = 0;
+  while ((p = s.find("\"checkpoint_", p)) != std::string::npos) {
+    const size_t q = s.find('"', p + 1);
+    const std::string name = s.substr(p + 12, q - p - 12);
+    const size_t t = s.find("\"tasks\"", q), a = s.find('[', t), b = s.find(']', a);
+    if (t == std::string::npos || a == std::string::npos || b == std::string::npos) break;
+    std::string list = s.substr(a + 1, b - a - 1);
+    for (char& ch : list) if (ch == ',') ch = ' ';
+    size_t pos = 0;
+    while (pos < list.size()) {
+      char* end;
+      const long v = strtol(list.c_str() + pos, &end, 10);
+      if (end == list.c_str() + pos) { ++pos; continue; }
+      m[(int)v] = dir + "/pb2025_ckpt" + name + ".pi05w";
+      pos = end - list.c_str();
+    }
+    p = b;
+  }
+  return m;
+}
 
 bool http_head(Conn& c, std::string* head) {
   for (;;) {
@@ -365,7 +413,7 @@ void serve(Server* S, int fd) {
     MP r{msg.data(), msg.data() + msg.size()};
     MP::V top = r.next();
     if (top.t != 'm') break;
-    NdArr cams[3], prop;
+    NdArr cams[3], prop, task_nd;
     bool reset = false;
     int64_t chunk_k = 0;
     for (uint64_t i = 0; i < top.n && r.ok; ++i) {
@@ -379,6 +427,7 @@ void serve(Server* S, int fd) {
       else if (key == "__action_chunk_size__") chunk_k = v.i;
       else if (cam >= 0 && v.t == 'm') parse_nd(r, v, &cams[cam]);
       else if (key == prop_key && v.t == 'm') parse_nd(r, v, &prop);
+      else if (key == "task_id" && v.t == 'm') parse_nd(r, v, &task_nd);
       else r.skip(v);
     }
     if (!r.ok) { fprintf(stderr, "pi05_server: bad msgpack\n"); break; }
@@ -401,9 +450,22 @@ void serve(Server* S, int fd) {
     chunk.assign((size_t)B * (K ? K : 1) * ad, 0.f);
     float infer_ms = 0;
     bool fail = false;
+    auto task_of = [&](int b) -> int {  // evaluator obs "task_id": int64 [B, 1] or [1]
+      if (!task_nd.data) return -1;
+      const size_t n = task_nd.nbytes / (task_nd.dtype == "<i8" ? 8 : 4);
+      const size_t i = std::min<size_t>(b, n ? n - 1 : 0);
+      return task_nd.dtype == "<i8" ? (int)reinterpret_cast<const int64_t*>(task_nd.data)[i]
+                                    : reinterpret_cast<const int32_t*>(task_nd.data)[i];
+    };
+    std::string terr;
     {
       std::lock_guard<std::mutex> g(S->mu);
+      if (S->info.model_kind == 1 && !S->ensure_task(task_of(0), &terr)) fail = true;
       for (int b = 0; b < B && !fail; ++b) {
+        if (S->info.model_kind == 1) {
+          if (task_of(b) < 0) { terr = "PiBehavior weights need task_id in the observation"; fail = true; break; }
+          pi05_set_task(S->eng, conn_id * 64 + b, task_of(b));
+        }
         Pi05Image im[3];
         for (int j = 0; j < 3; ++j) {
           const auto& s = cams[j].shape;
@@ -427,7 +489,7 @@ void serve(Server* S, int fd) {
       }
     }
     if (fail) {
-      std::string e = std::string("pi05_server: ") + pi05_last_error(S->eng);
+      std::string e = std::string("pi05_server: ") + (terr.empty() ? std::string(pi05_last_error(S->eng)) : terr);
       c.send(1, e.data(), e.size());
       break;
     }
@@ -470,7 +532,7 @@ void serve(Server* S, int fd) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string weights, prompt = "Turn on the radio receiver that's on the table in the living room.";
+  std::string weights, task_map, weights_dir = ".", prompt = "Turn on the radio receiver that's on the table in the living room.";
   int port = 8000, device = 0, replan = 16;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -480,9 +542,23 @@ int main(int argc, char** argv) {
     else if (a == "--prompt") prompt = next();
     else if (a == "--replan") replan = std::stoi(next());
     else if (a == "--device") device = std::stoi(next());
+    else if (a == "--task-map") task_map = next();
+    else if (a == "--weights-dir") weights_dir = next();
   }
-  if (weights.empty()) { fprintf(stderr, "usage: pi05_server --weights W.pi05w [--port 8000] [--prompt ...] [--replan 16]\n"); return 2; }
   Server S;
+  S.device = device;
+  if (!task_map.empty()) {  // 2025 1st place: one checkpoint per task group (task_checkpoint_mapping.json)
+    S.task_weights = read_task_map(task_map, weights_dir);
+    if (S.task_weights.empty()) { fprintf(stderr, "pi05_server: empty task map %s\n", task_map.c_str()); return 1; }
+    if (weights.empty()) weights = S.task_weights.begin()->second;
+  }
+  if (weights.empty()) {
+    fprintf(stderr,
+            "usage: pi05_server --weights W.pi05w [--port 8000] [--prompt ...] [--replan 16]\n"
+            "       pi05_server --task-map task_checkpoint_mapping.json --weights-dir DIR   (2025 1st place)\n");
+    return 2;
+  }
+  S.cur_weights = weights;
   char err[512];
   auto t0 = std::chrono::steady_clock::now();
   S.eng = pi05_create(weights.c_str(), device, err, sizeof err);
