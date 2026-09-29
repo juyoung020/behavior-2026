@@ -2,7 +2,7 @@
 # 학습 데이터 가속의 GPU 검증·측정을 차례로 (WSL). 각 단계 전에 GPU 가 비었는지 본다 — 다른 작업(Isaac Sim 등)이 GPU 를
 # 쓰고 있으면(사용 중 메모리 > FT_GPU_BUSY_MB, 기본 5000) 기다렸다가 한다. 결과는 $FT_WORK/logs/ 와 저장소 logs/fasttrain/.
 #   bash /mnt/c/behavior-2026/tools/ft_gpu_suite.sh [단계 ...]     (기본: 전부)
-# 단계: stage ref same check neg loader cbench native
+# 단계: stage ref same check neg loader cbench native orig(원래 로더 처리량, 같은 조건 비교용)
 set -u
 REPO=/mnt/c/behavior-2026
 RUN="bash $REPO/tools/ft_run.sh"
@@ -90,6 +90,7 @@ for s in $steps; do
             run bench_cbench_step $RUN tools/ft_bench.py cbench --threads 6 --batches 100 --step-ms 100 ;;
     native) run bench_native  $RUN tools/ft_bench.py native --threads 6 --batches 80 --json $FT_WORK/bench_native.json
             run bench_native_step $RUN tools/ft_bench.py native --threads 6 --batches 60 --step-ms 100 --json $FT_WORK/bench_native_step.json ;;
+    orig)   run bench_orig    $RUN tools/ft_bench.py loader --workers 8,16 --batches 16 --warm 1 --json $FT_WORK/bench_loader_orig_quiet.json ;;
     *) echo "모르는 단계 $s" ;;
   esac
 done
