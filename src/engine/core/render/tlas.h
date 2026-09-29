@@ -102,7 +102,7 @@ EHD void node_set_child(Node2& n, int which, const float* b) {
 }  // namespace rnd
 }  // namespace eng
 
-#if !defined(__CUDACC__) || !defined(__CUDA_ARCH__)
+// 층 1 호스트 빌더 (nvcc 장치 단계에서도 구문은 읽히지만 호출되지 않는다)
 #include <algorithm>
 #include <vector>
 namespace eng {
@@ -175,4 +175,3 @@ inline void tlas_build_host(const SceneView& S, const EnvView& E, std::vector<ui
 }
 }  // namespace rnd
 }  // namespace eng
-#endif

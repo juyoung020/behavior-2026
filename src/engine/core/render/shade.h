@@ -1,0 +1,318 @@
+// 색 계산 (층 1 = 층 2 비트 동일이 목표라 libm 대신 +,-,*,/,sqrt 와 정수 연산만 쓴다).
+// 모델: 결정적 난수(PCG 해시)로 도는 작은 경로 추적 — 맞은 점에서 조명 하나 뽑아 그림자 광선(다음 사건 추정) + 주변광(돔/ambient)
+//       + 코사인 가중 튕김 bounces 번, 재질은 램버트(알베도 = 상수 × 텍스처). 끝에 노출·톤매핑·sRGB.
+// 공식(RTX 실시간 경로 추적 + DLSS)과는 통계로만 비교한다(docs/엔진_자체구현.md 렌더 절).
+#pragma once
+#include <cstdint>
+
+#include "core/render/scene.h"
+
+namespace eng {
+namespace rnd {
+
+// ---- 손으로 짠 초월함수 (두 층 동일) ----
+EHD uint32_t f2u(float x) {
+#if defined(__CUDA_ARCH__)
+  return __float_as_uint(x);
+#else
+  uint32_t u;
+  __builtin_memcpy(&u, &x, 4);
+  return u;
+#endif
+}
+EHD float u2f(uint32_t u) {
+#if defined(__CUDA_ARCH__)
+  return __uint_as_float(u);
+#else
+  float x;
+  __builtin_memcpy(&x, &u, 4);
+  return x;
+#endif
+}
+// log2(x), x > 0 정규수. 가수 m∈[1,2) -> s=(m-1)/(m+1), log2 m = 2/ln2 · (s + s³/3 + s⁵/5 + s⁷/7 + s⁹/9)  (|오차| < 2e-7)
+EHD float flog2(float x) {
+  if (!(x > 0.0f)) return -126.0f;
+  const uint32_t u = f2u(x);
+  const int e = int((u >> 23) & 255u) - 127;
+  const float m = u2f((u & 0x007FFFFFu) | 0x3F800000u);
+  const float s = (m - 1.0f) / (m + 1.0f);
+  const float s2 = s * s;
+  const float p = s * (1.0f + s2 * (0.33333333f + s2 * (0.2f + s2 * (0.14285715f + s2 * 0.11111111f))));
+  return float(e) + p * 2.8853900817779268f;
+}
+// 2^x. 정수부는 지수 비트, 소수부 f∈[0,1) 는 테일러 7 차 (ln2 거듭제곱)
+EHD float fexp2(float x) {
+  if (x < -126.0f) return 0.0f;
+  if (x > 127.0f) return kInf;
+  float fl = float(int(x));
+  if (fl > x) fl = fl - 1.0f;
+  const float f = x - fl;
+  const float t = f * 0.69314718f;
+  const float p = 1.0f + t * (1.0f + t * (0.5f + t * (0.16666667f + t * (0.041666668f + t * (0.0083333338f +
+                  t * (0.0013888889f + t * 0.00019841270f))))));
+  return p * u2f(uint32_t(int(fl) + 127) << 23);
+}
+EHD float fpow(float x, float y) { return x > 0.0f ? fexp2(y * flog2(x)) : 0.0f; }
+EHD float srgb_to_lin(float c) { return c <= 0.04045f ? c / 12.92f : fpow((c + 0.055f) / 1.055f, 2.4f); }
+EHD float lin_to_srgb(float c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * fpow(c, 1.0f / 2.4f) - 0.055f; }
+
+// ---- 결정적 난수 (PCG 해시) ----
+EHD uint32_t pcg(uint32_t v) {
+  const uint32_t state = v * 747796405u + 2891336453u;
+  const uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+EHD float rnd01(uint32_t& s) {
+  s = pcg(s);
+  return float(s >> 8) * (1.0f / 16777216.0f);
+}
+
+EHD V3 normalize3(const V3& a) {
+  const float m = psqrt(magSq(a));
+  return m > 0.0f ? V3{a.x / m, a.y / m, a.z / m} : V3{0.0f, 0.0f, 1.0f};
+}
+
+// ---- 텍스처 (RGBA8, 반복, 겹선형) ----
+EHD void tex_fetch(const SceneView& S, const TexInfo& T, int x, int y, float* o) {
+  x %= T.w;
+  if (x < 0) x += T.w;
+  y %= T.h;
+  if (y < 0) y += T.h;
+  const uint32_t p = S.texels[T.offset + int64_t(y) * T.w + x];
+  o[0] = float(p & 255u);
+  o[1] = float((p >> 8) & 255u);
+  o[2] = float((p >> 16) & 255u);
+  o[3] = float(p >> 24);
+}
+EHD void tex_bilinear(const SceneView& S, int32_t ti, float u, float v, float* rgba) {
+  const TexInfo T = S.texs[ti];
+  const float x = u * float(T.w) - 0.5f, y = (1.0f - v) * float(T.h) - 0.5f;  // USD st: v 위쪽이 1, 영상 0 행이 위
+  float xf = float(int(x));
+  if (xf > x) xf = xf - 1.0f;
+  float yf = float(int(y));
+  if (yf > y) yf = yf - 1.0f;
+  const float fx = x - xf, fy = y - yf;
+  const int x0 = int(xf), y0 = int(yf);
+  float a[4], b[4], c[4], d[4];
+  tex_fetch(S, T, x0, y0, a);
+  tex_fetch(S, T, x0 + 1, y0, b);
+  tex_fetch(S, T, x0, y0 + 1, c);
+  tex_fetch(S, T, x0 + 1, y0 + 1, d);
+  for (int k = 0; k < 4; ++k) {
+    const float top = a[k] + (b[k] - a[k]) * fx;
+    const float bot = c[k] + (d[k] - c[k]) * fx;
+    rgba[k] = (top + (bot - top) * fy) * (1.0f / 255.0f);
+  }
+}
+
+struct Surf {
+  V3 p, ng, ns;  // 위치, 기하 법선, 음영 법선 (둘 다 광선 쪽을 보게 뒤집음)
+  V3 albedo, emissive;
+  float opacity;
+};
+
+EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& h) {
+  Surf s;
+  const InstInfo& in = S.insts[h.inst];
+  const GeomInfo& g = S.geoms[in.geom];
+  const TriX& T = S.tris[h.tri];
+  const Aff& W = E.inst_world[h.inst];
+  const Aff& IV = E.inst_inv[h.inst];
+  s.p = V3{r.o.x + r.d.x * h.t, r.o.y + r.d.y * h.t, r.o.z + r.d.z * h.t};
+  const V3 ngl = cross(V3{T.e1[0], T.e1[1], T.e1[2]}, V3{T.e2[0], T.e2[1], T.e2[2]});
+  V3 ng = normalize3(xnormal_inv(IV, ngl));
+  const float w0 = 1.0f - h.u - h.v;
+  V3 ns = ng;
+  if (g.flags & 1) {
+    const float* n = S.tri_nrm + 9 * int64_t(h.tri);
+    const V3 nl{n[0] * w0 + n[3] * h.u + n[6] * h.v, n[1] * w0 + n[4] * h.u + n[7] * h.v, n[2] * w0 + n[5] * h.u + n[8] * h.v};
+    ns = normalize3(xnormal_inv(IV, nl));
+  }
+  if (dot(ng, r.d) > 0.0f) ng = -ng;
+  if (dot(ns, ng) < 0.0f) ns = -ns;
+  (void)W;
+  const int32_t slot = S.tri_slot[h.tri];
+  const int32_t mi = S.slot_mat[in.slot_base + slot];
+  s.albedo = V3{0.5f, 0.5f, 0.5f};
+  s.emissive = V3{0.0f, 0.0f, 0.0f};
+  s.opacity = 1.0f;
+  if (mi >= 0) {
+    const Material& M = S.mats[mi];
+    V3 a{M.albedo[0], M.albedo[1], M.albedo[2]};
+    if (M.tex_albedo >= 0 && (g.flags & 2)) {
+      const float* uv = S.tri_uv + 6 * int64_t(h.tri);
+      float u = uv[0] * w0 + uv[2] * h.u + uv[4] * h.v;
+      float v = uv[1] * w0 + uv[3] * h.u + uv[5] * h.v;
+      u = u * M.uv_scale[0] + M.uv_offset[0];
+      v = v * M.uv_scale[1] + M.uv_offset[1];
+      float t[4];
+      tex_bilinear(S, M.tex_albedo, u, v, t);
+      a = V3{a.x * srgb_to_lin(t[0]), a.y * srgb_to_lin(t[1]), a.z * srgb_to_lin(t[2])};
+      if (M.flags & 1) s.opacity = t[3];
+    }
+    // OmniPBR: (albedo + albedo_add) × albedo_brightness
+    a = V3{(a.x + M.albedo_add) * M.albedo_brightness, (a.y + M.albedo_add) * M.albedo_brightness,
+           (a.z + M.albedo_add) * M.albedo_brightness};
+    s.albedo = V3{fmn(fmx(a.x, 0.0f), 1.0f), fmn(fmx(a.y, 0.0f), 1.0f), fmn(fmx(a.z, 0.0f), 1.0f)};
+    s.emissive = V3{M.emissive[0], M.emissive[1], M.emissive[2]};
+  }
+  s.ns = ns;
+  s.ng = ng;
+  return s;
+}
+
+// sin(2πu), cos(2πu), u∈[0,1): 구간을 [-π, π) 로 옮겨 테일러 11 차 (두 층 같게 다항식)
+EHD void sincos2pi(float u, float& sn, float& cs) {
+  const float x = u * 6.2831853f - 3.14159265f;
+  const float x2 = x * x;
+  sn = -(x * (1.0f - x2 * (0.16666667f - x2 * (0.0083333333f - x2 * (0.00019841270f - x2 *
+       (2.7557319e-6f - x2 * 2.5052108e-8f))))));
+  cs = -(1.0f - x2 * (0.5f - x2 * (0.041666668f - x2 * (0.0013888889f - x2 * (2.4801587e-5f - x2 * 2.7557319e-7f)))));
+}
+
+// 법선 n 둘레 코사인 가중 방향
+EHD V3 cosine_dir(const V3& n, float r1, float r2) {
+  float sn, cs;
+  sincos2pi(r1, sn, cs);
+  const float rr = psqrt(r2);
+  const float lx = rr * cs, ly = rr * sn, lz = psqrt(fmx(0.0f, 1.0f - r2));
+  const V3 t = fab(n.x) > 0.9f ? normalize3(cross(V3{0.0f, 1.0f, 0.0f}, n)) : normalize3(cross(V3{1.0f, 0.0f, 0.0f}, n));
+  const V3 b = cross(n, t);
+  return V3{t.x * lx + b.x * ly + n.x * lz, t.y * lx + b.y * ly + n.y * lz, t.z * lx + b.z * ly + n.z * lz};
+}
+
+EHD bool occluded(const SceneView& S, const EnvView& E, const V3& p, const V3& d, float tmax) {
+  const Ray r = make_ray(p, d);
+  const Hit h = trace(S, E, r, 1e-4f, tmax);
+  return h.inst >= 0;
+}
+
+// 조명 하나에서 받는 복사 조도 × (알베도/π) 의 알베도 뺀 부분 (그림자 포함). 결정적 표본 u1,u2 로 조명 위 한 점.
+EHD V3 light_direct(const SceneView& S, const EnvView& E, int32_t li, const V3& p, const V3& n, float u1, float u2) {
+  const Light& L = S.lights[li];
+  const Aff& W = E.light_world[li];
+  const V3 c{W.m[3], W.m[7], W.m[11]};
+  V3 q = c;
+  float area_cos = 0.0f;  // (면적 × 조명 쪽 코사인) / π
+  if (L.type == kLightSphere) {
+    // 구 조명: 보이는 쪽 원판을 점 하나로 (반지름 r, 휘도 L -> 조도 ≈ L π r² cos / d²)
+    const V3 dc = c - p;
+    const float d2 = magSq(dc);
+    if (!(d2 > L.radius * L.radius)) return V3{0.0f, 0.0f, 0.0f};
+    area_cos = L.radius * L.radius;
+  } else if (L.type == kLightRect || L.type == kLightDisk) {
+    float lx, ly;
+    if (L.type == kLightRect) {
+      lx = (u1 - 0.5f) * L.width;
+      ly = (u2 - 0.5f) * L.height;
+    } else {
+      const float rr = psqrt(u1) * L.radius;
+      float sn, cs;
+      sincos2pi(u2, sn, cs);
+      lx = rr * cs;
+      ly = rr * sn;
+    }
+    q = xpoint(W, V3{lx, ly, 0.0f});
+    const V3 ln = normalize3(xvec(W, V3{0.0f, 0.0f, -1.0f}));  // USD 사각·원판 조명은 -Z 로 비춘다
+    const V3 dq = p - q;
+    const float d2 = magSq(dq);
+    const float cl = dot(ln, dq) / psqrt(d2);
+    if (!(cl > 0.0f)) return V3{0.0f, 0.0f, 0.0f};
+    const float A = L.type == kLightRect ? L.width * L.height : 3.14159265f * L.radius * L.radius;
+    area_cos = A * cl / 3.14159265f;
+  } else if (L.type == kLightDistant) {
+    const V3 ld = normalize3(xvec(W, V3{0.0f, 0.0f, 1.0f}));  // 빛이 오는 쪽 (조명 +Z)
+    const float cs = dot(n, ld);
+    if (!(cs > 0.0f)) return V3{0.0f, 0.0f, 0.0f};
+    if (occluded(S, E, p, ld, 1e30f)) return V3{0.0f, 0.0f, 0.0f};
+    const float half = L.angle * 0.5f * 0.017453292f;
+    const float solid = 3.14159265f * half * half;  // 작은 각 근사
+    const float k = cs * solid / 3.14159265f;
+    return V3{L.radiance[0] * k, L.radiance[1] * k, L.radiance[2] * k};
+  } else {
+    return V3{0.0f, 0.0f, 0.0f};
+  }
+  const V3 dv = q - p;
+  const float d2 = magSq(dv);
+  const float d = psqrt(d2);
+  const V3 wd{dv.x / d, dv.y / d, dv.z / d};
+  const float cs = dot(n, wd);
+  if (!(cs > 0.0f)) return V3{0.0f, 0.0f, 0.0f};
+  if (occluded(S, E, p, wd, d * 0.999f)) return V3{0.0f, 0.0f, 0.0f};
+  const float k = cs * area_cos / d2;
+  return V3{L.radiance[0] * k, L.radiance[1] * k, L.radiance[2] * k};
+}
+
+// 픽셀 하나: depth(맞은 t, 못 맞추면 0) 와 선형 휘도
+EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, int px, int py, uint32_t seed, float& depth,
+                     V3& radiance) {
+  const Ray r0 = camera_ray(cam, float(px) + 0.5f, float(py) + 0.5f);
+  const Hit h0 = trace(S, E, r0, cam.znear, cam.zfar);
+  depth = h0.inst >= 0 ? h0.t : 0.0f;
+  radiance = V3{0.0f, 0.0f, 0.0f};
+  if (h0.inst < 0) {
+    radiance = V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
+    return;
+  }
+  const int spp = S.sp.spp > 0 ? S.sp.spp : 1;
+  V3 acc{0.0f, 0.0f, 0.0f};
+  for (int k = 0; k < spp; ++k) {
+    uint32_t rs = pcg(seed ^ pcg(uint32_t(k) * 0x9E3779B9u));
+    Ray r = r0;
+    Hit h = h0;
+    V3 thr{1.0f, 1.0f, 1.0f};
+    for (int b = 0; b <= S.sp.bounces; ++b) {
+      const Surf s = surface(S, E, r, h);
+      acc = acc + mulc(thr, s.emissive);
+      const V3 po = s.p + s.ng * 1e-4f;
+      // 주변광 (/rtx/sceneDb/ambientLightIntensity 와 돔 조명을 한 값으로)
+      V3 lsum = V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]};
+      // 조명: 몇 개를 뽑아 평균 × 개수 (균등 선택)
+      if (S.n_lights > 0) {
+        const int ns = S.sp.shadow_lights > 0 ? S.sp.shadow_lights : 1;
+        V3 ls{0.0f, 0.0f, 0.0f};
+        for (int j = 0; j < ns; ++j) {
+          int li = int(rnd01(rs) * float(S.n_lights));
+          li = li >= S.n_lights ? S.n_lights - 1 : li;
+          const float u1 = rnd01(rs), u2 = rnd01(rs);
+          if (S.lights[li].visible) ls = ls + light_direct(S, E, li, po, s.ns, u1, u2);
+        }
+        const float w = float(S.n_lights) / float(ns);
+        lsum = lsum + ls * w;
+      }
+      acc = acc + mulc(thr, mulc(s.albedo, lsum));
+      if (b == S.sp.bounces) break;
+      thr = mulc(thr, s.albedo);
+      // 주의: 함수 인자 계산 순서는 C++ 에서 정해져 있지 않다(g++ 는 오른쪽부터, nvcc 는 왼쪽부터) -> 난수는 따로 꺼낸다
+      const float b1 = rnd01(rs);
+      const float b2 = rnd01(rs);
+      const V3 nd = cosine_dir(s.ns, b1, b2);
+      r = make_ray(po, nd);
+      h = trace(S, E, r, 1e-4f, 1e30f);
+      if (h.inst < 0) {
+        acc = acc + mulc(thr, V3{S.sp.ambient[0], S.sp.ambient[1], S.sp.ambient[2]});
+        break;
+      }
+    }
+  }
+  const float inv = 1.0f / float(spp);
+  radiance = acc * inv;
+}
+
+EHD uint8_t to_u8(float x) {
+  const float c = fmn(fmx(x, 0.0f), 1.0f) * 255.0f + 0.5f;
+  return uint8_t(int(c));
+}
+// 톤매핑: 노출 곱 -> (선택) ACES 근사(Narkowicz 2015) -> sRGB 부호화
+EHD void tonemap(const ShadeParams& sp, const V3& L, uint8_t* rgb) {
+  float c[3] = {L.x * sp.exposure, L.y * sp.exposure, L.z * sp.exposure};
+  for (int k = 0; k < 3; ++k) {
+    float x = c[k];
+    if (sp.tonemap == 2) x = (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f);
+    if (sp.tonemap >= 1) x = lin_to_srgb(fmn(fmx(x, 0.0f), 1.0f));
+    rgb[k] = to_u8(x);
+  }
+}
+
+}  // namespace rnd
+}  // namespace eng

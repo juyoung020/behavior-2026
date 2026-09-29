@@ -139,6 +139,7 @@ constexpr int kStack = 64;
 // BLAS 순회 (지역 좌표 광선). nodes/tris 는 이 기하의 시작을 가리킨다. 전역 삼각형 번호 = tri_base + 지역 번호.
 EHD void blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, const Ray& r, float tmin, Hit& h, int32_t inst) {
   int32_t stack[kStack];
+  float stack_t[kStack];  // 넣을 때의 들어가는 t: 꺼낼 때 이미 더 가까운 것을 찾았으면 건너뜀
   int sp = 0;
   int32_t cur = 0;
   for (;;) {
@@ -150,7 +151,11 @@ EHD void blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, cons
       if (ha && hb) {
         const bool a_first = ta <= tb;
         const int32_t nearc = a_first ? n.c0 : n.c1, farc = a_first ? n.c1 : n.c0;
-        if (sp < kStack) stack[sp++] = farc;
+        if (sp < kStack) {
+          stack[sp] = farc;
+          stack_t[sp] = a_first ? tb : ta;
+          ++sp;
+        }
         cur = nearc;
         continue;
       }
@@ -169,8 +174,17 @@ EHD void blas_trace(const Node2* nodes, const TriX* tris, int32_t tri_base, cons
         }
       }
     }
-    if (sp == 0) break;
-    cur = stack[--sp];
+    // 꺼내기: 넣을 때의 들어가는 t 가 이미 찾은 것보다 먼 칸은 건너뛴다
+    bool got = false;
+    while (sp > 0) {
+      --sp;
+      if (stack_t[sp] <= h.t) {
+        cur = stack[sp];
+        got = true;
+        break;
+      }
+    }
+    if (!got) break;
   }
 }
 

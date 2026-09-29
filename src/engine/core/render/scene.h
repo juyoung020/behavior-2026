@@ -107,6 +107,7 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
   Hit h{tmax, 0.0f, 0.0f, -1, -1};
   if (S.n_inst <= 0) return h;
   int32_t stack[kStack];
+  float stack_t[kStack];  // 넣을 때의 들어가는 t: 꺼낼 때 이미 더 가까운 것을 찾았으면 건너뜀
   int sp = 0;
   int32_t cur = 0;
   for (;;) {
@@ -118,7 +119,11 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
       if (ha && hb) {
         const bool a_first = ta <= tb;
         const int32_t nearc = a_first ? n.c0 : n.c1, farc = a_first ? n.c1 : n.c0;
-        if (sp < kStack) stack[sp++] = farc;
+        if (sp < kStack) {
+          stack[sp] = farc;
+          stack_t[sp] = a_first ? tb : ta;
+          ++sp;
+        }
         cur = nearc;
         continue;
       }
@@ -134,8 +139,17 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
         blas_trace(S.blas_nodes + g.node_base, S.tris + g.tri_base, g.tri_base, rl, tmin, h, id);
       }
     }
-    if (sp == 0) break;
-    cur = stack[--sp];
+    // 꺼내기: 넣을 때의 들어가는 t 가 이미 찾은 것보다 먼 칸은 건너뛴다
+    bool got = false;
+    while (sp > 0) {
+      --sp;
+      if (stack_t[sp] <= h.t) {
+        cur = stack[sp];
+        got = true;
+        break;
+      }
+    }
+    if (!got) break;
   }
   return h;
 }
