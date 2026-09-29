@@ -1,7 +1,7 @@
 // 층 2 시험: 조인트 섬(D6 조인트 준비·반복 풀이·적분·되쓰기) CUDA 판 N 개 = 층 1 C++ (같은 코드를 호스트에서), 비트 비교 + 처리량.
 // 층 1 = PhysX 는 test_joints_prep 가 증명한다(같은 함수들). 여기서는 층 1 == 층 2.
 //   test_joints_gpu [--envs E] [--seed S] [--cone 0|1] [--reps R]
-//   --cone 1: 원뿔 한계(tanf 사용 — GPU 는 아직 glibc 이식본 없음)도 섞는다. 기본은 뺀다.
+//   --cone 0: 원뿔 한계(tanf 사용)를 뺀다. 기본은 섞는다(tanf 는 glibc 이식본 core/joints/glibc_tanf.h — GPU 도 libm 과 2^32 전수 동일).
 #include <cuda_runtime.h>
 #include <xmmintrin.h>
 
@@ -27,7 +27,7 @@ struct FtzScope {  // PhysX PxSIMDGuard 와 같은 MXCSR (FTZ + DAZ)
 };
 
 int main(int argc, char** argv) {
-  int envs = 65536, seed = 3, cone = 0, reps = 5;
+  int envs = 65536, seed = 3, cone = 1, reps = 5;
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--envs") && i + 1 < argc) envs = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = atoi(argv[++i]);

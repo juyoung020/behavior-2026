@@ -21,3 +21,20 @@ engine_test(test_scene_query test_scene_query.cpp PHYSX)
 # 공식 기록(OVD) 조인트 조사 도구 (replay/ovd.cpp 리더 재사용)
 engine_test(ovd_joint_census ovd_joint_census.cpp ${CMAKE_SOURCE_DIR}/../replay/ovd.cpp PHYSX)
 target_link_libraries(ovd_joint_census dl)
+# 조인트 붙이기·떼기 부수효과: PhysX 내부(Sc 층) 상태를 읽는다
+set(JX_INTERNAL_INCS
+  ${PHYSX_ROOT}/source/common/include ${PHYSX_ROOT}/source/common/src ${PHYSX_ROOT}/source/geomutils/include ${PHYSX_ROOT}/source/geomutils/src
+  ${PHYSX_ROOT}/source/geomutils/src/contact ${PHYSX_ROOT}/source/geomutils/src/pcm ${PHYSX_ROOT}/source/geomutils/src/common
+  ${PHYSX_ROOT}/source/geomutils/src/mesh ${PHYSX_ROOT}/source/geomutils/src/convex ${PHYSX_ROOT}/source/geomutils/src/hf
+  ${PHYSX_ROOT}/source/geomutils/src/gjk ${PHYSX_ROOT}/source/geomutils/src/intersection ${PHYSX_ROOT}/source/geomutils/src/distance
+  ${PHYSX_ROOT}/source/geomutils/src/sweep ${PHYSX_ROOT}/source/geomutils/src/ccd
+  ${PHYSX_ROOT}/source/lowlevel/api/include ${PHYSX_ROOT}/source/lowlevel/common/include/pipeline ${PHYSX_ROOT}/source/lowlevel/common/include/utils
+  ${PHYSX_ROOT}/source/lowlevel/software/include ${PHYSX_ROOT}/source/lowlevelaabb/include ${PHYSX_ROOT}/source/lowleveldynamics/include
+  ${PHYSX_ROOT}/source/lowleveldynamics/shared ${PHYSX_ROOT}/source/lowleveldynamics/src
+  ${PHYSX_ROOT}/source/physx/src ${PHYSX_ROOT}/source/physxgpu/include ${PHYSX_ROOT}/source/pvd/include
+  ${PHYSX_ROOT}/source/scenequery/include ${PHYSX_ROOT}/source/simulationcontroller/include ${PHYSX_ROOT}/source/simulationcontroller/src
+  ${PHYSX_ROOT}/source/omnipvd ${PHYSX_ROOT}/source/physxmetadata/core/include)
+engine_test(test_joint_lifecycle test_joint_lifecycle.cpp PHYSX)
+target_include_directories(test_joint_lifecycle PRIVATE ${JX_INTERNAL_INCS})
+target_compile_definitions(test_joint_lifecycle PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_compile_options(test_joint_lifecycle PRIVATE -Wno-everything)
