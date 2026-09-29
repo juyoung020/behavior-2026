@@ -1,0 +1,17 @@
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2021"
+description = "Offline instruction-format probe for pi0.5: builds prompts per format from demo stage annotations and scores predicted action chunks against the demonstration (open loop)"
+publish = false
+
+[[bin]]
+name = "probe"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3

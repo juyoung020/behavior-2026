@@ -1,0 +1,13 @@
+{
+ "policy_config": "pi05_b1k-pt50_cs32_bs64_lr2.5e-5_step50k",
+ "policy_dir": "/home/juyoung/checkpoints/openpi_comet/pi05-b1kpt50-cs32",
+ "rows": 1120,
+ "samples": 160,
+ "horizon": 32,
+ "load_s": 36.8,
+ "infer_first_s": 32.39,
+ "infer_ms_median": 114.2,
+ "infer_ms_p90": 116.6,
+ "jax_bytes_in_use_gib": 6.43,
+ "jax_peak_bytes_gib": 6.61
+}

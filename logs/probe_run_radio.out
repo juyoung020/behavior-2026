@@ -1,0 +1,15 @@
+prompt 1120줄 (160표본 × 7형식) -> /mnt/c/behavior-2026/data/probe/radio_e20_p2.prompts.jsonl
+[probe] 0/1120 12842 ms
+[probe] 100/1120 118 ms
+[probe] 200/1120 116 ms
+[probe] 300/1120 115 ms
+[probe] 400/1120 115 ms
+[probe] 500/1120 118 ms
+[probe] 600/1120 118 ms
+[probe] 700/1120 116 ms
+[probe] 800/1120 116 ms
+[probe] 900/1120 114 ms
+[probe] 1000/1120 116 ms
+[probe] 1100/1120 115 ms
+[probe] {"policy_config": "pi05_b1k", "policy_dir": "/home/juyoung/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio", "input_style": "openpi", "model_horizon": 32, "rows": 1120, "samples": 160, "horizon": 32, "load_s": 15.8, "infer_first_s": 12.84, "infer_ms_median": 116.0, "infer_ms_p90": 118.7, "jax_bytes_in_use_gib": 6.44, "jax_peak_bytes_gib": 6.67}
+결과: logs/probe_radio_20260929_221115.md
