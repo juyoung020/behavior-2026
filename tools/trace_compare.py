@@ -128,7 +128,9 @@ def compare_json(ja, jb):
     bad = 0
     out = []
     for name, key, va, vb in rows:
-        if key.startswith("agent_distance"):
+        if key == "한쪽에 없음":  # 결과 JSON 이 한쪽에만 있으면 다름(판이 빠졌거나 도중에 죽음)
+            ok = same = False
+        elif key.startswith("agent_distance"):
             ok = va is not None and vb is not None and abs(va - vb) <= 1e-6 * max(1.0, abs(va))
             same = va == vb
         else:

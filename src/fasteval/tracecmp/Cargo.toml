@@ -1,0 +1,17 @@
+[package]
+name = "tracecmp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "평가 실행 두 개의 스텝별 기록(trace.npz·server_log.npz·결과 JSON) 비교 — tools/trace_compare.py 의 Rust 판(같은 판정·같은 출력)"
+publish = false
+
+[dependencies]
+# npz = zip(deflate) 안의 .npy 들. npy 머리·배열 해석은 손으로 짰다(src/npy.rs).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# 결과 JSON: 실수를 비트까지 같게 읽고(float_roundtrip), 키 순서를 파일 그대로(preserve_order) 둔다(파이썬 json.load 와 같게)
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1

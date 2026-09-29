@@ -17,6 +17,8 @@
 # 행렬 JSON (예: tools\exp\smoke_radio.json)
 #   name, mode(public_test), tasks[], instances[] (과제별로 instances_by_task.<과제>[] 로 바꿀 수 있음), max_steps(0 = 공식 1.5x),
 #   black_guard(abort|warn|off, 기본 abort), trace(기본 true), write_video(기본 false), gpu_busy_mib(기본 3500),
+#   repeats(같은 판 반복 수, 설정끼리 번갈아), lock_scope(run = 판마다 잠금 | repeat = 반복 한 바퀴를 한 잠금), lock_minutes(최대 30), timeout_min,
+#   reuse_batch(-Reuse 때 한 프로세스의 인스턴스 수), kit_args[](Kit 시작 인자, 설정별로도 줄 수 있음), ported{backend, host, python, scene_root},
 #   settings[]: name, policy(local|replay|websocket|native), robot_config(없으면 공식 기본), wrapper(Default|RGBD|전체 경로), max_steps,
 #               chunk(--replay-action-chunk-size), port, extra_eval_args[],
 #               replay: actions(행동열 npz), quickack(기본 true), server(wsl|windows, 기본 wsl)
@@ -217,9 +219,9 @@ function Invoke-RunMatrix {
     try { $m = [IO.File]::ReadAllText((Resolve-Path $Matrix).Path, $Utf8) | ConvertFrom-Json -ErrorAction Stop }
     catch { Write-Host "행렬 JSON 을 못 읽었다($Matrix): $($_.Exception.Message) -- 경로는 / 로 쓰거나 \\ 로 적는다"; exit 2 }
     foreach ($s in $m.settings) {
-        foreach ($k in @('actions', 'robot_config')) {
+        foreach ($k in @('actions', 'robot_config', 'weights')) {
             $v = P $s $k ''
-            if ($v -and $v -ne 'none' -and -not (Test-Path $v)) { Write-Host "설정 $($s.name) 의 $k 파일이 없다: $v"; exit 2 }
+            if ($v -and $v -ne 'none' -and -not (Test-Path -LiteralPath $v)) { Write-Host "설정 $($s.name) 의 $k 파일이 없다: $v"; exit 2 }
         }
     }
     $name = P $m 'name' 'exp'
@@ -237,7 +239,16 @@ function Invoke-RunMatrix {
     $needGpu = -not ($Backend -eq 'ported' -and (P (P $m 'ported' $null) 'backend' 'engine') -eq 'dummy')
     $R = [int](P $m 'repeats' 1)  # 같은 판을 R 번(검은 화면 (B) 처럼 판마다 운인 것을 셀 때). 반복이 바깥 고리라 설정끼리 번갈아 돈다
     Say "실험 $name -> $script:Exp (backend $Backend, reuse $([bool]$Reuse), 반복 $R)"
+    # lock_scope: run(기본, 판마다 잡고 풂) | repeat(반복 한 바퀴 = 설정 전부를 한 잠금으로, 30 분 이내가 되게 잡는다)
+    $lockScope = P $m 'lock_scope' 'run'
     foreach ($rep in 1..$R) {
+    $repLocked = $false
+    if ($lockScope -eq 'repeat' -and -not $DryRun -and $needGpu) {
+        $g0 = Enter-EvalGpu $busy "exp_run $name 반복 $rep/$R ($(@($m.settings).Count) 설정)" ([int](P $m 'lock_minutes' 30))
+        if ($g0 -lt 0) { Say "반복 $rep 잠금 못 잡음 -> 멈춤"; break }
+        $repLocked = $true
+    }
+    try {
     foreach ($s in $m.settings) {
         foreach ($task in $m.tasks) {
             $byTask = P $m 'instances_by_task' $null
@@ -250,12 +261,12 @@ function Invoke-RunMatrix {
                 $batch = if ($Reuse) { @($todo.ToArray() | Select-Object -First $reuseN) } else { @($todo[0]) }
                 $outDir = if ($Reuse) { $base } else { "$base\i$($batch[0])" }
                 $tag = "$($s.name)_${task}_i$($batch -join '-')$(if ($R -gt 1) { "_r$rep" })_$(Get-Date -Format HHmmss)"
-                $gpu = if ($DryRun -or -not $needGpu) { 0 } else { Enter-EvalGpu $busy "exp_run $name $($s.name) $task i$($batch -join ',')" $lockMin }
+                $gpu = if ($DryRun -or -not $needGpu -or $repLocked) { 0 } else { Enter-EvalGpu $busy "exp_run $name $($s.name) $task i$($batch -join ',')" $lockMin }
                 if ($gpu -lt 0) {
                     foreach ($ix in $batch) { Add-Status @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; status = 'skipped_gpu_busy'; note = "GPU $(-$gpu) MiB 또는 잠금 못 잡음" } }
                     break
                 }
-                try { $res = Invoke-Eval $m $s $task $batch $outDir $tag } finally { if (-not $DryRun -and $needGpu) { [void](Exit-GpuLock 'exp_run') } }
+                try { $res = Invoke-Eval $m $s $task $batch $outDir $tag } finally { if (-not $DryRun -and $needGpu -and -not $repLocked) { [void](Exit-GpuLock 'exp_run') } }
                 if ($res.Dry) { foreach ($ix in $batch) { Add-Status @{ backend = $Backend; setting = $s.name; task = $task; index = $ix; status = 'dry' } }; break }
                 $info = Read-EvalLog $res.Log
                 $progress = $false
@@ -282,6 +293,7 @@ function Invoke-RunMatrix {
             }
         }
     }
+    } finally { if ($repLocked) { [void](Exit-GpuLock 'exp_run') } }
     }
     Invoke-Table $script:Exp
 }
@@ -366,8 +378,17 @@ function Invoke-Compare {
     $keys = @($da.Keys | Where-Object { $db.ContainsKey($_) } | Sort-Object)
     if (-not $keys.Count) { Write-Host '짝이 되는 판이 없다(trace.npz 가 있는 같은 설정\과제\인덱스)'; return }
     $fail = 0
+    # 비교기: Rust 판(src\fasteval\tracecmp, WSL 빌드 — 파이썬판과 출력·종료 코드가 글자까지 같음을 verify_vs_python.sh 로 확인)이 있으면 그것, 없으면 파이썬판
+    $rsBin = '/home/juyoung/cargo-target/tracecmp/release/tracecmp'
+    wsl -d Ubuntu-22.04 -u juyoung -- test -x $rsBin 2>$null
+    $useRs = ($LASTEXITCODE -eq 0)
+    $md[3] = $md[3] + $(if ($useRs) { ' 비교기: Rust tracecmp.' } else { ' 비교기: 파이썬 trace_compare.py.' })
     foreach ($k in $keys) {
-        $txt = & $script:Py "$Root\tools\trace_compare.py" $da[$k] $db[$k] --check --strict --pixels-report-only 2>&1 | ForEach-Object { "$_" }
+        if ($useRs) {
+            $txt = wsl -d Ubuntu-22.04 -u juyoung -- $rsBin (To-Wsl $da[$k]) (To-Wsl $db[$k]) --check --strict --pixels-report-only 2>&1 | ForEach-Object { "$_" }
+        } else {
+            $txt = & $script:Py "$Root\tools\trace_compare.py" $da[$k] $db[$k] --check --strict --pixels-report-only 2>&1 | ForEach-Object { "$_" }
+        }
         $code = $LASTEXITCODE
         if ($code -ne 0) { $fail++ }
         $sum = (($txt | Where-Object { $_ -match '^요약:|^픽셀' }) -join ' / ')
