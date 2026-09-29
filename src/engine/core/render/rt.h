@@ -135,17 +135,20 @@ struct Hit {
 };
 
 #ifndef RENDER_STACK
-#define RENDER_STACK 64
+#define RENDER_STACK 32
 #endif
-constexpr int kStack = RENDER_STACK;  // 순회 스택 (BLAS 굽기 깊이 한계도 이것으로)
+constexpr int kStack = RENDER_STACK;  // 순회 스택 (TLAS·BLAS 가 하나를 같이 씀, scene.h trace). radio 실측 최대 20 칸(render_stats)
+constexpr int kBlasMaxDepth = 32;     // BLAS 굽기 깊이 한계: TLAS 깊이 + 이것 < kStack 이어야 칸이 안 넘친다
 
 // 순회 통계 (호스트 진단 도구 tests/render/render_stats.cpp 만 -DRENDER_STATS 로 켬). 켜지 않으면 코드 없음.
 #ifdef RENDER_STATS
-struct RStats { uint64_t tlas_nodes, inst_leaves, blas_nodes, tri_tests; };
+struct RStats { uint64_t tlas_nodes, inst_leaves, blas_nodes, tri_tests, max_sp; };
 inline thread_local RStats g_rstats{};
 #define RSTAT(x) (g_rstats.x++)
+#define RSTAT_SP(v) (g_rstats.max_sp = (v) > g_rstats.max_sp ? (v) : g_rstats.max_sp)
 #else
 #define RSTAT(x) ((void)0)
+#define RSTAT_SP(v) ((void)0)
 #endif
 
 // BLAS 순회 (지역 좌표 광선). nodes/tris 는 이 기하의 시작을 가리킨다. 전역 삼각형 번호 = tri_base + 지역 번호.

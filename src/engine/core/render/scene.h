@@ -119,6 +119,8 @@ EHD bool inst_visible(const EnvView& E, int32_t i) { return (E.vis[i >> 5] >> (i
 
 // 두 단계 순회: TLAS(월드) -> 잎의 인스턴스 -> 지역 광선으로 BLAS. any = true 면 처음 맞은 것에서 끝(그림자·가림 광선).
 // skip: 이 깃발이 있는 인스턴스는 건너뜀(유리 = kInstGlass).
+// 스택 하나를 두 단계가 같이 쓴다(GPU 스레드별 지역 메모리 절반): 인스턴스에 들어갈 때 스택 높이(base)를 적어 두고,
+// BLAS 칸을 다 꺼내면 TLAS 로 돌아온다. 방문 순서·결과는 단계별 스택 두 개(옛 blas_trace)와 같다(넘침이 없을 때).
 EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, float tmax, bool any = false,
               int32_t skip = 0) {
   Hit h{tmax, 0.0f, 0.0f, -1, -1};
@@ -127,12 +129,20 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
   float stack_t[kStack];  // 넣을 때의 들어가는 t: 꺼낼 때 이미 더 가까운 것을 찾았으면 건너뜀
   int sp = 0;
   int32_t cur = 0;
+  // BLAS 안에 있을 때의 상태
+  bool in_blas = false;
+  int base = 0;
+  int32_t inst = -1, tri_base = 0;
+  const Node2* bn = nullptr;
+  const TriX* bt = nullptr;
+  Ray rl = r;
   for (;;) {
+    const Ray& rr = in_blas ? rl : r;
     if (cur >= 0) {
-      RSTAT(tlas_nodes);
-      const Node2& n = E.tlas[cur];
-      const float ta = n.c0 != kEmpty ? box_t(n.lo0, n.hi0, r, tmin, h.t) : kInf;
-      const float tb = n.c1 != kEmpty ? box_t(n.lo1, n.hi1, r, tmin, h.t) : kInf;
+      const Node2& n = in_blas ? bn[cur] : E.tlas[cur];
+      if (in_blas) RSTAT(blas_nodes); else RSTAT(tlas_nodes);
+      const float ta = n.c0 != kEmpty ? box_t(n.lo0, n.hi0, rr, tmin, h.t) : kInf;
+      const float tb = n.c1 != kEmpty ? box_t(n.lo1, n.hi1, rr, tmin, h.t) : kInf;
       const bool ha = ta < kInf, hb = tb < kInf;
       if (ha && hb) {
         const bool a_first = ta <= tb;
@@ -141,12 +151,27 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
           stack[sp] = farc;
           stack_t[sp] = a_first ? tb : ta;
           ++sp;
+          RSTAT_SP(uint64_t(sp));
         }
         cur = nearc;
         continue;
       }
       if (ha) { cur = n.c0; continue; }
       if (hb) { cur = n.c1; continue; }
+    } else if (in_blas) {
+      const uint32_t f = leaf_first(cur), c = leaf_count(cur);
+      for (uint32_t k = 0; k < c; ++k) {
+        float t, u, v;
+        RSTAT(tri_tests);
+        if (tri_hit(bt[f + k], rl, tmin, h.t, t, u, v)) {
+          h.t = t;
+          h.u = u;
+          h.v = v;
+          h.inst = inst;
+          h.tri = tri_base + int32_t(f + k);
+          if (any) return h;
+        }
+      }
     } else {
       const int32_t id = E.order[leaf_first(cur)];
       RSTAT(inst_leaves);
@@ -154,19 +179,30 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
         const InstInfo& in = S.insts[id];
         const GeomInfo& g = S.geoms[in.geom];
         const Aff& iv = E.inst_inv[id];
-        const Ray rl = make_ray(xpoint(iv, r.o), xvec(iv, r.d));
-        if (blas_trace(S.blas_nodes + g.node_base, S.tris + g.tri_base, g.tri_base, rl, tmin, h, id, any)) return h;
+        rl = make_ray(xpoint(iv, r.o), xvec(iv, r.d));
+        bn = S.blas_nodes + g.node_base;
+        bt = S.tris + g.tri_base;
+        tri_base = g.tri_base;
+        inst = id;
+        in_blas = true;
+        base = sp;
+        cur = 0;
+        continue;
       }
     }
-    // 꺼내기: 넣을 때의 들어가는 t 가 이미 찾은 것보다 먼 칸은 건너뛴다
+    // 꺼내기: 넣을 때의 들어가는 t 가 이미 찾은 것보다 먼 칸은 건너뛴다. BLAS 칸이 다 떨어지면 TLAS 로.
     bool got = false;
-    while (sp > 0) {
-      --sp;
-      if (stack_t[sp] <= h.t) {
-        cur = stack[sp];
-        got = true;
-        break;
+    for (;;) {
+      while (sp > (in_blas ? base : 0)) {
+        --sp;
+        if (stack_t[sp] <= h.t) {
+          cur = stack[sp];
+          got = true;
+          break;
+        }
       }
+      if (got || !in_blas) break;
+      in_blas = false;
     }
     if (!got) break;
   }

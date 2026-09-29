@@ -125,7 +125,7 @@ inline BlasOut blas_build(const float* v /* ntri*9 */, uint32_t ntri, uint32_t m
       if (cnt <= 8) continue;  // 중심이 모두 같다: 8 개 이하면 잎
       mid = b + cnt / 2;
     }
-    if (depth >= kStack - 4) {  // 순회 스택을 넘지 않게: 깊이 한계에서는 반으로만 (잎 8 제한은 지킨다)
+    if (depth >= kBlasMaxDepth - 4) {  // 순회 스택을 넘지 않게: 깊이 한계에서는 반으로만 (잎 8 제한은 지킨다)
       mid = b + cnt / 2;
     }
     Tmp L{}, R{};

@@ -59,9 +59,9 @@ int main(int argc, char** argv) {
         }
       const double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
       const double n = double(rays > 0 ? rays : 1);
-      std::printf("%-11s %-6s 광선 %7llu 맞음 %5.1f%% | 광선당 TLAS 노드 %6.1f 인스턴스 잎 %5.1f BLAS 노드 %7.1f 삼각형 %7.1f | %.0f ns/광선 (한 스레드)\n",
+      std::printf("%-11s %-6s 광선 %7llu 맞음 %5.1f%% | 광선당 TLAS 노드 %6.1f 인스턴스 잎 %5.1f BLAS 노드 %7.1f 삼각형 %7.1f | 스택 최대 %llu | %.0f ns/광선 (한 스레드)\n",
                   roles[c], kind == 0 ? "1차" : "튕김", (unsigned long long)rays, 100.0 * hits / n, g_rstats.tlas_nodes / n,
-                  g_rstats.inst_leaves / n, g_rstats.blas_nodes / n, g_rstats.tri_tests / n, dt * 1e9 / n);
+                  g_rstats.inst_leaves / n, g_rstats.blas_nodes / n, g_rstats.tri_tests / n, (unsigned long long)g_rstats.max_sp, dt * 1e9 / n);
     }
   }
   return 0;
