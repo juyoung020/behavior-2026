@@ -7,9 +7,9 @@
 //! 읽는 것(결과폴더 안): trace.npz(평가기 쪽 기록), server_log.npz(서버가 받은 관측, 키 앞에 "srv|"), json/*.json(공식 결과),
 //! trace_images.npz(몇 스텝의 영상 원본 — 있으면 픽셀 차이 표).
 
-mod npy;
 mod pyfmt;
 
+use npz as npy;
 use npy::{Array, Data};
 use pyfmt::{fmt_e, fmt_f, num, py_eq, py_str};
 use serde_json::Value;

@@ -1,0 +1,17 @@
+[package]
+name = "replaysrv"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "행동열 재생 정책 서버 — tools/replay_policy_server.py 의 Rust 판(같은 프로토콜·같은 행동·같은 관측 기록)"
+publish = false
+
+[dependencies]
+# npz 읽기(행동열)·쓰기(관측 기록) — 같이 쓰는 손으로 짠 해석기
+npz = { path = "../npz" }
+# setsockopt(TCP_QUICKACK) 만. 웹소켓·msgpack·blake2b·sha1·base64 는 손으로 짰다(src/).
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1

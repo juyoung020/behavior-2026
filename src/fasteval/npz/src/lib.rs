@@ -1,8 +1,9 @@
-//! npz(zip 안의 .npy 들) 읽기 — numpy np.savez_compressed 가 쓴 것만 다룬다(C 순서, 리틀엔디언).
-//! 받는 dtype: <f8 <f4 <f2 |b1 |u1 <i8 <i4 <i2 |i1 <u8 <u4 <u2 <U{n}(UTF-32LE 고정폭 문자열).
+//! npz(zip 안의 .npy 들) 읽기·쓰기 — numpy np.savez_compressed 와 같은 모양(C 순서, 리틀엔디언). src/fasteval 의 Rust 도구들이 같이 쓴다.
+//! 읽는 dtype: <f8 <f4 <f2 |b1 |u1 <i8 <i4 <i2 |i1 <u8 <u4 <u2 <U{n}(UTF-32LE 고정폭 문자열).
+//! 쓰는 dtype: F -> <f8, B -> |b1, U8 -> |u1, S -> <U{가장 긴 글자 수}(np.array(...).astype(str) 와 같은 폭).
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug)]
 pub enum Data {
@@ -186,4 +187,99 @@ pub fn load_npz(path: &str) -> Result<Vec<(String, Array)>, String> {
         out.push((key, parse_npy(&buf).map_err(|e| format!("{path}:{name}: {e}"))?));
     }
     Ok(out)
+}
+
+fn npy_header(descr: &str, shape: &[usize]) -> Vec<u8> {
+    let sh = match shape.len() {
+        0 => "()".to_string(),
+        1 => format!("({},)", shape[0]),
+        _ => format!("({})", shape.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")),
+    };
+    let mut h = format!("{{'descr': '{descr}', 'fortran_order': False, 'shape': {sh}, }}");
+    // numpy 처럼 전체(10 + 머리) 길이를 64 의 배수로, 끝은 줄바꿈
+    let total = 10 + h.len() + 1;
+    let pad = (64 - total % 64) % 64;
+    h.push_str(&" ".repeat(pad));
+    h.push('\n');
+    let mut out = Vec::with_capacity(10 + h.len());
+    out.extend_from_slice(b"\x93NUMPY");
+    out.push(1);
+    out.push(0);
+    out.extend_from_slice(&(h.len() as u16).to_le_bytes());
+    out.extend_from_slice(h.as_bytes());
+    out
+}
+
+/// 배열 하나를 .npy 바이트로
+pub fn to_npy(a: &Array) -> Vec<u8> {
+    match &a.data {
+        Data::F(v) => {
+            let mut b = npy_header("<f8", &a.shape);
+            for x in v {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+            b
+        }
+        Data::B(v) => {
+            let mut b = npy_header("|b1", &a.shape);
+            b.extend(v.iter().map(|&x| x as u8));
+            b
+        }
+        Data::U8(v) => {
+            let mut b = npy_header("|u1", &a.shape);
+            b.extend_from_slice(v);
+            b
+        }
+        Data::S(v) => {
+            let w = v.iter().map(|s| s.chars().count()).max().unwrap_or(0).max(1);
+            let mut b = npy_header(&format!("<U{w}"), &a.shape);
+            for s in v {
+                let mut k = 0;
+                for c in s.chars() {
+                    b.extend_from_slice(&(c as u32).to_le_bytes());
+                    k += 1;
+                }
+                for _ in k..w {
+                    b.extend_from_slice(&0u32.to_le_bytes());
+                }
+            }
+            b
+        }
+    }
+}
+
+/// np.savez_compressed 처럼 (이름, 배열) 들을 zip(deflate) 안의 <이름>.npy 로
+pub fn save_npz(path: &str, entries: &[(String, Array)]) -> Result<(), String> {
+    let f = File::create(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut z = zip::ZipWriter::new(f);
+    let opt = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (k, a) in entries {
+        z.start_file(format!("{k}.npy"), opt).map_err(|e| format!("{path}:{k}: {e}"))?;
+        z.write_all(&to_npy(a)).map_err(|e| format!("{path}:{k}: {e}"))?;
+    }
+    z.finish().map_err(|e| format!("{path}: {e}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn roundtrip() {
+        let arrs = vec![
+            ("f".to_string(), Array { shape: vec![2, 1, 3], kind: 'f', data: Data::F(vec![1.0, -2.5, f64::NAN, 4.0, 5.0, 6.0]) }),
+            ("s".to_string(), Array { shape: vec![2, 1], kind: 'U', data: Data::S(vec!["abc".into(), "".into()]) }),
+            ("b".to_string(), Array { shape: vec![3], kind: 'b', data: Data::B(vec![true, false, true]) }),
+        ];
+        let p = std::env::temp_dir().join("npz_roundtrip_test.npz");
+        let ps = p.to_str().unwrap();
+        save_npz(ps, &arrs).unwrap();
+        let back = load_npz(ps).unwrap();
+        std::fs::remove_file(&p).ok();
+        assert_eq!(back.len(), 3);
+        assert_eq!(back[0].1.shape, vec![2, 1, 3]);
+        if let Data::F(v) = &back[0].1.data { assert!(v[2].is_nan()); assert_eq!(v[1], -2.5); } else { panic!() }
+        if let Data::S(v) = &back[1].1.data { assert_eq!(v, &vec!["abc".to_string(), "".to_string()]); } else { panic!() }
+        if let Data::B(v) = &back[2].1.data { assert_eq!(v, &vec![true, false, true]); } else { panic!() }
+    }
 }

@@ -21,7 +21,7 @@
 #   reuse_batch(-Reuse 때 한 프로세스의 인스턴스 수), kit_args[](Kit 시작 인자, 설정별로도 줄 수 있음), ported{backend, host, python, scene_root},
 #   settings[]: name, policy(local|replay|websocket|native), robot_config(없으면 공식 기본), wrapper(Default|RGBD|전체 경로), max_steps,
 #               chunk(--replay-action-chunk-size), port, extra_eval_args[],
-#               replay: actions(행동열 npz), quickack(기본 true), server(wsl|windows, 기본 wsl)
+#               replay: actions(행동열 npz), quickack(기본 true), server(wsl = WSL 파이썬(기본) | rust = WSL Rust replaysrv | windows), port(기본 8110, 쓰이면 다음 빈 포트)
 #               websocket: server.start(명령, {port}·{task} 치환), server.kind(wsl|windows), server.ready_s(기본 600)
 #               native: module(기본 native_policy:pi05 = 네이티브 π0.5, src\fasteval\native_policy.py), weights, prompt, replan(16), seed(0)
 #                       -- 공식 LocalPolicy 안에서 돈다(src\pi05_native\glue\run_eval_native.py 와 같은 연결), 엔진 스텝 기록은 판 폴더 native_steps.csv
@@ -76,17 +76,27 @@ function Enter-EvalGpu([int]$busyMib, [string]$purpose, [int]$minutes, [int]$max
 # ---- 정책 서버 ----
 function Start-PolicyServer($s, [string]$task, [string]$outDir, [string]$tag) {
     $pol = P $s 'policy' 'local'
-    $port = [int](P $s 'port' $(if ($pol -eq 'replay') { 8010 } else { 8000 }))
+    # 재생 서버 기본 포트는 8110(다른 에이전트가 쓰는 8010 과 안 겹치게). 이미 누가 듣고 있으면 다음 빈 포트로(남의 서버에 붙지 않게)
+    $port = [int](P $s 'port' $(if ($pol -eq 'replay') { 8110 } else { 8000 }))
     $logBase = "$script:Exp\logs\server_$tag"
     if ($pol -eq 'replay') {
+        for ($k = 0; $k -lt 20; $k++) {
+            $busyPort = $false
+            try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 "http://127.0.0.1:$port/healthz"; $busyPort = $true } catch { $busyPort = ($_.Exception.Response -ne $null) }
+            if (-not $busyPort) { break }
+            Say "포트 $port 는 이미 누가 쓴다 -> $($port + 1)"
+            $port++
+        }
         $act = (Resolve-Path (P $s 'actions' '')).Path
         $qa = [bool](P $s 'quickack' $true)
-        if ((P $s 'server' 'wsl') -eq 'windows') {
+        $kind = P $s 'server' 'wsl'  # wsl(파이썬, 기본) | rust(WSL Rust replaysrv — 파이썬판과 응답·기록 같음 확인) | windows(파이썬)
+        if ($kind -eq 'windows') {
             $a = @("$Root\tools\replay_policy_server.py", '--actions', $act, '--port', "$port", '--log', "$outDir\server_log.npz", '--once')
             if ($qa) { $a += '--quickack' }
             $p = Start-Process $script:Py -ArgumentList $a -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logBase.out.log" -RedirectStandardError "$logBase.log"
         } else {
-            $cmd = "$WslPy /mnt/c/behavior-2026/tools/replay_policy_server.py --actions $(To-Wsl $act) --port $port --log $(To-Wsl $outDir)/server_log.npz --once"
+            $bin = if ($kind -eq 'rust') { '/home/juyoung/cargo-target/replaysrv/release/replaysrv' } else { "$WslPy /mnt/c/behavior-2026/tools/replay_policy_server.py" }
+            $cmd = "$bin --actions $(To-Wsl $act) --port $port --log $(To-Wsl $outDir)/server_log.npz --once"
             if ($qa) { $cmd += ' --quickack' }
             $p = Start-Process wsl -ArgumentList "-d Ubuntu-22.04 -u juyoung -- $cmd" -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logBase.out.log" -RedirectStandardError "$logBase.log"
         }
@@ -115,8 +125,8 @@ function Start-PolicyServer($s, [string]$task, [string]$outDir, [string]$tag) {
 function Stop-PolicyServer($srv, $s) {
     if ($null -eq $srv -or $null -eq $srv.Proc) { return }
     if (-not $srv.Proc.WaitForExit(30000)) { try { $srv.Proc.Kill() } catch {} }
-    if ((P $s 'policy' '') -eq 'replay' -and (P $s 'server' 'wsl') -eq 'wsl') {
-        wsl -d Ubuntu-22.04 -u juyoung -- pkill -f "replay_policy_server.py --actions .* --port $($srv.Port) " 2>$null | Out-Null
+    if ((P $s 'policy' '') -eq 'replay' -and (P $s 'server' 'wsl') -in @('wsl', 'rust')) {
+        wsl -d Ubuntu-22.04 -u juyoung -- pkill -f "(replay_policy_server.py|replaysrv) --actions .* --port $($srv.Port) " 2>$null | Out-Null
     }
 }
 
