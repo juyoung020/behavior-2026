@@ -10,5 +10,5 @@ if [ ! -f $B/CMakeCache.txt ]; then
   cmake -S /mnt/c/behavior-2026/src/engine/tests -B $B -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CUDA_HOST_COMPILER=g++ > $B/cmake.log 2>&1 || { cat $B/cmake.log; exit 1; }
 fi
 T="$@"
-[ -z "$T" ] && T="test_joints_prep"
+[ -z "$T" ] && T="test_joints_prep test_libm_joints test_rigid_api test_joints_gpu test_libm_joints_gpu"
 cmake --build $B -j 16 --target $T 2>&1 | grep -E 'error|Error|Built target|FAILED' | head -60

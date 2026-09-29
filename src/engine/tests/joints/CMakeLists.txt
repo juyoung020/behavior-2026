@@ -1,2 +1,8 @@
 # joints 시험 (joints 작업자). 층 0(PhysX) = 층 1(core/joints) = 층 2(cuda/joints)
 engine_test(test_joints_prep test_joints_prep.cpp jeng_api.cpp PHYSX)
+engine_test(test_libm_joints test_libm_joints.cpp)
+target_compile_options(test_libm_joints PRIVATE -fno-builtin)
+engine_test(test_joints_gpu test_joints_gpu.cu)
+engine_test(test_libm_joints_gpu test_libm_joints_gpu.cu)
+target_compile_options(test_libm_joints_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fno-builtin>)
+engine_test(test_rigid_api test_rigid_api.cpp PHYSX)

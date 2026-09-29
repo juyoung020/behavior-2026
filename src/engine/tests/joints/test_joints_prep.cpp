@@ -116,15 +116,15 @@ int main(int argc, char** argv) {
     std::vector<PxRigidBodyData> rbd(nb);
     std::vector<PxTransform> b2w(nb + 1, PxTransform(PxIdentity));
     for (int b = 1; b <= nb; ++b) {
-      PxRigidDynamic* a = phys->createRigidDynamic(PxTransform(g.v(2.0f), g.q()));
-      a->setCMassLocalPose(PxTransform(g.v(0.1f), g.q()));
+      PxRigidDynamic* a = phys->createRigidDynamic(PxTransform(toPx(g.v(2.0f)), toPx(g.q())));
+      a->setCMassLocalPose(PxTransform(toPx(g.v(0.1f)), toPx(g.q())));
       actors[b] = a;
-      b2w[b] = PxTransform(g.v(2.0f), g.q());
+      b2w[b] = PxTransform(toPx(g.v(2.0f)), toPx(g.q()));
       PxRigidBodyData& d = rbd[b - 1];
       memset(&d, 0, sizeof d);
-      d.linearVelocity = g.v(2.0f);
+      d.linearVelocity = toPx(g.v(2.0f));
       d.invMass = 1.0f / (0.1f + 10.0f * g.p());
-      d.angularVelocity = g.v(3.0f);
+      d.angularVelocity = toPx(g.v(3.0f));
       d.maxDepenetrationVelocity = 1e32f;
       d.invInertia = PxVec3(1.0f / (0.01f + g.p()), 1.0f / (0.01f + g.p()), 1.0f / (0.01f + g.p()));
       d.maxContactImpulse = 1e32f;
@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
       d.maxLinearVelocitySq = 1e32f;
       d.maxAngularVelocitySq = 100.0f * 100.0f;
     }
-    PxRigidStatic* stat = phys->createRigidStatic(PxTransform(g.v(1.0f), g.q()));
+    PxRigidStatic* stat = phys->createRigidStatic(PxTransform(toPx(g.v(1.0f)), toPx(g.q())));
 
     struct JP { PxD6Joint* px; J::D6Joint en; int a, b; int kind; };
     std::vector<JP> joints;
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
       const int a = 1 + g.i(nb);
       int b = g.i(nb + 2);            // 0 = 세계(null), nb+1 = 정적 행위자
       if (b == a) b = 0;
-      const PxTransform f0(g.v(0.2f), g.q()), f1(g.v(0.2f), g.q());
+      const PxTransform f0(toPx(g.v(0.2f)), toPx(g.q())), f1(toPx(g.v(0.2f)), toPx(g.q()));
       PxRigidActor* act1 = (b == 0) ? nullptr : (b == nb + 1 ? static_cast<PxRigidActor*>(stat) : actors[b]);
       PxD6Joint* pj = PxD6JointCreate(*phys, actors[a], f0, act1, f1);
       const uint8_t kind1 = b == 0 ? J::ACTOR_NONE : (b == nb + 1 ? J::ACTOR_STATIC : J::ACTOR_DYNAMIC);
