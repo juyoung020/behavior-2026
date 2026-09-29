@@ -28,3 +28,4 @@ build_win/
 *.pdb
 *.exp
 *.ilk
+.gpu_queue/
