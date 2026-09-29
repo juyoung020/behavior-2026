@@ -51,6 +51,8 @@ class Capture:
         self.meta = {"started": time.strftime("%Y-%m-%d %H:%M:%S")}
         self._subs = []
         self.convex_done = False
+        self.dump_at_pre = 0
+        self.dump_prim = ""
 
     # ------------------------------------------------------------------ 앱이 뜬 직후
     def after_launch(self):
@@ -72,6 +74,11 @@ class Capture:
 
         def pre(_dt):
             self.n_pre += 1
+            if self.dump_at_pre and self.n_pre == self.dump_at_pre:
+                try:
+                    self.dump_prim_state()
+                except Exception as e:  # 진단 실패가 평가를 바꾸면 안 된다
+                    print(f"[capture] 상태 덤프 실패: {e!r}", flush=True)
 
         def post(_dt):
             self.n_post += 1
@@ -298,6 +305,44 @@ class Capture:
                                "at_post_count": self.n_post}
         print(f"[capture] 볼록 메시 {len(verts)} 개 (충돌 prim {n_prims}) -> {out}", flush=True)
 
+    # ------------------------------------------------------------------ 진단: 지정 simulate 직전 관절체의 PhysX 쪽 실제 값 (읽기만)
+    def dump_prim_state(self):
+        """--dump-at-pre N --dump-prim PATH: N 번째 simulate 직전(전체 번호, meta 의 post 번호와 같은 셈)에 관절체 텐서 뷰의 get_* 를 전부 읽어
+        state_pre<N>.npz 로. 재생기 쪽 같은 덤프(ovd_replay --dump-art)와 비교해 OVD 밖에서 달라진 값을 찾는다 (문서 15절 S0 로봇)."""
+        import omni.physics.tensors as T
+        import omni.usd
+
+        stage_id = omni.usd.get_context().get_stage_id()
+        sv = T.create_simulation_view("numpy", stage_id)
+        av = sv.create_articulation_view(self.dump_prim)
+        out = {}
+        for name in sorted(dir(av)):
+            if not name.startswith("get_"):
+                continue
+            try:
+                v = getattr(av, name)()
+            except Exception:
+                continue
+            try:
+                out[name[4:]] = np.asarray(v)
+            except Exception:
+                pass
+        for name in ("link_paths", "dof_paths", "dof_names", "link_names", "shared_metatype"):
+            try:
+                v = getattr(av, name)
+                out["attr_" + name] = np.asarray(v if not hasattr(v, "link_names") else v.link_names, dtype=object)
+            except Exception:
+                pass
+        try:
+            mt = av.shared_metatype
+            out["meta_link_names"] = np.asarray(mt.link_names, dtype=object)
+            out["meta_dof_names"] = np.asarray(mt.dof_names, dtype=object)
+        except Exception:
+            pass
+        path = os.path.join(self.dump_dir, f"state_pre{self.n_pre}.npz")
+        np.savez(path, **out)
+        print(f"[capture] 상태 덤프 {len(out)} 항목 -> {path}", flush=True)
+
     # ------------------------------------------------------------------ 이름 대응 (엔진이 BDDL 이름·로봇을 물리 몸체에 잇는 데 필요)
     def dump_scope(self, ev):
         """판마다 BDDL 물체 이름 -> prim 경로·링크 경로, 로봇 관절 순서·팔/손끝 링크·센서·제어기 설정을 scope.json 에.
@@ -523,6 +568,8 @@ def main():
     cap = Capture(dump_dir, ovd="--no-ovd" not in ours, convex="--no-convex" not in ours,
                   sidelog="--no-sidelog" not in ours)
     cap.no_render = "--no-render" in ours
+    cap.dump_at_pre = int(ours[ours.index("--dump-at-pre") + 1]) if "--dump-at-pre" in ours else 0
+    cap.dump_prim = ours[ours.index("--dump-prim") + 1] if "--dump-prim" in ours else "/World/scene_0/controllable__r1pro__robot"
     cap.meta["no_render"] = cap.no_render
     install(cap)
     sys.argv = [INSTRUMENTED] + rest

@@ -10,6 +10,10 @@
 //     fetchResults 가 적은 결과(NpSceneFetchResults.cpp:277-470) -> 적용하지 않고 비교만 한다.
 //   - OVD 에 안 남는 호출(applyCache 계열, wakeUp/putToSleep)은 capture 의 sidelog 로 채운다.
 #include <algorithm>
+#include <array>
+#include <unordered_set>
+#include <sstream>
+#include <fstream>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
@@ -30,6 +34,7 @@
 #include "omni_filter.h"
 #include "ovd.h"
 #include "sidecar.h"
+#include "core/omni/controllers.h"
 
 using namespace physx;
 
@@ -286,6 +291,210 @@ class Replayer {
         }
       }
     }
+  }
+  // --dump-art <관절체 이름> <파일>: 첫 simulate 직전 그 관절체의 PhysX 값을 텍스트로 (공식 쪽 텐서 뷰 덤프 state_pre<N>.npz 와 비교용).
+  //   한 줄 = "키 번호 값..." (링크 번호 = PhysX 링크 순서, dof 번호 = 링크 순서 x 풀린 축 = 텐서 API 순서, 모양 번호 = 링크 순서 x 모양 순서)
+  std::string dump_art_name, dump_art_file;
+  void dump_art() {
+    PxArticulationReducedCoordinate* art = nullptr;
+    auto ia = art_by_name.find(dump_art_name);
+    if (ia != art_by_name.end()) art = ia->second;
+    if (!art) { fprintf(stderr, "dump-art: 관절체 %s 없음\n", dump_art_name.c_str()); return; }
+    FILE* f = fopen(dump_art_file.c_str(), "w");
+    if (!f) return;
+    PxU32 pi = 0, vi = 0;
+    art->getSolverIterationCounts(pi, vi);
+    fprintf(f, "art_iters 0 %u %u\n", pi, vi);
+    fprintf(f, "art_sleep 0 %.9g %.9g %.9g\n", art->getSleepThreshold(), art->getStabilizationThreshold(), art->getWakeCounter());
+    fprintf(f, "art_flags 0 %u\n", uint32_t(PxU8(art->getArticulationFlags())));
+    std::vector<PxArticulationLink*> links(art->getNbLinks());
+    art->getLinks(links.data(), PxU32(links.size()));
+    int dof = 0, shp = 0;
+    for (size_t i = 0; i < links.size(); ++i) {
+      PxArticulationLink* l = links[i];
+      const PxTransform c = l->getCMassLocalPose(), g = l->getGlobalPose();
+      const PxVec3 I = l->getMassSpaceInertiaTensor();
+      fprintf(f, "link_name %zu %s\n", i, l->getName() ? l->getName() : "?");
+      fprintf(f, "mass %zu %.9g\n", i, l->getMass());
+      fprintf(f, "com %zu %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", i, c.p.x, c.p.y, c.p.z, c.q.x, c.q.y, c.q.z, c.q.w);
+      fprintf(f, "inertia_diag %zu %.9g %.9g %.9g\n", i, I.x, I.y, I.z);
+      fprintf(f, "pose %zu %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", i, g.p.x, g.p.y, g.p.z, g.q.x, g.q.y, g.q.z, g.q.w);
+      fprintf(f, "body %zu %.9g %.9g %.9g %.9g %.9g %.9g 0x%x\n", i, l->getLinearDamping(), l->getAngularDamping(), l->getMaxLinearVelocity(),
+              l->getMaxAngularVelocity(), l->getMaxDepenetrationVelocity(), l->getCfmScale(), uint32_t(PxU16(l->getRigidBodyFlags())));
+      fprintf(f, "actor_flags %zu 0x%x %u\n", i, uint32_t(PxU8(l->getActorFlags())), uint32_t(l->getDominanceGroup()));
+      if (auto* j = l->getInboundJoint()) {
+        fprintf(f, "joint %zu type %d friction %.9g maxvel %.9g\n", i, int(j->getJointType()), j->getFrictionCoefficient(), j->getMaxJointVelocity());
+        for (int a = 0; a < 6; ++a) {
+          auto ax = PxArticulationAxis::Enum(a);
+          if (j->getMotion(ax) == PxArticulationMotion::eLOCKED) continue;
+          const PxArticulationLimit L = j->getLimitParams(ax);
+          const PxArticulationDrive D = j->getDriveParams(ax);
+          const PxJointFrictionParams FP = j->getFrictionParams(ax);
+          fprintf(f, "dof %d link %zu axis %d motion %d lim %.9g %.9g k %.9g c %.9g maxf %.9g dtype %d env %.9g %.9g %.9g %.9g arm %.9g maxdofvel %.9g fr %.9g %.9g %.9g pos %.9g vel %.9g tgt %.9g tvel %.9g\n",
+                  dof, i, a, int(j->getMotion(ax)), L.low, L.high, D.stiffness, D.damping, D.maxForce, int(D.driveType), D.envelope.maxEffort,
+                  D.envelope.maxActuatorVelocity, D.envelope.velocityDependentResistance, D.envelope.speedEffortGradient, j->getArmature(ax),
+                  j->getMaxJointVelocity(ax), FP.staticFrictionEffort, FP.dynamicFrictionEffort, FP.viscousFrictionCoefficient, j->getJointPosition(ax),
+                  j->getJointVelocity(ax), j->getDriveTarget(ax), j->getDriveVelocity(ax));
+          dof++;
+        }
+      }
+      PxShape* sh[64];
+      const PxU32 ns = l->getShapes(sh, 64);
+      for (PxU32 k = 0; k < ns; ++k) {
+        PxMaterial* m = nullptr;
+        sh[k]->getMaterials(&m, 1);
+        const PxTransform lp = sh[k]->getLocalPose();
+        fprintf(f, "shape %d link %zu off %.9g %.9g torsion %.9g %.9g flags 0x%x lp %.9g %.9g %.9g %.9g %.9g %.9g %.9g", shp, i, sh[k]->getContactOffset(),
+                sh[k]->getRestOffset(), sh[k]->getTorsionalPatchRadius(), sh[k]->getMinTorsionalPatchRadius(), uint32_t(PxU8(sh[k]->getFlags())), lp.p.x,
+                lp.p.y, lp.p.z, lp.q.x, lp.q.y, lp.q.z, lp.q.w);
+        if (m)
+          fprintf(f, " mat %.9g %.9g %.9g comb %d %d flags 0x%x damp %.9g", m->getStaticFriction(), m->getDynamicFriction(), m->getRestitution(),
+                  int(m->getFrictionCombineMode()), int(m->getRestitutionCombineMode()), uint32_t(PxU16(m->getFlags())), m->getDamping());
+        fputc('\n', f);
+        shp++;
+      }
+    }
+    fclose(f);
+    printf("dump-art: %s -> %s (링크 %zu, dof %d, 모양 %d)\n", dump_art_name.c_str(), dump_art_file.c_str(), links.size(), dof, shp);
+  }
+  // ------------------------------------------------------------------ S2 닫힌 고리 (문서 15절): --ctrl <s1 폴더>
+  // 에피소드 시작 뒤로는 로봇 드라이브 목표를 OVD 기록 대신 omni 제어기(core/omni/controllers.h)가 "우리 PhysX 상태"로 계산해 넣는다.
+  // 입력: s1_setup.txt·s1_actions.bin (capture/export_s1.py). 공식처럼 스텝 첫 서브스텝에 apply_action(바닥·뿌리 링크 자세),
+  // 서브스텝마다 step(관절 위치) -> setDriveTarget / setDriveVelocity (텐서 API 가 부르는 것과 같은 setter, 늘 부름).
+  struct CtrlSetup {
+    uint64_t episode_start = 0;
+    uint32_t substeps = 4, T = 0, A = 0;
+    std::string base_link, root_link;
+    int n_dof = 0;
+    std::vector<std::string> dof_link;
+    std::vector<float> sign, acts;
+    eng::omni::ctrl::R1ProConfig cfg{};
+    eng::omni::ctrl::R1ProState st{};
+    std::vector<PxArticulationJointReducedCoordinate*> joint;
+    std::vector<int> axis;
+    std::unordered_set<const void*> robot_joints;
+    std::unordered_map<const void*, std::array<std::vector<uint8_t>, 2>> rec;  // 조인트 -> 이번 서브스텝 공식 (위치, 속도) 목표 6 칸
+    uint64_t cmp_n = 0, cmp_bad = 0;
+    int64_t first_bad_step = -1;
+    std::string first_bad;
+    int64_t last_t = -1;
+    bool on = false;
+    uint64_t suppressed = 0, applied_steps = 0;
+  } C;
+
+  bool load_ctrl(const std::string& dir) {
+    std::ifstream f(dir + "/s1_setup.txt");
+    if (!f) return false;
+    std::map<std::string, std::vector<int>> groups;
+    float bl[12] = {};
+    std::string line;
+    while (std::getline(f, line)) {
+      std::istringstream is(line);
+      std::string k;
+      is >> k;
+      if (k == "episode_start_post") is >> C.episode_start;
+      else if (k == "substeps") is >> C.substeps;
+      else if (k == "base_link") is >> C.base_link;
+      else if (k == "root_link") is >> C.root_link;
+      else if (k == "n_dof") { is >> C.n_dof; C.dof_link.resize(C.n_dof); C.sign.resize(C.n_dof); }
+      else if (k == "group") { std::string g; int d; is >> g; while (is >> d) groups[g].push_back(d); }
+      else if (k == "base_limits") { for (float& x : bl) { std::string t; is >> t; x = strtof(t.c_str(), nullptr); } }
+      else if (k == "dof") {
+        int d, sg, has;
+        std::string link, lo, hi, vlo, vhi;
+        is >> d >> link >> sg >> lo >> hi >> vlo >> vhi >> has;
+        C.dof_link[d] = link;
+        C.sign[d] = float(sg);
+        C.cfg.pos_lo[d] = strtof(lo.c_str(), nullptr);
+        C.cfg.pos_hi[d] = strtof(hi.c_str(), nullptr);
+        C.cfg.vel_lo[d] = strtof(vlo.c_str(), nullptr);
+        C.cfg.vel_hi[d] = strtof(vhi.c_str(), nullptr);
+        C.cfg.has_limit[d] = uint8_t(has);
+      }
+    }
+    auto& c = C.cfg;
+    c.n_dof = C.n_dof;
+    auto cp = [&](const char* g, int* dst, int n) { auto& v = groups[g]; for (int i = 0; i < n && i < int(v.size()); ++i) dst[i] = v[i]; };
+    cp("base", c.base_dof, 3); cp("trunk", c.trunk_dof, 4); cp("arm_left", c.arm_dof[0], 7); cp("arm_right", c.arm_dof[1], 7);
+    cp("gripper_left", c.grip_dof[0], 2); cp("gripper_right", c.grip_dof[1], 2);
+    for (int k = 0; k < 3; ++k) { c.base_in_lo[k] = bl[k]; c.base_in_hi[k] = bl[3 + k]; c.base_out_lo[k] = bl[6 + k]; c.base_out_hi[k] = bl[9 + k]; }
+    eng::omni::ctrl::init(c);
+    eng::omni::ctrl::reset(C.st);
+    FILE* fa = fopen((dir + "/s1_actions.bin").c_str(), "rb");
+    if (!fa || fread(&C.T, 4, 1, fa) != 1 || fread(&C.A, 4, 1, fa) != 1) return false;
+    C.acts.resize(size_t(C.T) * C.A);
+    if (fread(C.acts.data(), 4, C.acts.size(), fa) != C.acts.size()) return false;
+    fclose(fa);
+    C.on = true;
+    return true;
+  }
+  bool ctrl_bind() {  // dof -> 조인트·축 (자식 링크 이름으로), 한 번
+    if (!C.joint.empty()) return true;
+    C.joint.assign(C.n_dof, nullptr);
+    C.axis.assign(C.n_dof, 0);
+    for (int d = 0; d < C.n_dof; ++d) {
+      auto il = actor_by_name.find(C.dof_link[d]);
+      if (il == actor_by_name.end()) { C.joint.clear(); return false; }
+      auto* l = il->second->is<PxArticulationLink>();
+      auto* j = l ? l->getInboundJoint() : nullptr;
+      if (!j) { C.joint.clear(); return false; }
+      C.joint[d] = j;
+      for (int a = 0; a < 6; ++a) if (j->getMotion(PxArticulationAxis::Enum(a)) != PxArticulationMotion::eLOCKED) { C.axis[d] = a; break; }
+      C.robot_joints.insert(j);
+    }
+    return true;
+  }
+  // OVD 의 로봇 드라이브 목표 쓰기를 건너뛸지 (에피소드 시작 뒤, 닫힌 고리가 대신 넣는다)
+  bool ctrl_suppress(PxBase* b, const std::string& an) {
+    if (!C.on || (an != "driveTarget" && an != "driveVelocity")) return false;
+    if (sims + side_offset + 1 <= C.episode_start) return false;
+    if (!ctrl_bind() || !C.robot_joints.count(b)) return false;
+    C.suppressed++;
+    C.rec[b][an == "driveTarget" ? 0 : 1] = cur_set_data;  // 공식 값 (비교용)
+    return true;
+  }
+  // simulate 직전: 이번 서브스텝 목표를 계산해 넣는다
+  void ctrl_before_simulate() {
+    if (!C.on) return;
+    const uint64_t g = sims + side_offset + 1;  // 곧 할 simulate 의 전체 번호
+    if (g <= C.episode_start) return;
+    const int64_t k = int64_t(g - C.episode_start - 1), t = k / C.substeps;
+    if (t >= int64_t(C.T) || !ctrl_bind()) return;
+    namespace ct = eng::omni::ctrl;
+    if (t != C.last_t) {
+      auto ib = actor_by_name.find(C.base_link), ir = actor_by_name.find(C.root_link);
+      if (ib == actor_by_name.end() || ir == actor_by_name.end()) return;
+      const PxTransform bp = ib->second->getGlobalPose(), rp = ir->second->getGlobalPose();
+      const float base_p[3] = {bp.p.x, bp.p.y, bp.p.z}, base_q[4] = {bp.q.x, bp.q.y, bp.q.z, bp.q.w};
+      const float root_p[3] = {rp.p.x, rp.p.y, rp.p.z}, root_q[4] = {rp.q.x, rp.q.y, rp.q.z, rp.q.w};
+      ct::apply_action(C.cfg, C.st, &C.acts[size_t(t) * C.A], base_p, base_q, root_p, root_q);
+      C.last_t = t;
+      C.applied_steps++;
+    }
+    float q[ct::kMaxDof] = {};
+    for (int d = 0; d < C.n_dof; ++d) q[d] = C.sign[d] * C.joint[d]->getJointPosition(PxArticulationAxis::Enum(C.axis[d]));
+    ct::DriveTargets out{};
+    ct::step(C.cfg, C.st, q, out);
+    // 공식 순서: 위치 목표 한 번에(set_dof_position_targets), 그다음 속도 목표 (dof 순서)
+    for (int d = 0; d < C.n_dof; ++d) if (out.set_pos[d]) C.joint[d]->setDriveTarget(PxArticulationAxis::Enum(C.axis[d]), C.sign[d] * out.pos[d]);
+    for (int d = 0; d < C.n_dof; ++d) if (out.set_vel[d]) C.joint[d]->setDriveVelocity(PxArticulationAxis::Enum(C.axis[d]), C.sign[d] * out.vel[d]);
+    // 자체 일관성: 우리 상태로 계산한 목표 vs 같은 서브스텝 공식 목표
+    for (int d = 0; d < C.n_dof; ++d) {
+      auto ir = C.rec.find(C.joint[d]);
+      if (ir == C.rec.end()) continue;
+      for (int w = 0; w < 2; ++w) {
+        if (!(w == 0 ? out.set_pos[d] : out.set_vel[d]) || ir->second[w].size() < 24) continue;
+        const float ours = C.sign[d] * (w == 0 ? out.pos[d] : out.vel[d]);
+        float r; memcpy(&r, ir->second[w].data() + 4 * C.axis[d], 4);
+        C.cmp_n++;
+        if (memcmp(&ours, &r, 4) && !C.cmp_bad++) {
+          C.first_bad_step = t;
+          char b[200]; snprintf(b, sizeof b, "스텝 %lld dof %d %s: 우리 %.9g 공식 %.9g", (long long)t, d, w == 0 ? "위치" : "속도", ours, r);
+          C.first_bad = b;
+        }
+      }
+    }
+    C.rec.clear();
   }
   void trace_flush() {
     for (auto& t : trace_buf) {
@@ -691,7 +900,9 @@ class Replayer {
   static uint32_t flagv(const uint8_t* p, uint32_t n) { uint32_t v = 0; memcpy(&v, p, n < 4 ? n : 4); return v; }
   static std::string cstr(const uint8_t* p, uint32_t n) { while (n && p[n - 1] == 0) --n; return std::string(reinterpret_cast<const char*>(p), n); }
 
+  std::vector<uint8_t> cur_set_data;
   void apply_set(Obj& o, uint32_t ah, const uint8_t* p, uint32_t n, PxBase* target = nullptr) {
+    cur_set_data.assign(p, p + n);
     const ovd::AttrInfo& ai = F.attrs[ah];
     const std::string cl = F.classes[ai.cls].name, an = ai.name;
     const std::string key = cl + "." + an;
@@ -786,6 +997,7 @@ class Replayer {
     } else if (cl == "PxArticulationJointReducedCoordinate") {
       auto* j = static_cast<PxArticulationJointReducedCoordinate*>(b);
       if (!j) ok = false;
+      else if (ctrl_suppress(b, an)) ok = true;
       else ok = apply_art_joint(j, an, p, n);
     } else if (cl == "PxShape") {
       auto* s = b ? b->is<PxShape>() : nullptr;
@@ -1614,6 +1826,8 @@ class Replayer {
             if (filters_dirty) resolve_filters();
             float dt; memcpy(&dt, F.data(e), 4);
             if (sims == 0 && !trace_sub.empty()) dump_state_before_first_sim();
+            if (sims == 0 && !dump_art_name.empty()) dump_art();
+            ctrl_before_simulate();
             so.scene->simulate(dt);
             so.scene->fetchResults(true);
             sims++;
@@ -1740,6 +1954,8 @@ int main(int argc, char** argv) {
     else if (a == "--trace-obj" && i + 1 < argc) R.trace_sub = argv[++i];
     else if (a == "--diag-no-self-collision") R.diag_no_self_collision = true;
     else if (a == "--contact-report-all") R.contact_report_all = true;
+    else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
+    else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }
     else if (a == "--filter-history") { while (i + 1 < argc && argv[i + 1][0] != '-') filter_hist.push_back(argv[++i]); }
     else if (a == "--side-offset" && i + 1 < argc) R.side_offset = strtoull(argv[++i], nullptr, 10);
   }
@@ -1756,6 +1972,7 @@ int main(int argc, char** argv) {
   if (R.side_offset) printf("곁기록: 앞선 인스턴스 몫 %zu 건 버림 (post < %" PRIu64 ")\n", side_dropped, R.side_offset);
   R.run();
   if (!R.trace_sub.empty()) R.trace_flush();
+  if (R.C.on) printf("닫힌 고리(--ctrl): 제어기 스텝 %" PRIu64 ", 건너뛴 OVD 드라이브 목표 %" PRIu64 ", 공식 목표와 비교 %" PRIu64 " 다름 %" PRIu64 " 첫 다름 %s\n", R.C.applied_steps, R.C.suppressed, R.C.cmp_n, R.C.cmp_bad, R.C.first_bad.empty() ? "없음" : R.C.first_bad.c_str());
   R.report();
   if (R.csv) fclose(R.csv);
   if (R.rec_pvd) {  // 기록 마무리 (파일 닫기)

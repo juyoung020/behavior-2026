@@ -42,7 +42,7 @@ set(PHYSX_LIBS
 
 foreach(t ovd_selftest ovd_replay)
   add_executable(${t} ${t}.cpp px_gpu_stub.cpp)
-  target_include_directories(${t} PRIVATE ${PHYSX_ROOT}/include ${PHYSX_ROOT}/pvdruntime/include)
+  target_include_directories(${t} PRIVATE ${PHYSX_ROOT}/include ${PHYSX_ROOT}/pvdruntime/include ${CMAKE_CURRENT_SOURCE_DIR}/..)
   target_compile_definitions(${t} PRIVATE ${PX_DEFS})
   target_compile_options(${t} PRIVATE ${COMMON_FLAGS})
   target_link_libraries(${t} ovd ${PHYSX_LIBS})
