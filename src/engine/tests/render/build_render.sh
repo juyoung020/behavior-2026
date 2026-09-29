@@ -4,7 +4,7 @@
 set -euo pipefail
 export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
 export PATH=/usr/local/cuda-12.8/bin:$PATH
-B=~/engine-build/render
+B=${RENDER_BUILD:-~/engine-build/render}
 cmake -S /mnt/c/behavior-2026/src/engine/tests -B "$B" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CUDA_HOST_COMPILER=g++ \
   -DCMAKE_BUILD_TYPE=Release > "$B.cmake.log" 2>&1 || { cat "$B.cmake.log"; exit 1; }
 T=("$@")

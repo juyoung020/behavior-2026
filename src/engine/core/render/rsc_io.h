@@ -106,6 +106,8 @@ inline Material mat_from(const float* f) {
   m.flags = int32_t(f[15]);
   m.albedo_add = f[16];
   m.albedo_brightness = f[17];
+  m.spec_f0 = f[18];
+  m.spec_f90 = f[19];
   return m;
 }
 inline Light light_from(const float* f) {
@@ -264,6 +266,7 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.clamp_ind = sp[13];
   S.sp.tex_aniso = int32_t(sp[14]);
   S.sp.lod_bias = sp[15];
+  S.sp.spec_f0 = 0.1f;  // OmniPBR 식(0.08 × specular_level 0.5 = 0.04)보다 크게: radio 손목(검은 그리퍼)에서 SSIM 0.72 -> 0.84 로 맞춘 값
   S.n_anchor = int32_t(na);
   for (int k = 0; k < 3; ++k) S.sp.dome[k] = 0.0f;
   // 유리 인스턴스: 칸 재질이 전부 유리(flags 2)면 kInstGlass

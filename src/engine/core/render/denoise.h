@@ -114,8 +114,9 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
     if (cmax > 0.0f) ind = V3{fmn(ind.x, cmax), fmn(ind.y, cmax), fmn(ind.z, cmax)};
     acc = acc + ind;
     // 1차 면 GGX 반사: 반벡터를 GGX 분포로 뽑아 광선 하나 (Walter 2007). 무게 = F G (v·h) / ((n·v)(n·h)).
-    // F0 = 0.04 (유전체, OmniPBR specular_level 0.5) 와 알베도를 금속도로 섞음. 맞은 점은 확산만(직접광 + 주변광/돔).
-    if (S.sp.spec) {
+    // F = f0 + (f90 - f0)(1 - v·h)^5 (재질 반사율, 없으면 sp.spec_f0·1), f0 는 알베도와 금속도로 섞음. 맞은 점은 확산만(직접광 + 주변광/돔).
+    const float sf0 = s0.f0 < 0.0f ? S.sp.spec_f0 : s0.f0, sf90 = s0.f0 < 0.0f ? 1.0f : s0.f90;
+    if (S.sp.spec && sf90 > 0.0f) {
       const float u1 = rnd01(rs);
       const float u2 = rnd01(rs);
       const V3 n = s0.ns;
@@ -141,10 +142,10 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
           const float g1l = 2.0f * nl / (nl + psqrt(a2 + (1.0f - a2) * nl * nl));
           const float m = 1.0f - vh;
           const float m5 = m * m * m * m * m;
-          const V3 f0{0.04f + (s0.albedo.x - 0.04f) * s0.metal, 0.04f + (s0.albedo.y - 0.04f) * s0.metal,
-                      0.04f + (s0.albedo.z - 0.04f) * s0.metal};
+          const V3 f0{sf0 + (s0.albedo.x - sf0) * s0.metal, sf0 + (s0.albedo.y - sf0) * s0.metal,
+                      sf0 + (s0.albedo.z - sf0) * s0.metal};
           const float gw = g1v * g1l * vh / (nv * ct);
-          const V3 wgt{(f0.x + (1.0f - f0.x) * m5) * gw, (f0.y + (1.0f - f0.y) * m5) * gw, (f0.z + (1.0f - f0.z) * m5) * gw};
+          const V3 wgt{(f0.x + (sf90 - f0.x) * m5) * gw, (f0.y + (sf90 - f0.y) * m5) * gw, (f0.z + (sf90 - f0.z) * m5) * gw};
           const Ray rr = make_ray(po0, l);
           const Hit hs = trace(S, E, rr, 1e-4f, 1e30f, false, kInstGlass);
           V3 ls{0.0f, 0.0f, 0.0f};

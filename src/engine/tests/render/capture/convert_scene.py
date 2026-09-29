@@ -59,6 +59,22 @@ class TexCache:
         self.n = 0
         self.missing = []
 
+    def mean(self, asset):
+        """텍스처 RGB 평균 (0~1, 64x64 로 줄여서). 못 찾으면 None"""
+        if not asset:
+            return None
+        from tex_lookup import find_texture
+        from PIL import Image
+
+        path = find_texture(asset)
+        if not path:
+            return None
+        if not hasattr(self, "_means"):
+            self._means = {}
+        if path not in self._means:
+            self._means[path] = float(np.asarray(Image.open(path).convert("RGB").resize((64, 64)), np.float32).mean() / 255.0)
+        return self._means[path]
+
     def get(self, asset):
         if not asset:
             return -1
@@ -144,6 +160,20 @@ def material_row(m, tex: TexCache, stats):
         row[12:15] = e * float(get_in(sh, "emissive_intensity", 40.0))
     row[16] = float(get_in(sh, "albedo_add", 0.0))
     row[17] = float(get_in(sh, "albedo_brightness", 1.0))
+    if "vray" in kind.lower():
+        # OmniGibsonVRayMtl 반사 (omnigibson_vray_mtl.mdl:88-117): Reflection = 반사 텍스처 색, reflection_glossiness = *_roughness.png 값
+        # (이름과 달리 광택으로 들어간다), metalness 텍스처. 텍스처를 평균 하나로 줄인다(렌더러는 재질 상수로 씀).
+        # 반사율: 수직 = 반사 × Fresnel(IOR 1.6) = 반사 × 0.053, 스침 = 반사. 거칠기 = 1 - 광택.
+        refl = tex.mean(get_in(sh, "reflection_texture"))
+        gloss = tex.mean(get_in(sh, "glossiness_texture"))
+        metal = tex.mean(get_in(sh, "metalness_texture"))
+        refl = 0.0 if refl is None else refl
+        row[9] = min(max(1.0 - (0.5 if gloss is None else gloss), 0.05), 1.0)
+        row[10] = 0.0 if metal is None else metal
+        row[18] = refl * 0.053
+        row[19] = refl
+        if refl <= 0.0 and row[10] <= 0.0:
+            row[18:20] = [-2.0, 0.0]  # 반사 없음 표시 (둘 다 0 이면 렌더러가 기본 반사율로 읽는다)
     return row
 
 

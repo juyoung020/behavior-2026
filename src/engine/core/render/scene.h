@@ -34,7 +34,8 @@ struct Material {
   float roughness, metallic, opacity;
   float emissive[3];   // 방출 휘도 (이미 세기·노출 곱함)
   int32_t flags;       // 1 = 텍스처가 알파로 잘라냄(cutout)
-  float albedo_add, albedo_brightness, pad0, pad1;
+  float albedo_add, albedo_brightness;
+  float spec_f0, spec_f90;  // 반사율: 수직·스침 (Schlick 두 끝). 둘 다 0 이면 기본(sp.spec_f0, 1). VRay = 반사 텍스처 평균 × Fresnel(IOR 1.6)
 };
 
 struct TexInfo {
@@ -73,6 +74,7 @@ struct ShadeParams {
   int32_t dome_map;      // 위경도 방향 규약 (시험용 변형 번호, 0 = 기본)
   int32_t tex_aniso;     // 텍스처 밉 발자국 (0 등방, 1 반비등방, 2 짧은 축). 파일 sp[14]
   float lod_bias;        // 밉 단계 더하기. 파일 sp[15]
+  float spec_f0;         // 재질에 반사율이 없을 때 쓰는 F0 (OmniPBR). 파일에 없음, 불러올 때 0.1 (rsc_io.h)
   float clamp_ind;       // 간접광(튕김·반사) 표본 하나의 채널 최댓값 × 노출 (반딧불 자르기, 0 = 안 자름). 파일 sp[13]
 };
 

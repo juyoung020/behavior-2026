@@ -297,7 +297,7 @@ int main(int argc, char** argv) {
   H.sp.exposure = 1.0f; H.sp.spp = spp; H.sp.shadow_lights = 1; H.sp.tonemap = tonemap; H.sp.bounces = bounces;
   H.sp.ao_range = ao; H.sp.white_scale = 8.0f;
   H.sp.dome_light = -1;  // 텍스처 돔 없음 (dome[] 상수)
-  H.sp.denoise = denoise; H.sp.dn_plane = 0.01f; H.sp.spec = spec; H.sp.clamp_ind = 0.0f; H.sp.tex_aniso = 2; H.sp.lod_bias = -0.5f;
+  H.sp.denoise = denoise; H.sp.dn_plane = 0.01f; H.sp.spec = spec; H.sp.clamp_ind = 0.0f; H.sp.tex_aniso = 2; H.sp.lod_bias = -0.5f; H.sp.spec_f0 = 0.04f;
   const SceneView SV = H.view();
   printf("합성 장면: 인스턴스 %d, 기하 %zu, 삼각형 %zu, BLAS 노드 %zu, 조명 %zu | 판 %d, 해상도 %d,%d,%d, spp %d, 튕김 %d\n",
          SV.n_inst, H.geoms.size(), H.tris.size(), H.blas_nodes.size(), H.lights.size(), envs, res[0], res[1], res[2],

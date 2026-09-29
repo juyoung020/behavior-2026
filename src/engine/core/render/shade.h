@@ -161,6 +161,7 @@ struct Surf {
   V3 albedo, emissive;
   float opacity;
   float rough, metal;  // 반사(GGX) 거칠기·금속도 (재질 상수)
+  float f0, f90;       // 반사율 두 끝 (f0 < 0: 기본 sp.spec_f0·1)
 };
 
 // cone: 맞은 점에서 광선 원뿔의 폭(월드 m, 광선에 수직) — 텍스처 밉 단계(광선 원뿔, Akenine-Möller 2019 식 단순판)
@@ -190,6 +191,8 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
   s.opacity = 1.0f;
   s.rough = 0.5f;
   s.metal = 0.0f;
+  s.f0 = -1.0f;
+  s.f90 = 1.0f;
   if (mi >= 0) {
     const Material& M = S.mats[mi];
     V3 a{M.albedo[0], M.albedo[1], M.albedo[2]};
@@ -223,6 +226,10 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
     s.emissive = V3{M.emissive[0], M.emissive[1], M.emissive[2]};
     s.rough = fmn(fmx(M.roughness, 0.02f), 1.0f);
     s.metal = fmn(fmx(M.metallic, 0.0f), 1.0f);
+    if (M.spec_f0 != 0.0f || M.spec_f90 != 0.0f) {  // 재질 반사율 있음 (f0 = -2, f90 = 0 은 '반사 없음')
+      s.f0 = fmx(M.spec_f0, 0.0f);
+      s.f90 = M.spec_f90;
+    }
   }
   s.ns = ns;
   s.ng = ng;

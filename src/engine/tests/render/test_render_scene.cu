@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
   int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0, lag = 0, denoise = -1, spec = -1;
   float clampi = -1;
   int dome_map = -1, aniso = -1;
-  float lod_bias = -99;
+  float lod_bias = -99, spec_f0 = -1;
   int mg_lo = -1, mg_hi = -1;
   float mg_val = 0;
   float exposure = -1, ambient = -1, ao = -1, white = -1, dn_plane = -1, dome_tex[3] = {1.0f, 1.0f, 1.0f};
@@ -146,6 +146,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--aniso") && i + 1 < argc) aniso = atoi(nx());
     else if (!strcmp(argv[i], "--mat-gray") && i + 1 < argc) sscanf(nx(), "%d,%d,%f", &mg_lo, &mg_hi, &mg_val);  // 재질 lo..hi 알베도 = 회색 val (텍스처 끔, 실험용)
     else if (!strcmp(argv[i], "--lod-bias") && i + 1 < argc) lod_bias = float(atof(nx()));
+    else if (!strcmp(argv[i], "--spec-f0") && i + 1 < argc) spec_f0 = float(atof(nx()));
     else if (!strcmp(argv[i], "--clamp") && i + 1 < argc) clampi = float(atof(nx()));
     else if (!strcmp(argv[i], "--dn-plane") && i + 1 < argc) dn_plane = float(atof(nx()));
     else if (!strcmp(argv[i], "--dome-tex") && i + 1 < argc) sscanf(nx(), "%f,%f,%f", &dome_tex[0], &dome_tex[1], &dome_tex[2]);
@@ -175,6 +176,7 @@ int main(int argc, char** argv) {
     H.mats[m].albedo_brightness = 1.0f;
   }
   if (lod_bias > -98) H.sp.lod_bias = lod_bias;
+  if (spec_f0 >= 0) H.sp.spec_f0 = spec_f0;
   if (clampi >= 0) H.sp.clamp_ind = clampi;
   if (dn_plane > 0) H.sp.dn_plane = dn_plane;
   for (int k = 0; k < 3; ++k) H.sp.dome[k] *= dome_tex[k];  // 하늘 텍스처 평균(선형) — sky.jpg 위 반구 평균 0.247,0.350,0.778
