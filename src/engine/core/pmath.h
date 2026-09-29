@@ -10,6 +10,11 @@
 #define EHD inline
 #endif
 
+// GPU 컴파일 규칙 (층 2): nvcc -fmad=false -prec-div=true -prec-sqrt=true -ftz=true
+//  - PhysX 는 simulate 안에서 SSE 를 FTZ+DAZ 로 둔다 (PxSIMDGuard, physx/include/foundation/unix/PxUnixFPU.h) -> GPU 도 -ftz=true,
+//    CPU 참조판(층 1)은 풀이 구간에서 MXCSR 에 FTZ·DAZ 를 켠다 (tests 의 FtzScope).
+//  - 삼각함수는 core/glibc_sincosf.h (glibc 2.35 FMA 판 이식, float 전 범위 libm 과 비트 동일 확인)
+
 namespace eng {
 
 struct V3 { float x, y, z; };
@@ -27,7 +32,14 @@ EHD V3& operator+=(V3& a, const V3& b) { a.x += b.x; a.y += b.y; a.z += b.z; ret
 EHD V3& operator*=(V3& a, float s) { a.x *= s; a.y *= s; a.z *= s; return a; }
 EHD float dot(const V3& a, const V3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 EHD float magSq(const V3& a) { return a.x * a.x + a.y * a.y + a.z * a.z; }
-EHD float mag(const V3& a) { return std::sqrt(magSq(a)); }
+EHD float psqrt(float x) {  // IEEE 올바른 반올림 제곱근 (SSE sqrtss 와 같음)
+#if defined(__CUDA_ARCH__)
+  return __fsqrt_rn(x);
+#else
+  return std::sqrt(x);
+#endif
+}
+EHD float mag(const V3& a) { return psqrt(magSq(a)); }
 EHD V3 mulc(const V3& a, const V3& b) { return V3{a.x * b.x, a.y * b.y, a.z * b.z}; }  // PxVec3::multiply
 EHD V3 cross(const V3& a, const V3& b) { return V3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
 EHD bool isZero(const V3& a) { return a.x == 0.0f && a.y == 0.0f && a.z == 0.0f; }
@@ -43,7 +55,7 @@ EHD Q operator*(const Q& a, float r) { return Q{a.x * r, a.y * r, a.z * r, a.w *
 EHD Q conj(const Q& a) { return Q{-a.x, -a.y, -a.z, a.w}; }
 EHD float qmagSq(const Q& a) { return a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w; }
 EHD Q normalized(const Q& a) {  // PxQuat::getNormalized: s = 1/magnitude
-  const float s = 1.0f / std::sqrt(qmagSq(a));
+  const float s = 1.0f / psqrt(qmagSq(a));
   return Q{a.x * s, a.y * s, a.z * s, a.w * s};
 }
 EHD bool isIdentity(const Q& a) { return a.x == 0.0f && a.y == 0.0f && a.z == 0.0f && a.w == 1.0f; }

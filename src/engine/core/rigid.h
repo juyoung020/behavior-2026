@@ -10,6 +10,7 @@
 #pragma once
 #include <cstdint>
 
+#include "glibc_sincosf.h"
 #include "pmath.h"
 
 namespace eng {
@@ -45,7 +46,7 @@ struct SceneParams {
 };
 
 // ---- 생성·API (PhysX 와 같은 입력 -> 같은 내부 상태)
-inline Body createRigidDynamic(const Tf& pose, const SceneParams& sp) {
+EHD Body createRigidDynamic(const Tf& pose, const SceneParams& sp) {
   Body b{};
   b.body2World = normalized(pose);                  // NpPhysics.cpp:522 globalPose.getNormalized()
   b.body2Actor = Tf{qid(), V3{0, 0, 0}};
@@ -76,20 +77,20 @@ inline Body createRigidDynamic(const Tf& pose, const SceneParams& sp) {
   b.internalFlags = 0;
   return b;
 }
-inline void setCMassLocalPose(Body& b, const Tf& pose) {  // NpRigidDynamic.cpp:185 -> ScBodyCore.cpp:98
+EHD void setCMassLocalPose(Body& b, const Tf& pose) {  // NpRigidDynamic.cpp:185 -> ScBodyCore.cpp:98
   const Tf p = normalized(pose);
   const Tf oldActor2World = b.body2World * inverse(b.body2Actor);
   b.body2World = oldActor2World * p;
   b.body2Actor = p;
 }
-inline void setMass(Body& b, float m) { b.invMass = m > 0.0f ? 1.0f / m : 0.0f; }
-inline void setMassSpaceInertiaTensor(Body& b, const V3& m) {
+EHD void setMass(Body& b, float m) { b.invMass = m > 0.0f ? 1.0f / m : 0.0f; }
+EHD void setMassSpaceInertiaTensor(Body& b, const V3& m) {
   b.invInertia = V3{m.x == 0.0f ? 0.0f : 1.0f / m.x, m.y == 0.0f ? 0.0f : 1.0f / m.y, m.z == 0.0f ? 0.0f : 1.0f / m.z};
 }
-inline Tf getGlobalPose(const Body& b) { return b.body2World * inverse(b.body2Actor); }  // NpRigidDynamic.h:66
+EHD Tf getGlobalPose(const Body& b) { return b.body2World * inverse(b.body2Actor); }  // NpRigidDynamic.h:66
 
 // ---- 한 simulate: 제약·접촉이 없는 묶음 경로 (DyTGSDynamics.cpp:2527-2570)
-inline void stepFree(Body& b, const SceneParams& sp, float dt) {
+EHD void stepFree(Body& b, const SceneParams& sp, float dt) {
   const float invDt = 1.0f / dt;
   // 1) preIntegrate: bodyCoreComputeUnconstrainedVelocity (DyBodyCoreIntegrator.h:39)
   {
@@ -107,17 +108,17 @@ inline void stepFree(Body& b, const SceneParams& sp, float dt) {
     lv *= linVelMultiplier;
     av *= angVelMultiplier;
     const float linVelSq = magSq(lv);
-    if (linVelSq > b.maxLinVelSq) lv *= std::sqrt(b.maxLinVelSq / linVelSq);
+    if (linVelSq > b.maxLinVelSq) lv *= psqrt(b.maxLinVelSq / linVelSq);
     const float angVelSq = magSq(av);
-    if (angVelSq > b.maxAngVelSq) av *= std::sqrt(b.maxAngVelSq / angVelSq);
+    if (angVelSq > b.maxAngVelSq) av *= psqrt(b.maxAngVelSq / angVelSq);
     b.linVel = lv;
     b.angVel = av;
   }
   // 2) copyToSolverBodyDataStep (DyTGSDynamics.cpp:154)
   const M33 rotation = mat_from_quat_simd(b.body2World.q);
-  const V3 sqrtInvInertia{b.invInertia.x == 0.0f ? 0.0f : std::sqrt(b.invInertia.x),
-                          b.invInertia.y == 0.0f ? 0.0f : std::sqrt(b.invInertia.y),
-                          b.invInertia.z == 0.0f ? 0.0f : std::sqrt(b.invInertia.z)};
+  const V3 sqrtInvInertia{b.invInertia.x == 0.0f ? 0.0f : psqrt(b.invInertia.x),
+                          b.invInertia.y == 0.0f ? 0.0f : psqrt(b.invInertia.y),
+                          b.invInertia.z == 0.0f ? 0.0f : psqrt(b.invInertia.z)};
   const V3 sqrtBodySpaceInertia{sqrtInvInertia.x == 0.0f ? 0.0f : 1.0f / sqrtInvInertia.x,
                                 sqrtInvInertia.y == 0.0f ? 0.0f : 1.0f / sqrtInvInertia.y,
                                 sqrtInvInertia.z == 0.0f ? 0.0f : 1.0f / sqrtInvInertia.z};
@@ -167,10 +168,10 @@ inline void stepFree(Body& b, const SceneParams& sp, float dt) {
     const float w2 = magSq(angularMotionVel);
     body2WorldP += delta;
     if (w2 != 0.0f) {
-      const float w = std::sqrt(w2);
+      const float w = psqrt(w2);
       const float v = dt * w * 0.5f;
-      float s = std::sin(v);                         // PxSinCos -> ::sinf / ::cosf (PxMath.h:210)
-      const float q = std::cos(v);
+      float s = glibc::sinf(v);                      // PxSinCos -> ::sinf / ::cosf (PxMath.h:210), glibc 2.35 이식
+      const float q = glibc::cosf(v);
       s /= w;
       const V3 pqr = angularMotionVel * s;
       const Q quatVel{pqr.x, pqr.y, pqr.z, 0.0f};
