@@ -320,7 +320,12 @@ class IntegPolicy:
             elif not self.stage_warned:
                 self.stage_warned = True
                 print("[simlink] 이 π0.5 가중치에는 단계 입력이 없다(문장 모델) — 단계 번호는 기록만", flush=True)
-        self.decisions.append({"env": env, "step": self.step, "applied": applied, **d})
+        rec = {"env": env, "step": self.step, "applied": applied, **d}
+        if self.log_path:  # 결정은 드물다: 바로 적는다(평가기가 끝에 프로세스를 바로 닫아도 남게)
+            with open(pathlib.Path(self.log_path).with_name("decisions.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        else:
+            self.decisions.append(rec)
         if d.get("kind") != "stage":
             print(f"[simlink] step {self.step} env {env}: {d.get('kind')} ({d.get('trigger')}) "
                   f"text={d.get('text')!r} stage={d.get('stage')} est={d.get('stage_est')} applied={applied} "
