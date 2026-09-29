@@ -6,7 +6,7 @@
 #include <vector>
 #include <xmmintrin.h>
 
-#include "core/render/shade.h"
+#include "core/render/denoise.h"
 #include "core/render/tlas.h"
 
 namespace eng {
@@ -59,21 +59,41 @@ struct HostEnv {
   }
 };
 
+// 층 1 카메라 한 대: (1) G 버퍼·조도 (2) à-trous sp.denoise 번 (3) 합치기·톤매핑. 단계 사이는 스레드 합류(= GPU 커널 경계).
+// lin != nullptr 이면 톤매핑 전 선형 휘도(픽셀당 3)도 적는다(노출 맞추기용, 비트 비교 대상 아님).
 inline void render_host(const SceneView& S, HostEnv& E, const Camera& c, int32_t env, int32_t cam, int32_t frame,
-                        float* depth, uint8_t* rgb, int nthreads = 0) {
+                        float* depth, uint8_t* rgb, int nthreads = 0, float* lin = nullptr) {
   if (nthreads <= 0) nthreads = int(std::thread::hardware_concurrency());
   const EnvView ev = E.view();
-  std::vector<std::thread> th;
-  for (int t = 0; t < nthreads; ++t)
-    th.emplace_back([&, t] {
-      // GPU -ftz=true 와 같게: 이 스레드의 MXCSR 에 FTZ(0x8000)+DAZ(0x40)
-      const unsigned old = _mm_getcsr();
-      _mm_setcsr(old | 0x8040u);
-      for (int py = t; py < c.h; py += nthreads)
-        for (int px = 0; px < c.w; ++px) render_pixel(S, ev, c, env, cam, frame, px, py, depth, rgb);
-      _mm_setcsr(old);
-    });
-  for (auto& x : th) x.join();
+  const int n = c.w * c.h;
+  std::vector<GPix> G(n);
+  std::vector<float> A(size_t(n) * 6), B(size_t(n) * 6);
+  auto par = [&](auto&& fn) {
+    std::vector<std::thread> th;
+    for (int t = 0; t < nthreads; ++t)
+      th.emplace_back([&, t] {
+        const unsigned old = _mm_getcsr();  // GPU -ftz=true 와 같게: FTZ(0x8000)+DAZ(0x40)
+        _mm_setcsr(old | 0x8040u);
+        for (int py = t; py < c.h; py += nthreads)
+          for (int px = 0; px < c.w; ++px) fn(px, py);
+        _mm_setcsr(old);
+      });
+    for (auto& x : th) x.join();
+  };
+  par([&](int px, int py) {
+    const int i = py * c.w + px;
+    shade_gbuf(S, ev, c, px, py, pixel_seed(env, cam, px, py, frame), depth[i], G[i], &A[6 * size_t(i)]);
+  });
+  float* in = A.data();
+  float* out = B.data();
+  for (int it = 0; it < S.sp.denoise; ++it) {
+    par([&](int px, int py) { atrous_pixel(c, G.data(), in, out, px, py, 1 << it, S.sp.dn_plane); });
+    float* t = in; in = out; out = t;
+  }
+  par([&](int px, int py) { compose_pixel(S.sp, G.data(), in, py * c.w + px, rgb); });
+  if (lin)
+    for (int i = 0; i < n; ++i)
+      for (int k = 0; k < 3; ++k) lin[3 * i + k] = G[i].a[k] * in[6 * i + k] + in[6 * i + 3 + k];
 }
 
 }  // namespace rnd

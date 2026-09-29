@@ -222,7 +222,7 @@ __global__ void kProbeTrace(SceneView S, gpu::Batch B, const Camera* cams, int n
 }
 
 int main(int argc, char** argv) {
-  int envs = 64, ninst = 2000, spp = 1, bounces = 1, check = 4, reps = 5, use_gpu = 1, tonemap = 2;
+  int envs = 64, ninst = 2000, spp = 1, bounces = 1, check = 4, reps = 5, use_gpu = 1, tonemap = 2, denoise = 4, spec = 1;
   float ao = 0.0f;
   const char* dump = nullptr;
   int res[3] = {720, 480, 480};
@@ -235,6 +235,8 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--reps") && i + 1 < argc) reps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--gpu") && i + 1 < argc) use_gpu = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--ao") && i + 1 < argc) ao = float(atof(argv[++i]));
+    else if (!strcmp(argv[i], "--denoise") && i + 1 < argc) denoise = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--spec") && i + 1 < argc) spec = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--tonemap") && i + 1 < argc) tonemap = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
     else if (!strcmp(argv[i], "--res") && i + 1 < argc) sscanf(argv[++i], "%d,%d,%d", &res[0], &res[1], &res[2]);
@@ -294,6 +296,8 @@ int main(int argc, char** argv) {
   H.sp.ambient[0] = 0.05f; H.sp.ambient[1] = 0.05f; H.sp.ambient[2] = 0.06f;
   H.sp.exposure = 1.0f; H.sp.spp = spp; H.sp.shadow_lights = 1; H.sp.tonemap = tonemap; H.sp.bounces = bounces;
   H.sp.ao_range = ao; H.sp.white_scale = 8.0f;
+  H.sp.dome_light = -1;  // 텍스처 돔 없음 (dome[] 상수)
+  H.sp.denoise = denoise; H.sp.dn_plane = 0.01f; H.sp.spec = spec; H.sp.clamp_ind = 0.0f; H.sp.tex_aniso = 2; H.sp.lod_bias = -0.5f;
   const SceneView SV = H.view();
   printf("합성 장면: 인스턴스 %d, 기하 %zu, 삼각형 %zu, BLAS 노드 %zu, 조명 %zu | 판 %d, 해상도 %d,%d,%d, spp %d, 튕김 %d\n",
          SV.n_inst, H.geoms.size(), H.tris.size(), H.blas_nodes.size(), H.lights.size(), envs, res[0], res[1], res[2],
@@ -343,6 +347,7 @@ int main(int argc, char** argv) {
   gpu::DevScene DS;
   DS.init(H);
   gpu::Batch B = gpu::make_batch(DS.view, envs);
+  gpu::Scratch work;
   RCK(cudaMemcpy(B.anchor, anchors.data(), anchors.size() * sizeof(Aff), cudaMemcpyHostToDevice));
   std::vector<uint32_t> vis(size_t(envs) * B.W, 0xFFFFFFFFu);
   RCK(cudaMemcpy(B.vis, vis.data(), vis.size() * 4, cudaMemcpyHostToDevice));
@@ -364,8 +369,7 @@ int main(int argc, char** argv) {
     RCK(cudaGetLastError());
     cudaEventRecord(e1);
     for (int c = 0; c < ncam; ++c) {
-      dim3 bs(16, 8), gs((res[c] + 15) / 16, (res[c] + 7) / 8, envs);
-      gpu::kRender<<<gs, bs>>>(DS.view, B, dcams, ncam, c, frame, ddep[c], drgb[c]);
+      gpu::render_cam(DS.view, B, dcams, ncam, c, res[c], res[c], frame, ddep[c], drgb[c], work);
       RCK(cudaGetLastError());
     }
   };

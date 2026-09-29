@@ -111,8 +111,13 @@ static void write_ppm(const std::string& fn, const uint8_t* rgb, int stride, int
 int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "사용: test_render_scene <폴더> ...\n"); return 2; }
   const std::string dir = argv[1];
-  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0, lag = 0;
-  float exposure = -1, ambient = -1, ao = -1, white = -1, dome_tex[3] = {1.0f, 1.0f, 1.0f};
+  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0, lag = 0, denoise = -1, spec = -1;
+  float clampi = -1;
+  int dome_map = -1, aniso = -1;
+  float lod_bias = -99;
+  int mg_lo = -1, mg_hi = -1;
+  float mg_val = 0;
+  float exposure = -1, ambient = -1, ao = -1, white = -1, dn_plane = -1, dome_tex[3] = {1.0f, 1.0f, 1.0f};
   std::string out;
   std::vector<int> only_frames;
   for (int i = 2; i < argc; ++i) {
@@ -135,6 +140,14 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--official") && i + 1 < argc) official = atoi(nx());
     else if (!strcmp(argv[i], "--fit")) fit = 1;
     else if (!strcmp(argv[i], "--lag") && i + 1 < argc) lag = atoi(nx());
+    else if (!strcmp(argv[i], "--denoise") && i + 1 < argc) denoise = atoi(nx());
+    else if (!strcmp(argv[i], "--spec") && i + 1 < argc) spec = atoi(nx());
+    else if (!strcmp(argv[i], "--dome-map") && i + 1 < argc) dome_map = atoi(nx());
+    else if (!strcmp(argv[i], "--aniso") && i + 1 < argc) aniso = atoi(nx());
+    else if (!strcmp(argv[i], "--mat-gray") && i + 1 < argc) sscanf(nx(), "%d,%d,%f", &mg_lo, &mg_hi, &mg_val);  // 재질 lo..hi 알베도 = 회색 val (텍스처 끔, 실험용)
+    else if (!strcmp(argv[i], "--lod-bias") && i + 1 < argc) lod_bias = float(atof(nx()));
+    else if (!strcmp(argv[i], "--clamp") && i + 1 < argc) clampi = float(atof(nx()));
+    else if (!strcmp(argv[i], "--dn-plane") && i + 1 < argc) dn_plane = float(atof(nx()));
     else if (!strcmp(argv[i], "--dome-tex") && i + 1 < argc) sscanf(nx(), "%f,%f,%f", &dome_tex[0], &dome_tex[1], &dome_tex[2]);
     else if (!strcmp(argv[i], "--frames") && i + 1 < argc) {
       char* s = nx();
@@ -151,6 +164,19 @@ int main(int argc, char** argv) {
   if (ambient >= 0) H.sp.ambient[0] = H.sp.ambient[1] = H.sp.ambient[2] = ambient;
   if (ao >= 0) H.sp.ao_range = ao;
   if (white >= 0) H.sp.white_scale = white;
+  if (denoise >= 0) H.sp.denoise = denoise;
+  if (spec >= 0) H.sp.spec = spec;
+  if (dome_map >= 0) H.sp.dome_map = dome_map;
+  if (aniso >= 0) H.sp.tex_aniso = aniso;
+  for (int m = mg_lo; m >= 0 && m <= mg_hi && m < int(H.mats.size()); ++m) {
+    H.mats[m].tex_albedo = -1;
+    H.mats[m].albedo[0] = H.mats[m].albedo[1] = H.mats[m].albedo[2] = mg_val;
+    H.mats[m].albedo_add = 0.0f;
+    H.mats[m].albedo_brightness = 1.0f;
+  }
+  if (lod_bias > -98) H.sp.lod_bias = lod_bias;
+  if (clampi >= 0) H.sp.clamp_ind = clampi;
+  if (dn_plane > 0) H.sp.dn_plane = dn_plane;
   for (int k = 0; k < 3; ++k) H.sp.dome[k] *= dome_tex[k];  // 하늘 텍스처 평균(선형) — sky.jpg 위 반구 평균 0.247,0.350,0.778
   if (!lights) H.lights.clear();
   const double t_load = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -305,23 +331,9 @@ int main(int argc, char** argv) {
         const RgbStat so = rgb_stat(orgb->data.data(), int(orgb->c), n);
         if (so.mean[0] + so.mean[1] + so.mean[2] < 6.0) continue;  // 검은 프레임
         Buf b{std::vector<float>(size_t(n) * 3), orgb, n};
-        std::vector<std::thread> th;
-        const int nt = int(std::thread::hardware_concurrency());
-        for (int t = 0; t < nt; ++t)
-          th.emplace_back([&, t] {
-            const unsigned old = _mm_getcsr();
-            _mm_setcsr(old | 0x8040u);
-            for (int py = t; py < cm.h; py += nt)
-              for (int px = 0; px < cm.w; ++px) {
-                float d;
-                V3 L;
-                shade_pixel(SV, ev, cm, px, py, pixel_seed(0, c, px, py, int(F.step)), d, L);
-                float* o = &b.L[3 * (size_t(py) * cm.w + px)];
-                o[0] = L.x; o[1] = L.y; o[2] = L.z;
-              }
-            _mm_setcsr(old);
-          });
-        for (auto& x : th) x.join();
+        std::vector<float> dd(n);
+        std::vector<uint8_t> rr(size_t(n) * 3);
+        render_host(SV, HE, cm, 0, c, int(F.step), dd.data(), rr.data(), 0, b.L.data());  // 잡음 제거까지 같은 경로
         bufs.push_back(std::move(b));
       }
     }
@@ -358,6 +370,7 @@ int main(int argc, char** argv) {
   gpu::DevScene DS;
   DS.init(H);
   gpu::Batch B = gpu::make_batch(DS.view, envs);
+  gpu::Scratch work;
   std::vector<Aff> anchors(size_t(envs) * B.A);
   std::vector<uint32_t> vis(size_t(envs) * B.W, 0xFFFFFFFFu);
   std::vector<Camera> cams(size_t(envs) * 3);
@@ -397,9 +410,8 @@ int main(int argc, char** argv) {
     RCK(cudaGetLastError());
     cudaEventRecord(e1);
     for (int c = 0; c < 3; ++c) {
-      dim3 bs(16, 8), gs((cw[c] + 15) / 16, (chh[c] + 7) / 8, envs);
       // 프레임 번호 = 판이 그리는 기록 스텝 (층 1 과 같은 난수 씨앗) -> 판마다 다르므로 커널 인자 대신 0 으로 두고 판 번호로 구분
-      gpu::kRender<<<gs, bs>>>(DS.view, B, dcams, 3, c, 0, ddep[c], drgb[c]);
+      gpu::render_cam(DS.view, B, dcams, 3, c, cw[c], chh[c], 0, ddep[c], drgb[c], work);
       RCK(cudaGetLastError());
     }
     cudaEventRecord(e2);

@@ -35,6 +35,7 @@ struct RenderBatch {
   Camera* dcams = nullptr;
   std::vector<float*> ddep;
   std::vector<uint8_t*> drgb;
+  Scratch work;  // 잡음 제거 작업 공간 (카메라끼리 재사용, 가장 큰 카메라 × 판 수)
 
   void init(const HostScene& H, int envs, const std::vector<CamRig>& cam_rigs) {
     scene.init(H);
@@ -70,8 +71,7 @@ struct RenderBatch {
     kBuild<<<E, kBuildThreads, 0, st>>>(scene.view, B);
     kRigs<<<(E * ncam + 127) / 128, 128, 0, st>>>(drigs, ncam, B, dcams);
     for (int c = 0; c < ncam; ++c) {
-      dim3 bs(16, 8), gs((rigs[c].w + 15) / 16, (rigs[c].h + 7) / 8, E);
-      kRender<<<gs, bs, 0, st>>>(scene.view, B, dcams, ncam, c, frame, ddep[c], drgb[c]);
+      render_cam(scene.view, B, dcams, ncam, c, rigs[c].w, rigs[c].h, frame, ddep[c], drgb[c], work, st);
     }
     RCK(cudaGetLastError());
   }

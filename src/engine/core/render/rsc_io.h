@@ -116,6 +116,7 @@ inline Light light_from(const float* f) {
   L.cone_angle = f[11]; L.cone_softness = f[12];
   for (int k = 0; k < 12; ++k) L.rel.m[k] = f[13 + k];
   L.normalize = f[25] != 0.0f ? 1 : 0;
+  L.tex = int32_t(f[26]) - 1;
   if (L.normalize) {  // USD Lux: 휘도 = 세기 / 표면적 (구 4πr², 사각 w·h, 원판 πr², 원기둥 2πrL)
     const float pi = 3.14159265f;
     float area = 0.0f;
@@ -257,6 +258,12 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.exposure = sp[3]; S.sp.spp = int32_t(sp[4]); S.sp.shadow_lights = int32_t(sp[5]);
   S.sp.tonemap = int32_t(sp[6]); S.sp.bounces = int32_t(sp[7]); S.sp.white_scale = sp[8];
   S.sp.ao_range = sp[9];
+  S.sp.denoise = int32_t(sp[10]);
+  S.sp.dn_plane = sp[11] > 0.0f ? sp[11] : 0.01f;
+  S.sp.spec = int32_t(sp[12]);
+  S.sp.clamp_ind = sp[13];
+  S.sp.tex_aniso = int32_t(sp[14]);
+  S.sp.lod_bias = sp[15];
   S.n_anchor = int32_t(na);
   for (int k = 0; k < 3; ++k) S.sp.dome[k] = 0.0f;
   // 유리 인스턴스: 칸 재질이 전부 유리(flags 2)면 kInstGlass
@@ -271,6 +278,11 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
     }
     if (glass) S.insts[i].flags |= kInstGlass;
   }
+  S.sp.dome_light = -1;
+  S.sp.dome_map = 0;
+  for (size_t i = 0; i < S.lights.size(); ++i)
+    if (S.lights[i].type == kLightDome && S.lights[i].visible && S.lights[i].tex >= 0 && S.sp.dome_light < 0)
+      S.sp.dome_light = int32_t(i);
   for (const auto& L : S.lights)
     if (L.type == kLightDome && L.visible)
       for (int k = 0; k < 3; ++k) S.sp.dome[k] += L.radiance[k];

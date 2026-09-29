@@ -48,7 +48,7 @@ enum LightType : int32_t { kLightSphere = 0, kLightRect = 1, kLightDisk = 2, kLi
 
 struct Light {
   int32_t type, anchor;  // anchor: 조명이 붙은 기준 prim (-1 = 고정, world 그대로)
-  int32_t visible, pad;
+  int32_t visible, tex;  // tex: 돔 위경도 텍스처 (-1 없음)
   float radiance[3];     // 휘도 = intensity * 2^exposure * color (* 색온도)
   float radius, width, height, length, angle;  // 모양 (USD 단위)
   float cone_angle, cone_softness;
@@ -66,7 +66,14 @@ struct ShadeParams {
   float white_scale;     // Hable/Reinhard 흰색 기준 (선형)
   float ao_range;        // 주변광 가림 거리 (m). 코사인 광선이 이 거리 안에서 막히면 주변광 없음. 0 이하 = 가림 없음
   float dome[3];         // 돔(하늘) 휘도: 아무것도 안 맞은 광선이 받는 빛. 불러올 때 DomeLight 들의 radiance 합(텍스처는 평균 1 로 봄)
-  float pad1;
+  int32_t denoise;       // à-trous 잡음 제거 반복 수 (0 = 끔, denoise.h). 파일 sp[10]
+  float dn_plane;        // 잡음 제거 평면 거리 허용 (거리 × 간격 배수). 파일 sp[11], 0 이면 0.01
+  int32_t spec;          // 1차 면 GGX 반사 광선 (0 = 끔). 파일 sp[12]
+  int32_t dome_light;    // 텍스처 있는 돔 조명 번호 (-1 없음: dome[] 상수)
+  int32_t dome_map;      // 위경도 방향 규약 (시험용 변형 번호, 0 = 기본)
+  int32_t tex_aniso;     // 텍스처 밉 발자국 (0 등방, 1 반비등방, 2 짧은 축). 파일 sp[14]
+  float lod_bias;        // 밉 단계 더하기. 파일 sp[15]
+  float clamp_ind;       // 간접광(튕김·반사) 표본 하나의 채널 최댓값 × 노출 (반딧불 자르기, 0 = 안 자름). 파일 sp[13]
 };
 
 // 정적 장면 (판 공유). 포인터는 호스트 또는 장치 메모리.

@@ -2,7 +2,7 @@
 //  kBuild : 판 하나 = 블록 하나. 인스턴스 월드 행렬·역행렬·AABB -> 중심 경계(블록 축약, min/max) -> 64 비트 키 ->
 //           비트닉 정렬(전역 작업 공간) -> Karras 내부 노드 -> 잎에서 뿌리로 상자(원자 계수, 두 번째 도착이 계산) -> 노드 채움.
 //           층 1(tlas_build_host)과 같은 트리를 만든다(키가 모두 다르고, 상자는 min/max 라 순서 무관).
-//  kRender: 스레드 하나 = 픽셀 하나, blockIdx.z = 판. core/render/render_host.h 의 render_pixel 을 그대로 부른다.
+//  render_cam: kShade -> kAtrous × sp.denoise -> kCompose (core/render/denoise.h 의 EHD 함수를 층 1 과 똑같이 부른다).
 // 컴파일: -fmad=false -prec-div=true -prec-sqrt=true -ftz=true (tests/CMakeLists.txt ENGINE_CUDA_FLAGS)
 #pragma once
 #include <cuda_runtime.h>
@@ -239,15 +239,70 @@ __global__ void __launch_bounds__(kBuildThreads) kBuild(SceneView S, Batch B) {
   }
 }
 
-// 카메라 cam 한 대를 판 E 개 모두에 대해. cams: [E × ncam], 출력: depth [E × h × w], rgb [E × h × w × 3]
-__global__ void kRender(SceneView S, Batch B, const Camera* cams, int ncam, int cam, int frame, float* depth, uint8_t* rgb) {
+// 카메라 cam 한 대를 판 E 개 모두에 대해 (층 1 render_host 와 같은 세 단계). cams: [E × ncam], 출력: depth [E × h × w], rgb [E × h × w × 3]
+//  kShade  : 스레드 = 픽셀, blockIdx.z = 판. shade_gbuf -> depth, G 버퍼, 조도(6)
+//  kAtrous : à-trous 한 번 (간격 step), 조도 핑퐁
+//  kCompose: 알베도 × 조도 + 반사·방출 -> 톤매핑 -> rgb
+__global__ void kShade(SceneView S, Batch B, const Camera* cams, int ncam, int cam, int frame, float* depth, GPix* G,
+                       float* irr) {
   const int e = blockIdx.z;
   const Camera& c = cams[e * ncam + cam];
   const int px = blockIdx.x * blockDim.x + threadIdx.x, py = blockIdx.y * blockDim.y + threadIdx.y;
   if (px >= c.w || py >= c.h) return;
   const EnvView E = env_view(B, e);
   const size_t hw = size_t(c.w) * c.h;
-  render_pixel(S, E, c, e, cam, frame, px, py, depth + e * hw, rgb + e * hw * 3);
+  const int i = py * c.w + px;
+  shade_gbuf(S, E, c, px, py, pixel_seed(e, cam, px, py, frame), depth[e * hw + i], G[e * hw + i], irr + (e * hw + i) * 6);
+}
+__global__ void kAtrous(const Camera* cams, int ncam, int cam, const GPix* G, const float* in, float* out, int step,
+                        float sz) {
+  const int e = blockIdx.z;
+  const Camera& c = cams[e * ncam + cam];
+  const int px = blockIdx.x * blockDim.x + threadIdx.x, py = blockIdx.y * blockDim.y + threadIdx.y;
+  if (px >= c.w || py >= c.h) return;
+  const size_t hw = size_t(c.w) * c.h;
+  atrous_pixel(c, G + e * hw, in + e * hw * 6, out + e * hw * 6, px, py, step, sz);
+}
+__global__ void kCompose(ShadeParams sp, const Camera* cams, int ncam, int cam, const GPix* G, const float* irr,
+                         uint8_t* rgb) {
+  const int e = blockIdx.z;
+  const Camera& c = cams[e * ncam + cam];
+  const int px = blockIdx.x * blockDim.x + threadIdx.x, py = blockIdx.y * blockDim.y + threadIdx.y;
+  if (px >= c.w || py >= c.h) return;
+  const size_t hw = size_t(c.w) * c.h;
+  compose_pixel(sp, G + e * hw, irr + e * hw * 6, py * c.w + px, rgb + e * hw * 3);
+}
+
+// 잡음 제거 작업 공간 (G 버퍼 + 조도 핑퐁 = 픽셀당 72 B). 필요할 때 늘린다.
+struct Scratch {
+  GPix* G = nullptr;
+  float *A = nullptr, *B = nullptr;
+  size_t cap = 0;
+  void ensure(size_t npix) {
+    if (npix <= cap) return;
+    cudaFree(G); cudaFree(A); cudaFree(B);
+    RCK(cudaMalloc(&G, npix * sizeof(GPix)));
+    RCK(cudaMalloc(&A, npix * 6 * sizeof(float)));
+    RCK(cudaMalloc(&B, npix * 6 * sizeof(float)));
+    cap = npix;
+  }
+  ~Scratch() { cudaFree(G); cudaFree(A); cudaFree(B); }
+};
+
+// 카메라 한 대 (w×h, 판 E 개 모두 같은 크기) 를 그린다. scratch 는 부르는 쪽이 가진다(판끼리·카메라끼리 재사용).
+inline void render_cam(const SceneView& S, const Batch& B, const Camera* dcams, int ncam, int cam, int w, int h, int frame,
+                       float* depth, uint8_t* rgb, Scratch& W, cudaStream_t st = 0) {
+  const size_t hw = size_t(w) * h;
+  W.ensure(hw * size_t(B.E));
+  const dim3 bs(16, 8), gs((w + 15) / 16, (h + 7) / 8, B.E);
+  kShade<<<gs, bs, 0, st>>>(S, B, dcams, ncam, cam, frame, depth, W.G, W.A);
+  float* in = W.A;
+  float* out = W.B;
+  for (int it = 0; it < S.sp.denoise; ++it) {
+    kAtrous<<<gs, bs, 0, st>>>(dcams, ncam, cam, W.G, in, out, 1 << it, S.sp.dn_plane);
+    float* t = in; in = out; out = t;
+  }
+  kCompose<<<gs, bs, 0, st>>>(S.sp, dcams, ncam, cam, W.G, in, rgb);
 }
 
 }  // namespace gpu

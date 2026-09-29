@@ -147,7 +147,7 @@ def material_row(m, tex: TexCache, stats):
     return row
 
 
-def light_row(L, anchor_idx):
+def light_row(L, anchor_idx, tex=None):
     row = np.zeros(32, np.float32)
     a = L["attrs"]
 
@@ -176,6 +176,9 @@ def light_row(L, anchor_idx):
     row[12] = float(a.get("inputs:shaping:cone:softness", a.get("shaping:cone:softness", 0.0)) or 0.0)
     row[13:25] = usd_to_aff(np.eye(4))
     row[25] = 1.0 if g("normalize", default=False) else 0.0  # USD Lux normalize: 휘도를 조명 표면적으로 나눔(렌더러가 한다)
+    if tex is not None and L["type"] == "DomeLight":  # 돔 위경도 텍스처 번호 + 1 (0 = 없음) (render B, rsc_io.h light_from)
+        tf = g("texture:file", default=None)
+        row[26] = float(tex.get(tf) + 1) if tf else 0.0
     return row
 
 
@@ -225,7 +228,7 @@ def main():
         flags = 1 if m.get("double_sided") else 0
         inst_rows.append((conv_key[key], m["anchor"], base, flags, usd_to_aff(m["rel"])))
     n_mesh_anchor = len(anchors)
-    light_rows = [light_row(L, n_mesh_anchor + i) for i, L in enumerate(lights)]
+    light_rows = [light_row(L, n_mesh_anchor + i, tex) for i, L in enumerate(lights)]
     n_anchor = n_mesh_anchor + len(lights)
 
     # 쓰기
@@ -243,13 +246,20 @@ def main():
         off += nt
     n_tri = off
     texels = np.concatenate(tex.chunks) if tex.chunks else np.zeros(0, np.uint32)
+    # 음영 기본값 (render B 가 radio 기준 자료 스텝 1·2·101 × 카메라 3 과 SSIM·EMD 로 고름, docs 14.6.3). core/render/rsc_io.h load_scene 순서
     sp = np.zeros(16, np.float32)
-    sp[0:3] = 1.0  # 주변광 (조정 대상)
-    sp[3] = 1.0    # 노출 (조정 대상)
-    sp[4] = 1      # spp
-    sp[5] = 1      # 그림자 광선
-    sp[6] = 2      # ACES + sRGB
-    sp[7] = 1      # 튕김
+    sp[0:3] = 1.0      # 주변광 (가림 없음, 노출 곱하면 거의 0)
+    sp[3] = 0.00283    # 노출 (Hable 에서 히스토그램 EMD 최소; 물리 추정 ISO100·1/50 s·f5 = 0.0008 과 같은 자릿수)
+    sp[4] = 2          # spp
+    sp[5] = 1          # 그림자 광선 (기여 비례 조명 고르기)
+    sp[6] = 5          # Hable + sRGB (공식 op 6 ACES 는 우리 ACES 두 판보다 Hable 이 더 가깝다)
+    sp[7] = 1          # 튕김
+    sp[10] = 4         # à-trous 잡음 제거 4 번 (간격 1,2,4,8)
+    sp[11] = 0.01      # 잡음 제거 평면 거리 허용
+    sp[12] = 1         # 1차 면 GGX 반사 광선
+    sp[13] = 2.0       # 간접광 표본 자르기 (× 1/노출)
+    sp[14] = 2         # 텍스처 밉 = 짧은 축 발자국 (RTX 비등방 필터 흉내)
+    sp[15] = -0.5      # 밉 단계 더하기
     with open(os.path.join(out, "scene.rsc"), "wb") as f:
         f.write(b"RSCENE01")
         cnt = np.zeros(16, np.int64)

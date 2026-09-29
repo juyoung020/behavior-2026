@@ -5,6 +5,7 @@
 #pragma once
 #include <cstdint>
 
+#include "core/common/glibc_trig.h"
 #include "core/render/scene.h"
 
 namespace eng {
@@ -134,10 +135,32 @@ EHD void tex_sample(const SceneView& S, int32_t ti, float u, float v, float lod,
   }
 }
 
+// 돔(하늘) 휘도: 방향 d(월드) -> 돔 조명 좌표 -> 위경도 텍스처 × radiance. 텍스처 없으면 dome[] 상수.
+// atan2/acos 는 glibc 이식본(core/common/glibc_trig.h, 두 층 비트 같음). lod: 밉 단계(1차 0, 튕김은 흐린 단계).
+EHD V3 dome_radiance(const SceneView& S, const EnvView& E, const V3& d, float lod) {
+  const int32_t li = S.sp.dome_light;
+  if (li < 0) return V3{S.sp.dome[0], S.sp.dome[1], S.sp.dome[2]};
+  const Light& L = S.lights[li];
+  const Aff& W = E.light_world[li];  // 회전의 전치 = 역 (돔 좌표로)
+  const V3 q = normalize3(V3{W.m[0] * d.x + W.m[4] * d.y + W.m[8] * d.z, W.m[1] * d.x + W.m[5] * d.y + W.m[9] * d.z,
+                             W.m[2] * d.x + W.m[6] * d.y + W.m[10] * d.z});
+  const float inv2pi = 0.15915494f, invpi = 0.31830989f;
+  float u, th;
+  const int m = S.sp.dome_map;
+  if (m == 0) { u = 0.5f - eng::glibc::atan2f(q.y, q.x) * inv2pi; th = eng::glibc::acosf(fmn(fmx(q.z, -1.0f), 1.0f)); }
+  else if (m == 1) { u = 0.5f + eng::glibc::atan2f(q.y, q.x) * inv2pi; th = eng::glibc::acosf(fmn(fmx(q.z, -1.0f), 1.0f)); }
+  else if (m == 2) { u = 0.5f + eng::glibc::atan2f(q.x, -q.z) * inv2pi; th = eng::glibc::acosf(fmn(fmx(q.y, -1.0f), 1.0f)); }
+  else { u = 0.5f - eng::glibc::atan2f(q.x, -q.z) * inv2pi; th = eng::glibc::acosf(fmn(fmx(q.y, -1.0f), 1.0f)); }
+  float t[4];
+  tex_sample(S, L.tex, u, 1.0f - th * invpi, lod, t);
+  return V3{L.radiance[0] * srgb_to_lin(t[0]), L.radiance[1] * srgb_to_lin(t[1]), L.radiance[2] * srgb_to_lin(t[2])};
+}
+
 struct Surf {
   V3 p, ng, ns;  // 위치, 기하 법선, 음영 법선 (둘 다 광선 쪽을 보게 뒤집음)
   V3 albedo, emissive;
   float opacity;
+  float rough, metal;  // 반사(GGX) 거칠기·금속도 (재질 상수)
 };
 
 // cone: 맞은 점에서 광선 원뿔의 폭(월드 m, 광선에 수직) — 텍스처 밉 단계(광선 원뿔, Akenine-Möller 2019 식 단순판)
@@ -165,6 +188,8 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
   s.albedo = V3{0.5f, 0.5f, 0.5f};
   s.emissive = V3{0.0f, 0.0f, 0.0f};
   s.opacity = 1.0f;
+  s.rough = 0.5f;
+  s.metal = 0.0f;
   if (mi >= 0) {
     const Material& M = S.mats[mi];
     V3 a{M.albedo[0], M.albedo[1], M.albedo[2]};
@@ -183,8 +208,9 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
       const float ta = fab(du1 * dv2 - dv1 * du2);
       const float dl = mag(r.d);
       const float cs = fmx(fab(dot(ng, r.d)) / dl, 0.05f);
-      const float fp = cone / cs;
-      const float lod = wa > 0.0f ? 0.5f * flog2(fp * fp * ta / wa) : 0.0f;
+      // 발자국: 등방 = 원뿔/cos (긴 축). RTX 는 비등방 필터라 비스듬한 바닥도 선명 -> tex_aniso 1 = 원뿔/sqrt(cos), 2 = 원뿔(짧은 축)
+      const float fp = S.sp.tex_aniso == 2 ? cone : (S.sp.tex_aniso == 1 ? cone / psqrt(cs) : cone / cs);
+      const float lod = (wa > 0.0f ? 0.5f * flog2(fp * fp * ta / wa) : 0.0f) + S.sp.lod_bias;
       float t[4];
       tex_sample(S, M.tex_albedo, u, v, lod, t);
       a = V3{a.x * srgb_to_lin(t[0]), a.y * srgb_to_lin(t[1]), a.z * srgb_to_lin(t[2])};
@@ -195,6 +221,8 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
            (a.z + M.albedo_add) * M.albedo_brightness};
     s.albedo = V3{fmn(fmx(a.x, 0.0f), 1.0f), fmn(fmx(a.y, 0.0f), 1.0f), fmn(fmx(a.z, 0.0f), 1.0f)};
     s.emissive = V3{M.emissive[0], M.emissive[1], M.emissive[2]};
+    s.rough = fmn(fmx(M.roughness, 0.02f), 1.0f);
+    s.metal = fmn(fmx(M.metallic, 0.0f), 1.0f);
   }
   s.ns = ns;
   s.ng = ng;
