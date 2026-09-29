@@ -21,6 +21,9 @@ for s in $STEPS; do
     pbdump) OPENPI_BEHAVIOR_DATA_ROOT=/mnt/c/behavior-2026/data JAX_PLATFORMS=cuda bash $T/wsl_py.sh $T/dump_reference_pb.py --tag gpu --samples 0-3 --layers 0-1 --bench 10 2>&1 | grep -v -i -E "warn|^s*$" ;;
     pbverify) $B/pi05_verify_pb --weights /mnt/c/behavior-2026/data/pi05_native/pb2025_ckpt2.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref_pb --tag gpu --floor cpu --samples 0-3 --time ;;
     pbcpu) OPENPI_BEHAVIOR_DATA_ROOT=/mnt/c/behavior-2026/data JAX_PLATFORMS=cpu taskset -c 0-15 bash $T/wsl_py.sh $T/dump_reference_pb.py --tag cpu --samples 0-1 --layers 0-1 2>&1 | grep -v -i warn ;;
+    pbcpu23) OPENPI_BEHAVIOR_DATA_ROOT=/mnt/c/behavior-2026/data JAX_PLATFORMS=cpu taskset -c 0-15 bash $T/wsl_py.sh $T/dump_reference_pb.py --tag cpu --samples 2-3 --layers 2-3 2>&1 | grep -v -i warn ;;
+    pbv01) $B/pi05_verify_pb --weights /mnt/c/behavior-2026/data/pi05_native/pb2025_ckpt2.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref_pb --tag gpu --floor cpu --samples 0-1 | grep -E "^(suf.s1[0-9]|suf.s[5-9].x|actions|inp|FAIL|PASS)" ;;
+    pbv23) $B/pi05_verify_pb --weights /mnt/c/behavior-2026/data/pi05_native/pb2025_ckpt2.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref_pb --tag gpu --samples 2-3 | grep -E "^(suf.s1[5-9]|actions|FAIL|PASS)" ;;
     server) $B/pi05_server --weights /mnt/c/behavior-2026/data/pi05_native/pi05_radio.pi05w --port 8765 > /tmp/pi05_server.log 2>&1 &
             SP=$!; for i in $(seq 60); do grep -q ready /tmp/pi05_server.log && break; sleep 1; done; cat /tmp/pi05_server.log
             bash $T/wsl_py.sh $T/server_client_test.py --port 8765 --steps 64 2>&1 | grep -v -i warn; kill $SP ;;
