@@ -16,59 +16,49 @@ extern "C" void px_isFiniteFloatV(const float* in, float* out) { const float r =
 extern "C" void px_isFiniteVec3V(const float* in, float* out) { const float r = isFiniteVec3V(*(const Vec3V*)&in[0]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
 extern "C" void px_isFiniteVec4V(const float* in, float* out) { const float r = isFiniteVec4V(*(const Vec4V*)&in[0]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
 extern "C" void px_isValidVec3V(const float* in, float* out) { const float r = isValidVec3V(*(const Vec3V*)&in[0]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_getInvalidVec3V(const float* in, float* out) { const Vec3V r = getInvalidVec3V(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_allElementsEqualFloatV(const float* in, float* out) { const float r = allElementsEqualFloatV(*(const FloatV*)&in[0], *(const FloatV*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsEqualVec3V(const float* in, float* out) { const float r = allElementsEqualVec3V(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsEqualVec4V(const float* in, float* out) { const float r = allElementsEqualVec4V(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsEqualBoolV(const float* in, float* out) { const float r = allElementsEqualBoolV(*(const BoolV*)&in[0], *(const BoolV*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsEqualVecU32V(const float* in, float* out) { const float r = allElementsEqualVecU32V(*(const VecU32V*)&in[0], *(const VecU32V*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsEqualVecI32V(const float* in, float* out) { const float r = allElementsEqualVecI32V(*(const VecI32V*)&in[0], *(const VecI32V*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsNearEqualFloatV(const float* in, float* out) { const float r = allElementsNearEqualFloatV(*(const FloatV*)&in[0], *(const FloatV*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsNearEqualVec3V(const float* in, float* out) { const float r = allElementsNearEqualVec3V(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_allElementsNearEqualVec4V(const float* in, float* out) { const float r = allElementsNearEqualVec4V(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]) ? 1.0f : 0.0f; memcpy(out, &r, 4); }
-extern "C" void px_FZero(const float* in, float* out) { const FloatV r = FZero(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FOne(const float* in, float* out) { const FloatV r = FOne(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FHalf(const float* in, float* out) { const FloatV r = FHalf(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FEps(const float* in, float* out) { const FloatV r = FEps(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FMax(const float* in, float* out) { const FloatV r = FMax(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FNegMax(const float* in, float* out) { const FloatV r = FNegMax(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FEps6(const float* in, float* out) { const FloatV r = FEps6(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FNeg(const float* in, float* out) { const FloatV r = FNeg(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FAdd(const float* in, float* out) { const FloatV r = FAdd(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FSub(const float* in, float* out) { const FloatV r = FSub(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FMul(const float* in, float* out) { const FloatV r = FMul(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FDiv(const float* in, float* out) { const FloatV r = FDiv(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FDivFast(const float* in, float* out) { const FloatV r = FDivFast(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FRecip(const float* in, float* out) { const FloatV r = FRecip(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FRecipFast(const float* in, float* out) { const FloatV r = FRecipFast(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FRsqrt(const float* in, float* out) { const FloatV r = FRsqrt(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FRsqrtFast(const float* in, float* out) { const FloatV r = FRsqrtFast(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FSqrt(const float* in, float* out) { const FloatV r = FSqrt(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FScaleAdd(const float* in, float* out) { const FloatV r = FScaleAdd(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FNegScaleSub(const float* in, float* out) { const FloatV r = FNegScaleSub(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FAbs(const float* in, float* out) { const FloatV r = FAbs(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FSel(const float* in, float* out) { const FloatV r = FSel(*(const BoolV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FZero(const float* in, float* out) { const FloatV r0 = FZero(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FOne(const float* in, float* out) { const FloatV r0 = FOne(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FHalf(const float* in, float* out) { const FloatV r0 = FHalf(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FEps(const float* in, float* out) { const FloatV r0 = FEps(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FMax(const float* in, float* out) { const FloatV r0 = FMax(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FNegMax(const float* in, float* out) { const FloatV r0 = FNegMax(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FEps6(const float* in, float* out) { const FloatV r0 = FEps6(); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FNeg(const float* in, float* out) { const FloatV r0 = FNeg(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FAdd(const float* in, float* out) { const FloatV r0 = FAdd(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FSub(const float* in, float* out) { const FloatV r0 = FSub(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FMul(const float* in, float* out) { const FloatV r0 = FMul(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FDiv(const float* in, float* out) { const FloatV r0 = FDiv(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FDivFast(const float* in, float* out) { const FloatV r0 = FDivFast(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FRecip(const float* in, float* out) { const FloatV r0 = FRecip(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FRecipFast(const float* in, float* out) { const FloatV r0 = FRecipFast(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FRsqrt(const float* in, float* out) { const FloatV r0 = FRsqrt(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FRsqrtFast(const float* in, float* out) { const FloatV r0 = FRsqrtFast(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FSqrt(const float* in, float* out) { const FloatV r0 = FSqrt(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FScaleAdd(const float* in, float* out) { const FloatV r0 = FScaleAdd(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FNegScaleSub(const float* in, float* out) { const FloatV r0 = FNegScaleSub(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FAbs(const float* in, float* out) { const FloatV r0 = FAbs(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FSel(const float* in, float* out) { const FloatV r0 = FSel(*(const BoolV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_FIsGrtr(const float* in, float* out) { const BoolV r = FIsGrtr(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_FIsGrtrOrEq(const float* in, float* out) { const BoolV r = FIsGrtrOrEq(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_FIsEq(const float* in, float* out) { const BoolV r = FIsEq(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FMin(const float* in, float* out) { const FloatV r = FMin(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FClamp(const float* in, float* out) { const FloatV r = FClamp(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FMin(const float* in, float* out) { const FloatV r0 = FMin(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FClamp(const float* in, float* out) { const FloatV r0 = FClamp(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_FAllGrtr(const float* in, float* out) { const uint32_t r = FAllGrtr(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, 4); }
 extern "C" void px_FAllGrtrOrEq(const float* in, float* out) { const uint32_t r = FAllGrtrOrEq(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, 4); }
 extern "C" void px_FAllEq(const float* in, float* out) { const uint32_t r = FAllEq(*(const FloatV*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, 4); }
 extern "C" void px_FOutOfBounds(const float* in, float* out) { const uint32_t r = FOutOfBounds(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, 4); }
 extern "C" void px_FInBounds(const float* in, float* out) { const uint32_t r = FInBounds(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, 4); }
-extern "C" void px_FRound(const float* in, float* out) { const FloatV r = FRound(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FSin(const float* in, float* out) { const FloatV r = FSin(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_FCos(const float* in, float* out) { const FloatV r = FCos(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FRound(const float* in, float* out) { const FloatV r0 = FRound(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FSin(const float* in, float* out) { const FloatV r0 = FSin(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_FCos(const float* in, float* out) { const FloatV r0 = FCos(*(const FloatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Splat(const float* in, float* out) { const Vec3V r = V3Splat(*(const FloatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Merge(const float* in, float* out) { const Vec3V r = V3Merge(*(const FloatV*)&in[0], *(const FloatV*)&in[4], *(const FloatV*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3UnitX(const float* in, float* out) { const Vec3V r = V3UnitX(); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3UnitY(const float* in, float* out) { const Vec3V r = V3UnitY(); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3UnitZ(const float* in, float* out) { const Vec3V r = V3UnitZ(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3GetX(const float* in, float* out) { const FloatV r = V3GetX(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3GetY(const float* in, float* out) { const FloatV r = V3GetY(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3GetZ(const float* in, float* out) { const FloatV r = V3GetZ(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3GetX(const float* in, float* out) { const FloatV r0 = V3GetX(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3GetY(const float* in, float* out) { const FloatV r0 = V3GetY(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3GetZ(const float* in, float* out) { const FloatV r0 = V3GetZ(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3SetX(const float* in, float* out) { const Vec3V r = V3SetX(*(const Vec3V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3SetY(const float* in, float* out) { const Vec3V r = V3SetY(*(const Vec3V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3SetZ(const float* in, float* out) { const Vec3V r = V3SetZ(*(const Vec3V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
@@ -99,21 +89,21 @@ extern "C" void px_V3NegScaleSub(const float* in, float* out) { const Vec3V r = 
 extern "C" void px_V3MulAdd(const float* in, float* out) { const Vec3V r = V3MulAdd(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4], *(const Vec3V*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3NegMulSub(const float* in, float* out) { const Vec3V r = V3NegMulSub(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4], *(const Vec3V*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Abs(const float* in, float* out) { const Vec3V r = V3Abs(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3Dot(const float* in, float* out) { const FloatV r = V3Dot(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3Dot(const float* in, float* out) { const FloatV r0 = V3Dot(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Cross(const float* in, float* out) { const Vec3V r = V3Cross(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3Length(const float* in, float* out) { const FloatV r = V3Length(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3LengthSq(const float* in, float* out) { const FloatV r = V3LengthSq(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3Length(const float* in, float* out) { const FloatV r0 = V3Length(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3LengthSq(const float* in, float* out) { const FloatV r0 = V3LengthSq(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Normalize(const float* in, float* out) { const Vec3V r = V3Normalize(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3NormalizeSafe(const float* in, float* out) { const Vec3V r = V3NormalizeSafe(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3SumElems(const float* in, float* out) { const FloatV r = V3SumElems(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3SumElems(const float* in, float* out) { const FloatV r0 = V3SumElems(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Sel(const float* in, float* out) { const Vec3V r = V3Sel(*(const BoolV*)&in[0], *(const Vec3V*)&in[4], *(const Vec3V*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3IsGrtr(const float* in, float* out) { const BoolV r = V3IsGrtr(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3IsGrtrOrEq(const float* in, float* out) { const BoolV r = V3IsGrtrOrEq(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3IsEq(const float* in, float* out) { const BoolV r = V3IsEq(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Max(const float* in, float* out) { const Vec3V r = V3Max(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Min(const float* in, float* out) { const Vec3V r = V3Min(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3ExtractMax(const float* in, float* out) { const FloatV r = V3ExtractMax(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V3ExtractMin(const float* in, float* out) { const FloatV r = V3ExtractMin(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3ExtractMax(const float* in, float* out) { const FloatV r0 = V3ExtractMax(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V3ExtractMin(const float* in, float* out) { const FloatV r0 = V3ExtractMin(*(const Vec3V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Clamp(const float* in, float* out) { const Vec3V r = V3Clamp(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4], *(const Vec3V*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3Sign(const float* in, float* out) { const Vec3V r = V3Sign(*(const Vec3V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V3AllGrtr(const float* in, float* out) { const uint32_t r = V3AllGrtr(*(const Vec3V*)&in[0], *(const Vec3V*)&in[4]); memcpy(out, &r, 4); }
@@ -144,10 +134,10 @@ extern "C" void px_V4UnpackZW(const float* in, float* out) { const Vec4V r = V4U
 extern "C" void px_V4UnitW(const float* in, float* out) { const Vec4V r = V4UnitW(); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4UnitY(const float* in, float* out) { const Vec4V r = V4UnitY(); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4UnitZ(const float* in, float* out) { const Vec4V r = V4UnitZ(); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4GetX(const float* in, float* out) { const FloatV r = V4GetX(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4GetY(const float* in, float* out) { const FloatV r = V4GetY(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4GetZ(const float* in, float* out) { const FloatV r = V4GetZ(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4GetW(const float* in, float* out) { const FloatV r = V4GetW(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4GetX(const float* in, float* out) { const FloatV r0 = V4GetX(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4GetY(const float* in, float* out) { const FloatV r0 = V4GetY(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4GetZ(const float* in, float* out) { const FloatV r0 = V4GetZ(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4GetW(const float* in, float* out) { const FloatV r0 = V4GetW(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4SetX(const float* in, float* out) { const Vec4V r = V4SetX(*(const Vec4V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4SetY(const float* in, float* out) { const Vec4V r = V4SetY(*(const Vec4V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4SetZ(const float* in, float* out) { const Vec4V r = V4SetZ(*(const Vec4V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
@@ -179,11 +169,11 @@ extern "C" void px_V4MulAdd(const float* in, float* out) { const Vec4V r = V4Mul
 extern "C" void px_V4NegMulSub(const float* in, float* out) { const Vec4V r = V4NegMulSub(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4], *(const Vec4V*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Abs(const float* in, float* out) { const Vec4V r = V4Abs(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Andc(const float* in, float* out) { const Vec4V r = V4Andc(*(const Vec4V*)&in[0], *(const VecU32V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4Dot(const float* in, float* out) { const FloatV r = V4Dot(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4Dot3(const float* in, float* out) { const FloatV r = V4Dot3(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4Dot(const float* in, float* out) { const FloatV r0 = V4Dot(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4Dot3(const float* in, float* out) { const FloatV r0 = V4Dot3(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Cross(const float* in, float* out) { const Vec4V r = V4Cross(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4Length(const float* in, float* out) { const FloatV r = V4Length(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4LengthSq(const float* in, float* out) { const FloatV r = V4LengthSq(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4Length(const float* in, float* out) { const FloatV r0 = V4Length(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4LengthSq(const float* in, float* out) { const FloatV r0 = V4LengthSq(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Normalize(const float* in, float* out) { const Vec4V r = V4Normalize(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4NormalizeSafe(const float* in, float* out) { const Vec4V r = V4NormalizeSafe(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4NormalizeFast(const float* in, float* out) { const Vec4V r = V4NormalizeFast(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
@@ -193,8 +183,8 @@ extern "C" void px_V4IsGrtrOrEq(const float* in, float* out) { const BoolV r = V
 extern "C" void px_V4IsEq(const float* in, float* out) { const BoolV r = V4IsEq(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Max(const float* in, float* out) { const Vec4V r = V4Max(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Min(const float* in, float* out) { const Vec4V r = V4Min(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4ExtractMax(const float* in, float* out) { const FloatV r = V4ExtractMax(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4ExtractMin(const float* in, float* out) { const FloatV r = V4ExtractMin(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4ExtractMax(const float* in, float* out) { const FloatV r0 = V4ExtractMax(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_V4ExtractMin(const float* in, float* out) { const FloatV r0 = V4ExtractMin(*(const Vec4V*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4Clamp(const float* in, float* out) { const Vec4V r = V4Clamp(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4], *(const Vec4V*)&in[8]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4AllGrtr(const float* in, float* out) { const uint32_t r = V4AllGrtr(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, 4); }
 extern "C" void px_V4AllGrtrOrEq(const float* in, float* out) { const uint32_t r = V4AllGrtrOrEq(*(const Vec4V*)&in[0], *(const Vec4V*)&in[4]); memcpy(out, &r, 4); }
@@ -209,12 +199,11 @@ extern "C" void px_V4PermXZXZ(const float* in, float* out) { const Vec4V r = V4P
 extern "C" void px_V4PermYWYW(const float* in, float* out) { const Vec4V r = V4PermYWYW(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4PermYZXW(const float* in, float* out) { const Vec4V r = V4PermYZXW(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_V4PermZWXY(const float* in, float* out) { const Vec4V r = V4PermZWXY(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_V4Perm(const float* in, float* out) { const Vec4V r = V4Perm(*(const Vec4V*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_QuatV_From_RotationAxisAngle(const float* in, float* out) { const QuatV r = QuatV_From_RotationAxisAngle(*(const Vec3V*)&in[0], *(const FloatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_QuatNormalize(const float* in, float* out) { const QuatV r = QuatNormalize(*(const QuatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_QuatLength(const float* in, float* out) { const FloatV r = QuatLength(*(const QuatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_QuatLengthSq(const float* in, float* out) { const FloatV r = QuatLengthSq(*(const QuatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
-extern "C" void px_QuatDot(const float* in, float* out) { const FloatV r = QuatDot(*(const QuatV*)&in[0], *(const QuatV*)&in[4]); memcpy(out, &r, sizeof(r)); }
+extern "C" void px_QuatLength(const float* in, float* out) { const FloatV r0 = QuatLength(*(const QuatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_QuatLengthSq(const float* in, float* out) { const FloatV r0 = QuatLengthSq(*(const QuatV*)&in[0]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
+extern "C" void px_QuatDot(const float* in, float* out) { const FloatV r0 = QuatDot(*(const QuatV*)&in[0], *(const QuatV*)&in[4]); const Vec4V r = r0; memcpy(out, &r, sizeof(r)); }
 extern "C" void px_QuatConjugate(const float* in, float* out) { const QuatV r = QuatConjugate(*(const QuatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_QuatGetImaginaryPart(const float* in, float* out) { const Vec3V r = QuatGetImaginaryPart(*(const QuatV*)&in[0]); memcpy(out, &r, sizeof(r)); }
 extern "C" void px_QuatGetMat33V(const float* in, float* out) { const Mat33V r = QuatGetMat33V(*(const QuatV*)&in[0]); memcpy(out, &r, sizeof(r)); }

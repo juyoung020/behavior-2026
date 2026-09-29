@@ -27,7 +27,8 @@ for i in $(seq 60); do curl -sf http://127.0.0.1:$PORT/healthz >/dev/null && bre
 source $BASE/.venv/bin/activate
 cd $BASE/BEHAVIOR-1K/OmniGibson
 set +e
-python /mnt/c/behavior-2026/src/engine/capture/physx_capture.py --dump-dir "$OUT" "${EXTRA[@]}" -- --trace -- \
+# WSL 에는 RTX 렌더 장치가 없다 -> --no-render (카메라 관측만 0 영상, 물리 무관)
+python /mnt/c/behavior-2026/src/engine/capture/physx_capture.py --dump-dir "$OUT" --no-render "${EXTRA[@]}" -- --trace -- \
   --task-name turning_on_radio --robot-config /mnt/c/behavior-2026/src/configs/r1pro_openpi.yaml \
   --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode public_test \
   --host 127.0.0.1 --port $PORT --instance-indices 0 --num-envs 1 --max-steps "$MAXSTEPS" \

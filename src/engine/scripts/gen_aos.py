@@ -68,6 +68,15 @@ def transform(text, name):
     t = re.sub(r"(?<![\w:])(_mm_\w+)\s*\(", r"sse::\1(", t)
     t = re.sub(r"\b_MM_SHUFFLE\b", "ENG_MM_SHUFFLE", t)
     t = re.sub(r"\bPX_FORCE_INLINE\b", "EHD", t)
+    # 원본에 인라인 표시가 없는 것들도 GPU 에서 불리므로 EHD 를 붙인다 (식은 그대로):
+    #   UnionM128 (VecU32V) 의 생성자·형변환, 맨 앞 칸에서 시작하는 함수 선언·정의 (예: Vec4V_From_PxVec3_WUndefined)
+    if name == "PxUnixSse2AoS.h":  # FloatV 한 칸 표현 선택지 (aos_prelude.h FV1, docs 12.7)
+        t = t.replace("typedef sse::m128 FloatV;",
+                      "#if defined(ENG_AOS_FLOATV_ONE_LANE)\ntypedef sse::FV1 FloatV;\n#else\ntypedef sse::m128 FloatV;\n#endif")
+    if name == "PxUnixSse2AoS.h":  # UnionM128 생성자·형변환, Mat33V/Mat34V/Mat44V 생성자
+        t = re.sub(r"^(\s+)(UnionM128\(|operator sse::m128\(\)|Mat3[34]V\(|Mat44V\()", r"\1EHD \2", t, flags=re.M)
+    t = re.sub(r"^((?:Vec3V|Vec4V|FloatV|BoolV|QuatV|Mat33V|Mat34V|Mat44V|VecU32V|VecI32V|PxU32|PxI32|PxF32|bool|void) "
+               r"\w+\()", r"EHD \1", t, flags=re.M)
     # 전역 상수: 호스트판 이름_h 와 장치판 이름_d 두 벌(초기값 글자 그대로 복사), 쓰는 곳은 ENG_G(이름) (aos_prelude.h)
     def dup(nm, typ, init):
         return (f"alignas(16) static const {typ} {nm}_h = {init};\n"

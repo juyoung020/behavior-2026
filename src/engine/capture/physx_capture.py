@@ -1,6 +1,6 @@
 """공식 평가기를 한 줄도 고치지 않고 돌리면서, 물리 층 검증에 쓸 기록을 뜬다 (엔진 자체 구현 층 0).
 
-    python C:\\behavior-2026\\src\\engine\\capture\\physx_capture.py --dump-dir <폴더> [--no-ovd] [--no-convex] [--no-sidelog] \\
+    python C:\\behavior-2026\\src\\engine\\capture\\physx_capture.py --dump-dir <폴더> [--no-ovd] [--no-convex] [--no-sidelog] [--no-render] \\
         -- <tools\\eval_instrumented.py 인자 그대로, 예: --trace -- --task-name turning_on_radio ...>
 
 남기는 것 (<폴더> 안, 에셋 파생물이라 git 에 올리지 않는다 -- src\\engine\\.gitignore 의 dumps/)
@@ -334,9 +334,45 @@ class Capture:
         print(f"[capture] 끝: 물리 스텝 {self.n_post}, 곁기록 {len(self.log)} 건, {self.meta.get('ovd_files')}", flush=True)
 
 
+def install_no_render():
+    """렌더 장치가 없는 곳(WSL, RTX 없음)용: 카메라 읽기만 같은 모양·형의 0 영상으로 바꾼다.
+    물리는 안 건드린다(읽기 전용 경로). 재생 서버는 관측을 안 보므로 행동열·물리 결과는 그대로다.
+    원래 경로: VisionSensor._get_obs -> replicator annotator.get_data (렌더 장치 없으면 data=None 으로 죽는다,
+    omni.replicator.core annotator_utils.py:454). 모양·형은 VisionSensor._obs_space_mapping 과
+    _preprocess_cpu_obs/_preprocess_gpu_obs(seg_ 는 int64/int32) 를 따른다."""
+    import omnigibson as og
+    import torch as th
+    from omnigibson.sensors import vision_sensor as VS
+    from omnigibson.sensors.sensor_base import BaseSensor
+
+    def get_obs_zero(self):
+        obs, info = BaseSensor._get_obs(self)
+        space = self._obs_space_mapping
+        dev = og.sim.device if "cuda" in str(og.sim.device) else "cpu"
+        for m in self._modalities:
+            spec = space[m]
+            if not isinstance(spec, tuple):  # bbox (Sequence 공간) -> 빈 목록
+                obs[m], info[m] = [], {}
+                continue
+            shape, _lo, _hi, dt = spec
+            if "seg_" in m:
+                tdt = th.int32 if dev != "cpu" else th.int64
+                info[m] = {}
+            else:
+                tdt = {np.dtype(np.uint8): th.uint8, np.dtype(np.float32): th.float32}[np.dtype(dt)]
+            obs[m] = th.zeros(shape, dtype=tdt, device=dev)
+        return obs, info
+
+    VS.VisionSensor._get_obs = get_obs_zero
+    print("[capture] 렌더 없음: 카메라 관측을 0 영상으로 (물리 무관)", flush=True)
+
+
 def install(cap: Capture):
     import omnigibson as og
     from omnigibson import simulator as S
+
+    if getattr(cap, "no_render", False):
+        install_no_render()
 
     orig_launch_app = S._launch_app
 
@@ -418,6 +454,8 @@ def main():
         sys.exit("--dump-dir 가 필요하다")
     cap = Capture(dump_dir, ovd="--no-ovd" not in ours, convex="--no-convex" not in ours,
                   sidelog="--no-sidelog" not in ours)
+    cap.no_render = "--no-render" in ours
+    cap.meta["no_render"] = cap.no_render
     install(cap)
     sys.argv = [INSTRUMENTED] + rest
     runpy.run_path(INSTRUMENTED, run_name="__main__")

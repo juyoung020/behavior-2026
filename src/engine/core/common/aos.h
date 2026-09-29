@@ -16,25 +16,25 @@ namespace aos
 
 typedef union UnionM128
 {
-	UnionM128()
+	EHD UnionM128()
 	{
 	}
-	UnionM128(sse::m128 in)
+	EHD UnionM128(sse::m128 in)
 	{
 		m128 = in;
 	}
 
-	UnionM128(sse::m128i in)
+	EHD UnionM128(sse::m128i in)
 	{
 		m128i = in;
 	}
 
-	operator sse::m128()
+	EHD operator sse::m128()
 	{
 		return m128;
 	}
 
-	operator sse::m128() const
+	EHD operator sse::m128() const
 	{
 		return m128;
 	}
@@ -51,7 +51,11 @@ typedef union UnionM128
 	sse::m128i m128i;
 } UnionM128;
 
+#if defined(ENG_AOS_FLOATV_ONE_LANE)
+typedef sse::FV1 FloatV;
+#else
 typedef sse::m128 FloatV;
+#endif
 typedef sse::m128 Vec3V;
 typedef sse::m128 Vec4V;
 typedef sse::m128 BoolV;
@@ -90,10 +94,10 @@ struct VecShiftV
 PX_ALIGN_PREFIX(16)
 struct Mat33V
 {
-	Mat33V()
+	EHD Mat33V()
 	{
 	}
-	Mat33V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2) : col0(c0), col1(c1), col2(c2)
+	EHD Mat33V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2) : col0(c0), col1(c1), col2(c2)
 	{
 	}
 	Vec3V PX_ALIGN(16, col0);
@@ -104,10 +108,10 @@ struct Mat33V
 PX_ALIGN_PREFIX(16)
 struct Mat34V
 {
-	Mat34V()
+	EHD Mat34V()
 	{
 	}
-	Mat34V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2, const Vec3V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
+	EHD Mat34V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2, const Vec3V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
 	{
 	}
 	Vec3V PX_ALIGN(16, col0);
@@ -133,10 +137,10 @@ struct Mat43V
 PX_ALIGN_PREFIX(16)
 struct Mat44V
 {
-	Mat44V()
+	EHD Mat44V()
 	{
 	}
-	Mat44V(const Vec4V& c0, const Vec4V& c1, const Vec4V& c2, const Vec4V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
+	EHD Mat44V(const Vec4V& c0, const Vec4V& c1, const Vec4V& c2, const Vec4V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
 	{
 	}
 	Vec4V PX_ALIGN(16, col0);
@@ -238,7 +242,7 @@ EHD QuatV QuatVLoadA(const PxF32* v);
 EHD QuatV QuatVLoadXYZW(const PxF32 x, const PxF32 y, const PxF32 z, const PxF32 w);
 
 // not added to public api
-Vec4V Vec4V_From_PxVec3_WUndefined(const PxVec3& v);
+EHD Vec4V Vec4V_From_PxVec3_WUndefined(const PxVec3& v);
 
 ///////////////////////////////////////////////////
 // Construct a simd type from a different simd type
@@ -4419,7 +4423,7 @@ template<int index> EHD BoolV BSplatElement(BoolV a)
 */
 
 template <int index>
-BoolV BSplatElement(BoolV a)
+EHD BoolV BSplatElement(BoolV a)
 {
 	float* data = reinterpret_cast<float*>(&a);
 	return V4Load(data[index]);
