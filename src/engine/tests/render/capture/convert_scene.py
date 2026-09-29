@@ -107,6 +107,9 @@ def material_row(m, tex: TexCache, stats):
     stats.setdefault("kinds", {})
     stats["kinds"][kind] = stats["kinds"].get(kind, 0) + 1
     tint = np.array(get_in(sh, "diffuse_tint", [1, 1, 1]), np.float32)[:3]
+    if "OmniGlass" in kind:  # 유리: 렌더러가 색 광선은 지나가게 한다(깊이는 맞음). flags 2 (render B, rsc_io.h)
+        row[15] = 2
+        return row
     if "UsdPreviewSurface" in kind:
         base = np.array(get_in(sh, "diffuseColor", [0.18, 0.18, 0.18]), np.float32)[:3]
         row[0:3] = base
@@ -172,6 +175,7 @@ def light_row(L, anchor_idx):
     row[11] = float(a.get("inputs:shaping:cone:angle", a.get("shaping:cone:angle", 90.0)) or 90.0)
     row[12] = float(a.get("inputs:shaping:cone:softness", a.get("shaping:cone:softness", 0.0)) or 0.0)
     row[13:25] = usd_to_aff(np.eye(4))
+    row[25] = 1.0 if g("normalize", default=False) else 0.0  # USD Lux normalize: 휘도를 조명 표면적으로 나눔(렌더러가 한다)
     return row
 
 

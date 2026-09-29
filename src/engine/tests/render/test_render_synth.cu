@@ -189,18 +189,8 @@ EHD void probe_trace(const SceneView& S, const EnvView& E, const Camera& cm, int
     acc = acc + mulc(thr, s.emissive);
     const V3 po = s.p + s.ng * 1e-4f;
     q[29] = po.x; q[30] = po.y; q[31] = po.z;
-    V3 lsum{0.0f, 0.0f, 0.0f};
-    if (S.n_lights > 0) {
-      V3 ls{0.0f, 0.0f, 0.0f};
-      int li = int(rnd01(rs) * float(S.n_lights));
-      li = li >= S.n_lights ? S.n_lights - 1 : li;
-      const float u1 = rnd01(rs);
-      const float u2 = rnd01(rs);
-      q[11] = float(li); q[12] = u1; q[13] = u2;
-      if (S.lights[li].visible) ls = ls + light_direct(S, E, li, po, s.ns, u1, u2);
-      q[14] = ls.x; q[15] = ls.y; q[16] = ls.z;
-      lsum = ls * float(S.n_lights);
-    }
+    V3 lsum = direct_light(S, E, po, s.ns, rs);
+    q[14] = lsum.x; q[15] = lsum.y; q[16] = lsum.z;
     if (!ao) lsum = lsum + amb;
     q[17] = lsum.x; q[18] = lsum.y; q[19] = lsum.z;
     acc = acc + mulc(thr, mulc(s.albedo, lsum));

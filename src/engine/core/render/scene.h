@@ -17,7 +17,7 @@ struct GeomInfo {
   float lo[3], hi[3];  // 지역 좌표 경계 (BLAS 뿌리)
 };
 
-enum InstFlags : int32_t { kInstDoubleSided = 1 };
+enum InstFlags : int32_t { kInstDoubleSided = 1, kInstGlass = 2 };  // 유리: 깊이는 맞고 색·그림자 광선은 지나감
 
 struct InstInfo {
   int32_t geom, anchor;
@@ -51,7 +51,8 @@ struct Light {
   int32_t visible, pad;
   float radiance[3];     // 휘도 = intensity * 2^exposure * color (* 색온도)
   float radius, width, height, length, angle;  // 모양 (USD 단위)
-  float cone_angle, cone_softness, pad1;
+  float cone_angle, cone_softness;
+  int32_t normalize;     // USD Lux normalize (불러올 때 radiance 를 표면적으로 나눠 둠)
   Aff rel;               // 기준 prim 에 대한 상대 변환 (anchor=-1 이면 월드)
 };
 
@@ -108,7 +109,9 @@ struct EnvView {
 EHD bool inst_visible(const EnvView& E, int32_t i) { return (E.vis[i >> 5] >> (i & 31)) & 1u; }
 
 // 두 단계 순회: TLAS(월드) -> 잎의 인스턴스 -> 지역 광선으로 BLAS. any = true 면 처음 맞은 것에서 끝(그림자·가림 광선).
-EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, float tmax, bool any = false) {
+// skip: 이 깃발이 있는 인스턴스는 건너뜀(유리 = kInstGlass).
+EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, float tmax, bool any = false,
+              int32_t skip = 0) {
   Hit h{tmax, 0.0f, 0.0f, -1, -1};
   if (S.n_inst <= 0) return h;
   int32_t stack[kStack];
@@ -136,7 +139,7 @@ EHD Hit trace(const SceneView& S, const EnvView& E, const Ray& r, float tmin, fl
       if (hb) { cur = n.c1; continue; }
     } else {
       const int32_t id = E.order[leaf_first(cur)];
-      if (inst_visible(E, id)) {
+      if (inst_visible(E, id) && !(S.insts[id].flags & skip)) {
         const InstInfo& in = S.insts[id];
         const GeomInfo& g = S.geoms[in.geom];
         const Aff& iv = E.inst_inv[id];

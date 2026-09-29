@@ -115,6 +115,17 @@ inline Light light_from(const float* f) {
   L.radius = f[6]; L.width = f[7]; L.height = f[8]; L.length = f[9]; L.angle = f[10];
   L.cone_angle = f[11]; L.cone_softness = f[12];
   for (int k = 0; k < 12; ++k) L.rel.m[k] = f[13 + k];
+  L.normalize = f[25] != 0.0f ? 1 : 0;
+  if (L.normalize) {  // USD Lux: 휘도 = 세기 / 표면적 (구 4πr², 사각 w·h, 원판 πr², 원기둥 2πrL)
+    const float pi = 3.14159265f;
+    float area = 0.0f;
+    if (L.type == kLightSphere) area = 4.0f * pi * L.radius * L.radius;
+    else if (L.type == kLightRect) area = L.width * L.height;
+    else if (L.type == kLightDisk) area = pi * L.radius * L.radius;
+    else if (L.type == kLightCylinder) area = 2.0f * pi * L.radius * L.length;
+    if (area > 0.0f)
+      for (int k = 0; k < 3; ++k) L.radiance[k] = L.radiance[k] / area;
+  }
   return L;
 }
 
@@ -248,6 +259,18 @@ inline bool load_scene(const std::string& path, HostScene& S, uint32_t max_leaf 
   S.sp.ao_range = sp[9];
   S.n_anchor = int32_t(na);
   for (int k = 0; k < 3; ++k) S.sp.dome[k] = 0.0f;
+  // 유리 인스턴스: 칸 재질이 전부 유리(flags 2)면 kInstGlass
+  // 칸 수 = 다음 인스턴스의 slot_base - 이 slot_base (마지막은 끝까지; 변환기가 인스턴스 순서대로 칸을 깐다)
+  for (size_t i = 0; i < S.insts.size(); ++i) {
+    const int32_t b = S.insts[i].slot_base;
+    const int32_t e = i + 1 < S.insts.size() ? S.insts[i + 1].slot_base : int32_t(S.slot_mat.size());
+    bool glass = e > b;
+    for (int32_t k = b; k < e; ++k) {
+      const int32_t m = S.slot_mat[k];
+      glass = glass && m >= 0 && (S.mats[m].flags & 2);
+    }
+    if (glass) S.insts[i].flags |= kInstGlass;
+  }
   for (const auto& L : S.lights)
     if (L.type == kLightDome && L.visible)
       for (int k = 0; k < 3; ++k) S.sp.dome[k] += L.radiance[k];

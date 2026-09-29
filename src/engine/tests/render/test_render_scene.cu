@@ -111,7 +111,7 @@ static void write_ppm(const std::string& fn, const uint8_t* rgb, int stride, int
 int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "사용: test_render_scene <폴더> ...\n"); return 2; }
   const std::string dir = argv[1];
-  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0;
+  int use_gpu = 1, envs = 64, check = 3, reps = 5, res = 0, spp = -1, bounces = -1, tonemap = -1, lights = 1, ppm = 0, official = 1, fit = 0, lag = 0;
   float exposure = -1, ambient = -1, ao = -1, white = -1, dome_tex[3] = {1.0f, 1.0f, 1.0f};
   std::string out;
   std::vector<int> only_frames;
@@ -134,6 +134,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--ppm")) ppm = 1;
     else if (!strcmp(argv[i], "--official") && i + 1 < argc) official = atoi(nx());
     else if (!strcmp(argv[i], "--fit")) fit = 1;
+    else if (!strcmp(argv[i], "--lag") && i + 1 < argc) lag = atoi(nx());
     else if (!strcmp(argv[i], "--dome-tex") && i + 1 < argc) sscanf(nx(), "%f,%f,%f", &dome_tex[0], &dome_tex[1], &dome_tex[2]);
     else if (!strcmp(argv[i], "--frames") && i + 1 < argc) {
       char* s = nx();
@@ -186,15 +187,20 @@ int main(int argc, char** argv) {
   printf("\n== 층 1 vs 공식 RTX (depth: |차| 분포, RGB: 채널 평균 차 / 히스토그램 EMD / SSIM / 평균 |차|; 괄호 = 공식 자신(다시 그림) 잡음) ==\n");
   double sum_t1 = 0;
   uint64_t n_pix_t1 = 0;
-  for (auto& F : frames) {
+  for (size_t fi = 0; fi < frames.size(); ++fi) {
+    auto& F = frames[fi];
     if (!official) break;
+    // --lag 1: 공식 영상이 한 스텝 전 자세로 그려졌는지 가르기 — 바로 앞 스텝(k-1) 이 있으면 그 자세·카메라로 그린다
+    const HostFrame* P = &F;
+    if (lag && fi > 0 && frames[fi - 1].step == F.step - 1) P = &frames[fi - 1];
+    else if (lag) continue;
     HostEnv HE;
     HE.resize(SV);
-    for (int a = 0; a < SV.n_anchor && a < int(F.anchor.size()); ++a) HE.anchor[a] = F.anchor[a];
-    for (size_t w = 0; w < HE.vis.size() && w < F.vis.size(); ++w) HE.vis[w] = F.vis[w];
+    for (int a = 0; a < SV.n_anchor && a < int(P->anchor.size()); ++a) HE.anchor[a] = P->anchor[a];
+    for (size_t w = 0; w < HE.vis.size() && w < P->vis.size(); ++w) HE.vis[w] = P->vis[w];
     HE.build(SV);
     for (int c = 0; c < 3 && c < int(F.cams.size()); ++c) {
-      const Camera& cm = F.cams[c];
+      const Camera& cm = P->cams[c];
       const int n = cm.w * cm.h;
       std::vector<float> dep(n);
       std::vector<uint8_t> rgb(size_t(n) * 3);
@@ -280,15 +286,19 @@ int main(int argc, char** argv) {
     // (장면 하나에 노출 스칼라 하나 = 보정값. 프레임마다 맞추지 않는다.) 검은 공식 프레임은 뺀다.
     struct Buf { std::vector<float> L; const Image* off; int n; };
     std::vector<Buf> bufs;
-    for (auto& F : frames) {
+    for (size_t fi = 0; fi < frames.size(); ++fi) {
+      const HostFrame& F = frames[fi];
+      const HostFrame* P = &F;  // --lag 1: 한 스텝 전 자세 (공식 영상은 한 스텝 늦게 그려짐)
+      if (lag && fi > 0 && frames[fi - 1].step == F.step - 1) P = &frames[fi - 1];
+      else if (lag) continue;
       HostEnv HE;
       HE.resize(SV);
-      for (int a = 0; a < SV.n_anchor && a < int(F.anchor.size()); ++a) HE.anchor[a] = F.anchor[a];
-      for (size_t w = 0; w < HE.vis.size() && w < F.vis.size(); ++w) HE.vis[w] = F.vis[w];
+      for (int a = 0; a < SV.n_anchor && a < int(P->anchor.size()); ++a) HE.anchor[a] = P->anchor[a];
+      for (size_t w = 0; w < HE.vis.size() && w < P->vis.size(); ++w) HE.vis[w] = P->vis[w];
       HE.build(SV);
       const EnvView ev = HE.view();
       for (int c = 0; c < 3 && c < int(F.cams.size()); ++c) {
-        const Camera& cm = F.cams[c];
+        const Camera& cm = P->cams[c];
         const Image* orgb = F.find(std::string("img::") + kRoles[c] + "::rgb");
         if (!orgb || orgb->h != cm.h || orgb->w != cm.w) continue;
         const int n = cm.w * cm.h;

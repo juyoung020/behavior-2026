@@ -223,7 +223,7 @@ EHD V3 cosine_dir(const V3& n, float r1, float r2) {
 
 EHD bool occluded(const SceneView& S, const EnvView& E, const V3& p, const V3& d, float tmax) {
   const Ray r = make_ray(p, d);
-  const Hit h = trace(S, E, r, 1e-4f, tmax, true);
+  const Hit h = trace(S, E, r, 1e-4f, tmax, true, kInstGlass);  // 유리는 빛을 막지 않는다
   return h.inst >= 0;
 }
 
@@ -235,11 +235,21 @@ EHD V3 light_direct(const SceneView& S, const EnvView& E, int32_t li, const V3& 
   V3 q = c;
   float area_cos = 0.0f;  // (면적 × 조명 쪽 코사인) / π
   if (L.type == kLightSphere) {
-    // 구 조명: 보이는 쪽 원판을 점 하나로 (반지름 r, 휘도 L -> 조도 ≈ L π r² cos / d²)
+    // 구 조명: 조도 ≈ L π r² cos / d² (보이는 원판). 그림자 광선은 점 p 를 향한 반구 위 한 점으로 쏜다 —
+    // 천장 등에 반쯤 묻힌 조명(중심이 천장 위)도 아래 반구가 보이면 빛이 나온다(RTX 와 같게).
     const V3 dc = c - p;
     const float d2 = magSq(dc);
     if (!(d2 > L.radius * L.radius)) return V3{0.0f, 0.0f, 0.0f};
     area_cos = L.radius * L.radius;
+    const V3 w = normalize3(p - c);
+    const V3 t = fab(w.x) > 0.9f ? normalize3(cross(V3{0.0f, 1.0f, 0.0f}, w)) : normalize3(cross(V3{1.0f, 0.0f, 0.0f}, w));
+    const V3 b = cross(w, t);
+    const float rr = psqrt(u1);
+    float sn, cs;
+    sincos2pi(u2, sn, cs);
+    const float lx = rr * cs, ly = rr * sn, lz = psqrt(fmx(0.0f, 1.0f - u1));
+    q = V3{c.x + (t.x * lx + b.x * ly + w.x * lz) * L.radius, c.y + (t.y * lx + b.y * ly + w.y * lz) * L.radius,
+           c.z + (t.z * lx + b.z * ly + w.z * lz) * L.radius};
   } else if (L.type == kLightRect || L.type == kLightDisk) {
     float lx, ly;
     if (L.type == kLightRect) {
@@ -283,12 +293,76 @@ EHD V3 light_direct(const SceneView& S, const EnvView& E, int32_t li, const V3& 
   return V3{L.radiance[0] * k, L.radiance[1] * k, L.radiance[2] * k};
 }
 
+// 조명 고르기 가중치 = 가림 없는 기여 추정(휘도 × 입체각 근사 × 코사인). 조명이 수십 개(radio 38 개)라 균등 선택은
+// 가까운 작은 조명 하나가 전부를 차지해 점잡음이 된다 -> 기여에 비례해 고른다(중요도 표본). 지평선 근처 큰 조명이
+// 확률 0 이 되지 않게 코사인에 (크기/거리) 여유를 더한다.
+EHD float light_weight(const SceneView& S, const EnvView& E, int32_t li, const V3& p, const V3& n) {
+  const Light& L = S.lights[li];
+  if (!L.visible) return 0.0f;
+  const float lum = 0.2126f * L.radiance[0] + 0.7152f * L.radiance[1] + 0.0722f * L.radiance[2];
+  const Aff& W = E.light_world[li];
+  if (L.type == kLightDistant) {
+    const V3 ld = normalize3(xvec(W, V3{0.0f, 0.0f, 1.0f}));
+    const float half = L.angle * 0.5f * 0.017453292f;
+    return lum * 3.14159265f * half * half * fmx(dot(n, ld), 0.0f);
+  }
+  if (!(L.type == kLightSphere || L.type == kLightRect || L.type == kLightDisk)) return 0.0f;
+  const V3 dv{W.m[3] - p.x, W.m[7] - p.y, W.m[11] - p.z};
+  const float d2 = fmx(magSq(dv), 1e-8f);
+  const float d = psqrt(d2);
+  float area, ext, cl = 1.0f;
+  if (L.type == kLightSphere) {
+    area = 3.14159265f * L.radius * L.radius;
+    ext = L.radius;
+  } else {
+    area = L.type == kLightRect ? L.width * L.height : 3.14159265f * L.radius * L.radius;
+    ext = L.type == kLightRect ? 0.5f * psqrt(L.width * L.width + L.height * L.height) : L.radius;
+    const V3 ln = normalize3(xvec(W, V3{0.0f, 0.0f, -1.0f}));
+    cl = fmn(fmx(-dot(ln, dv) / d + ext / d, 0.0f), 1.0f);
+  }
+  const float cs = fmn(fmx(dot(n, dv) / d + ext / d, 0.0f), 1.0f);
+  return lum * area * cs * cl / d2;
+}
+
+// 직접광 (다음 사건 추정): 가중치 비례로 조명 ns 개를 골라 그림자 광선. 반환 = Σ 기여 / (확률 × ns). 난수 순서 고정.
+EHD V3 direct_light(const SceneView& S, const EnvView& E, const V3& po, const V3& n, uint32_t& rs) {
+  V3 ls{0.0f, 0.0f, 0.0f};
+  if (S.n_lights <= 0) return ls;
+  float wsum = 0.0f;
+  for (int32_t li = 0; li < S.n_lights; ++li) wsum = wsum + light_weight(S, E, li, po, n);
+  const int ns = S.sp.shadow_lights > 0 ? S.sp.shadow_lights : 1;
+  for (int j = 0; j < ns; ++j) {
+    const float pick = rnd01(rs);
+    const float u1 = rnd01(rs);
+    const float u2 = rnd01(rs);
+    if (!(wsum > 0.0f)) continue;
+    const float target = pick * wsum;
+    float acc = 0.0f, wl = 0.0f;
+    int32_t li = -1;
+    for (int32_t k = 0; k < S.n_lights; ++k) {  // 누적 합으로 찾기 (가중치는 위와 같은 식이라 같은 값)
+      const float w = light_weight(S, E, k, po, n);
+      if (!(w > 0.0f)) continue;
+      li = k;
+      wl = w;
+      acc = acc + w;
+      if (target < acc) break;
+    }
+    if (li < 0) continue;
+    const V3 c = light_direct(S, E, li, po, n, u1, u2);
+    const float inv = wsum / (wl * float(ns));
+    ls = ls + c * inv;
+  }
+  return ls;
+}
+
 // 픽셀 하나: depth(맞은 t, 못 맞추면 0) 와 선형 휘도
 EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, int px, int py, uint32_t seed, float& depth,
                      V3& radiance) {
   const Ray r0 = camera_ray(cam, float(px) + 0.5f, float(py) + 0.5f);
-  const Hit h0 = trace(S, E, r0, cam.znear, cam.zfar);
+  Hit h0 = trace(S, E, r0, cam.znear, cam.zfar);
   depth = h0.inst >= 0 ? h0.t : 0.0f;
+  // 유리: 깊이는 유리 면(공식 depth_linear 와 같음), 색은 유리 뒤를 본다(얇은 투명 유리 근사, 반사·굴절 없음)
+  if (h0.inst >= 0 && (S.insts[h0.inst].flags & kInstGlass)) h0 = trace(S, E, r0, cam.znear, cam.zfar, false, kInstGlass);
   radiance = V3{0.0f, 0.0f, 0.0f};
   const V3 dome{S.sp.dome[0], S.sp.dome[1], S.sp.dome[2]};
   if (h0.inst < 0) {  // 하늘(돔 조명)이 보임
@@ -312,21 +386,8 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
       const Surf s = surface(S, E, r, h, cone);
       acc = acc + mulc(thr, s.emissive);
       const V3 po = s.p + s.ng * 1e-4f;
-      // 직접광: 조명 몇 개를 균등하게 뽑아 그림자 광선 (평균 × 개수)
-      V3 lsum{0.0f, 0.0f, 0.0f};
-      if (S.n_lights > 0) {
-        const int ns = S.sp.shadow_lights > 0 ? S.sp.shadow_lights : 1;
-        V3 ls{0.0f, 0.0f, 0.0f};
-        for (int j = 0; j < ns; ++j) {
-          int li = int(rnd01(rs) * float(S.n_lights));
-          li = li >= S.n_lights ? S.n_lights - 1 : li;
-          const float u1 = rnd01(rs);
-          const float u2 = rnd01(rs);
-          if (S.lights[li].visible) ls = ls + light_direct(S, E, li, po, s.ns, u1, u2);
-        }
-        const float w = float(S.n_lights) / float(ns);
-        lsum = ls * w;
-      }
+      // 직접광: 기여 비례로 조명을 골라 그림자 광선 (direct_light)
+      V3 lsum = direct_light(S, E, po, s.ns, rs);
       if (!ao) lsum = lsum + amb;  // 가림 없는 주변광
       acc = acc + mulc(thr, mulc(s.albedo, lsum));
       // 코사인 광선 하나: 주변광 가림(AO), 돔(하늘) 빛, 다음 튕김을 같이 한다.
@@ -336,7 +397,7 @@ EHD void shade_pixel(const SceneView& S, const EnvView& E, const Camera& cam, in
       const float b2 = rnd01(rs);
       const V3 nd = cosine_dir(s.ns, b1, b2);
       r = make_ray(po, nd);
-      h = trace(S, E, r, 1e-4f, 1e30f);
+      h = trace(S, E, r, 1e-4f, 1e30f, false, kInstGlass);
       if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) acc = acc + mulc(thr, mulc(s.albedo, amb));
       if (h.inst < 0) {  // 빠져나간 광선 = 돔 휘도 (코사인 표본이라 알베도만 곱함)
         acc = acc + mulc(thr, mulc(s.albedo, dome));
