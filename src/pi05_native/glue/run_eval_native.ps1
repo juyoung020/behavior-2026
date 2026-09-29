@@ -13,7 +13,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $env:OMNI_KIT_ACCEPT_EULA = 'YES'
 $env:KMP_DUPLICATE_LIB_OK = 'TRUE'   # same workaround as run_eval_radio.ps1 (torch MKL + conda llvm-openmp)
-. "$(conda info --base)\shell\condabin\conda-hook.ps1"
+. "$env:USERPROFILE\anaconda3\shell\condabin\conda-hook.ps1"  # user anaconda3 holds the behavior env (another conda can come first on PATH, so not conda info --base)
 conda activate behavior
 . C:\behavior-2026\tools\gpu_lock.ps1 -Lib   # shared lock (owner.txt: owner= purpose= start_epoch= end_epoch= vram_gb=)
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
