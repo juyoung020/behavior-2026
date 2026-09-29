@@ -1,35 +1,55 @@
-# agent — 상위 계획기 (Qwen3.5-9B 양자화, GPU)
+# agent — high-level planner agent + evaluator↔π0.5 relay (Rust)
 
-`plan.md` 1~2절의 **판단** 층. 긴 계획·기억·단계 추적을 맡고, π0.5 에는 지금 단계 지시 한 줄만 넘긴다.
-π0.5 는 과거를 기억하지 않으므로 "무엇을 했고 무엇이 남았나"는 전부 여기서 들고 있는다.
+The "judgement" layer of `plan.md` §1–2. It keeps the long plan, memory and step tracking, and gives π0.5 only the
+instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../../docs/에이전트_설계.md)** (Korean).
 
-## 흐름
+## Two paths
 
-```
-과제 지시 + BDDL 목표 ─┐
-씬그래프(meridian) ────┼─▶ loop.py: 다음 단계 고르기 → issue_command → 실행 감시 → check_done
-로봇 상태(오도메트리) ─┘                     │            ▲                       │
-                                             ▼            │            다음 / 재시도 / 재계획
-                                   instruction.py → π0.5 문장        memory.py 요약
-```
+| Path | What | Files |
+|---|---|---|
+| Every step (relay) | Evaluator ↔ relay ↔ π0.5 server. Observation and action bytes pass through unchanged; the relay appends `__agent_prompt__` (and `__agent_flush__`) to the observation map. Masked WebSocket payloads are never unmasked (mask-key rotation), frames are cut-through streamed, sockets use `TCP_QUICKACK`. Odometry and boundary detection are plain arithmetic. **No LLM here.** | `relay.rs` `ws.rs` `msgpack.rs` `wire.rs` `session.rs` `odom.rs` `monitor.rs` |
+| Step boundaries (agent) | Called only at episode start, budget exhaustion, periodic checks, base settling, gripper changes. OpenAI-compatible Chat Completions with tool calling (`tools` / `tool_calls` / `role:"tool"`) decides the next step. | `planner.rs` `tools.rs` `context.rs` `memory.rs` `plan.rs` `graph.rs` `llm.rs` |
 
-- 매 스텝 부르지 않는다. 단계가 끝났거나 스텝 한도를 넘었을 때만 LLM 을 부른다.
-- LLM 이 생각하는 동안 시뮬레이터 시간은 멈춰 있다(점수는 시뮬레이터 스텝 기준).
+The π0.5 server side is a 70-line glue file, `tools/serve_b1k_agent.py`: it swaps openpi's `B1KPolicyWrapper` for a subclass
+that reads `__agent_prompt__` as the prompt and removes the injected keys (openpi itself is not modified).
 
-## 파일
+## Decision interface
 
-| 파일 | 하는 일 |
+`Agent = Core (state) + Decider`. `Core` owns the stage log, plan checklist, object memory (`back` / `the other`),
+reference resolution, step budgets and instruction rendering. Deciders: `LlmDecider` (tool-calling loop) and
+`PriorDecider` (no LLM, follows the demonstration prior). An RL decider plugs into the same trait;
+`Core::decision_input()` is the structured state and is written to every boundary record.
+
+## Files
+
+| File | Role |
 |---|---|
-| `state.py` | 에이전트 상태: 과제, 남은 목표 조건, 지금 단계, 남은 스텝, 로봇 위치(추정), 손에 든 것, 직전 결과 |
-| `instruction.py` | 지시 계약(JSON) → π0.5 문장. 형식 4가지(과제 문장 / Comet 하위과제 / 목적·예상행동 / 숫자 명령)를 바꿔 끼울 수 있게 — `plan.md` 4.1 비교용 |
-| `memory.py` | 단계 기록과 요약. 공간 기억은 씬그래프가 맡고 여기는 "한 일" 기억만 |
-| `tools.py` | LLM 이 부르는 도구 정의(JSON 스키마)와 실행: `graph_query` · `robot_state` · `issue_command` · `check_done` · `goal_status` · `summarize` |
-| `llm.py` | 로컬 LLM 서버(OpenAI 호환, 예: llama.cpp CUDA) 호출 |
-| `loop.py` | 반복문: 목표를 다 채우거나 스텝이 떨어질 때까지 |
-| `prompts/system.md` | 시스템 프롬프트 초안 |
+| `main.rs` | CLI `bagent`: `relay`, `sim`, `replay`, `build-assets`, `render`, `schedule`, `mock-llm`, `fake-pi`, `bench`, `bench-local`, `bench-image`, `llm-check` |
+| `relay.rs` | Relay: cut-through vs. hold, planner threads, ping handling while planning, latency stats |
+| `ws.rs` | Hand-written RFC 6455: handshake (`/healthz`), frames, mask rotation, vectored writes, `poll(2)`, `TCP_QUICKACK` |
+| `msgpack.rs` / `wire.rs` | Zero-copy scan of masked msgpack; observation keys, `base_qvel`, grippers, images, injected suffix |
+| `session.rs` / `odom.rs` / `monitor.rs` | Per-environment odometry (same integration as `src/meridian/demo_player.py`), five boundary triggers |
+| `planner.rs` | `Core`, `Decider`, `LlmDecider`, `PriorDecider`, automatic evidence, deterministic fallback |
+| `tools.rs` | Tool schemas and execution: `issue_command`, `continue_current`, `finish`, `graph_query`, `resolve_reference`, `look`, `robot_state`, `goal_status`, `set_plan`, `remember` |
+| `context.rs` / `memory.rs` / `plan.rs` | Single system message context, recent-turn window + summaries after the decision, checklist |
+| `graph.rs` | meridian `scene_server` client (TCP JSON lines, `127.0.0.1:7791`), static/shared graphs, object memory |
+| `catalog.rs` / `bddl.rs` / `vocab.rs` / `instruction.rs` | Task cards (`assets/tasks.json`: prompts, limits, BDDL, top demo step orders, step budgets), 35-skill vocabulary, 4 instruction formats, π0.5 token budget |
+| `llm.rs` / `http.rs` / `codec.rs` | Chat Completions (explicit deterministic sampling), hand-written HTTP, `curl` for HTTPS, replay/fake LLMs, local-server up/down hooks; base64, SHA-1 |
+| `trace.rs` / `replay.rs` | JSONL execution records, timeline, single-file HTML player, replay verification |
+| `mockworld.rs` / `fakes.rs` | Fake world (fake executor), rule-based fake LLM (in-process and HTTP), fake π0.5 server, fake evaluator |
+| `prompts/system.md` | System prompt (English) |
+| `tests/e2e.rs` | End-to-end tests (relay byte identity, fake-world episodes, fallback, replay, HTTP LLM) |
 
-## 아직 연결 안 된 것
+## Quick start (WSL)
 
-- `graph_query`: meridian Graphcore 조회 — `src/meridian/`, `docs/meridian_통합설계.md` 통합 뒤.
-- `issue_command` / 실행 감시: π0.5 서버와 평가기 사이 다리 — 아직 없음.
-- 오늘 "있는 그대로" 실행은 2위 Comet 의 계획기 반복문(`refs/openpi-comet/src/openpi/shared/client.py:273-314`)을 그대로 쓴다. 여기 코드는 그 다음 단계.
+```bash
+export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/cargo-target/agent
+cd /mnt/c/behavior-2026/src/agent
+cargo test --release                                  # 39 tests
+cargo run --release -- sim --scenario trash --llm oracle
+set -a; . ~/.config/behavior-2026/kau.env; set +a     # API key via environment only
+cargo run --release -- sim --scenario radio --llm kau --no-images
+cargo run --release -- relay --listen 0.0.0.0:8000 --upstream 127.0.0.1:8100 --mode agent --llm kau --graph meridian
+```
+
+Runs are written to `runs/` (git-ignored).
