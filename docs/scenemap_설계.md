@@ -149,7 +149,7 @@ int  sm_snapshot(sm_ctx*, sm_snapshot_t** out);   // 읽기 전용 스냅숏(참
 - simlink 가 이미 받는 것(평가기 원 텐서: RGBA u8, 깊이 f32 m, proprio 61)을 그대로 넘긴다. 자르기·축소는 scenemap 안에서 한다(ROS 계약의 640×480 은 더 이상 필요 없음).
 - 카메라 외부 자세는 scenemap 이 proprio 로 직접 계산한다(순기구학 코드는 `src\agent\src\fk.rs` 와 같은 상수, C++ 로 새로).
 
-### 4.2 검출기(YOLOE) 출력 — C++ frontend 에이전트와 맞출 형식(제안)
+### 4.2 검출기(YOLOE) 출력 — 약속(확정 09-30, `src/ovdet/include/ovdet.h` 와 `src/scenemap/include/scenemap.h` 가 같은 정의를 `SM_DETECTIONS_DEFINED` 가드로 가짐)
 
 ```c
 typedef struct {
@@ -160,7 +160,7 @@ typedef struct {
   const int32_t*  cls;       // n: 프롬프트 표의 번호(판 시작 때 넘긴 이름 목록의 순서)
   const float*    score;     // n: 신뢰도
   const float*    box;       // n×4: x0,y0,x1,y1 원 영상 화소
-  int mask_w, mask_h;        // 마스크 격자(예: 160×160)
+  int mask_w, mask_h;        // 마스크 격자(YOLOE 입력 1024 기준 256×256)
   float mask_sx, mask_sy, mask_ox, mask_oy;   // 원 영상 화소 = 마스크 칸 × s + o (레터박스 되돌림)
   const uint32_t* mask_bits; // n × ceil(mask_w×mask_h/32): 행 우선 비트
 } sm_detections;
@@ -168,6 +168,8 @@ typedef struct {
 
 - 프롬프트 표: 판 시작 때 계획기가 BDDL 물체 이름 목록을 넘긴다. 검출기와 scenemap 이 같은 표(순서)를 쓴다. 구조물 이름(바닥·벽·문)은 표 뒤쪽에 따로 둔다(문은 방 나누기용).
 - 마스크는 검출기 해상도 그대로 비트로 넘긴다(복사 없음, 같은 프로세스). scenemap 이 깊이 화소로 샘플링한다.
+- 비트 순서: 칸 k = j·mask_w + i 는 word k>>5 의 bit (k&31)(LSB 먼저). 칸 (i, j) 는 x ∈ [i·sx+ox, (i+1)·sx+ox), y ∈ [j·sy+oy, (j+1)·sy+oy) 를 덮고, 칸 중심은 (i+0.5)·s+o.
+- 검출기 호출: `const sm_detections* ovd_detect(h, img, timing)`. 반환값은 핸들이 소유하고 다음 호출 전까지 유효하다. 입력은 RGBA u8 원 텐서(호스트·GPU). cls 는 `ovd_set_prompt` 이름 목록 번호다(BDDL 이름을 정규화한 것, 어휘 밖 이름도 번호는 유지하되 검출은 안 됨). 평가 전용 이름 점수·면적은 별도 getter.
 - 한 번 부르기의 수명: 다음 `sm_push_image` 전까지 유효하다. scenemap 은 필요한 것만 복사한다.
 
 ### 4.3 계획기 ↔ scenemap
