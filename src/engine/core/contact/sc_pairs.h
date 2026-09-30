@@ -651,8 +651,18 @@ class ScPairs {
     if (actor1 >= 0) registerInActor(actor1, it, 1);
     return it;
   }
-  void removeExternalInteraction(int32_t it) {
+  void removeExternalInteraction(int32_t it) {  // ConstraintInteraction::destroy (ScConstraintInteraction.cpp:66): 더러움 목록에서 빼고(setClean(true)) 행위자 목록에서 뺌
     Interaction& I = inters[size_t(it)];
+    if (I.iflags & IFlag::eIN_DIRTY_LIST) {
+      const uint32_t pos = dirtyPos[it];
+      const int32_t last = dirtyList.back();
+      dirtyList[pos] = last;
+      dirtyPos[last] = pos;
+      dirtyList.pop_back();
+      dirtyPos.erase(it);
+      I.iflags &= uint8_t(~IFlag::eIN_DIRTY_LIST);
+    }
+    I.dirty = 0;
     if (I.actor0 >= 0) unregisterFromActor(I.actor0, it, 0);
     if (I.actor1 >= 0) unregisterFromActor(I.actor1, it, 1);
     freeInteraction(it);

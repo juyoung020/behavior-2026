@@ -34,6 +34,9 @@
 #include "ScNPhaseCore.h"
 #include "ScArticulationSim.h"
 #include "ScArticulationCore.h"
+#include "ScConstraintSim.h"
+#include "ScConstraintInteraction.h"
+#include "NpConstraint.h"
 #include "PxsContext.h"
 #include "PxsContactManager.h"
 #include "PxsContactManagerState.h"
@@ -155,7 +158,15 @@ void W(_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj)(IG::IslandSim* s, PxU3
     R(NAME)(s, e);                                             \
   }
 WRAP_EDGE(OP_DISCONNECT, _ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj)
-WRAP_EDGE(OP_REMOVE, _ZN5physx2IG19SimpleIslandManager16removeConnectionEj)
+// removeConnection: 조인트 간선(ConstraintInteraction)은 joints 몫이라 기록하지 않는다
+void R(_ZN5physx2IG19SimpleIslandManager16removeConnectionEj)(SIM*, PxU32);
+void W(_ZN5physx2IG19SimpleIslandManager16removeConnectionEj)(SIM* s, PxU32 e) {
+  if (G.on) {
+    const Sc::Interaction* it = s->getInteractionFromEdgeIndex(e);
+    if (!it || it->getType() != Sc::InteractionType::eCONSTRAINTSHADER) G.calls[OP_REMOVE].push_back(IslandCall{OP_REMOVE, e, 0, 0, 0, 0});
+  }
+  R(_ZN5physx2IG19SimpleIslandManager16removeConnectionEj)(s, e);
+}
 WRAP_EDGE(OP_CLEAR_RIGID_CM, _ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCMEj)
 WRAP_EDGE(OP_DEACT_EDGE, _ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj)
 void R(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)(SIM*, PxU32, IG::Edge::EdgeType);
@@ -362,7 +373,8 @@ int main(int argc, char** argv) {
   int nb = 150, steps = 300, seed = 1, threads = 2;
   bool sleep = false;
   int removeEvery = 0;
-  int refilterEvery = 0;  // --refilter N: N 스텝마다 모양 거르기 자료 바꾸기 + 몸체 운동학 전환 (재거르기·convert 경로)  // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
+  int refilterEvery = 0;
+  int jointEvery = 0;  // --joints N: N 스텝마다 조인트 하나 만들고(충돌 끔/켬) 하나 없애기 (행위자 목록 자리표 재생)  // --refilter N: N 스텝마다 모양 거르기 자료 바꾸기 + 몸체 운동학 전환 (재거르기·convert 경로)  // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--bodies") && i + 1 < argc) nb = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--steps") && i + 1 < argc) steps = atoi(argv[++i]);
@@ -371,6 +383,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--sleep")) sleep = true;
     else if (!strcmp(argv[i], "--remove") && i + 1 < argc) removeEvery = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--refilter") && i + 1 < argc) refilterEvery = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--joints") && i + 1 < argc) jointEvery = atoi(argv[++i]);
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
@@ -453,6 +466,8 @@ int main(int argc, char** argv) {
   }
   // 조인트 (충돌 끔 기본)
   std::vector<std::pair<PxRigidActor*, PxRigidActor*>> jointed;
+  std::vector<PxJoint*> liveJoints;
+  std::map<PxJoint*, int32_t> jointExt;  // 조인트 -> 우리 층 자리표 번호
   for (int j = 0; j + 1 < int(dyns.size()); j += 11) {
     PxRigidDynamic* a = dyns[size_t(j)];
     PxRigidDynamic* b = dyns[size_t(j + 1)];
@@ -461,6 +476,7 @@ int main(int argc, char** argv) {
     jt->setMotion(PxD6Axis::eSWING1, PxD6Motion::eFREE);
     if (j % 3 == 0) jt->setConstraintFlag(PxConstraintFlag::eCOLLISION_ENABLED, true);
     jointed.push_back({a, b});
+    liveJoints.push_back(jt);
   }
   // 관절체 2 개 (하나는 뿌리 고정), 묶음(자기 충돌 켬)
   std::vector<PxArticulationReducedCoordinate*> arts;
@@ -561,6 +577,7 @@ int main(int argc, char** argv) {
         gElemSim[e] = sim;
       }
     }
+    M.jointPairs.clear();  // 조인트가 없어지면 거르기에서도 빠진다 (Scene::findConstraintCore)
     for (auto& jp : jointed) {
       Sc::ActorSim* s0 = static_cast<NpRigidDynamic*>(jp.first)->getCore().getSim();
       Sc::ActorSim* s1 = static_cast<NpRigidDynamic*>(jp.second)->getCore().getSim();
@@ -605,6 +622,11 @@ int main(int argc, char** argv) {
       M.appendToActorList(kv.second, e->second);
     }
   }
+  for (PxJoint* j : liveJoints) {  // 처음 조인트 -> 자리표 번호 (나중에 없앨 때)
+    const Sc::ConstraintSim* cs = static_cast<NpConstraint*>(j->getConstraint())->getCore().getSim();
+    const Sc::Interaction* ci = cs ? reinterpret_cast<const Sc::Interaction*>(cs->getInteraction()) : nullptr;
+    if (ci && extIndex.count(ci)) jointExt[j] = extIndex[ci];
+  }
   printf("조인트·관절 상호작용 자리표 %zu 개\n", extIndex.size());
   uint64_t bad = 0, cmpList = 0, cmpEvents = 0, cmpCalls = 0, cmpActor = 0;
   int firstBad = -1;
@@ -613,7 +635,7 @@ int main(int argc, char** argv) {
     ++bad;
   };
   const float dt = 1.0f / 60.0f;
-  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0, nRemovedActors = 0, nRefilterApi = 0, nKinToggle = 0;
+  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0, nRemovedActors = 0, nRefilterApi = 0, nKinToggle = 0, nJointOps = 0;
   for (int step = 0; step < steps; ++step) {
     for (size_t k = 0; k < kinematics.size(); ++k) {  // 운동학 몸체 옮기기 (잠 켬이면 절반은 150 스텝 뒤 멈춤)
       if (sleep && (k & 1) && step > 150) continue;
@@ -664,6 +686,47 @@ int main(int argc, char** argv) {
         break;
       }
       G.on = false;
+    }
+    // API: 조인트 만들기·없애기 (Sc::ConstraintInteraction: registerInActors(행위자 0 다음 1) / destroy)
+    struct JointOp { bool add; Sc::ActorSim* a0; Sc::ActorSim* a1; PxJoint* j; const Sc::Interaction* ci; };
+    std::vector<JointOp> jointOps;
+    if (jointEvery > 0 && step % jointEvery == 2) {
+      G.on = true;
+      if (!liveJoints.empty() && P(rng) < 0.5f) {
+        const size_t ji = size_t(P(rng) * float(liveJoints.size())) % liveJoints.size();
+        PxJoint* j = liveJoints[ji];
+        PxRigidActor *x0, *x1;
+        j->getActors(x0, x1);
+        jointOps.push_back(JointOp{false, nullptr, nullptr, j, nullptr});
+        j->release();
+        liveJoints.erase(liveJoints.begin() + long(ji));
+        for (size_t q = 0; q < jointed.size(); ++q)
+          if (jointed[q].first == x0 && jointed[q].second == x1) { jointed.erase(jointed.begin() + long(q)); break; }
+        nJointOps++;
+      } else {
+        for (int tries = 0; tries < 20; ++tries) {
+          PxRigidDynamic* a = dyns[size_t(P(rng) * float(dyns.size())) % dyns.size()];
+          PxRigidDynamic* b = dyns[size_t(P(rng) * float(dyns.size())) % dyns.size()];
+          if (a == b || (a->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC) || (b->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC)) continue;
+          bool dup = false;
+          for (auto& jp : jointed) dup |= (jp.first == a && jp.second == b) || (jp.first == b && jp.second == a);
+          if (dup) continue;
+          PxD6Joint* jt = PxD6JointCreate(*phys, a, PxTransform(PxIdentity), b, PxTransform(PxVec3(0.3f, 0, 0)));
+          jt->setMotion(PxD6Axis::eSWING1, PxD6Motion::eFREE);
+          if (P(rng) < 0.3f) jt->setConstraintFlag(PxConstraintFlag::eCOLLISION_ENABLED, true);
+          jointed.push_back({a, b});
+          liveJoints.push_back(jt);
+          {
+            const Sc::ConstraintSim* cs = static_cast<NpConstraint*>(jt->getConstraint())->getCore().getSim();
+            jointOps.push_back(JointOp{true, static_cast<NpRigidDynamic*>(a)->getCore().getSim(), static_cast<NpRigidDynamic*>(b)->getCore().getSim(), jt,
+                                       cs ? reinterpret_cast<const Sc::Interaction*>(cs->getInteraction()) : nullptr});
+          }
+          nJointOps++;
+          break;
+        }
+      }
+      G.on = false;
+      syncScene();
     }
     // 가끔 행위자 빼기(API) — 그때 PhysX 가 하는 섬 호출도 이 스텝 기록에 넣고, 우리 층도 스텝 재생 앞에서 같은 모양 순서로 뺀다
     std::vector<int32_t> removedElems;
@@ -726,6 +789,21 @@ int main(int argc, char** argv) {
     for (auto& c : G.createdShapeChunks) created.insert(created.end(), c.pairs.begin(), c.pairs.end());
     nCreated += created.size() / 2;
     nTrig += G.createdTrigger.size() / 2;
+    for (const JointOp& op : jointOps) {
+      if (op.add) {
+        const int32_t id = M.addExternalInteraction(actorOf(op.a0), actorOf(op.a1), ss::eCONSTRAINTSHADER);
+        jointExt[op.j] = id;
+        if (op.ci) extIndex[op.ci] = id;
+      } else {
+        auto je = jointExt.find(op.j);
+        if (je != jointExt.end()) {
+          for (auto it = extIndex.begin(); it != extIndex.end(); ++it)
+            if (it->second == je->second) { extIndex.erase(it); break; }
+          M.removeExternalInteraction(je->second);
+          jointExt.erase(je);
+        }
+      }
+    }
     for (const ApiOp& op : apiOps) {
       if (op.kind == 0) M.setElementInteractionsDirty(op.elem, ss::DirtyFlag::eFILTER_STATE, ss::IFlag::eFILTERABLE);
       else {
@@ -911,8 +989,8 @@ int main(int argc, char** argv) {
     }
     if (bad && step > firstBad + 2) break;
   }
-  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 ", 뺀 행위자 %" PRIu64 ", 거르기 자료 바꿈 %" PRIu64 ", 운동학 전환 %" PRIu64 "\n", steps, nCreated,
-         nTrig, nRemoved, nTouch, nAct, nDeact, nRemovedActors, nRefilterApi, nKinToggle);
+  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 ", 뺀 행위자 %" PRIu64 ", 거르기 자료 바꿈 %" PRIu64 ", 운동학 전환 %" PRIu64 ", 조인트 만듦·없앰 %" PRIu64 "\n", steps, nCreated,
+         nTrig, nRemoved, nTouch, nAct, nDeact, nRemovedActors, nRefilterApi, nKinToggle, nJointOps);
   printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents, cmpCalls, cmpActor,
          bad);
   if (bad) printf(" (첫 다름 스텝 %d)", firstBad);
