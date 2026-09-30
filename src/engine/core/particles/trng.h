@@ -7,6 +7,7 @@
 //   원소 x 마다 Philox4_32(시드 하위 32비트, 0, x) 첫 출력 → (v & 0x7fffffff) * 4.6566127342e-10f, 그다음 std::sqrt·std::sin/cos(float) = glibc.
 #pragma once
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 
 #include "core/common/glibc_sincosf.h"
@@ -15,11 +16,13 @@
 namespace eng {
 namespace particles {
 
-struct TorchMT {  // at::mt19937_data_pod
+struct TorchMT {  // at::mt19937_data_pod + CPUGeneratorImpl 의 정규분포 캐시(double)
   uint64_t seed;
   int32_t left;
   uint32_t next;
   uint32_t state[624];
+  int32_t normal_valid;  // next_double_normal_sample 이 있나
+  double normal_next;
 };
 
 // th.get_rng_state() 바이트(5056) → 엔진 상태 (CPUGeneratorImplStateLegacy: seed u64, left i32, seeded i32, next u64, state u64[624], ...)
@@ -34,6 +37,13 @@ PEHD bool torch_mt_from_bytes(const uint8_t* b, int n, TorchMT& m) {
     uint64_t v;
     memcpy(&v, b + 24 + 8 * i, 8);
     m.state[i] = (uint32_t)v;
+  }
+  // legacy: normal_x(5016) normal_y(5024) normal_rho(5032) normal_is_valid(5040) — double 정규 캐시 = normal_y
+  m.normal_valid = 0;
+  m.normal_next = 0.0;
+  if (n >= 5044) {
+    memcpy(&m.normal_valid, b + 5040, 4);
+    memcpy(&m.normal_next, b + 5024, 8);
   }
   return true;
 }
@@ -81,6 +91,32 @@ PEHD float torch_rand_float(TorchMT& m) {
   const double x = (double)(v & 0xFFFFFFu) * (1.0 / 16777216.0);
   return (float)(x * (1.0 - 0.0) + 0.0);
 }
+
+// th.randn (eager, float32, 원소 16 개 미만 또는 비연속 → normal_distribution<double> 한 원소씩, ATen/core/DistributionsHelper.h:188)
+// Box-Muller: u1, u2 = double 균등(53 비트), r = sqrt(-2 log1p(-u2)), θ = 2π u1, 캐시 ← r sin θ, 반환 r cos θ (캐시가 있으면 그것).
+// log1p·sin·cos 는 double libm (호스트 glibc 를 그대로 — 층 2 는 필요해지면 옮긴다). 캐시는 get_rng_state 의 legacy normal_y/normal_is_valid.
+#if !defined(__CUDA_ARCH__)
+inline double torch_uniform_double(TorchMT& m) {
+  const uint64_t v = torch_mt_u64(m);
+  const double x = (double)(v & ((uint64_t(1) << 53) - 1)) * (1.0 / 9007199254740992.0);
+  return x * (1.0 - 0.0) + 0.0;
+}
+inline float torch_randn_float(TorchMT& m) {
+  double ret;
+  if (m.normal_valid) {
+    m.normal_valid = 0;
+    ret = m.normal_next;
+  } else {
+    const double u1 = torch_uniform_double(m), u2 = torch_uniform_double(m);
+    const double r = std::sqrt(-2.0 * std::log1p(-u2));
+    const double th = 2.0 * 3.14159265358979323846 * u1;
+    m.normal_next = r * std::sin(th);
+    m.normal_valid = 1;
+    ret = r * std::cos(th);
+  }
+  return (float)(ret * 1.0 + 0.0);
+}
+#endif
 
 // ---- Philox4_32 (첫 출력만) ----
 PEHD uint32_t philox_first(uint64_t seed, uint64_t offset) {

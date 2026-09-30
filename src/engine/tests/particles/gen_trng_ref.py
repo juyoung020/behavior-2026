@@ -21,6 +21,7 @@ def main():
         T.random_quaternion(k)
     states, ns, quats, after, rint = [], [], [], [], []
     rstates, rvals, rlens = [], [], []
+    nstates, nvals, nlens = [], [], []
     maxn = 64
     for i in range(a.n):
         th.manual_seed(int(rng.integers(0, 2**63)))
@@ -44,6 +45,12 @@ def main():
         rstates.append(st2)
         rvals.append(np.pad(rr, (0, 6000 - len(rr))))
         rlens.append(len(rr))
+        # eager th.randn(3) 여러 번 (캐시가 이어지는 꼴: get_parallel_rays 의 random_vector)
+        st3 = th.get_rng_state().numpy().copy()
+        rn = np.concatenate([th.randn(3).numpy() for _ in range(int(rng.integers(1, 6)))])
+        nstates.append(st3)
+        nvals.append(np.pad(rn, (0, 15 - len(rn))))
+        nlens.append(len(rn))
     np.save(os.path.join(a.out, "state.npy"), np.stack(states))
     np.save(os.path.join(a.out, "after.npy"), np.stack(after))
     np.save(os.path.join(a.out, "n.npy"), np.array(ns, np.int32))
@@ -52,6 +59,9 @@ def main():
     np.save(os.path.join(a.out, "rand_state.npy"), np.stack(rstates))
     np.save(os.path.join(a.out, "rand_vals.npy"), np.stack(rvals).astype(np.float32))
     np.save(os.path.join(a.out, "rand_len.npy"), np.array(rlens, np.int32))
+    np.save(os.path.join(a.out, "randn_state.npy"), np.stack(nstates))
+    np.save(os.path.join(a.out, "randn_vals.npy"), np.stack(nvals).astype(np.float32))
+    np.save(os.path.join(a.out, "randn_len.npy"), np.array(nlens, np.int32))
     print("done", a.n, "state bytes", states[0].shape)
 
 
