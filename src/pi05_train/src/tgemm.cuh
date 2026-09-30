@@ -25,6 +25,8 @@ struct TGemm {
   int M = 0, N = 0, K = 0;
   int nb2 = 1;
   long long sA1 = 0, sA2 = 0, sB1 = 0, sB2 = 0, sC1 = 0, sC2 = 0;
+  int splits = 1;        // split-K (set by tgemm): f32 partials in ws, summed in split order by tgemm_reduce
+  float* ws = nullptr;
 };
 
 __device__ __forceinline__ void ldmatrix_x4_t(uint32_t (&r)[4], uint32_t addr) {
@@ -54,11 +56,13 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32) tgemm_kernel(TGemm p, E
 
   const int M = p.M, N = p.N, K = p.K;
   const int m0 = blockIdx.x * BM, n0 = blockIdx.y * BN;
-  const int b = blockIdx.z, b1 = b / p.nb2, b2 = b % p.nb2;
+  const int split = blockIdx.z % p.splits, b = blockIdx.z / p.splits, b1 = b / p.nb2, b2 = b % p.nb2;
   const bf16* A = p.A + b1 * p.sA1 + b2 * p.sA2;
   const bf16* B = p.B + b1 * p.sB1 + b2 * p.sB2;
   const long long coff = b1 * p.sC1 + b2 * p.sC2;
-  const int ktiles = (K + BK - 1) / BK;
+  const int ktiles_all = (K + BK - 1) / BK;
+  const int kper = (ktiles_all + p.splits - 1) / p.splits, kt0 = split * kper;
+  const int ktiles = max(0, min(ktiles_all, kt0 + kper) - kt0);
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
   const int wm = warp / WARPS_N, wn = warp % WARPS_N;
 
@@ -111,14 +115,14 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32) tgemm_kernel(TGemm p, E
 
 #pragma unroll
   for (int s = 0; s < STAGES - 1; ++s) {
-    if (s < ktiles) { load_a(s, s); load_b(s, s); }
+    if (s < ktiles) { load_a(s, kt0 + s); load_b(s, kt0 + s); }
     cp_async_commit();
   }
   for (int i = 0; i < ktiles; ++i) {
     cp_async_wait<STAGES - 2>();
     __syncthreads();
     const int nxt = i + STAGES - 1;
-    if (nxt < ktiles) { load_a(nxt % STAGES, nxt); load_b(nxt % STAGES, nxt); }
+    if (nxt < ktiles) { load_a(nxt % STAGES, kt0 + nxt); load_b(nxt % STAGES, kt0 + nxt); }
     cp_async_commit();
     const bf16* a = sA + (i % STAGES) * BM * BK;
     const bf16* bb = sB + (i % STAGES) * BN * BK;
@@ -170,23 +174,76 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32) tgemm_kernel(TGemm p, E
       const int row = m0 + wm * WM + mt * 16 + g;
       const int col = n0 + wn * WN + nt * 8 + 2 * t4;
       if (col >= N) continue;
+      if (p.splits > 1) {
+        float* w = p.ws + ((long long)b * p.splits + split) * M * N;
+        if (row < M) *reinterpret_cast<float2*>(w + (long long)row * N + col) = make_float2(acc[mt][nt][0], acc[mt][nt][1]);
+        if (row + 8 < M)
+          *reinterpret_cast<float2*>(w + (long long)(row + 8) * N + col) = make_float2(acc[mt][nt][2], acc[mt][nt][3]);
+        continue;
+      }
       if (row < M) epi(row, col, acc[mt][nt][0], acc[mt][nt][1], coff);
       if (row + 8 < M) epi(row + 8, col, acc[mt][nt][2], acc[mt][nt][3], coff);
     }
 }
 
+// split-K partials [batch][splits][M][N] summed in split order, then the epilogue (b -> b / nb2, b % nb2 offsets)
+template <class Epi>
+__global__ void tgemm_reduce(const float* ws, int splits, int M, int N, int nb2, long long sC1, long long sC2, Epi epi) {
+  const int b = blockIdx.y, half = N / 2;
+  const long long coff = (long long)(b / nb2) * sC1 + (long long)(b % nb2) * sC2;
+  const float* w = ws + (long long)b * splits * M * N;
+  for (long long i = blockIdx.x * (long long)blockDim.x + threadIdx.x; i < (long long)M * half;
+       i += (long long)gridDim.x * blockDim.x) {
+    const int r = (int)(i / half), c = 2 * (int)(i % half);
+    float s0 = w[(long long)r * N + c], s1 = w[(long long)r * N + c + 1];
+    for (int k = 1; k < splits; ++k) {
+      s0 += w[(long long)k * M * N + (long long)r * N + c];
+      s1 += w[(long long)k * M * N + (long long)r * N + c + 1];
+    }
+    epi(r, c, s0, s1, coff);
+  }
+}
+
+inline float* tgemm_workspace(size_t floats) {  // grows on demand (one per process; single stream use)
+  static float* ws = nullptr;
+  static size_t cap = 0;
+  if (floats > cap) {
+    if (ws) { PI05_CUDA(cudaDeviceSynchronize()); PI05_CUDA(cudaFree(ws)); }
+    cap = floats * 2;
+    PI05_CUDA(cudaMalloc(&ws, cap * 4));
+  }
+  return ws;
+}
+inline int tgemm_sms() {
+  static int n = [] { cudaDeviceProp pr; cudaGetDeviceProperties(&pr, 0); return pr.multiProcessorCount; }();
+  return n;
+}
+
 template <bool A_KM, bool B_KM, class Epi>
-void tgemm(const TGemm& p, const Epi& epi, int batch, cudaStream_t st) {
-  if (p.M <= 0 || p.N <= 0 || batch <= 0) return;
+void tgemm(const TGemm& p0, const Epi& epi, int batch, cudaStream_t st) {
+  if (p0.M <= 0 || p0.N <= 0 || batch <= 0) return;
+  TGemm p = p0;
   auto run = [&](auto kern, int bm, int bn, int threads, int smem) {
     static bool attr = false;
     if (!attr && smem > 48 * 1024) {
       PI05_CUDA(cudaFuncSetAttribute(kern, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
       attr = true;
     }
-    dim3 grid(cdiv(p.M, bm), cdiv(p.N, bn), batch);
+    // few output tiles and a long K (LoRA factors: N or M = rank): split K so every SM gets work
+    const long long tiles = (long long)cdiv(p.M, bm) * cdiv(p.N, bn) * batch;
+    const int ktiles = cdiv(p.K, 32);
+    int splits = 1;
+    while (tiles * splits * 2 <= 2LL * tgemm_sms() && ktiles / (splits * 2) >= 8 && splits < 32) splits *= 2;
+    p.splits = splits;
+    if (splits > 1) p.ws = tgemm_workspace((size_t)batch * splits * p.M * p.N);
+    dim3 grid(cdiv(p.M, bm), cdiv(p.N, bn), batch * splits);
     kern<<<grid, threads, smem, st>>>(p, epi);
     PI05_CUDA(cudaGetLastError());
+    if (splits > 1) {
+      tgemm_reduce<<<dim3(std::max(1, (int)std::min<long long>((long long)p.M * p.N / 2 / 256 + 1, 1024)), batch), 256, 0, st>>>(
+          p.ws, splits, p.M, p.N, p.nb2, p.sC1, p.sC2, epi);
+      PI05_CUDA(cudaGetLastError());
+    }
   };
   if ((long long)p.M * p.N >= 256LL * 1024)
     run(tgemm_kernel<128, 128, 2, 4, 3, A_KM, B_KM, Epi>, 128, 128, 256, 3 * 256 * 32 * 2);

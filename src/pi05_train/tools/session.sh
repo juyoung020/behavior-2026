@@ -15,13 +15,14 @@ for s in $STEPS; do
   echo "=== $s $(date +%T)"
   case $s in
     gemm) $B/tgemm_test ;;
+    gemmb) $B/tgemm_test --bench ;;
     kern) $B/tkern_test ;;
     ref_gpu) JAX_PLATFORMS=cuda bash $NT/wsl_py.sh $T/train_ref.py --mode $MODE $DEP --tag ${MODE}_gpu 2>&1 | grep -v -i -E "warn|^\s*$" ;;
     ref_cpu) JAX_PLATFORMS=cpu taskset -c 0-15 bash $NT/wsl_py.sh $T/train_ref.py --mode $MODE $DEP --tag ${MODE}_cpu 2>&1 | grep -v -i -E "warn|^\s*$" ;;
     verify) $B/pi05_train_verify --ref $R --tag ${MODE}_gpu --floor ${MODE}_cpu ;;
     verifyl) PI05_VERIFY_LAYERS=1 $B/pi05_train_verify --ref $R --tag ${MODE}_gpu --floor ${MODE}_cpu | grep -E "^(loss|grad|  .[0-9])" ;;
     state) JAX_PLATFORMS=cpu bash $NT/wsl_py.sh $T/make_state.py --ckpt ~/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio --mode $MODE --out /mnt/c/behavior-2026/data/pi05_train/state_${MODE}_radio.pi05d 2>&1 | grep -v -i warn ;;
-    bench) for o in 2 1; do $B/pi05_train_bench --state /mnt/c/behavior-2026/data/pi05_train/state_${MODE}_radio.pi05d --model /mnt/c/behavior-2026/data/pi05_native/pi05_radio.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref --batch 32 --steps 2 --offload $o; done ;;
+    bench) for o in ${PI05_BENCH_OFFLOAD:-2 1}; do $B/pi05_train_bench --state /mnt/c/behavior-2026/data/pi05_train/state_${MODE}_radio.pi05d --model /mnt/c/behavior-2026/data/pi05_native/pi05_radio.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref --batch 32 --steps 2 --offload $o; done ;;
     aug) JAX_PLATFORMS=cuda bash $NT/wsl_py.sh $T/aug_ref.py --tag gpu 2>&1 | grep -v -i warn; JAX_PLATFORMS=cpu bash $NT/wsl_py.sh $T/aug_ref.py --tag cpu 2>&1 | grep -v -i warn; $B/pi05_aug_test --ref $R --tag gpu --floor cpu ;;
     augt) $B/pi05_aug_test --ref $R --tag gpu --floor cpu ;;
     quick) ~/pi05_native_build/pi05_verify --weights /mnt/c/behavior-2026/data/pi05_native/pi05_radio.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref --tag gpu --floor cpu --floor-single cpu_planted --samples 0-3 --time | grep -E "^(actions|graph|PASS|FAIL)" ;;

@@ -57,9 +57,17 @@ class LoraTrainer {
     float *rs1, *rs2, *p32s;
   };
 
+  void prof_mark(int i);
+  void prof_report();
+  cudaEvent_t prof_ev_[7] = {};
+  double prof_ms_[6] = {};
+  int prof_n_ = 0;
   void siglip_layer_fwd(int l, const bf16* x, bf16* out);
   void siglip_layer_bwd(int l, const bf16* x, const bf16* dout, bf16* dx);
   void joint_layer_fwd(int l, const bf16* xp, const bf16* xs, bf16* xp_out, bf16* xs_out);
+  bool remat_ = false;                       // inside a backward recompute
+  std::vector<bf16*> gup_l_, sig_h_;         // per-layer MLP activations kept (optional, memory permitting)
+  bf16 *gup_scratch_ = nullptr, *sig_h_scratch_ = nullptr;
   void joint_layer_bwd(int l, const bf16* xp, const bf16* xs, const bf16* dxp_out, const bf16* dxs_out, bf16* dxp,
                        bf16* dxs);
   void attention_fwd(int l);

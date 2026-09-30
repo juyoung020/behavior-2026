@@ -84,7 +84,13 @@ bool LoraTrainer::init(const std::string& state_path, const std::string& model_p
   j.mqp = B((size_t)TCAP * NH * RP); j.mkvp = B((size_t)TCAP * 2 * RP); j.pbp = B((size_t)TCAP * NH * TCAP);
   j.p32p = Fl((size_t)TCAP * NH * TCAP); j.encp = B((size_t)TCAP * NH * HD); j.mop = B((size_t)TCAP * RP);
   j.op = B((size_t)TCAP * DP); j.xmidp = B((size_t)TCAP * DP); j.n2p = B((size_t)TCAP * DP);
-  j.gup = B((size_t)2 * TCAP * FP); j.mgup = B((size_t)2 * TCAP * RP); j.ap = B((size_t)TCAP * FP);
+  j.gup = B((size_t)2 * TCAP * FP);
+  gup_scratch_ = j.gup;
+  sig_h_scratch_ = sg_.h;
+  if (const char* k = getenv("PI05_LORA_KEEP_MLP"); !k || k[0] != '0') {  // +1.3 GB: skips most of the recompute
+    for (int l = 0; l < Lg_; ++l) gup_l_.push_back(B((size_t)2 * TCAP * FP));
+    for (int l = 0; l < Li_; ++l) sig_h_.push_back(B((size_t)TI * FI));
+  } j.mgup = B((size_t)2 * TCAP * RP); j.ap = B((size_t)TCAP * FP);
   j.mlp = B((size_t)TCAP * RP); j.dp = B((size_t)TCAP * DP); j.rp1 = Fl(TCAP); j.rp2 = Fl(TCAP);
   j.moda = B(3 * DS); j.n1s = B(AH * DS); j.qs = B(AH * NH * HD); j.kvs = B(AH * 2 * HD); j.mqs = B(AH * NH * RS);
   j.mkvs = B(AH * 2 * RS); j.pbs = B((size_t)AH * NH * SCAP); j.p32s = Fl((size_t)AH * NH * SCAP);
@@ -150,16 +156,22 @@ void LoraTrainer::siglip_layer_fwd(int l, const bf16* x, bf16* out) {
   layernorm_fwd(s.xmid, P(EB + "LayerNorm_1/scale")->p + l * DI, P(EB + "LayerNorm_1/bias")->p + l * DI, s.ln2, s.mu2,
                 s.rs2, TI, DI, st);
   const std::string m = EB + "MlpBlock_0/";
-  tgemm<true, false>(G(s.ln2, DI, P(m + "Dense_0/kernel")->pb + (size_t)l * DI * FI, FI, TI, FI, DI),
-                     EBiasBf16{s.h, FI, P(m + "Dense_0/bias")->pb + (size_t)l * FI}, 1, st);
+  s.h = sig_h_.empty() ? sig_h_scratch_ : sig_h_[l];  // fc1 output kept per layer when there is room
+  const bool reuse = remat_ && !sig_h_.empty();
+  if (!reuse)
+    tgemm<true, false>(G(s.ln2, DI, P(m + "Dense_0/kernel")->pb + (size_t)l * DI * FI, FI, TI, FI, DI),
+                       EBiasBf16{s.h, FI, P(m + "Dense_0/bias")->pb + (size_t)l * FI}, 1, st);
   gelu_fwd(s.h, s.a, (long long)TI * FI, st);
-  tgemm<true, false>(G(s.a, FI, P(m + "Dense_1/kernel")->pb + (size_t)l * FI * DI, DI, TI, DI, FI),
-                     EBiasResidBf16{out, DI, P(m + "Dense_1/bias")->pb + (size_t)l * DI, s.xmid}, 1, st);
+  if (!reuse)  // in a recompute the layer output is not needed
+    tgemm<true, false>(G(s.a, FI, P(m + "Dense_1/kernel")->pb + (size_t)l * FI * DI, DI, TI, DI, FI),
+                       EBiasResidBf16{out, DI, P(m + "Dense_1/bias")->pb + (size_t)l * DI, s.xmid}, 1, st);
 }
 
 void LoraTrainer::siglip_layer_bwd(int l, const bf16* x, const bf16* dout, bf16* dx) {
   Sig& s = sg_;
+  remat_ = true;
   siglip_layer_fwd(l, x, gC_);  // recompute (remat); output unused
+  remat_ = false;
   const size_t LD = (size_t)DI * DI;
   const std::string m = EB + "MlpBlock_0/";
   TParam *W1 = P(m + "Dense_0/kernel"), *B1 = P(m + "Dense_0/bias"), *W2 = P(m + "Dense_1/kernel"),
@@ -371,10 +383,22 @@ void LoraTrainer::joint_layer_fwd(int l, const bf16* xp, const bf16* xs, bf16* x
   add_bf16(xp, j.op, j.xmidp, T * DP, st);
   PI05_CUDA(cudaMemcpyAsync(pseudo_p_, w0.s2, DP * 2, cudaMemcpyDeviceToDevice, st));
   adarms_fwd(j.xmidp, pseudo_p_, j.n2p, j.rp2, T, DP, st);
-  lora_fwd(w0.g, j.n2p, T, j.gup, FP, (long long)TCAP * FP, j.mgup, RP, (long long)TCAP * RP, st);
+  // gate/up output kept per layer when there is room: the recompute then skips the two big MLP products (the
+  // values are the ones the first forward produced, so the backward is unchanged)
+  j.gup = gup_l_.empty() ? gup_scratch_ : gup_l_[l];
+  if (!remat_ || gup_l_.empty()) {
+    lora_fwd(w0.g, j.n2p, T, j.gup, FP, (long long)TCAP * FP, j.mgup, RP, (long long)TCAP * RP, st);
+  } else {
+    tgemm<true, false>(GB(j.n2p, DP, 0, w0.g.A, RP, (long long)DP * RP, (long long)TCAP * RP, T, RP, DP),
+                       EStoreBf16{j.mgup, RP}, 2, st);
+  }
   gelu_mul_fwd(j.gup, j.gup + (size_t)TCAP * FP, j.ap, T * FP, st);
-  lora_fwd(w0.lin, j.ap, T, j.dp, DP, 0, j.mlp, RP, 0, st);
-  add_bf16(j.xmidp, j.dp, xp_out, T * DP, st);
+  if (!remat_ || gup_l_.empty()) {
+    lora_fwd(w0.lin, j.ap, T, j.dp, DP, 0, j.mlp, RP, 0, st);
+    add_bf16(j.xmidp, j.dp, xp_out, T * DP, st);
+  } else {  // the layer output is not needed in the backward, only the LoRA mid of the down projection
+    tgemm<true, false>(G(j.ap, FP, w0.lin.A, RP, T, RP, FP), EStoreBf16{j.mlp, RP}, 1, st);
+  }
   // suffix: out projection, gated residual, MLP
   lout_fwd(w1.o, j.encs, AH, j.os, j.mos, bsum_, st);
   gated_res_fwd(xs, j.os, j.moda + 2 * DS, j.xmids, AH, DS, st);
@@ -450,7 +474,9 @@ void LoraTrainer::joint_layer_bwd(int l, const bf16* xp, const bf16* xs, const b
                                   bf16* dxp, bf16* dxs) {
   Joint& j = jt_;
   const int T = T_;
+  remat_ = true;
   joint_layer_fwd(l, xp, xs, junkp_, junks_);
+  remat_ = false;
   auto Fz = [&](const std::string& n) { return F(n); };
   auto Pp = [&](const std::string& n) { return P(n); };
   const LoraTrainer_W w0 = layer_w(this, l, 0, Fz, Pp), w1 = layer_w(this, l, 1, Fz, Pp);
@@ -545,7 +571,9 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
   TParam *Pk = P(IMG + "embedding/kernel"), *Pb = P(IMG + "embedding/bias"), *Ppos = P(IMG + "pos_embedding");
   sgemm(true, false, TI, DI, 588, patches_, 588, Pk->p, DI, stem_, DI, false, st);
   stem_finish(stem_, Pb->p, Ppos->p, sig_in_[0], TI, st);
+  prof_mark(0);
   for (int l = 0; l < Li_; ++l) siglip_layer_fwd(l, sig_in_[l], l + 1 < Li_ ? sig_in_[l + 1] : sig_last_);
+  prof_mark(1);
   TParam *Ens = P(IMG + "Transformer/encoder_norm/scale"), *Enb = P(IMG + "Transformer/encoder_norm/bias");
   layernorm_fwd(sig_last_, Ens->p, Enb->p, enc_ln_, enc_mu_, enc_rs_, TI, DI, st);
   TParam *Hw = P(IMG + "head/kernel"), *Hb = P(IMG + "head/bias");
@@ -581,6 +609,7 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
   lin_f32_fwd(c1_, nullptr, P("time_mlp_out/kernel")->p, P("time_mlp_out/bias")->p, z2_, cond_, 1, DS, DS, 1, st);
   lin_f32_fwd(xt_, nullptr, P("action_in_proj/kernel")->p, P("action_in_proj/bias")->p, nullptr, h0f_, AH, AD, DS, 0, st);
   f32_to_bf16(h0f_, xs_in_[0], AH * DS, st);
+  prof_mark(2);
   // ---- joint layers
   for (int l = 0; l < Lg_; ++l)
     joint_layer_fwd(l, xp_in_[l], xs_in_[l], l + 1 < Lg_ ? xp_in_[l + 1] : xp_fin_, l + 1 < Lg_ ? xs_in_[l + 1] : xs_fin_);
@@ -590,6 +619,7 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
   lin_f32_fwd(nullptr, y_, P("action_out_proj/kernel")->p, P("action_out_proj/bias")->p, nullptr, v_, AH, DS, AD, 0, st);
   flow_loss(v_, u_, lossr_, dv_, AH, AD, scale / AH, st);
 
+  prof_mark(3);
   // ================= backward
   PI05_CUDA(cudaMemsetAsync(dcond_, 0, DS * 4, st));
   lin_f32_bwd(nullptr, y_, P("action_out_proj/kernel")->p, nullptr, dv_, 0, dyf_, P("action_out_proj/kernel")->g,
@@ -605,6 +635,7 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
     std::swap(dxp, dxp2);
     std::swap(dxs, dxs2);
   }
+  prof_mark(4);
   // heads
   bf16_to_f32(dxs, h0f_, AH * DS, st);
   lin_f32_bwd(xt_, nullptr, P("action_in_proj/kernel")->p, nullptr, h0f_, 0, nullptr, P("action_in_proj/kernel")->g,
@@ -613,6 +644,7 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
               P("time_mlp_out/bias")->g, 1, DS, DS, dyf_, st);
   lin_f32_bwd(temb_, nullptr, P("time_mlp_in/kernel")->p, z1_, dc1_, 1, nullptr, P("time_mlp_in/kernel")->g,
               P("time_mlp_in/bias")->g, 1, DS, DS, dyf_, st);
+  prof_mark(5);
   // image tokens: head Dense, encoder_norm, SigLIP layers, stem
   const bf16* dimg = dxp;  // rows [0, 768)
   tgemm<false, false>(G(enc_ln_, DI, dimg, DP, DI, DP, TI), EAddF32{Hw->g, DP}, 1, st);
@@ -629,6 +661,8 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
   sgemm(false, false, 588, DI, TI, patches_, 588, stem_, DI, Pk->g, DI, true, st);
   stem_bias_pos_grads(stem_, Pb->g, Ppos->g, NI, st);
   (void)LD;
+  prof_mark(6);
+  prof_report();
   float lr[AH];
   PI05_CUDA(cudaMemcpyAsync(lr, lossr_, AH * 4, cudaMemcpyDeviceToHost, st));
   PI05_CUDA(cudaStreamSynchronize(st));
@@ -637,4 +671,31 @@ float LoraTrainer::accumulate(const LoraSample& s, float scale) {
   return (float)(sum / AH);
 }
 
+}  // namespace pi05t
+
+namespace pi05t {
+// PI05_TRAIN_PROFILE=1: per-phase GPU time of accumulate() (events), averaged and printed every 32 samples
+void LoraTrainer::prof_mark(int i) {
+  static const bool on = getenv("PI05_TRAIN_PROFILE") != nullptr;
+  if (!on) return;
+  if (!prof_ev_[0]) for (auto& ev : prof_ev_) cudaEventCreate(&ev);
+  cudaEventRecord(prof_ev_[i], st);
+}
+void LoraTrainer::prof_report() {
+  static const bool on = getenv("PI05_TRAIN_PROFILE") != nullptr;
+  if (!on) return;
+  cudaEventSynchronize(prof_ev_[6]);
+  for (int i = 0; i < 6; ++i) {
+    float ms = 0;
+    cudaEventElapsedTime(&ms, prof_ev_[i], prof_ev_[i + 1]);
+    prof_ms_[i] += ms;
+  }
+  if (++prof_n_ % 32 == 0) {
+    const char* nm[6] = {"siglip fwd", "prefix+text+suffix inputs", "joint fwd + loss", "joint bwd (remat)", "heads bwd",
+                         "siglip bwd (remat) + stem"};
+    printf("profile per sample:");
+    for (int i = 0; i < 6; ++i) printf("  %s %.1f ms", nm[i], prof_ms_[i] / prof_n_);
+    printf("\n");
+  }
+}
 }  // namespace pi05t

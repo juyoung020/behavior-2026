@@ -1,5 +1,6 @@
 // Checks the training GEMM (all operand layouts) against a double-precision CPU reference on random bf16 data.
 #include <cmath>
+#include <string>
 #include <cstdio>
 #include <random>
 #include <vector>
@@ -58,7 +59,38 @@ int run(int M, int N, int K, int batch) {
   return ok ? 0 : 1;
 }
 
-int main() {
+template <bool AK, bool BK>
+double bench(int M, int N, int K) {
+  bf16 *a, *b, *c;
+  cudaMalloc(&a, (size_t)M * K * 2);
+  cudaMalloc(&b, (size_t)N * K * 2);
+  cudaMalloc(&c, (size_t)M * N * 2);
+  cudaMemset(a, 0, (size_t)M * K * 2);
+  cudaMemset(b, 0, (size_t)N * K * 2);
+  TGemm p;
+  p.A = a; p.B = b; p.M = M; p.N = N; p.K = K; p.lda = AK ? K : M; p.ldb = BK ? K : N;
+  for (int i = 0; i < 3; ++i) tgemm<AK, BK>(p, EStoreBf16{c, N}, 1, 0);
+  cudaEvent_t e0, e1;
+  cudaEventCreate(&e0); cudaEventCreate(&e1);
+  cudaEventRecord(e0);
+  const int reps = 20;
+  for (int i = 0; i < reps; ++i) tgemm<AK, BK>(p, EStoreBf16{c, N}, 1, 0);
+  cudaEventRecord(e1);
+  cudaEventSynchronize(e1);
+  float ms = 0;
+  cudaEventElapsedTime(&ms, e0, e1);
+  cudaFree(a); cudaFree(b); cudaFree(c);
+  return 2.0 * M * N * K / (ms / reps * 1e-3) / 1e12;
+}
+
+int main(int argc, char** argv) {
+  if (argc > 1 && std::string(argv[1]) == "--bench") {
+    const int sh[][3] = {{968, 32768, 2048}, {968, 2048, 16384}, {968, 2048, 2048}, {768, 4304, 1152}, {2048, 16384, 968}};
+    for (auto& s : sh)
+      printf("M %5d N %5d K %5d : A_KM B_KM %.1f TF/s | A_KM !B_KM %.1f | !A_KM !B_KM %.1f\n", s[0], s[1], s[2],
+             bench<true, true>(s[0], s[1], s[2]), bench<true, false>(s[0], s[1], s[2]), bench<false, false>(s[0], s[1], s[2]));
+    return 0;
+  }
   int bad = 0;
   const int shapes[][4] = {{32, 1024, 256, 1}, {256, 912, 256, 1}, {136, 200, 72, 2}, {1024, 1024, 40, 1},
                            {904, 256, 256, 1}, {64, 3072, 8, 2}};
