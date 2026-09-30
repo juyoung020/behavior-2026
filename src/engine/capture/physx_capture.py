@@ -427,6 +427,22 @@ class Capture:
             out.append({"env_idx": st.env_idx, "instance_id": st.instance_id, "objects": objs, "robot": rob})
         with open(os.path.join(self.dump_dir, "scope.json"), "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=1)
+        # OVD 에 안 남는 단일 액터 플래그(중력 끔): USD physxRigidBody:disableGravity 가 참인 강체 prim 목록 -> gravity_off.txt
+        # (omni 가 setActorFlag(eDISABLE_GRAVITY) 로 넣는데 PhysX 는 단일 플래그 쓰기를 OVD 에 기록하지 않는다 — 문서 15절)
+        try:
+            import omni.usd
+
+            stage = omni.usd.get_context().get_stage()
+            names = []
+            for prim in stage.Traverse():
+                a = prim.GetAttribute("physxRigidBody:disableGravity")
+                if a and a.IsValid() and a.Get():
+                    names.append(str(prim.GetPath()))
+            with open(os.path.join(self.dump_dir, "gravity_off.txt"), "w", encoding="utf-8") as f:
+                f.write("\n".join(names) + ("\n" if names else ""))
+            print(f"[capture] 중력 끔 prim {len(names)} 개 -> gravity_off.txt", flush=True)
+        except Exception as e:
+            print(f"[capture] 중력 끔 목록 실패: {e!r}", flush=True)
         print(f"[capture] 이름 대응 scope.json: 판 {len(out)}, 물체 {sum(len(o['objects']) for o in out)}", flush=True)
 
     # ------------------------------------------------------------------ 끝
