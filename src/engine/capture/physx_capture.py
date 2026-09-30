@@ -117,9 +117,31 @@ class Capture:
                     if kind == "art":
                         self.view_extra[vid] = self.view_meta(view) or {}
                         self.view_extra[vid]["max_dofs"] = int(getattr(view, "max_dofs", 0))
+                ret = orig(view, data, indices, *a, **kw)
+                # 쓴 값이 실제로 들어갔는지 같은 뷰의 get_* 로 다시 읽어 본다 (읽기만). 곁기록에는 효과 없는 쓰기가 섞인다
+                # (옛 PhysX 인스턴스의 뷰, post 43 에 새로 만든 로봇 뷰 등 — 문서 15절 S0 ②). 1 = 들어감, 0 = 안 들어감, -1 = 확인 못함
+                eff = -1
+                try:
+                    getter = getattr(view, "get_" + name[4:], None)
+                    if getter is not None:
+                        got = to_np(getter(), np.float32).reshape(-1)
+                        want = to_np(data, np.float32).reshape(-1)
+                        if got.size == want.size:
+                            eff = int(np.array_equal(got.view(np.uint32), want.view(np.uint32)))
+                        else:
+                            idx = to_np(indices, np.int64).reshape(-1)
+                            n = view.count if hasattr(view, "count") else 0
+                            if n and got.size % n == 0 and want.size % max(len(idx), 1) == 0 and len(idx):
+                                per = got.size // n
+                                sel = got.reshape(n, per)[idx].reshape(-1)
+                                w = want.reshape(-1)[: sel.size] if want.size >= sel.size else want
+                                if sel.size == w.size:
+                                    eff = int(np.array_equal(sel.view(np.uint32), w.view(np.uint32)))
+                except Exception:
+                    eff = -1
                 self.log.append((self.n_post, self.n_pre, kind, name, vid, to_np(indices, np.uint32),
-                                 to_np(data, np.float32)))
-                return orig(view, data, indices, *a, **kw)
+                                 to_np(data, np.float32), eff))
+                return ret
 
             setattr(cls, name, f)
 
@@ -148,7 +170,7 @@ class Capture:
                         self.view_extra[vid] = self.view_meta(self_._view) or {}
                         self.view_extra[vid]["max_dofs"] = int(getattr(self_._view, "max_dofs", 0))
                     self.log.append((self.n_post, self.n_pre, "batch", name, vid, to_np(indices, np.uint32),
-                                     to_np(data, np.float32)))
+                                     to_np(data, np.float32), -1))
                     return orig(self_, data, indices, cast=cast)
 
                 return f
@@ -183,7 +205,7 @@ class Capture:
                     if vid not in cap.views:
                         cap.views[vid] = ("psi", [path])
                     data = np.concatenate([np.asarray(x, np.float32).ravel() for x in a]) if a else np.zeros(0, np.float32)
-                    cap.log.append((cap.n_post, cap.n_pre, "psi", name, vid, np.zeros(0, np.uint32), data))
+                    cap.log.append((cap.n_post, cap.n_pre, "psi", name, vid, np.zeros(0, np.uint32), data, -1))
                     return attr(stage_id, prim_id, *a)
 
                 return logged
@@ -423,6 +445,7 @@ class Capture:
                 idx=np.concatenate([e[5] for e in self.log]) if self.log else np.zeros(0, np.uint32),
                 data_len=np.array([e[6].size for e in self.log], np.int64),
                 data=np.concatenate([e[6].ravel() for e in self.log]) if self.log else np.zeros(0, np.float32),
+                eff=np.array([e[7] if len(e) > 7 else -1 for e in self.log], np.int8),
                 view_ids=np.array([str(k) for k in self.views]),
                 view_kind=np.array([v[0] for v in self.views.values()]),
                 view_paths=np.array(["|".join(v[1]) for v in self.views.values()]))

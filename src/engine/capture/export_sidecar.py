@@ -67,15 +67,22 @@ def export_sidelog(d):
             sg = signs[i] if i < len(signs) else []
             out += struct.pack("<I", len(sg)) + np.array(sg, np.int8).tobytes()
     n = len(z["post"])
+    skipped_eff = [0]
     out += struct.pack("<I", n)
     io_ = do = 0
     for i in range(n):
         ni, nd = int(z["idx_len"][i]), int(z["data_len"][i])
         method = METHOD.get(str(z["method"][i]), str(z["method"][i]))
+        # 기록 도구가 "효과 없음"(다시 읽은 값이 쓴 값과 다름)으로 표시한 쓰기는 재생기가 건너뛰도록 이름만 바꾼다 (번호는 그대로)
+        if "eff" in z.files and int(z["eff"][i]) == 0:
+            method = "noeffect:" + method
+            skipped_eff[0] += 1
         out += struct.pack("<QI", int(z["post"][i]), vindex.get(str(z["view"][i]), 0)) + wstr(method)
         out += struct.pack("<I", ni) + z["idx"][io_:io_ + ni].astype(np.uint32).tobytes(); io_ += ni
         out += struct.pack("<I", nd) + z["data"][do:do + nd].astype(np.float32).tobytes(); do += nd
     open(os.path.join(d, "sidelog.bin"), "wb").write(bytes(out))
+    if skipped_eff[0]:
+        print(f"곁기록: 효과 없던 쓰기 {skipped_eff[0]} 건은 재생에서 건너뜀 표시")
     return n
 
 
