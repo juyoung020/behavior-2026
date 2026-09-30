@@ -19,6 +19,7 @@
 
 #include "../tests/solver/px_internal.h"
 #include "DyFeatherstoneArticulation.h"
+#include "g1_hooks.h"
 #if defined(G1_SOLVER_IO)
 #include G1_SOLVER_IO  // solver_host.cpp 와 같은 뿌리의 판 정의 (CMake G1_CORE_ROOT)
 #else
@@ -146,8 +147,10 @@ struct Step {
   uint32_t skipArt = 0, skipKin = 0, skipMod = 0, skipOther = 0;
 };
 
+G1StepInfo gInfo;  // 관절체 단독 그림자(g1_art.cpp)에 넘기는 것
+
 struct SolverShadow {
-  bool on = false, checked = false;
+  bool on = false, cmpOn = false, checked = false;
   PxScene* curScene = nullptr;
   Step st;
   // 판 작업 공간 (용량 고정, 스텝마다 재사용)
@@ -193,6 +196,7 @@ struct SolverShadow {
 void takeSnapshot() {
   Step& S = GS.st;
   S = Step();
+  gInfo = G1StepInfo();
   if (!GS.curScene) return;
   S.scene = GS.curScene;
   Sc::Scene& sc = static_cast<NpScene*>(GS.curScene)->getScScene();
@@ -213,6 +217,10 @@ void takeSnapshot() {
   prm.solverArticBatchSize = dy->getSolverArticBatchSize();
   prm.lengthScale = GS.curScene->getPhysics().getTolerancesScale().length;
 
+  gInfo.dt = prm.dt;
+  gInfo.gravity[0] = prm.gravity.x;
+  gInfo.gravity[1] = prm.gravity.y;
+  gInfo.gravity[2] = prm.gravity.z;
   const PxU32 nIsl = is.getNbActiveIslands();
   const IG::IslandId* ids = is.getActiveIslands();
   S.islandsAll = nIsl;
@@ -221,6 +229,7 @@ void takeSnapshot() {
     // PhysX 묶음 하나 (DyTGSDynamics.cpp:720)
     PxU32 nbBodies = 0, nbArt = 0, maxPos = 0, maxVel = 0;
     const uint32_t gStart = uint32_t(S.islands.size());
+    const size_t aStart = gInfo.artAlone.size();
     while (nbBodies < prm.solverBatchSize && cur < nIsl && nbArt < prm.solverArticBatchSize) {
       const IG::Island& island = is.getIsland(ids[cur]);
       nbBodies += island.mNodeCount[IG::Node::eRIGID_BODY_TYPE];
@@ -235,6 +244,10 @@ void takeSnapshot() {
         maxVel = PxMax<PxU32>(maxVel, w >> 8);
         n = node.mNextNode;
       }
+      // 관절체 단독 그림자 대상: 노드가 관절체 하나뿐, 접촉·조인트 간선 없음
+      if (island.mNodeCount[IG::Node::eARTICULATION_TYPE] == 1 && island.mNodeCount[IG::Node::eRIGID_BODY_TYPE] == 0 &&
+          island.mFirstEdge[IG::Edge::eCONTACT_MANAGER] == IG_INVALID_EDGE && island.mFirstEdge[IG::Edge::eCONSTRAINT] == IG_INVALID_EDGE)
+        gInfo.artAlone.push_back(G1ArtAlone{is.getNode(island.mRootNode).mObject, 0});
       // 섬 하나를 판 입력으로 (안 되면 되돌림)
       const size_t mB = S.bodies.size(), mIB = S.ib.size(), mICM = S.icm.size(), mCM = S.cms.size(), mP = S.patches.size(),
                    mC = S.contacts.size(), mF = S.friction.size(), mC1 = S.c1d.size(), mIC1 = S.ic1d.size(), mJD = S.jd.size(), mWB = S.wbSeed.size();
@@ -384,6 +397,7 @@ void takeSnapshot() {
       ++cur;
     }
     ++S.batches;
+    for (size_t k = aStart; k < gInfo.artAlone.size(); ++k) gInfo.artAlone[k].iterWord = uint16_t((maxVel << 8) | maxPos);
     if (S.islands.size() > gStart) {
       ++S.batchesUsed;
       S.groups.push_back(Step::Group{gStart, uint32_t(S.islands.size()), uint16_t((maxVel << 8) | maxPos)});
@@ -397,6 +411,7 @@ void takeSnapshot() {
     if (it != S.cmIndex.end()) S.act.push_back(it->second);
   }
   S.valid = true;
+  gInfo.valid = true;
 }
 
 // ---------------- 진단: PhysX 가 접촉 준비를 4 개 묶음(SIMD)으로 했는지 하나씩 했는지 (몸체 틀 bodyFrame0 위치로 가림)
@@ -477,22 +492,26 @@ class HookDispatcher : public PxCpuDispatcher {
 }  // namespace
 
 PxCpuDispatcher* g1_dispatcher() {
-  if (!getenv("G1_SOLVER")) return nullptr;
+  if (!getenv("G1_SOLVER") && !getenv("G1_ART")) return nullptr;
   static HookDispatcher* d = new HookDispatcher();  // 프로세스 끝까지 (PxPhysics 여러 개가 같이 씀)
   GS.on = true;
+  GS.cmpOn = getenv("G1_SOLVER") != nullptr;
   return d;
 }
+
+const G1StepInfo& g1_step_info() { return gInfo; }
 
 // ovd_replay 가 simulate 바로 앞에서 (g1_shadow.cpp 의 g1_before_simulate 를 거쳐)
 void g1_solver_before(PxScene* scene) {
   if (!GS.on) return;
   GS.curScene = scene;
   GS.st.valid = false;
+  gInfo.valid = false;
 }
 
 // fetchResults 뒤: 같은 입력으로 우리 풀이를 돌려 PhysX 결과와 비교
 void g1_solver_after(PxScene* scene, uint64_t sim) {
-  if (!GS.on) return;
+  if (!GS.on || !GS.cmpOn) return;
   if (!GS.checked) {
     GS.init();
     GS.checked = true;
@@ -685,7 +704,7 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
 }
 
 void g1_solver_report() {
-  if (!GS.on) return;
+  if (!GS.on || !GS.cmpOn) return;
   printf("G1 solver 그림자 (관절체 없는 섬, 스텝마다 PhysX 상태로 다시 맞춤): simulate %" PRIu64 " (스냅샷 없음 %" PRIu64 "), 엔진 오류 스텝 %" PRIu64 "\n",
          GS.steps, GS.stepsNoSnap, GS.engineErr);
   printf("  활성 섬 %" PRIu64 " 중 푼 섬 %" PRIu64 " (PhysX 묶음 %" PRIu64 " 중 %" PRIu64 "), 뺀 섬: 관절체 묶음 %" PRIu64 ", 운동학 %" PRIu64 ", 수정 가능 접촉 %" PRIu64 ", 기타 %" PRIu64

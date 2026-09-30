@@ -126,14 +126,12 @@ struct Shadow {
 
 }  // namespace
 
-// G1 solver 그림자 (g1_solver.cpp, G1_SOLVER=1)
-void g1_solver_before(PxScene* scene);
-void g1_solver_after(PxScene* scene, uint64_t sim);
-void g1_solver_report();
+#include "g1_hooks.h"  // solver·관절체 단독 그림자 (g1_solver.cpp G1_SOLVER=1, g1_art.cpp G1_ART=1)
 
 // ovd_replay 가 simulate 바로 앞에서 부른다
 void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_solver_before(scene);
+  g1_art_before(scene);
   if (!G.on) G.on = getenv("G1_CONTACT") != nullptr;
   if (!G.on) return;
   (void)sim;
@@ -184,6 +182,7 @@ bool g1_simulate(PxScene* scene, float dt, uint64_t sim) {
 // ovd_replay 가 fetchResults 뒤에 부른다
 void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_solver_after(scene, sim);
+  g1_art_after(scene, sim);
   if (!G.on) return;
   (void)phys;
   G.lastSim = (long long)sim;
@@ -292,6 +291,7 @@ void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
 
 void g1_report() {
   g1_solver_report();
+  g1_art_report();
   if (!G.on) return;
   printf("G1 contact 그림자: 관리자·simulate %" PRIu64 " (좁은 단계 돈 것 %" PRIu64 ", 건너뜀 %" PRIu64 ", 못 옮긴 모양 %" PRIu64 ", 넘침 %" PRIu64 ", 뒤에도 새 표시 %" PRIu64 ", 다시 등록 %" PRIu64 ")\n",
          G.nCM, G.nRun, G.nSkip, G.nUnsup, G.nOverflow, G.nNewAfter, G.nRefresh);
