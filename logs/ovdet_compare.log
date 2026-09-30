@@ -1,0 +1,27 @@
+[gpu_lock] 대기 2번째 / 사용 중:  /  / 끝  — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 대기 1번째 / 사용 중: engine-lead / 장면 추출 hiding_Easter_eggs public_test_5 (약 2분) / 끝 22:27 — 20초 뒤 다시
+[gpu_lock] 잡음: ovdet (ovdet: detector comparison (7 heads, ep0 40 s + ep200)) ~ 22:50:41
+episode 0: 240 frames, task turning_on_radio
+episode 200: 512 frames, task picking_up_trash
+detector        mem MB    p50    p99 |  task found/named |  nameable f/n |   small f/n | struct   any | name prec | frag mean/multi
+fastsam            506   5.72  13.85 | 0.54/0.15 (n1630) | 0.47/0.20 n3130 | 0.24/0.09 n1034 | 0.42 0.44 | 0.21 n9927 | 2.90/0.53
+y11s               104   2.86   9.26 | 0.48/0.33 (n1630) | 0.24/0.10 n3130 | 0.07/0.06 n1034 | 0.15 0.18 | 0.56 n2367 | 1.37/0.32
+y11m               174   4.70  10.72 | 0.49/0.36 (n1630) | 0.28/0.15 n3130 | 0.10/0.09 n1034 | 0.17 0.21 | 0.63 n2457 | 1.19/0.17
+y11l               182   5.79  14.18 | 0.49/0.35 (n1630) | 0.30/0.17 n3130 | 0.12/0.12 n1034 | 0.16 0.24 | 0.58 n2694 | 1.25/0.20
+y11s_all           126   2.98   9.19 | 0.48/0.33 (n1630) | 0.24/0.10 n3130 | 0.07/0.06 n1034 | 0.15 0.18 | 0.56 n2367 | 1.37/0.32
+y11l_all           204   5.95  13.42 | 0.49/0.35 (n1630) | 0.30/0.17 n3130 | 0.12/0.12 n1034 | 0.16 0.24 | 0.58 n2690 | 1.25/0.20
+y11l_allp          204   5.99  15.26 | 0.66/0.34 (n1630) | 0.39/0.12 n4301 | 0.23/0.08 n1396 | 0.17 0.39 | 0.40 n3929 | 1.27/0.19
+av_interleaved_write_frame(): Broken pipe
+av_interleaved_write_frame(): Broken pipe
+Error writing trailer of pipe:1: Broken pipe
+Error writing trailer of pipe:1: Broken pipe
+[gpu_lock] 풀음
