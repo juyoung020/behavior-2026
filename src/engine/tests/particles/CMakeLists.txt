@@ -9,3 +9,5 @@ add_executable(test_visual_gpu test_visual_gpu.cu)
 target_include_directories(test_visual_gpu PRIVATE ${CMAKE_SOURCE_DIR}/..)
 target_compile_options(test_visual_gpu PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr -Xcompiler=-ffp-contract=off>)
+engine_test(test_trng test_trng.cpp)
+engine_test(test_dice test_dice.cpp)
