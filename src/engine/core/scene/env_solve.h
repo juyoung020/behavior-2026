@@ -37,6 +37,7 @@ struct EnvSolveImpl : public EnvSolve {
   std::vector<Body> bodies;
   std::vector<art::Articulation> arts;
   std::vector<SceneJoint> joints;
+  std::vector<SceneJointExt> jointExt;  // joints 와 같은 순서 (장면 파일 JNTLP001, 없거나 판 도중 조인트면 정적 상대 없음)
   std::vector<SceneActor> sceneActors;
   std::vector<jnt::Writeback> wbs;  // Dy 제약 번호별
   std::unordered_map<uint64_t, std::vector<sv::FrictionPatch>> fric;  // (요소0<<32 | 요소1) -> 지난 마찰 패치
@@ -97,6 +98,8 @@ struct EnvSolveImpl : public EnvSolve {
     bodies = f.bodies;
     arts = f.arts;
     joints = f.joints;
+    jointExt = f.jointExt;
+    jointExt.resize(joints.size(), SceneJointExt{{kNone, kNone}, {Tf{Q{0, 0, 0, 1}, V3{0, 0, 0}}, Tf{Q{0, 0, 0, 1}, V3{0, 0, 0}}}});
     sceneActors = f.actors;
     uint32_t maxWb = 0;
     for (const SceneJoint& j : f.joints) maxWb = j.index + 1 > maxWb ? j.index + 1 : maxWb;
@@ -173,6 +176,7 @@ struct EnvSolveImpl : public EnvSolve {
   uint32_t addJoint(const SceneJoint& j) {
     const uint32_t k = uint32_t(joints.size());
     joints.push_back(j);
+    jointExt.push_back(SceneJointExt{{kNone, kNone}, {Tf{Q{0, 0, 0, 1}, V3{0, 0, 0}}, Tf{Q{0, 0, 0, 1}, V3{0, 0, 0}}}});
     jointDead.resize(joints.size(), 0);
     if (wbs.size() <= j.index) wbs.resize(size_t(j.index) + 1, jnt::Writeback{});
     wbs[j.index] = jnt::Writeback{};
@@ -348,6 +352,11 @@ struct EnvSolveImpl : public EnvSolve {
         if (ci == ig::INVALID_EDGE || ci >= cap || cmKey[ci] == ~0ull) {
           if (!unknownEdge && getenv("G1_ENV_TRACE")) fprintf(stderr, "[env solve] 스텝 %llu 모르는 접촉 간선 %u 객체 %x (칸 수 %u)\n", (unsigned long long)steps, e, ci, cap);
           ++unknownEdge;
+          continue;
+        }
+        if (cms[ci].body0 == sv::NONE) {  // 몸체 0 을 모르는 관리자 (판 도중 넣은 행위자가 몸체 표에 없음 등): 풀면 bodySolverIndex[NONE] -> 넘침
+          if (!unknownNode && getenv("G1_ENV_TRACE")) fprintf(stderr, "[env solve] 스텝 %llu 몸체 0 을 모르는 접촉 관리자 %u\n", (unsigned long long)steps, ci);
+          ++unknownNode;
           continue;
         }
         icm.push_back(ci);

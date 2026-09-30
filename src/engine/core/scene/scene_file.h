@@ -71,6 +71,14 @@ struct SceneJoint {
   jnt::D6Data data;
 };
 
+// 조인트 부가 칸 (선택 절 JNTLP001, joints 와 같은 순서): 정적 상대의 PhysX actorID(없으면 kNone)와 PxJoint 국소 틀(getLocalPose, 정규화된 값).
+// 정적 행위자 자세가 바뀌면 PhysX 는 붙은 조인트의 c2b[그쪽] = getCom(정적).transformInv(국소 틀) 로 상수를 다시 만든다
+// (NpRigidStatic::setGlobalPose -> updateShaderComs -> Ext::Joint::onComShift, getCom(정적) = globalPose.getInverse(), ExtJoint.h:549).
+struct SceneJointExt {
+  uint32_t staticID[2];
+  Tf local[2];
+};
+
 // 접촉 관리자 (v1: 내부 상태 넘겨받기). 순서 = Sc::Scene 의 겹침 상호작용 배열 순서(getInteractions(eOVERLAP)).
 // 좁은 단계·풀이가 스텝 사이에 들고 가는 것: 지속 다양체(PhysX Gu::Cache 가 가리키는 PersistentContactManifold 바이트),
 // Gu::Cache::mPairData, 지난 스텝 출력 상태(statusFlag: 더러움 판정), 지난 스텝 마찰 패치(PxcNpWorkUnit::mFrictionDataPtr).
@@ -131,6 +139,8 @@ struct SceneFile {
   // 그 뒤 선택 절 (머리 "SVPRM001"): 풀이 매개변수 (Dy 문맥 값: 반발 문턱·마찰 기준 거리·묶음 크기 등, 머리에 없는 것)
   bool hasSolverPrm = false;
   sv::SolverParams solverPrm{};
+  // 그 뒤 선택 절 (머리 "JNTLP001"): 조인트 부가 칸 (없으면 비어 있음 — 정적 자세 쓰기의 조인트 상수 다시 만들기를 못 함)
+  std::vector<SceneJointExt> jointExt;
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -203,6 +213,11 @@ inline bool writeScene(const char* path, SceneFile& s) {
   if (ok && s.sc.valid && s.hasSolverPrm) {
     const uint32_t sz = sizeof(sv::SolverParams);
     ok = fwrite("SVPRM001", 1, 8, f) == 8 && fwrite(&sz, 4, 1, f) == 1 && fwrite(&s.solverPrm, sizeof(s.solverPrm), 1, f) == 1;
+    if (ok && !s.joints.empty() && s.jointExt.size() == s.joints.size()) {
+      const uint32_t n = uint32_t(s.jointExt.size()), es = sizeof(SceneJointExt);
+      ok = fwrite("JNTLP001", 1, 8, f) == 8 && fwrite(&n, 4, 1, f) == 1 && fwrite(&es, 4, 1, f) == 1 &&
+           fwrite(s.jointExt.data(), sizeof(SceneJointExt), n, f) == n;
+    }
   }
   ok = fclose(f) == 0 && ok;
   return ok;
@@ -252,6 +267,12 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
     uint32_t sz = 0;
     s.hasSolverPrm = fread(m, 1, 8, f) == 8 && !memcmp(m, "SVPRM001", 8) && fread(&sz, 4, 1, f) == 1 && sz == sizeof(sv::SolverParams) &&
                      fread(&s.solverPrm, sizeof(s.solverPrm), 1, f) == 1;
+    uint32_t n = 0, es = 0;
+    if (s.hasSolverPrm && fread(m, 1, 8, f) == 8 && !memcmp(m, "JNTLP001", 8) && fread(&n, 4, 1, f) == 1 && fread(&es, 4, 1, f) == 1 &&
+        es == sizeof(SceneJointExt) && n == s.joints.size()) {
+      s.jointExt.resize(n);
+      if (fread(s.jointExt.data(), sizeof(SceneJointExt), n, f) != n) s.jointExt.clear();
+    }
   }
   fclose(f);
   return ok ? true : fail("짧음");

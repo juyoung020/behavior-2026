@@ -1,5 +1,9 @@
 // particles 편집 창의 몸체 API (core/particles/edit_window.h BodyApi) 를 env 상태 위에 (문서 12.3, 리드).
 // 몸체 = EnvSolveImpl 의 Body 칸 (장면 파일 번호 + 판 도중 넣은 것), 손잡이 = ScScene 손잡이(행위자 기록 번호, 0 이상).
+// 자세 쓰기는 PhysX 처럼 행위자 상호작용에 변환 바뀜을 알린다 (RigidSim::notifyShapesOfTransformChange -> notifyActorInteractionsOfTransformChange,
+//   ScShapeSimBase.cpp:389): 겹침 상호작용마다 resetManagerCachedState, 잠든 동적이면 onShapeChangeWhileSleeping(잃은 닿음 목록).
+// 정적 자세(setStaticPose, NpRigidStatic::setGlobalPose :70): 정규화 -> Sc StaticCore::setActor2World(모양 칸 dirty + 상호작용 알림)
+//   -> updateShaderComs: 붙은 조인트의 c2b[정적 쪽] = getCom(정적).transformInv(국소 틀), getCom = 새 자세.getInverse() (ExtJoint.h:549).
 // 모양 없는 동적 행위자(meta__*_link 등)는 Sc 행위자가 없다 -> 몸체 번호 손잡이 -2 - 몸체 번호 (bodyHandle 이 골라 줌). 이 손잡이는 Sc 칸이 없어
 // setGlobalPose 에서 Sc 칸 갱신만 빠지고, 몸체·깸 카운터 표·섬 요청은 같다.
 // 부수효과는 joints 모듈 core/joints/rigid_api.h (NpRigidDynamic 과 같은 입력 -> 같은 상태) 로 계산하고, 돌려받은 섬 요청(깨움·잠 준비·바로 재움)과
@@ -12,6 +16,7 @@
 #include <algorithm>
 #include <vector>
 
+#include "core/joints/d6_joint.h"
 #include "core/joints/rigid_api.h"
 #include "core/particles/edit_window.h"
 #include "core/scene/env_solve.h"
@@ -23,7 +28,7 @@ struct EnvBodyApi : public particles::BodyApi {
   EnvStep& E;
   EnvSolveImpl& S;
   std::vector<jnt::BodySimState> sim;  // 몸체 번호별 BodySim 쪽 API 상태 (속도 수정 누적 등)
-  uint64_t reqActivate = 0, reqDeactivate = 0, reqSleep = 0, unknown = 0;
+  uint64_t reqActivate = 0, reqDeactivate = 0, reqSleep = 0, unknown = 0, staticWrites = 0, jointC2b = 0, interReset = 0, lostTouchAdd = 0, triggerSkip = 0;
 
   EnvBodyApi(EnvStep& e, EnvSolveImpl& s) : E(e), S(s) { sim.assign(S.bodies.size(), jnt::makeBodySimState()); }
 
@@ -90,6 +95,67 @@ struct EnvBodyApi : public particles::BodyApi {
     return s;
   }
 
+  // notifyActorInteractionsOfTransformChange (Sc 손잡이 h 의 쌍 관리층 행위자)
+  void transformChanged(int32_t h, bool isDynamic, bool isAsleep) {
+    if (h < 0 || size_t(h) >= E.pairsOfSc.size()) return;
+    const int32_t pa = E.pairsOfSc[size_t(h)];
+    ss::ScPairs& P = E.C->S->pairs;
+    if (pa < 0 || size_t(pa) >= P.actors.size()) return;
+    const ss::Actor& A = P.actors[size_t(pa)];
+    std::vector<int32_t> its;
+    for (uint32_t k = 0; k < A.interactions.size(); ++k) its.push_back(A.interactions[k]);
+    for (int32_t it : its) {
+      if (it < 0 || size_t(it) >= P.inters.size()) continue;
+      const ss::Interaction& I = P.inters[size_t(it)];
+      if (!I.alive) continue;
+      if (I.type == ss::eOVERLAP) {
+        P.userResetManagerCachedState(it);
+        ++interReset;
+        // ShapeInteraction::onShapeChangeWhileSleeping (ScShapeInteraction.cpp:1143)
+        if (isAsleep && isDynamic && I.cm < 0 && !(I.siFlags & ss::SiFlag::TOUCH_KNOWN) && I.actor1 >= 0 &&
+            P.actors[size_t(I.actor1)].isDynamicRigid() && !(I.siFlags & ss::SiFlag::CONTACTS_RESPONSE_DISABLED)) {
+          E.live.addToLostTouchList(I.actor0, I.actor1);
+          ++lostTouchAdd;
+        }
+      } else if (I.type == ss::eTRIGGER) {
+        ++triggerSkip;  // TriggerInteraction::forceProcessingThisFrame (트리거는 아직 안 옮김)
+      }
+    }
+  }
+  // ---- 정적 (particles BodyApi 정적 입구)
+  bool hasStaticApi() const override { return true; }
+  Tf staticPose(int32_t h) override {
+    if (h < 0 || size_t(h) >= E.sc->actors.size() || E.sc->actors[size_t(h)].kind != 0) {
+      ++unknown;
+      return Tf{qid(), V3{0, 0, 0}};
+    }
+    const px::PxTransform& t = E.sc->actors[size_t(h)].pose;
+    return Tf{Q{t.q.x, t.q.y, t.q.z, t.q.w}, V3{t.p.x, t.p.y, t.p.z}};
+  }
+  void setStaticPose(int32_t h, const Tf& pose) override {
+    if (h < 0 || size_t(h) >= E.sc->actors.size() || !E.sc->actors[size_t(h)].alive || E.sc->actors[size_t(h)].kind != 0) {
+      ++unknown;
+      return;
+    }
+    ++staticWrites;
+    const Tf np = normalized(pose);
+    ScActorRec& a = E.sc->actors[size_t(h)];
+    a.pose = px::PxTransform(px::PxVec3(np.p.x, np.p.y, np.p.z), px::PxQuat(np.q.x, np.q.y, np.q.z, np.q.w));  // StaticCore::setActor2World
+    for (uint32_t e : a.elements) E.sc->markDirty(e);                                                     // markBoundsForUpdate
+    transformChanged(h, false, true);
+    // updateShaderComs -> 조인트 c2b
+    const Tf com = jnt::comOf(jnt::ACTOR_STATIC, np);  // getCom(정적) = getGlobalPose().getInverse()
+    for (size_t k = 0; k < S.joints.size() && k < S.jointExt.size(); ++k) {
+      if (S.jointDead.size() > k && S.jointDead[k]) continue;
+      for (int s = 0; s < 2; ++s) {
+        if (S.jointExt[k].staticID[s] != a.actorID) continue;
+        const Tf& l = S.jointExt[k].local[s];
+        S.joints[k].data.c2b[s] = jnt::toTf32(jnt::transformInvTf(com, l));  // Ext::Joint::onComShift (joints d6_joint.h 와 같은 식)
+        ++jointC2b;
+      }
+    }
+  }
+
   Tf actorPose(int32_t h) override {  // NpRigidDynamic::getGlobalPose = body2World * body2Actor^-1
     const int32_t b = bodyOf(h);
     if (b < 0) { ++unknown; return Tf{qid(), V3{0, 0, 0}}; }
@@ -106,6 +172,7 @@ struct EnvBodyApi : public particles::BodyApi {
       E.sc->updateActorCached(h, px::PxTransform(px::PxVec3(x.body2World.p.x, x.body2World.p.y, x.body2World.p.z),
                                                  px::PxQuat(x.body2World.q.x, x.body2World.q.y, x.body2World.q.z, x.body2World.q.w)),
                               a.body2Actor, false);
+      transformChanged(h, true, !nodeActive(nodeOf(h)));  // BodySim::postBody2WorldChange -> notifyShapesOfTransformChange
     }
     apply(h, req, x);
   }

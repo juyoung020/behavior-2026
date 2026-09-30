@@ -308,6 +308,24 @@ void dumpScene(PxScene* scene, uint64_t sim) {
       PxU32 tid = 0;
       void* ext = c->getExternalReference(tid);
       j.name = F.addName(ext && tid == PxConstraintExtIDs::eJOINT ? static_cast<PxJoint*>(ext)->getName() : nullptr);
+      {  // 부가 칸: 정적 상대 actorID + 국소 틀 (JNTLP001)
+        sc::SceneJointExt x{};
+        x.staticID[0] = x.staticID[1] = sc::kNone;
+        x.local[0] = x.local[1] = eng::Tf{eng::Q{0, 0, 0, 1}, eng::V3{0, 0, 0}};
+        if (ext && tid == PxConstraintExtIDs::eJOINT) {
+          PxJoint* pj = static_cast<PxJoint*>(ext);
+          PxRigidActor* a[2] = {nullptr, nullptr};
+          pj->getActors(a[0], a[1]);
+          for (int s = 0; s < 2; ++s) {
+            x.local[s] = g1px::toE(pj->getLocalPose(s == 0 ? PxJointActorIndex::eACTOR0 : PxJointActorIndex::eACTOR1));
+            if (a[s] && a[s]->getType() == PxActorType::eRIGID_STATIC) {
+              Sc::StaticSim* ss = static_cast<NpRigidStatic*>(a[s])->getCore().getSim();
+              if (ss) x.staticID[s] = ss->getActorID();
+            }
+          }
+        }
+        F.jointExt.push_back(x);
+      }
       if (dc.constantBlockSize != sizeof(eng::jnt::D6Data)) ++D.unsup;
       else memcpy(&j.data, dc.constantBlock, sizeof(eng::jnt::D6Data));
       F.joints.push_back(j);
