@@ -11,3 +11,4 @@ target_compile_options(test_visual_gpu PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr -Xcompiler=-ffp-contract=off>)
 engine_test(test_trng test_trng.cpp)
 engine_test(test_dice test_dice.cpp)
+engine_test(test_contain test_contain.cpp)
