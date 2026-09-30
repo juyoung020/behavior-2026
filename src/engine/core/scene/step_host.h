@@ -501,8 +501,9 @@ inline void hostPostThird(ig::IslandManager& M) {
 // Ph 가 채우는 마디: bp() = 넓은 단계 + 새 겹침을 쌍 관리층에(dirty·finishBroadPhase), np() = 좁은 단계·새 닿음·연결,
 //                   solve(post) = 풀이(post 에 풀이 뒤 깸 카운터), lost() = 사라진 겹침..unregisterInteractions, lost3() = destroyManagers·processLostContacts3,
 //                   afterIntegration(post) = 적분 뒤 풀이 쪽 (관절체 잠 판정 등, post 의 링크·관절체 깸 카운터)
+// 풀이 앞 반쪽 (N 판을 풀이 자리에서 모아 한 번에 풀 때 판마다 부름)
 template <class Ph>
-inline void hostSimulateOrder(ig::IslandManager& M, ss::ScPairs& P, LiveIslands& L, std::vector<uint8_t>& active, HostWake& W, Ph& ph) {
+inline void hostSimulatePre(ig::IslandManager& M, ss::ScPairs& P, LiveIslands& L, std::vector<uint8_t>& active, HostWake& W, Ph& ph) {
   hostProcessLostTouchPairs(P, L);  // postBroadPhaseStage2 (새 상호작용 만들기와 섬 넣기 사이 — 섬 호출이 서로 안 걸려 앞에 둠)
   ph.bp();
   ig::firstPassIslandGen(M);
@@ -513,8 +514,10 @@ inline void hostSimulateOrder(ig::IslandManager& M, ss::ScPairs& P, LiveIslands&
   ig::secondPassIslandGenPart2(M);
   hostSnapshotSolveWake(W);
   hostSetActiveFromIslands(M, P, active, true, nullptr);
-  HostWake post = W;
-  ph.solve(post);
+}
+// 풀이 뒤 반쪽 (post = 풀이가 낸 깸 카운터 표)
+template <class Ph>
+inline void hostSimulatePost(ig::IslandManager& M, ss::ScPairs& P, LiveIslands& L, std::vector<uint8_t>& active, HostWake& W, HostWake& post, Ph& ph) {
   ph.lost();
   hostThirdBegin(M);
   hostThirdSim(M, M.speculative);
@@ -525,6 +528,13 @@ inline void hostSimulateOrder(ig::IslandManager& M, ss::ScPairs& P, LiveIslands&
   hostDeactivateEdges(M, P, ph.acts());
   ph.afterIntegration(post);  // 풀이 쪽 적분 뒤 (관절체 잠 판정·재운 몸체 되돌리기·Sc 칸) — post 에 관절체 깸 카운터
   hostAfterIntegration(M, P, L, W, post);
+}
+template <class Ph>
+inline void hostSimulateOrder(ig::IslandManager& M, ss::ScPairs& P, LiveIslands& L, std::vector<uint8_t>& active, HostWake& W, Ph& ph) {
+  hostSimulatePre(M, P, L, active, W, ph);
+  HostWake post = W;
+  ph.solve(post);
+  hostSimulatePost(M, P, L, active, W, post, ph);
 }
 
 }  // namespace scene

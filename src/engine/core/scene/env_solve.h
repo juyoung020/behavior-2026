@@ -4,7 +4,8 @@
 //   접촉 입력 = contactSolverInput (좁은 단계 칸), 지난 마찰 패치 = 모양 쌍 키로 들고 감(새 관리자는 0)
 //   깸 카운터 = 깸 카운터 표(Sc 층 값)를 풀이 앞에 몸체·관절체 칸으로, 풀이 뒤 값을 post 로
 //   적분 뒤 = afterIntegrationHost → Sc 칸 갱신(얼린 몸체 빼고) → 섬이 재운 몸체 되돌리기(+Sc 칸) → 관절체 잠 판정/재우기 → 깨어 있는 링크 Sc 칸
-// 판 도중 새 조인트 = addJoint/removeJoint (간선 객체 0x80000000|번호). 풀이 본체는 batch 가 있으면 N 판 모으기(env_batch.h)로.
+// 판 도중 새 조인트 = addJoint/removeJoint (간선 객체 0x80000000|번호).
+// 나눠 부르기: solvePre(판 B 짜기) -> solveCore(풀이 본체 — N 판이면 부르는 쪽이 B·prm 을 모아 한 번에) -> solvePost(마찰 패치·깸 카운터 들고 가기).
 // 아직: 운동학 몸체(섬에 있으면 알림만), resetCMs(조인트 끊김).
 // 호스트 전용.
 #pragma once
@@ -18,7 +19,6 @@
 #include <vector>
 
 #include "core/articulation/art_static.h"
-#include "core/scene/env_batch.h"
 #include "core/scene/env_step.h"
 #include "core/scene/scene_file.h"
 #include "core/solver/solver_io.h"
@@ -46,7 +46,7 @@ struct EnvSolveImpl : public EnvSolve {
   // 조인트가 붙은 수 (BodySim::onConstraintAttach -> registerCountedInteraction, ScBodySim.h:159): 몸체별, 관절체 링크별(관절체*kMaxLinks+LL)
   std::vector<uint32_t> jointsOnBody, jointsOnLink;
   std::vector<uint8_t> jointDead;  // 판 도중 지운 조인트 (번호는 그대로 둔다)
-  SolveBatch* batch = nullptr;     // 있으면 풀이 본체를 N 판 모으기로 (G2a)
+  bool coreExternal = false;       // true 면 solveCore 가 아무것도 안 함 (N 판 모으기: 부르는 쪽이 B 를 모아 풀이 본체를 부름)
   sv::SolverParams prm{};
   // ---- 작업 공간
   std::vector<sv::SBodyVel> vels;
@@ -202,6 +202,20 @@ struct EnvSolveImpl : public EnvSolve {
   }
 
   void solve(EnvStep& E, HostWake& post) override {
+    solvePre(E, post);
+    solveCore(E);
+    solvePost(E, post);
+  }
+  // 풀이 본체 (판 하나, CPU). N 판 모으기면 부르는 쪽이 같은 일을 판 여러 개에 (env_run --batch: CPU 흉내, 나중에 GPU)
+  void solveCore(EnvStep& E) override {
+    if (coreExternal) return;
+    EnvTimer tm(E.times ? &E.times->solveCore : nullptr);
+    EnvFtz f;
+    sv::solverStepHost(B, prm);
+    sv::afterIntegrationHost(B);
+  }
+  void solvePre(EnvStep& E, HostWake& post) override {
+    (void)post;
     contact::ContactScene& S = *E.C->S;
     const ss::ScPairs& P = S.pairs;
     ig::IslandManager& M = E.isl->M;
@@ -426,16 +440,10 @@ struct EnvSolveImpl : public EnvSolve {
     B.artStaticCap = kStaticCap;
     B.artBatchIndex = artBatch.data();
     B.artProg = artProg.data();
-    {
-      EnvTimer tm(E.times ? &E.times->solveCore : nullptr);
-      if (batch) {
-        batch->solve(B, prm);
-      } else {
-        EnvFtz f;
-        sv::solverStepHost(B, prm);
-        sv::afterIntegrationHost(B);
-      }
-    }
+  }
+  void solvePost(EnvStep& E, HostWake& post) override {
+    const ss::ScPairs& P = E.C->S->pairs;
+    const uint32_t cap = uint32_t(cms.size());
     if (B.error) ++engineErr;
     // 5. 마찰 패치 들고 가기, 풀이 뒤 깸 카운터
     const sv::FrictionArena& fa = B.friction[B.frictionCurIdx];

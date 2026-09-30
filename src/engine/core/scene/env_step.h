@@ -27,6 +27,10 @@ struct EnvStep;
 struct EnvSolve {
   virtual ~EnvSolve() {}
   virtual void solve(EnvStep& E, HostWake& post) = 0;             // 풀이 (post: 강체 solverWc)
+  // 나눠 부르기 (N 판 모으기): 판 짜기 -> 풀이 본체(여러 판 한 번에 가능) -> 결과 들고 가기. 기본 = solve 한 번
+  virtual void solvePre(EnvStep& E, HostWake& post) { solve(E, post); }
+  virtual void solveCore(EnvStep& E) { (void)E; }
+  virtual void solvePost(EnvStep& E, HostWake& post) { (void)E; (void)post; }
   virtual void afterIntegration(EnvStep& E, HostWake& post) { (void)E; (void)post; }  // 적분 뒤 (post: 링크·관절체 wc)
 };
 
@@ -67,6 +71,7 @@ struct EnvStep {
   bool contactDistChanged = false;  // Sc mHasContactDistanceChanged (편집 API 가 켬)
   uint64_t steps = 0;
   EnvTimes* times = nullptr;  // 진단 (없으면 안 잼)
+  HostWake post;              // 나눠 부르기: 풀이 뒤 깸 카운터 표 (envStepBegin -> envStepEnd)
   // 묶기 (적재 뒤 한 번)
   void bind() {
     live.M = &isl->M;
@@ -231,6 +236,38 @@ struct EnvPhases {
   }
   std::vector<PairsAct>* acts() { return nullptr; }
 };
+// 나눠 부르기: envStepBegin(판 짜기까지) -> envStepCore(풀이 본체 — N 판 모으기면 부르는 쪽이 판 여러 개를 한 번에) -> envStepEnd.
+// envStep 과 같은 차례·같은 결과.
+inline void envStepBegin(EnvStep& E) {
+  EnvTimer tm(E.times ? &E.times->total : nullptr);
+  contact::ContactScene& S = *E.C->S;
+  E.live.clearStep();
+  if (E.active.size() < S.pairs.actors.size()) E.active.resize(S.pairs.actors.size(), 0);
+  EnvPhases ph{E, S};
+  hostSimulatePre(E.isl->M, S.pairs, E.live, E.active, E.wake, ph);
+  E.post = E.wake;
+  EnvTimer ts(E.times ? &E.times->solve : nullptr);
+  if (E.solver) E.solver->solvePre(E, E.post);
+}
+inline void envStepCore(EnvStep& E) {
+  EnvTimer tm(E.times ? &E.times->total : nullptr);
+  EnvTimer ts(E.times ? &E.times->solve : nullptr);
+  if (E.solver) E.solver->solveCore(E);
+}
+inline void envStepEnd(EnvStep& E) {
+  EnvTimer tm(E.times ? &E.times->total : nullptr);
+  contact::ContactScene& S = *E.C->S;
+  {
+    EnvTimer ts(E.times ? &E.times->solve : nullptr);
+    if (E.solver) E.solver->solvePost(E, E.post);
+  }
+  EnvPhases ph{E, S};
+  hostSimulatePost(E.isl->M, S.pairs, E.live, E.active, E.wake, E.post, ph);
+  contact::contactBroadPhaseEnd(S);
+  E.C->bp->endStep();
+  E.sc->endStep();
+  ++E.steps;
+}
 inline void envStep(EnvStep& E) {
   EnvTimer tm(E.times ? &E.times->total : nullptr);
   contact::ContactScene& S = *E.C->S;
