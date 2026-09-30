@@ -130,3 +130,26 @@ if os.environ.get("SWEEP_LAYOUT"):  # 진단: 창 안 행위자 생성·정적 �
         print("정적 묶음", r[0], r[-1], len(r))
     dyn_w = [i for i, c, h, a, v in blk if a == "PxRigidActor.globalPose" and cls.get(h) == "PxRigidDynamic"]
     print("동적 자세 쓰기", len(dyn_w), "처음", dyn_w[:3], "끝", dyn_w[-3:])
+if os.environ.get("SWEEP_PATTERN"):  # 진단: 창 안 사건 흐름을 (종류) 연속 묶음으로
+    def tag(c, h, a):
+        k = cls.get(h, "?")
+        n = names.get(h, "")
+        if c == "create" and k == "PxRigidDynamic":
+            return "생성"
+        if a == "PxRigidActor.globalPose":
+            if "Particle" in n:
+                return "입자자세"
+            return "정적자세" if k == "PxRigidStatic" else "동적자세"
+        if a in ("PxRigidBody.linearVelocity", "PxRigidBody.angularVelocity"):
+            return "입자속도" if "Particle" in n else "동적속도"
+        return None
+    seq = []
+    for i, c, h, a, v in blk:
+        t = tag(c, h, a)
+        if t is None:
+            continue
+        if seq and seq[-1][0] == t:
+            seq[-1][1] += 1
+        else:
+            seq.append([t, 1, i])
+    print(" ".join(f"{t}×{n}" for t, n, i in seq))

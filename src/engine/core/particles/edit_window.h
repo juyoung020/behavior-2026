@@ -36,6 +36,11 @@ struct BodyApi {
   virtual void setVelocity(int32_t h, const V3& lin, const V3& ang) = 0;  // setLinearVelocity → setAngularVelocity
   virtual void bodyAdded(int32_t h, const Body& b) = 0;                 // spawn_add 로 만든 몸체 등록
   virtual void bodyRemoved(int32_t h) = 0;
+  // 정적 행위자 (운동학 전용 물체의 뿌리 등): 자세 쓰기 = NpRigidStatic::setGlobalPose (정규화 → Sc 정적 자세 → 모양 dirty → 붙은 조인트 c2b 다시 계산).
+  // 기본은 없음(false) — env 구현(리드 EnvBodyApi)이 채운다.
+  virtual bool hasStaticApi() const { return false; }
+  virtual Tf staticPose(int32_t h) { (void)h; return Tf{qid(), V3{0, 0, 0}}; }
+  virtual void setStaticPose(int32_t h, const Tf& pose) { (void)h, (void)pose; }
 };
 
 // 새 행위자 출처 (리드 g1_sc 틀 + 우리 키 대응 build_spawn_table)
@@ -48,7 +53,7 @@ struct SpawnSource {
 struct SpawnResolver {
   virtual ~SpawnResolver() {}
   virtual bool half(int32_t src, int32_t part, SpawnSource& out) = 0;  // 반쪽 (원본 물체, 부분 번호)
-  virtual bool particle(int32_t system, SpawnSource& out) = 0;         // 입자 계 틀
+  virtual bool particle(int32_t system, int32_t idx, SpawnSource& out) = 0;  // 입자 계 틀 (idx = 이번 편집의 몇 번째 새 입자 — 틀 안 행위자가 입자마다 다름)
 };
 
 struct ObjectRt {
@@ -104,8 +109,9 @@ struct TransitionEditWindow : scene::EditWindow {
     std::vector<SyncActor> acts;
     sync->order(sweeps++, acts);
     for (const SyncActor& a : acts) {
-      if (a.isStatic) {
-        ++staticSkipped;
+      if (a.isStatic) {  // 정적: 값 그대로 다시 씀 (조인트 c2b 다시 계산 — 값이 load 의 XForm 자세면 장면 파일 값과 다를 수 있음)
+        if (body->hasStaticApi()) body->setStaticPose(a.h, body->staticPose(a.h));
+        else ++staticSkipped;
         continue;
       }
       const Tf cur = body->actorPose(a.h);
@@ -143,11 +149,6 @@ struct TransitionEditWindow : scene::EditWindow {
     for (const Edit& e : *edits) {
       if (e.kind != EDIT_PARTICLES_ADD) continue;
       ParticleSystemRt& S = (*systems)[size_t(e.system)];
-      SpawnSource src;
-      if (!spawn->particle(e.system, src)) {
-        ++failed;
-        continue;
-      }
       // 기존 입자 get (원점 → 중심) — 새 prim 을 만들기 전에 뜬다 (generate_particles 첫 줄)
       const size_t n0 = S.actors.size();
       std::vector<Pose7> set(n0);
@@ -159,7 +160,13 @@ struct TransitionEditWindow : scene::EditWindow {
         physical_center(t, S.off, c);
         set[i] = particle_frame_from_center(c, t + 3, S.off);  // 공식: 중심이 그대로 원점
       }
-      for (const Pose7& p : e.poses) {  // 새 입자 강체 (원점 자세, 방향 정규화 전)
+      for (size_t k = 0; k < e.poses.size(); ++k) {  // 새 입자 강체 (원점 자세, 방향 정규화 전)
+        const Pose7& p = e.poses[k];
+        SpawnSource src;
+        if (!spawn->particle(e.system, int32_t(k), src)) {
+          ++failed;
+          continue;
+        }
         const int32_t h = spawnOne(E, src, p);
         if (h < 0) {
           ++failed;
@@ -173,6 +180,7 @@ struct TransitionEditWindow : scene::EditWindow {
       for (size_t i = 0; i < n0; ++i) body->velocity(S.actors[i], lin[i], ang[i]);
       const V3 z{0, 0, 0};
       for (size_t i = 0; i < S.actors.size(); ++i) body->setVelocity(S.actors[i], i < n0 ? lin[i] : z, i < n0 ? ang[i] : z);
+      if (sync) flushSync();  // 벌 방식: 입자 넣기 창의 동기화 벌 한 번 (공식 onion OVD: 입자 전부 set 뒤, 입자까지 든 한 벌)
     }
   }
 

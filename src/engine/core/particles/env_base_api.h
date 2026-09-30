@@ -2,7 +2,7 @@
 //   강체 (particles): 리드 EnvBodyApi (core/scene/env_body_api.h) + joints rigid_api.h 의 putToSleep·wakeUp (NpRigidDynamic.cpp:504,517).
 //     뿌리 자세 쓰기 = setGlobalPose(autowake), 선/각속도 쓰기 = 지금 선·각을 읽어 한쪽만 바꿔 setLinearVelocity → setAngularVelocity (텐서 뷰 set_velocities 6 칸),
 //     psi 잠·깨움 = putToSleep / wakeUp(리셋값), is_sleeping = BodySim 비활성 (BodyCore::isSleeping).
-//     운동학 전용 뿌리 자세 쓰기 = XForm(USD) 쓰기: 되돌리기에서는 같은 값이라 USD→PhysX 동기화가 일어나지 않는다고 보고 아무것도 안 함 (가정 — 닫힌 고리로 확인).
+//     운동학 전용 뿌리 자세 쓰기 = XForm(USD) 쓰기 → PhysX 정적 setGlobalPose (공식 OVD 확인) — 값은 dump 의 XForm 자세(BaseObject::xform), EnvBodyApi::setStaticPose.
 //   관절체 (engine-solver-art 구현): BaseArtApi 로 넘긴다.
 // 호스트 전용.
 #pragma once
@@ -59,6 +59,10 @@ struct EnvBaseApi : BaseStateApi {
       ++artMissing;
       return Tf{qid(), V3{0, 0, 0}};
     }
+    if (o.kind == BASE_KINEMATIC) {  // XFormPrim.get_position_orientation (운동학 물체는 안 움직이므로 추출 값)
+      if (o.hasXform) return o.xform;
+      return B.hasStaticApi() ? B.staticPose(o.root) : B.actorPose(o.root);
+    }
     return B.actorPose(o.root);
   }
   void rootVelocity(const BaseObject& o, V3& lin, V3& ang) override {
@@ -79,7 +83,9 @@ struct EnvBaseApi : BaseStateApi {
       else ++artMissing;
     } else if (o.kind == BASE_RIGID) {
       B.setActorPose(o.root, pose);
-    }  // BASE_KINEMATIC: 같은 값 XForm 쓰기 — 아무것도 안 함 (머리말 가정)
+    } else if (o.kind == BASE_KINEMATIC && B.hasStaticApi()) {
+      B.setStaticPose(o.root, pose);  // XForm 쓰기 → USD → PhysX 정적 setGlobalPose (공식 OVD: 운동학 물체 34 개가 되돌리기 때 정적 자세를 받음)
+    }
   }
   void setRootLinVel(const BaseObject& o, const V3& v) override {
     V3 l, a;

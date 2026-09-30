@@ -26,7 +26,7 @@ struct FakeBody : BodyApi {
 };
 struct NoSpawn : SpawnResolver {
   bool half(int32_t, int32_t, SpawnSource&) override { return false; }
-  bool particle(int32_t, SpawnSource&) override { return false; }
+  bool particle(int32_t, int32_t, SpawnSource&) override { return false; }
 };
 struct LogBase : scene::EditWindow {
   std::vector<std::string>* log;

@@ -205,6 +205,35 @@ inline int32_t spawn_add(scene::ScScene& sc, scene::ScModules& m, const SpawnTem
   if (!actor_from_template(T, a, actorPose, in, bodyOut, usd_scale, raw_q)) return -1;
   return sc.addActor(in, m);
 }
+// 정적 행위자 넣기 (입자 계 틀 prim 등 — 틀 파일의 정적 자세 그대로, 몸체 없음). 반환 = 손잡이
+inline int32_t spawn_add_static(scene::ScScene& sc, scene::ScModules& m, const SpawnTemplate& T, uint32_t a) {
+  const scene::SceneActor& A = T.shared->actors[a];
+  if (A.kind != scene::kStatic) return -1;
+  scene::ScActorIn in;
+  in.kind = scene::kStatic;
+  in.pose = tf_px(A.staticPose);
+  in.body2Actor = tf_px(Tf{qid(), V3{0, 0, 0}});
+  in.idtBody2Actor = 1, in.kinematic = 0, in.forcedKineNotif = 0, in.awake = 0;
+  in.dominance = A.dominance;
+  for (uint32_t s = A.shapeStart; s < A.shapeStart + A.shapeCount; ++s) {
+    const scene::SceneShape& S = T.shared->shapes[s];
+    scene::ScShapeIn si;
+    memset(static_cast<void*>(&si), 0, sizeof(si));
+    si.geom = S.geom;
+    si.localPose = tf_px(S.localPose);
+    si.contactOffset = S.contactOffset;
+    si.shapeFlags = S.shapeFlags;
+    si.restOffset = S.restOffset;
+    si.torsionalPatchRadius = S.torsionalPatchRadius;
+    si.minTorsionalPatchRadius = S.minTorsionalPatchRadius;
+    if (s < T.f.shapeFilters.size())
+      for (int k = 0; k < 4; ++k) si.filter[k] = T.f.shapeFilters[s].w[k];
+    const Tf& lp = S.localPose;
+    si.idtShape = (lp.p.x == 0 && lp.p.y == 0 && lp.p.z == 0 && isIdentity(lp.q)) ? 1 : 0;
+    in.shapes.push_back(si);
+  }
+  return sc.addActor(in, m);
+}
 
 }  // namespace particles
 }  // namespace eng

@@ -1,10 +1,12 @@
 # 닫힌 고리 편집 계획 (g1_edit_hook.cpp 가 읽음): 수확 기록(HARVEST_BASE=1) 의 전이마다 편집 창 simulate·지울 물체·넣을 반쪽(틀·부분 메타)·base 물체 표.
-#   python3 build_edit_plan.py <수확 기록 폴더> <출력 plan.txt>   (틀 폴더 = <수확 기록 폴더>/tmpl, 리드 G1_SC_TEMPLATES 로 뜬 것)
+#   python3 build_edit_plan.py <수확 기록 폴더> <출력 plan.txt> [다지기 npy 폴더 = <기록>/dice_npy]   (틀 폴더 = <기록>/tmpl, 리드 G1_SC_TEMPLATES 로 뜬 것)
+#   P <K+1> <원본> <원본 뿌리> <계 이름> <틀 파일> <계 틀 prim 행위자 또는 -1> <입자 수> <틀 안 입자 행위자...> <다지기 ev 폴더>   (다지기)
 # 줄:
 #   T <K+1> <원본 이름> <원본 뿌리 링크 경로> <원본 척도 3>   — 지우기 창 = simulate K+1 앞 (K = step_physics), 무덤·뜨기 = K 앞
 #   H <틀 파일> <틀 안 행위자> <새 물체 이름> <부분> bb_pos3 bb_orn4 bb_size3 native_bb3 base_link_offset3
 #   O <이름> <종류 0 강체 1 관절체 2 운동학> <관절 수> <뿌리 링크 경로> <동적 링크 수> <링크...>   (그 창 dump 때 등록부 차례)
 #   C <이름> <척도 3>   (있으면 — 물체 척도)
+#   X <이름> p3 q4      (운동학 물체: dump 가 읽은 XForm 자세)
 #   K <행위자 prim 경로> <세계 척도 3>   (있으면 — USD 세계 행렬 행 길이, 동기화 벌 척도)
 #   E
 # 다지기(입자)는 아직 (자르기만).
@@ -33,7 +35,36 @@ def num(v):
 
 
 lines = []
+dice_i = 0
 for ev in hm:
+    if ev["rule"] == "DicingRule":  # P 줄: 입자 넣기 창(K) = 틀 줄 simulate, 지우기 창(K+1) = 원본을 뺀 줄 simulate
+        src = ev["src"]
+        R = [x for x in tl if any(f"/{src}/" in r for r in x["removed"])]
+        A = [x for x in tl if any(ev["system"] in a for a in x["added"]) and x["template"]]
+        if not R or len(A) <= dice_i:
+            print("다지기 틀 줄 없음", src)
+            continue
+        L, Ad = R[0], A[dice_i]
+        dice_i += 1
+        root = [r for r in L["removed"] if f"/{src}/" in r][0]
+        part = [k for k, a in enumerate(Ad["added"]) if "Particle" in a]
+        tmpl_prim = ([k for k, a in enumerate(Ad["added"]) if "/template/" in a] + [-1])[0]
+        ddir = os.path.join(sys.argv[3] if len(sys.argv) > 3 else os.path.join(rec, "dice_npy"), f"ev_{dice_i - 1:03d}")
+        lines.append(" ".join(["P", str(L["sim"]), src, root, ev["system"], Ad["template"], str(tmpl_prim), str(len(part))] + [str(k) for k in part] + [ddir]))
+        win = [w for w in base["windows"] if w["step"] == ev["step"]]
+        for o in (win[0]["objects"] if win else []):
+            kind = 1 if o["articulated"] else (2 if o["kinematic_only"] else 0)
+            lines.append(" ".join(["O", o["name"], str(kind), str(o["n_joints"]), o["root_link"], str(len(o["dynamic_links"]))] + o["dynamic_links"]))
+            if "scale" in o:
+                lines.append(" ".join(["C", o["name"]] + [repr(float(x)) for x in o["scale"]]))
+            for lp, ls in (o.get("link_scale") or {}).items():
+                if ls:
+                    lines.append(" ".join(["K", lp] + [repr(float(x)) for x in ls]))
+            dd = (win[0].get("dump") or {}).get(o["name"]) if win else None
+            if o["kinematic_only"] and dd:  # 운동학 물체: dump 가 읽은 XForm 자세 (되돌리기가 이 값을 정적 자세로 씀)
+                lines.append(" ".join(["X", o["name"]] + [repr(float(x)) for x in list(dd["pos"]) + list(dd["ori"])]))
+        lines.append("E")
+        continue
     if ev["rule"] != "SlicingRule":
         continue
     src = ev["src"]
@@ -62,7 +93,10 @@ for ev in hm:
                 lines.append(" ".join(["C", o["name"]] + [repr(float(x)) for x in o["scale"]]))  # 물체 척도 (동기화 벌 USD 왕복)
             for lp, ls in (o.get("link_scale") or {}).items():
                 if ls:
-                    lines.append(" ".join(["K", lp] + [repr(float(x)) for x in ls]))  # 행위자 prim 세계 척도 (있으면 물체 척도 대신)
+                    lines.append(" ".join(["K", lp] + [repr(float(x)) for x in ls]))
+            dd = (win[0].get("dump") or {}).get(o["name"]) if win else None
+            if o["kinematic_only"] and dd:  # 운동학 물체: dump 가 읽은 XForm 자세 (되돌리기가 이 값을 정적 자세로 씀)
+                lines.append(" ".join(["X", o["name"]] + [repr(float(x)) for x in list(dd["pos"]) + list(dd["ori"])]))
     lines.append("E")
 open(out, "w").write("\n".join(lines) + "\n")
 print("전이", sum(1 for l in lines if l.startswith("T ")))

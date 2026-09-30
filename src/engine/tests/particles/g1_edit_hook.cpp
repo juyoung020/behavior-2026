@@ -24,6 +24,8 @@
 #include "core/scene/env_body_api.h"
 #include "core/scene/env_art_api.h"
 #include "core/scene/scene_file.h"
+#include "core/particles/trng.h"
+#include "tests/omni/npy.h"
 
 using namespace eng;
 using namespace eng::particles;
@@ -48,8 +50,14 @@ struct Trans {
   float srcScale[3] = {1, 1, 1};
   std::vector<Half> halves;
   std::vector<ObjLine> objs;
+  // 다지기 (P 줄): 입자 계 틀·틀 안 행위자(새 입자 차례)·계 틀 prim 행위자(첫 다지기만, 없으면 -1)·다지기 기록 폴더(dice_events_to_npy ev_NNN)
+  bool dice = false;
+  std::string system, tmpl, diceDir;
+  int32_t tmplTemplateActor = -1;
+  std::vector<uint32_t> particleActors;
   std::map<std::string, std::vector<float>> scale;  // 물체 이름 -> 척도 (C 줄)
-  std::map<std::string, std::vector<double>> actorScale;  // 행위자 prim -> 세계 척도 (K 줄, 있으면 우선)
+  std::map<std::string, std::vector<double>> actorScale;
+  std::map<std::string, Tf> xform;  // X 줄: 운동학 물체 dump XForm 자세  // 행위자 prim -> 세계 척도 (K 줄, 있으면 우선)
   std::map<int, std::vector<std::pair<std::string, int>>> sweepOrder;  // 벌 -> (행위자 이름, 정적?) 공식 차례 (PARTICLES_SYNC_ORDER)
 };
 
@@ -75,7 +83,26 @@ struct Resolver : SpawnResolver {
     out.raw_q = false;
     return true;
   }
-  bool particle(int32_t, SpawnSource&) override { return false; }
+  bool particle(int32_t system, int32_t idx, SpawnSource& out) override {
+    if (!t || system != 0 || idx < 0 || size_t(idx) >= t->particleActors.size()) return false;
+    auto it = cache->find(t->tmpl);
+    if (it == cache->end()) {
+      std::string err;
+      if (!(*cache)[t->tmpl].load(t->tmpl.c_str(), &err)) {
+        fprintf(stderr, "[particles 편집] 틀 읽기 실패 %s: %s\n", t->tmpl.c_str(), err.c_str());
+        cache->erase(t->tmpl);
+        return false;
+      }
+      it = cache->find(t->tmpl);
+    }
+    out.T = &it->second;
+    out.actor = t->particleActors[size_t(idx)];
+    const auto& A = it->second.shared->actors[out.actor];
+    const auto& g = it->second.shared->shapes[A.shapeStart].geom;  // 입자 prim 척도 = 볼록 척도 (B10)
+    out.usd_scale[0] = g.convex.scale.scale.x, out.usd_scale[1] = g.convex.scale.scale.y, out.usd_scale[2] = g.convex.scale.scale.z;
+    out.raw_q = true;
+    return true;
+  }
 };
 
 struct Hook;
@@ -100,6 +127,8 @@ struct Hook {
   std::vector<BaseObject> bobjs;
   std::vector<ObjectRt> objs;
   std::vector<ParticleSystemRt> systems;
+  std::vector<uint32_t> particleTmplIdx;  // systems[0].actors 와 같은 차례: 입자의 틀 안 행위자·틀 파일 (벌 척도 = 볼록 척도)
+  std::vector<std::string> particleTmpl;
   std::vector<Edit> edits;
   std::unique_ptr<EnvBaseApi> BA;
   std::unique_ptr<scene::EnvArtApi> AA;
@@ -107,6 +136,7 @@ struct Hook {
   BaseStateWindow B;
   TransitionEditWindow W;
   size_t removedIdx = size_t(-1);
+  int32_t systemTemplateH = -1;
   uint64_t windows = 0, missingNames = 0, failed = 0;
 
   ~Hook() {
@@ -188,6 +218,24 @@ struct Hook {
         for (float& x : h.h.native_bb) x = F(is);
         for (float& x : h.h.base_link_offset) x = F(is);
         T.back().halves.push_back(h);
+      } else if (k == "P") {
+        T.emplace_back();
+        Trans& t = T.back();
+        t.dice = true;
+        unsigned n;
+        is >> t.simRemove >> t.src >> t.srcRoot >> t.system >> t.tmpl >> t.tmplTemplateActor >> n;
+        for (unsigned i = 0; i < n; ++i) {
+          uint32_t a;
+          is >> a;
+          t.particleActors.push_back(a);
+        }
+        is >> t.diceDir;
+      } else if (k == "X") {
+        std::string n;
+        is >> n;
+        float v[7];
+        for (float& x : v) x = F(is);
+        T.back().xform[n] = Tf{Q{v[3], v[4], v[5], v[6]}, V3{v[0], v[1], v[2]}};
       } else if (k == "K") {
         std::string n;
         is >> n;
@@ -260,10 +308,12 @@ struct Hook {
         else b.kind = BASE_ART, b.art = it->second;
       } else {
         b.root = handle(o.root);
-        b.kind = b.root < 0 ? BASE_NONE : (o.kind == 2 ? BASE_KINEMATIC : BASE_RIGID);
+        b.kind = b.root == -1 ? BASE_NONE : (o.kind == 2 ? BASE_KINEMATIC : BASE_RIGID);
+        auto xf = t.xform.find(o.name);
+        if (xf != t.xform.end()) b.hasXform = 1, b.xform = xf->second;
         for (const std::string& l : o.links) {
           const int32_t h = handle(l);
-          if (h >= 0) b.links.push_back(h);
+          if (h != -1) b.links.push_back(h);  // 모양 없는 링크는 몸체 번호 손잡이(-2 이하)
         }
       }
       if (o.name == t.src) removedIdx = i;
@@ -273,6 +323,27 @@ struct Hook {
     const int32_t sh = handle(t.srcRoot);
     if (sh >= 0) objs[0].actors.push_back(sh);
     edits.clear();
+    if (t.dice) {  // 다지기: 규칙 안 입자 생성 (창 밖 ①) — 중심은 기록(harvest_dice), 방향은 기록한 난수 상태에서 T.random_quaternion (dice.h·trng.h 대조 완료)
+      Npy cen, rng, off;
+      const std::string d = t.diceDir + "/";
+      if (npy_load(d + "centers.npy", cen) && npy_load(d + "rng.npy", rng) && npy_load(d + "off.npy", off)) {
+        const int n = int(cen.shape[0]);
+        TorchMT m;
+        torch_mt_from_bytes(rng.as<uint8_t>(), int(rng.count()), m);
+        std::vector<float> q(size_t(4 * n));
+        random_quaternion(m, n, q.data());
+        Edit pa;
+        pa.kind = EDIT_PARTICLES_ADD;
+        pa.system = 0;
+        for (int i = 0; i < n; ++i) pa.poses.push_back(particle_frame_from_center(cen.as<float>() + 3 * i, &q[size_t(4 * i)], off.as<float>()));
+        edits.push_back(pa);
+        if (systems.empty()) systems.resize(1);
+        memcpy(systems[0].off, off.as<float>(), 12);
+        for (int i = 0; i < n && size_t(i) < t.particleActors.size(); ++i) particleTmplIdx.push_back(t.particleActors[size_t(i)]), particleTmpl.push_back(t.tmpl);
+      } else {
+        ++failed;
+      }
+    }
     Edit rb;
     rb.kind = EDIT_REMOVE_BEGIN;
     rb.poses.push_back(Pose7{{100.0f, 100.0f, 100.0f}, {0.0f, 0.0f, 0.0f, 1.0f}});  // 지울 물체 하나: 무덤 첫 자리
@@ -316,7 +387,28 @@ struct Hook {
     W.sync = getenv("PARTICLES_SYNC_OLD") ? nullptr : &syncp;
     const bool tr = getenv("PARTICLES_HOOK_TRACE") != nullptr;
     if (tr) fprintf(stderr, "[particles 편집] 창 %d 시작: 물체 %zu, 원본 손잡이 %d, 반쪽 %zu\n", ti, bobjs.size(), sh, t.halves.size());
+    if (t.dice && t.tmplTemplateActor >= 0) {  // 입자 계 틀 prim (계를 처음 만들 때 강체로 한 번 들어감 — 리드 틀 줄의 첫 행위자)
+      SpawnSource src;
+      auto it = cache.find(t.tmpl);
+      if (it == cache.end()) {
+        std::string err;
+        if (cache[t.tmpl].load(t.tmpl.c_str(), &err)) it = cache.find(t.tmpl);
+      }
+      if (it != cache.end()) {
+        src.T = &it->second;
+        src.actor = uint32_t(t.tmplTemplateActor);
+        const auto& A = it->second.shared->actors[src.actor];
+        if (getenv("PARTICLES_HOOK_TRACE")) fprintf(stderr, "[particles 편집] 계 틀 prim 행위자 종류 %u\n", A.kind);
+        const int32_t h = A.kind == scene::kDynamic ? W.spawnOne(E, src, Pose7{{0, 0, 0}, {0, 0, 0, 1}})
+                                                    : spawn_add_static(*E.sc, E.modules(), it->second, src.actor);  // 정적 틀 prim
+        if (h >= 0) systemTemplateH = h;
+        else ++failed;
+      }
+    }
     W.runRuleEdits(E);
+    if (t.dice && !systems.empty())  // 다음 창 물체 표·벌 차례가 이름으로 찾도록 (입자 prim 이름 = 계 이름 + 전역 번호)
+      for (size_t i = 0; i < systems[0].actors.size(); ++i)
+        handleOf["/World/scene_0/" + t.system + "/particles/" + t.system + "Particle" + std::to_string(i)] = systems[0].actors[i];
     W.dumpState(E);
     if (tr) fprintf(stderr, "[particles 편집] 뜨기 끝\n");
     W.teleportToGrave(E);
@@ -415,6 +507,24 @@ void SyncFromPlan::order(int sweep, std::vector<TransitionEditWindow::SyncActor>
   for (const ObjLine& o : t.objs)
     if (o.kind == 0 && o.name != t.src) push(o.root, 0);
   for (auto& kv : fresh) push(kv.first, 0);
+  if (!H->systems.empty()) {  // 입자 (공식 onion: 벌 끝쪽)
+    const auto& acts = H->systems[0].actors;
+    for (size_t i = 0; i < acts.size(); ++i) {
+      TransitionEditWindow::SyncActor a;
+      a.h = acts[i];
+      a.isStatic = 0;
+      a.scale[0] = a.scale[1] = a.scale[2] = 1.0;
+      if (i < H->particleTmplIdx.size()) {
+        auto it = H->cache.find(H->particleTmpl[i]);
+        if (it != H->cache.end()) {
+          const auto& A = it->second.shared->actors[H->particleTmplIdx[i]];
+          const auto& g = it->second.shared->shapes[A.shapeStart].geom;
+          a.scale[0] = g.convex.scale.scale.x, a.scale[1] = g.convex.scale.scale.y, a.scale[2] = g.convex.scale.scale.z;
+        }
+      }
+      out.push_back(a);
+    }
+  }
 }
 }  // namespace
 

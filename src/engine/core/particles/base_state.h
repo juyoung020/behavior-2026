@@ -37,6 +37,8 @@ struct BaseObject {
   std::vector<int32_t> links;      // BASE_RIGID: RigidDynamicPrim 링크 손잡이 (링크 차례) — sleep/wake 대상
   int32_t art = -1;                // BASE_ART: 관절체 번호
   uint32_t nJoints = 0;            // 관절 쓰기 여부 (n_joints > 0)
+  uint8_t hasXform = 0;            // BASE_KINEMATIC: dump 가 읽는 XForm 자세(USD/Fabric 합성)를 장면 추출에서 떠 둠 — PhysX 정적 자세와 몇 ulp 다를 수 있음
+  Tf xform{};
 };
 struct BaseObjectState {
   uint8_t asleep = 0;
