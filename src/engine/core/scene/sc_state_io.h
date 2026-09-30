@@ -44,6 +44,7 @@ struct ScState {
   std::vector<uint32_t> elems;  // 행위자별 요소 차례를 이어 붙임
   std::vector<ScStateShape> shapes;  // 요소 번호별
   std::vector<uint32_t> changed;
+  std::vector<uint32_t> dirty;  // Scene::mDirtyShapeSimMap (SCSTATE3)
 };
 
 inline ScStateTracker scSaveTracker(const IdTracker& t) {
@@ -108,6 +109,7 @@ inline ScState scSave(const ScScene& S, const std::vector<uint32_t>& elemToScene
     o.shapes.push_back(r);
   }
   o.changed = S.changed;
+  o.dirty = S.dirty;
   return o;
 }
 
@@ -156,6 +158,7 @@ inline uint32_t scLoad(ScScene& S, const ScState& o, GeomOf geomOfSceneShape) {
     s.in.minTorsionalPatchRadius = r.minTorsionalPatchRadius;
   }
   S.changed = o.changed;
+  S.dirty = o.dirty;
   return missing;
 }
 
@@ -176,12 +179,12 @@ inline bool rv(FILE* f, std::vector<T>& v) {
 inline bool wt(FILE* f, const ScStateTracker& t) { return fwrite(&t.cur, 4, 1, f) == 1 && wv(f, t.freeIds) && wv(f, t.pending); }
 inline bool rt(FILE* f, ScStateTracker& t) { return fread(&t.cur, 4, 1, f) == 1 && rv(f, t.freeIds) && rv(f, t.pending); }
 }  // namespace detail_sc
-constexpr char kScStateMagic[8] = {'S', 'C', 'S', 'T', 'A', 'T', 'E', '2'};  // 2: 모양 쌍 관리층 입력(거르기 자료·쉼 거리·비틀림) 더함
+constexpr char kScStateMagic[8] = {'S', 'C', 'S', 'T', 'A', 'T', 'E', '3'};  // 2: 모양 쌍 관리층 입력 더함, 3: 더러운 모양 표
 inline bool writeScState(FILE* f, const ScState& s) {
   using namespace detail_sc;
   const uint32_t sizes[2] = {uint32_t(sizeof(ScStateActor)), uint32_t(sizeof(ScStateShape))};
   return fwrite(kScStateMagic, 1, 8, f) == 8 && fwrite(sizes, 4, 2, f) == 2 && wt(f, s.elementIds) && wt(f, s.actorIds) && wv(f, s.actors) &&
-         wv(f, s.elems) && wv(f, s.shapes) && wv(f, s.changed);
+         wv(f, s.elems) && wv(f, s.shapes) && wv(f, s.changed) && wv(f, s.dirty);
 }
 // 머리가 없으면(옛 파일) false 이고 s.valid = false
 inline bool readScState(FILE* f, ScState& s) {
@@ -191,7 +194,7 @@ inline bool readScState(FILE* f, ScState& s) {
   if (fread(m, 1, 8, f) != 8 || memcmp(m, kScStateMagic, 8)) return false;
   uint32_t sizes[2];
   if (fread(sizes, 4, 2, f) != 2 || sizes[0] != sizeof(ScStateActor) || sizes[1] != sizeof(ScStateShape)) return false;
-  s.valid = rt(f, s.elementIds) && rt(f, s.actorIds) && rv(f, s.actors) && rv(f, s.elems) && rv(f, s.shapes) && rv(f, s.changed);
+  s.valid = rt(f, s.elementIds) && rt(f, s.actorIds) && rv(f, s.actors) && rv(f, s.elems) && rv(f, s.shapes) && rv(f, s.changed) && rv(f, s.dirty);
   return s.valid;
 }
 

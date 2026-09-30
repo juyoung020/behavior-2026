@@ -2527,7 +2527,7 @@ class Replayer {
         // put_to_sleep 뒤에 같은 물체의 텐서 쓰기(자세·속도·관절 값)가 같은 스텝 사이(after 같음)에 있으면 공식에서는 깨어 있다
         // (추정: 텐서 쓰기는 다음 simulate 직전에 PhysX 에 닿고 그때 깨움 -> psi 재우기가 먼저 되고 쓰기가 덮는다).
         // chop_slice0 상태 되살리기(post 353): 재우면 simulate 338 부터 그 물체들만 갈림. REPLAY_SLEEP_ALWAYS=1 이면 옛 동작.
-        if (m == "put_to_sleep" && !psi_early && !side_early && !getenv("REPLAY_SLEEP_ALWAYS") && written_same_step(path)) {
+        if (m == "put_to_sleep" && !psi_early && !side_early && !(psi_anchor && !getenv("REPLAY_PSI_KEEPHEUR")) && !getenv("REPLAY_SLEEP_ALWAYS") && written_same_step(path)) {
           applied["side:put_to_sleep 뒤 텐서 쓰기로 깨어 있음"]++;
           continue;
         }
@@ -2575,6 +2575,112 @@ class Replayer {
       psi_done.insert(j);
       applied[side_early ? "side:곁기록 먼저" : "side:psi 먼저"]++;
     }
+  }
+
+  // REPLAY_PSI_ANCHOR=1 (particles 탐침 09-30: psi 는 OVD 에 사건을 안 남기고, 텐서 쓰기는 OVD set 으로 남으며, 둘 다 부른 즉시 PhysX 에 닿는다):
+  // 곁기록 psi(wake_up/put_to_sleep) 를 그 창에서 그 물체(또는 그 아래 경로)의 마지막 OVD set 사건 바로 뒤에 넣는다 (load_state = 물체마다 쓰기 -> psi).
+  // 그 창에 그 물체의 set 이 없으면 예전 자리(simulate 직전). 값 2 = 그 물체의 처음 연속 set 묶음 끝 뒤, 3 = put_to_sleep 만.
+  // REPLAY_PSI_KEEPHEUR=1 이면 같은 스텝 쓰기 뒤 재우기 건너뛰기(written_same_step) 를 그대로 둔다.
+  // 결과(자르기 0, 09-30): 끄면 43/32 물체로 나빠지고, 켜 두면 1·3 모두 기본과 같은 12 물체 — psi 자리는 B9 원인이 아님.
+  bool psi_anchor = getenv("REPLAY_PSI_ANCHOR") != nullptr;
+  std::unordered_map<size_t, std::vector<size_t>> anchored;  // OVD 사건 번호 -> 그 뒤에 넣을 곁기록 호출 번호들
+  void build_psi_anchors() {
+    anchored.clear();
+    const uint32_t a_el = attr("PxScene", "elapsedTime");
+    std::unordered_map<uint64_t, std::string> nameOf;
+    std::vector<std::pair<std::string, size_t>> lastSet;  // 이번 창: (이름, 마지막 set 사건 — 모드 2 는 처음 연속 set 묶음의 끝)
+    const int mode = atoi(getenv("REPLAY_PSI_ANCHOR"));
+    std::unordered_map<std::string, bool> closed;  // 모드 2: 처음 묶음이 끝났나 (다른 물체 set 이 끼면 끝)
+    std::string lastName;
+    uint64_t w = 0;
+    bool ob = false;
+    uint64_t octx = 0;
+    size_t j = 0, nPsi = 0, nNoSet = 0;
+    std::string sampleMiss;
+    auto resolve = [&](uint64_t win) {  // 창 win 의 곁기록 psi 호출
+      while (j < scalls.size() && scalls[j].after <= win + side_offset) {
+        const engine::SideCall& c = scalls[j];
+        if (scalls[j].after == win + side_offset && ((c.method == "wake_up" && mode != 3) || c.method == "put_to_sleep")) {
+          const engine::SideView& v = sviews[c.view];
+          size_t best = 0;
+          bool found = false;
+          std::vector<uint32_t> idx = c.idx;
+          if (idx.empty()) for (uint32_t k = 0; k < v.prims.size(); ++k) idx.push_back(k);
+          for (uint32_t k : idx) {
+            if (k >= v.prims.size()) continue;
+            // 물체 뿌리 경로 (/World/scene_0/<물체>) 아래의 set 이면 그 물체의 것 (관절체 psi 는 링크 경로로 오고 쓰기는 다른 링크·관절에 남는다)
+            std::string path = v.prims[k];
+            {
+              size_t cut = 0;
+              int slashes = 0;
+              for (size_t q = 0; q < path.size(); ++q)
+                if (path[q] == '/' && ++slashes == 4) { cut = q; break; }
+              if (cut) path = path.substr(0, cut);
+            }
+            for (const auto& ls : lastSet)
+              if (ls.first == path || (ls.first.size() > path.size() && ls.first.compare(0, path.size(), path) == 0 && ls.first[path.size()] == '/')) {
+                if (!found || ls.second > best) best = ls.second;
+                found = true;
+              }
+          }
+          ++nPsi;
+          if (found) anchored[best].push_back(j);
+          else {
+            ++nNoSet;
+            if (sampleMiss.empty() && !v.prims.empty()) sampleMiss = v.prims[idx.empty() ? 0 : idx[0]] + " (창 set " + std::to_string(lastSet.size()) + (lastSet.empty() ? "" : ", 예 " + lastSet[0].first) + ")";
+          }
+        }
+        ++j;
+      }
+    };
+    for (size_t i = 0; i < F.events.size(); ++i) {
+      const ovd::Event& e = F.events[i];
+      if (e.cmd == ovd::kSet && F.attrs[e.attr].name == "name") {
+        nameOf[e.obj] = cstr(F.data(e), e.data_len);
+        continue;
+      }
+      if (e.cmd == ovd::kSet && e.attr == a_el) {
+        resolve(w);
+        lastSet.clear();
+        closed.clear();
+        lastName.clear();
+        ++w;
+        ob = true;
+        octx = e.obj;
+      } else if (e.cmd == ovd::kStopFrame) {
+        if (ob && e.ctx == octx) ob = false;
+      } else if (e.cmd == ovd::kSet && !ob) {
+        auto it = nameOf.find(e.obj);
+        if (it == nameOf.end()) continue;
+        if (mode == 2 && !lastName.empty() && lastName != it->second) closed[lastName] = true;
+        lastName = it->second;
+        bool upd = false;
+        for (auto& ls : lastSet)
+          if (ls.first == it->second) {
+            if (!(mode == 2 && closed[it->second])) ls.second = i;
+            upd = true;
+          }
+        if (!upd) lastSet.push_back({it->second, i});
+      }
+    }
+    size_t n = 0;
+    for (auto& kv : anchored) n += kv.second.size();
+    fprintf(stderr, "[재생] psi 자리 맞춤: 곁기록 psi %zu 개 중 %zu 개를 그 물체의 마지막 OVD set 뒤에 (창에 그 물체 set 없음 %zu, 창 %llu, 예 %s)\n", nPsi, n, nNoSet,
+            (unsigned long long)w, sampleMiss.c_str());
+  }
+  void apply_anchored(size_t ev) {
+    auto it = anchored.find(ev);
+    if (it == anchored.end()) return;
+    for (size_t j : it->second) {
+      if (psi_done.count(j) || side_skip.count(j)) continue;
+      const size_t keep = scall_next;
+      scall_next = j + 1;
+      apply_side(scalls[j]);
+      scall_next = keep;
+      psi_done.insert(j);
+      applied["side:psi 자리 맞춤"]++;
+    }
+    anchored.erase(it);
   }
 
   void apply_side_until(uint64_t after) {
@@ -2808,6 +2914,7 @@ class Replayer {
     uint64_t& out_ctx = run_out_ctx;
     const uint32_t a_elapsed = attr("PxScene", "elapsedTime");
     for (size_t& i = run_i; i < F.events.size(); ++i) {
+      if (psi_anchor && i > 0) apply_anchored(i - 1);
       const ovd::Event& e = F.events[i];
       if (trace_sim >= 0 && int64_t(sims) == trace_sim && !out_block) {  // 진단: 한 프레임의 입력 사건 순서 (REPLAY_TRACE_SIM=simulate 번호-1)
         const std::string on = objs.count(e.obj) ? objs[e.obj].name : std::string("?");
@@ -3058,6 +3165,7 @@ int main(int argc, char** argv) {
   // 그 쓰기의 결과는 USD 에 되쓰여(updateToUsd) 이 OVD 의 생성 값에 이미 들어 있다.
   size_t side_dropped = 0;
   while (R.scall_next < R.scalls.size() && R.scalls[R.scall_next].after < R.side_offset) { R.scall_next++; side_dropped++; }
+  if (R.psi_anchor) R.build_psi_anchors();  // REPLAY_PSI_ANCHOR: 곁기록 psi 를 물체의 마지막 OVD set 뒤로
   if (R.side_offset) printf("곁기록: 앞선 인스턴스 몫 %zu 건 버림 (post < %" PRIu64 ")\n", side_dropped, R.side_offset);
   R.run();
   if (!R.trace_sub.empty()) R.trace_flush();

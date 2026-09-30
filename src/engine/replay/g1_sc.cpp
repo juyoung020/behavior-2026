@@ -485,6 +485,10 @@ void scCapture(PxScene* scene, es::ScScene& E, bool record) {
   copyTracker(E.actorIds, sc.getActorIDTracker());
   const uint32_t maxE = E.elementIds.maxId();
   E.grow(maxE ? maxE - 1 : 0);
+  {  // 더러운 모양 표 (다음 simulate 의 updateDirtyShapes 가 칸을 다시 계산할 모양)
+    const PxBitMap& dm = sc.getDirtyShapeSimMap();
+    E.dirty.assign(dm.getWords(), dm.getWords() + dm.getWordCount());
+  }
   PxsTransformCache& tc = sc.getLowLevelContext()->getTransformCache();
   Bp::BoundsArray& ba = sc.getBoundsArray();
   const float* cd = sc.getLowLevelContext()->getContactDistances();

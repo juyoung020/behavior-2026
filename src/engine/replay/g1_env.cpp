@@ -60,6 +60,7 @@ struct EnvCheck {
   long long firstBad = -1;
   std::string firstWhat;
   int show = 5;
+  physx::PxScene* scene = nullptr;
 } EC;
 
 struct Tally {
@@ -244,6 +245,7 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
 
 // 창 뒤(simulate 앞) PhysX 에서 뜨는 것: 옮긴 관절체 호출, 건드린 몸체·관절체의 지금 상태, 깸 카운터·활성 (API 는 아직 바깥)
 void g1_env_capture_window(physx::PxScene* scene) {
+  EC.scene = scene;
   EC.boundary = g1_islands_rec_count();
   g1_pairs_body_states(EC.pre);
   g1_pairs_wake(EC.preWake);
@@ -257,7 +259,7 @@ void g1_env_capture_window(physx::PxScene* scene) {
     g1_loop_take_art_ops(EC.pxArts[k], EC.artOps[k]);
     bool sleepOp = false;
     for (const G1ArtOp& op : EC.artOps[k]) sleepOp = sleepOp || op.type == 3;
-    if (g1_loop_touched(EC.pxArts[k]) || sleepOp || EC.first) {
+    if (g1_loop_touched(EC.pxArts[k]) || sleepOp) {  // 경계 스텝은 파일 = PhysX 라 다시 맞추지 않는다 (Sc 칸을 우리 공식으로 새로 계산하면 잠든 링크 칸이 PhysX 가 예전에 적어 둔 값과 갈림)
       EC.artTouched[k] = 1;
       EC.artSnap[k].reset(new eng::art::Articulation);
       if (!g1_env_art_snapshot(scene, EC.pxArts[k], *EC.artSnap[k])) EC.artSnap[k].reset();
@@ -331,7 +333,7 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
   for (size_t h = 0; h < o.sc.actors.size(); ++h)
     if (o.sc.actors[h].alive && o.sc.actors[h].kind != 0) scByNode[o.sc.actors[h].node] = int32_t(h);
   for (const G1BodyState& b : EC.pre) {
-    if (b.link || !(b.touched || EC.first)) continue;
+    if (b.link || !b.touched) continue;
     const int32_t bi = EC.solver.bodyOf(uint32_t(b.node & 0xffffffffu));
     if (bi < 0) continue;
     eng::Body& x = EC.solver.bodies[size_t(bi)];
@@ -428,6 +430,72 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
         --EC.show;
         fprintf(stderr, "[g1 env] sim %llu 관절체 %zu 칸 %zu/%zu: PhysX %.9g 우리 %.9g\n", (unsigned long long)sim, k, fj, nf, pv, ev);
       }
+    }
+  }
+  if (getenv("G1_ENV_SCCMP")) {  // 진단: 스텝 끝 우리 Sc 칸 = PhysX (변환 캐시·경계 상자)
+    static physx::PxScene* sceneKeep = nullptr;
+    (void)sceneKeep;
+    sc2::ScScene cap;
+    g1_sc_capture(EC.scene, cap);
+    uint32_t bad = 0, firstE = ~0u;
+    for (size_t e = 0; e < cap.shapes.size() && e < o.sc.shapes.size(); ++e) {
+      if (!cap.shapes[e].alive || !o.sc.shapes[e].alive) continue;
+      if (memcmp(&cap.cache[e], &o.sc.cache[e], 28) || memcmp(&cap.bounds[e], &o.sc.bounds[e], 24)) {
+        if (firstE == ~0u) firstE = uint32_t(e);
+        ++bad;
+      }
+    }
+    static uint32_t lastBad = 0;
+    const bool changedBad = bad != lastBad;
+    lastBad = bad;
+    if (changedBad && getenv("G1_ENV_SCCMP_CHG")) fprintf(stderr, "[g1 env] sim %llu Sc 칸 다름 수 바뀜 -> %u (첫 요소 %u)\n", (unsigned long long)sim, bad, firstE);
+    if (bad && EC.show > 0) {
+      --EC.show;
+      const sc2::ScActorRec& ar = o.sc.actors[size_t(o.sc.shapes[firstE].actor)];
+      const float* c0 = reinterpret_cast<const float*>(&o.sc.cache[firstE]);
+      const float* c1 = reinterpret_cast<const float*>(&cap.cache[firstE]);
+      const float* b0 = reinterpret_cast<const float*>(&o.sc.bounds[firstE]);
+      const float* b1 = reinterpret_cast<const float*>(&cap.bounds[firstE]);
+      {  // 그 링크의 몸체 자세: 우리 관절체 칸 vs PhysX
+        std::vector<G1BodyState> bs;
+        g1_pairs_body_states(bs);
+        for (const G1BodyState& q : bs)
+          if (q.node == ar.node) {
+            const int32_t k = EC.solver.artOf(uint32_t(q.node & 0xffffffffu));
+            const uint32_t ll = uint32_t(q.node >> 33);
+            if (k >= 0 && ll < EC.solver.arts[size_t(k)].nLinks) {
+              const eng::Tf& t = EC.solver.arts[size_t(k)].bodies[ll].body2World;
+              fprintf(stderr, "  링크 몸체 우리 %.9g %.9g %.9g %.9g %.9g %.9g %.9g / PhysX %.9g %.9g %.9g %.9g %.9g %.9g %.9g (관절체 %d %s LL %u 깨어 %d)\n", t.q.x, t.q.y,
+                      t.q.z, t.q.w, t.p.x, t.p.y, t.p.z, q.b2w[0], q.b2w[1], q.b2w[2], q.b2w[3], q.b2w[4], q.b2w[5], q.b2w[6], k,
+                      size_t(k) < EC.f.artName.size() ? EC.f.name(EC.f.artName[size_t(k)]) : "?", ll,
+                      int(EC.solver.arts[size_t(k)].awake));
+              {
+                std::vector<int8_t> pxa;
+                g1_pairs_actor_active(pxa);
+                const int32_t pa = size_t(o.sc.shapes[firstE].actor) < E.pairsOfSc.size() ? E.pairsOfSc[size_t(o.sc.shapes[firstE].actor)] : -1;
+                const uint32_t nid = uint32_t(q.node & 0xffffffffu);
+                const eng::ig::IslandSim& A2 = o.isl.M.accurate;
+                fprintf(stderr, "  활성: 우리 행위자 %d / PhysX %d, 우리 섬 노드 플래그 %x, 깸 표 %.9g / PhysX %.9g, body2Actor q %.9g %.9g %.9g %.9g\n",
+                        pa >= 0 ? int(E.active[size_t(pa)]) : -1, pa >= 0 && size_t(pa) < pxa.size() ? int(pxa[size_t(pa)]) : -9,
+                        nid < A2.nodes.size ? A2.nodes.d[nid].flags : 0xff, E.wake.body(q.node) ? E.wake.body(q.node)->wc : -1.f, q.wc, q.b2a[0], q.b2a[1], q.b2a[2],
+                        q.b2a[3]);
+              }
+            }
+          }
+      }
+      {
+        const sc2::ScShapeRec& x = o.sc.shapes[firstE];
+        const sc2::ScShapeRec& y = cap.shapes[firstE];
+        const sc2::ScActorRec& ya = cap.actors[size_t(y.actor)];
+        fprintf(stderr, "  모양 국소 우리 q %.9g %.9g %.9g %.9g idt %u 몸체-행위자 idt %u / PhysX q %.9g %.9g %.9g %.9g idt %u 몸체-행위자 idt %u b2a %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n",
+                x.in.localPose.q.x, x.in.localPose.q.y, x.in.localPose.q.z, x.in.localPose.q.w, x.in.idtShape, ar.idtBody2Actor, y.in.localPose.q.x, y.in.localPose.q.y,
+                y.in.localPose.q.z, y.in.localPose.q.w, y.in.idtShape, ya.idtBody2Actor, ya.body2Actor.q.x, ya.body2Actor.q.y, ya.body2Actor.q.z, ya.body2Actor.q.w,
+                ya.body2Actor.p.x, ya.body2Actor.p.y, ya.body2Actor.p.z);
+      }
+      fprintf(stderr, "[g1 env] sim %llu Sc 칸 다름 %u (첫 요소 %u, 행위자 손잡이 %d 종류 %u 노드 %llx 얼림 %u/%u)\n  캐시 우리 %.9g %.9g %.9g %.9g %.9g %.9g %.9g / PhysX %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n  상자 우리 %.9g %.9g %.9g %.9g %.9g %.9g / PhysX %.9g %.9g %.9g %.9g %.9g %.9g\n",
+              (unsigned long long)sim, bad, firstE, o.sc.shapes[firstE].actor, ar.kind, (unsigned long long)ar.node, o.sc.cacheFlags[firstE], cap.cacheFlags[firstE],
+              c0[0], c0[1], c0[2], c0[3], c0[4], c0[5], c0[6], c1[0], c1[1], c1[2], c1[3], c1[4], c1[5], c1[6], b0[0], b0[1], b0[2], b0[3], b0[4], b0[5], b1[0], b1[1],
+              b1[2], b1[3], b1[4], b1[5]);
     }
   }
   {

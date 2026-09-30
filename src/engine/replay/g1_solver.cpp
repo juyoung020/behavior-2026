@@ -643,6 +643,21 @@ void envFricCapture() {
   }
 }
 
+// 진단 (G1_WATCH_ELEM=e): 작업마다 변환 캐시 칸 e 가 바뀌었으면 (작업 이름, 값) — 누가 그 칸을 쓰는지
+void watchElem(uint32_t e, const char* task) {
+  if (!gEnvFricScene) return;
+  static float last[7] = {0, 0, 0, 0, 0, 0, 0};
+  Sc::Scene& sc = static_cast<NpScene*>(gEnvFricScene)->getScScene();
+  PxsTransformCache& tc = sc.getLowLevelContext()->getTransformCache();
+  if (e >= tc.getTotalSize()) return;
+  const PxTransform& t = tc.getTransformCache(e).transform;
+  const float v[7] = {t.q.x, t.q.y, t.q.z, t.q.w, t.p.x, t.p.y, t.p.z};
+  if (memcmp(v, last, sizeof(v))) {
+    fprintf(stderr, "[칸 %u] 작업 %s 앞: q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g\n", e, task, v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+    memcpy(last, v, sizeof(v));
+  }
+}
+
 // ---------------- 작업 스레드 하나짜리 디스패처 (UpdateContinuationTask 직전에 스냅샷)
 class HookDispatcher : public PxCpuDispatcher {
  public:
@@ -680,6 +695,7 @@ class HookDispatcher : public PxCpuDispatcher {
       g1_sc_task(t->getName());
       g1_scene_task(t->getName());
       if (getenv("G1_ENV_FRIC") && !strcmp(t->getName(), "UpdateContinuationTask")) envFricCapture();
+      if (const char* we = getenv("G1_WATCH_ELEM")) watchElem(uint32_t(atoi(we)), t->getName());
       if (getenv("G1_TASKS")) fprintf(stderr, "[task] %s\n", t->getName());
       if (!strcmp(t->getName(), "ScScene.afterIntegration")) takeLateSnapshot();
       if (!strcmp(t->getName(), "UpdateContinuationTask")) {

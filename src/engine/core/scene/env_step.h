@@ -154,6 +154,7 @@ struct EnvPhases {
   void bp() {
     ScScene& sc = *E.sc;
     BpRuntime& bpr = *E.C->bp;
+    sc.updateDirtyShapes();  // preRigidBodyNarrowPhase: API 로 바뀐 모양 칸 (넓은 단계 앞)
     // 칸 수 = 요소 번호 최댓값 (모양·집합체가 같은 번호 표를 씀 — BoundsArray::size 는 용량이라 쓰면 안 됨)
     const uint32_t nb = uint32_t(sc.elementIds.maxId() > sc.bounds.size() ? sc.elementIds.maxId() : sc.bounds.size());
     std::vector<px::PxBounds3> b(nb);

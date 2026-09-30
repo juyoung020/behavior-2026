@@ -94,6 +94,7 @@ struct ScScene {
   std::vector<float> contactDist;
   std::vector<uint32_t> cacheFlags;  // PxsTransformFlag (eFROZEN = 1) — 요소별
   std::vector<uint32_t> changed;     // 넓은 단계 바뀜 비트맵 (AABBManager changedAABBMgActorHandleMap), 요소 번호 비트
+  std::vector<uint32_t> dirty;       // Scene::mDirtyShapeSimMap (모양 자세·기하를 API 로 바꿈 -> 다음 simulate 의 updateDirtyShapes 에서 칸 다시 계산)
   uint32_t unsupported = 0;
 
   static uint32_t bpGroup(const ScActorRec& a) {  // Bp::getFilterGroup (BpFiltering.h:80)
@@ -111,6 +112,34 @@ struct ScScene {
       contactDist.resize(e + 1, 0.f);
       cacheFlags.resize(e + 1, 0u);
     }
+  }
+  // ShapeSimBase::markBoundsForUpdate (ScShapeSimBase.cpp:349): 넓은 단계에 있는 모양만
+  void markDirty(uint32_t e) {
+    if (!shapes[e].inBp) return;
+    if (dirty.size() <= e / 32) dirty.resize(e / 32 + 1, 0u);
+    dirty[e / 32] |= 1u << (e & 31);
+  }
+  // Scene::updateDirtyShapes (ScPipeline.cpp:199, preRigidBodyNarrowPhase — 넓은 단계 앞): 칸 다시 계산, 캐시 플래그 0, 바뀜 표시
+  void updateDirtyShapes() {
+    for (size_t w = 0; w < dirty.size(); ++w)
+      for (uint32_t bits = dirty[w]; bits; bits &= bits - 1) {
+        const uint32_t e = uint32_t(w * 32 + __builtin_ctz(bits));
+        if (e >= shapes.size() || !shapes[e].alive) continue;
+        computeCached(e);
+        cacheFlags[e] = 0;
+        markChanged(e);
+      }
+    dirty.clear();
+  }
+  // 모양 국소 자세·기하 바꾸기 (RigidCore::onShapeChange eSHAPE2BODY / eGEOMETRY -> markBoundsForUpdate)
+  void setShapeLocalPose(uint32_t e, const px::PxTransform& pose, bool idt) {
+    shapes[e].in.localPose = pose;
+    shapes[e].in.idtShape = idt ? 1 : 0;
+    markDirty(e);
+  }
+  void setShapeGeometry(uint32_t e, const contact::ShapeGeom& g) {
+    shapes[e].in.geom = g;
+    markDirty(e);
   }
   void markChanged(uint32_t e) {
     if (changed.size() <= e / 32) changed.resize(e / 32 + 1, 0u);
