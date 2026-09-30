@@ -26,3 +26,4 @@ target_include_directories(test_p23_gpu PRIVATE ${CMAKE_SOURCE_DIR}/..)
 target_compile_options(test_p23_gpu PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr --extended-lambda -Xcompiler=-ffp-contract=off>)
 engine_test(test_slice_capture test_slice_capture.cpp)
+engine_test(test_dice_capture test_dice_capture.cpp)

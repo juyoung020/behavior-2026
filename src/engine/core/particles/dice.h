@@ -27,12 +27,13 @@ PEHD float arange_at(float start, float step, int64_t i, int64_t n) {
   return (float)(s + d * (double)i);
 }
 
+constexpr int kMaxDiceMeshes = 32;
 struct DiceMesh {
   float tf[16];  // 충돌 메시 scaled_transform (float32, 행 우선)
   Delaunay3 dl;  // 메시 점(국소)의 삼각분할 (scipy 로 미리)
 };
 
-// 격자를 만들고 안쪽 점만 out 에 (공식 순서). 반환 = 개수 (cap 넘으면 -1). lo·hi = 링크 visual_aabb, r = 입자 반지름(float32)
+// 격자를 만들고 안쪽 점만 out 에 (공식 순서). 반환 = 개수 (cap 넘으면 -1, 메시 > kMaxDiceMeshes 면 -2). lo·hi = 링크 visual_aabb, r = 입자 반지름(float32)
 PEHD int64_t dice_grid(const float lo[3], const float hi[3], float r, const DiceMesh* ms, int nm, float* out, int64_t cap) {
   const float step = r * 2.0f;  // particle_particle_rest_distance
   float st[3];
@@ -42,8 +43,9 @@ PEHD int64_t dice_grid(const float lo[3], const float hi[3], float r, const Dice
     n[k] = arange_len(st[k], hi[k] - r, step);
     if (n[k] < 0) n[k] = 0;
   }
-  float inv[4][16];
-  int start[4] = {0, 0, 0, 0};
+  if (nm > kMaxDiceMeshes) return -2;  // 충돌 메시가 너무 많음 (실제: 양파 반쪽 12 개)
+  float inv[kMaxDiceMeshes][16];
+  int start[kMaxDiceMeshes] = {0};
   for (int m = 0; m < nm; ++m) inv4_mkl(ms[m].tf, inv[m]);
   int64_t cnt = 0;
   for (int64_t i = 0; i < n[0]; ++i)

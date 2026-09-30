@@ -24,7 +24,7 @@ namespace particles {
 
 enum EditKind : int32_t {
   EDIT_INHERIT_STATES = 0,   // 지난 스텝에 넣은 물체(object)가 원본(src)의 비물리 상태를 물려받음 (온도·익음 등; 늦은 묶임: 한 전이의 반쪽 모두 마지막 원본)
-  EDIT_PARTICLES_ADD = 1,    // 입자 계(tmpl = 계 틀)에 강체 n 개: 원점 자세 poses[n], 속도 0. 기존 입자 전부 다시 놓기(EDIT_PARTICLES_RESET)가 뒤따름
+  EDIT_PARTICLES_ADD = 1,    // 입자 계(tmpl = 계 틀)에 강체 n 개: 원점 자세 poses[n](방향은 정규화 전 — 몸체 만들 때 PhysX 처럼 getNormalized, 위치는 정규화 전 방향으로 계산됨), 속도 0. 기존 입자 전부 다시 놓기(EDIT_PARTICLES_RESET)가 뒤따름
   EDIT_PARTICLES_RESET = 2,  // 입자 계의 기존 입자 전부를 왕복한 원점 자세로 다시 놓고 속도 유지
   EDIT_REMOVE_BEGIN = 3,     // 전체 상태 저장 + 무덤 순간이동(objects, 자세 poses) + 물리 1 스텝
   EDIT_REMOVE_OBJECT = 4,    // 물체 삭제 (행위자·모양)
