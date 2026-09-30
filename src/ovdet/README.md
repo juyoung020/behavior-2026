@@ -87,3 +87,20 @@ YOLOE's code and weights are AGPL-3.0:
 The TensorRT engines are derived from those weights. ovdet itself contains no Ultralytics code.
 
 The competition submission (Docker image given to the organizers) therefore ships AGPL-covered weights. On 2026-09-30 the user decided that **the submission's source is published under AGPL-3.0**. `docs/제출지침.md` lists this as a submission checklist item: a source link and the LICENSE go into the README.
+
+## Status (2026-09-30) and what is left
+
+Done:
+
+- The library and its C API, output in the `sm_detections` format.
+- The Linux build.
+- The FastSAM path, moved to `deprecated/ovdet_fastsam`.
+- The detector comparison, including a confidence sweep. The recommendation is YOLOE-11m, the 272-name engine, `conf_th` 0.10. Details are in `docs/ovdet_검출기.md`.
+- The AGPL notes.
+
+Left:
+
+1. **The ep0 radio is never found** with the task prompt "radio receiver". This holds even at conf 0.05. With the whole 272-name vocabulary it is found but named "satchel". Next step: add synonyms such as "radio" to the vocabulary, re-export, and re-run the comparison.
+2. `tools/ref_check.py` compares ovdet with Ultralytics' own FP32 prediction. It is written but has not been run.
+3. Coffee tables are often named "floor" or "rug". Check whether the cause is the GT labels (floor points inside the table's GT box).
+4. Whether to make the recommended setting the default of `ovd_default_config` is not decided yet. It depends on scenemap's object-map scores.
