@@ -49,7 +49,7 @@ struct Trans {
   std::vector<Half> halves;
   std::vector<ObjLine> objs;
   std::map<std::string, std::vector<float>> scale;  // 물체 이름 -> 척도 (C 줄)
-  std::map<std::string, std::vector<float>> actorScale;  // 행위자 prim -> 세계 척도 (K 줄, 있으면 우선)
+  std::map<std::string, std::vector<double>> actorScale;  // 행위자 prim -> 세계 척도 (K 줄, 있으면 우선)
   std::map<int, std::vector<std::pair<std::string, int>>> sweepOrder;  // 벌 -> (행위자 이름, 정적?) 공식 차례 (PARTICLES_SYNC_ORDER)
 };
 
@@ -191,8 +191,12 @@ struct Hook {
       } else if (k == "K") {
         std::string n;
         is >> n;
-        std::vector<float> v(3);
-        for (float& x : v) x = F(is);
+        std::vector<double> v(3);
+        for (double& x : v) {
+          std::string tk;
+          is >> tk;
+          x = strtod(tk.c_str(), nullptr);
+        }
         T.back().actorScale[n] = v;
       } else if (k == "C") {
         std::string n;
@@ -325,7 +329,25 @@ struct Hook {
     if (removedIdx != size_t(-1)) B.markRemoved(removedIdx);
     W.edit(E);  // 지운 요소의 바뀜·dirty 칸은 sc_scene.h removeActor 가 지움 (리드 72c1a98)
     if (tr) fprintf(stderr, "[particles 편집] 지우기 끝\n");
+    const char* dbgH = getenv("PARTICLES_DEBUG_H");  // 진단: 이 손잡이 자세를 되돌리기·벌 앞뒤로
+    Tf dbg0{};
+    if (dbgH) dbg0 = W.body->actorPose(atoi(dbgH));
     W.loadState(E);
+    if (dbgH) {
+      const Tf d1 = W.body->actorPose(atoi(dbgH));
+      fprintf(stderr, "[particles 편집] 손잡이 %s: 앞 q %.9g %.9g %.9g %.9g / 뒤 q %.9g %.9g %.9g %.9g\n", dbgH, dbg0.q.x, dbg0.q.y, dbg0.q.z, dbg0.q.w, d1.q.x, d1.q.y,
+              d1.q.z, d1.q.w);
+      for (auto& kv : handleOf)
+        if (kv.second == atoi(dbgH)) {
+          auto as = t.actorScale.find(kv.first);
+          double sc[3] = {1, 1, 1};
+          if (as != t.actorScale.end()) memcpy(sc, as->second.data(), 24);
+          const Pose7 raw{{dbg0.p.x, dbg0.p.y, dbg0.p.z}, {dbg0.q.x, dbg0.q.y, dbg0.q.z, dbg0.q.w}};
+          const Q g = usd_roundtrip_quat_d(raw, dbg0, sc, false);
+          fprintf(stderr, "[particles 편집]   %s 척도 %s %.9g %.9g %.9g → 왕복 q %.9g %.9g %.9g %.9g\n", kv.first.c_str(), as != t.actorScale.end() ? "K" : "없음", sc[0], sc[1],
+                  sc[2], g.x, g.y, g.z, g.w);
+        }
+    }
     if (tr) fprintf(stderr, "[particles 편집] 되돌리기·넣기 끝 (실패 %d)\n", W.failed);
     if (!W.sync) W.flushSync();
     W.pending.clear();
@@ -341,7 +363,7 @@ struct Hook {
 
 void SyncFromPlan::order(int sweep, std::vector<TransitionEditWindow::SyncActor>& out) {
   Trans& t = H->T[size_t(H->cur)];
-  auto scaleOf = [&](const std::string& obj, float s[3]) {
+  auto scaleOf = [&](const std::string& obj, double s[3]) {
     auto it = t.scale.find(obj);
     for (int k = 0; k < 3; ++k) s[k] = it != t.scale.end() ? it->second[size_t(k)] : 1.0f;
   };
@@ -360,7 +382,7 @@ void SyncFromPlan::order(int sweep, std::vector<TransitionEditWindow::SyncActor>
     auto f = fresh.find(actor);
     if (f != fresh.end()) {
       a.h = f->second.first;
-      memcpy(a.scale, f->second.second->usd, 12);
+      for (int k = 0; k < 3; ++k) a.scale[k] = f->second.second->usd[k];
     } else {
       auto it = H->handleOf.find(actor);
       if (it == H->handleOf.end()) {
@@ -370,7 +392,7 @@ void SyncFromPlan::order(int sweep, std::vector<TransitionEditWindow::SyncActor>
       a.h = it->second;
       scaleOf(objOfActor.count(actor) ? objOfActor[actor] : std::string(), a.scale);
       auto as = t.actorScale.find(actor);
-      if (as != t.actorScale.end()) memcpy(a.scale, as->second.data(), 12);
+      if (as != t.actorScale.end()) memcpy(a.scale, as->second.data(), 24);
     }
     out.push_back(a);
   };

@@ -140,16 +140,21 @@ inline px::PxTransform tf_px(const Tf& t) {
 //   M = diag(scale)·R(q)·T(p) (double) → pxr RemoveScaleShear → ExtractRotationQuat → float → PxQuat::getNormalized
 //   행렬에 쓰는 q: raw_q = 넣은 값 그대로(정규화 전 — 다진 입자, 텐서 뷰 set_transforms), 아니면 정규화한 값(반쪽).
 //   대조(test_spawn_exec): 다진 입자 25/25, 반쪽 9/10 (남은 1 개 = 미해결 B10).
-inline Q usd_roundtrip_quat(const Pose7& raw, const Tf& pose, const float scale[3], bool raw_q) {
+// 척도 double 판 (동기화 벌: 행위자 prim USD 세계 척도는 double — float 로 자르면 끝비트가 달라짐)
+inline Q usd_roundtrip_quat_d(const Pose7& raw, const Tf& pose, const double scale[3], bool raw_q) {
   namespace gf = eng::omni::gf;
   const float pq[4] = {raw_q ? raw.q[0] : pose.q.x, raw_q ? raw.q[1] : pose.q.y, raw_q ? raw.q[2] : pose.q.z, raw_q ? raw.q[3] : pose.q.w};
   const float pp[3] = {pose.p.x, pose.p.y, pose.p.z};
   gf::M4 M = gf::from_physx_pose(pp, pq);
   for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c) M.m[r][c] *= (double)scale[r];
+    for (int c = 0; c < 3; ++c) M.m[r][c] *= scale[r];
   double q[4];
   gf::extract_rotation_quat(gf::remove_scale_shear(M), q);
   return normalized(Q{(float)q[0], (float)q[1], (float)q[2], (float)q[3]});
+}
+inline Q usd_roundtrip_quat(const Pose7& raw, const Tf& pose, const float scale[3], bool raw_q) {
+  const double d[3] = {scale[0], scale[1], scale[2]};
+  return usd_roundtrip_quat_d(raw, pose, d, raw_q);
 }
 // usd_scale: USD 왕복을 거치면 그 척도(반쪽 = 물체 척도, 다진 입자 = 입자 prim 척도), nullptr 이면 자세 그대로(정규화만)
 // raw_q: 왕복 행렬을 정규화 전 쿼터니언으로 (다진 입자 true)

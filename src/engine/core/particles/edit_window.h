@@ -83,7 +83,7 @@ struct TransitionEditWindow : scene::EditWindow {
   struct SyncActor {
     int32_t h;
     uint8_t isStatic;
-    float scale[3];
+    double scale[3];  // 행위자 prim USD 세계 척도 (double)
   };
   struct SyncOrder {
     virtual ~SyncOrder() {}
@@ -111,7 +111,7 @@ struct TransitionEditWindow : scene::EditWindow {
       const Tf cur = body->actorPose(a.h);
       const Pose7 raw{{cur.p.x, cur.p.y, cur.p.z}, {cur.q.x, cur.q.y, cur.q.z, cur.q.w}};
       Tf t = cur;
-      t.q = usd_roundtrip_quat(raw, cur, a.scale, false);
+      t.q = usd_roundtrip_quat_d(raw, cur, a.scale, false);
       body->setActorPose(a.h, t);
       body->setVelocity(a.h, z, z);
     }

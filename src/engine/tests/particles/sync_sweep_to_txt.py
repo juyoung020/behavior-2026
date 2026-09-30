@@ -24,7 +24,7 @@ def trace(arg):
 
 # 새 물체의 첫 사건 번호 → 그 앞뒤 프레임 경계
 first = None
-for ln in trace(f"/World/scene_0/{newname}/base_link"):
+for ln in trace(newname if newname.startswith("/") else f"/World/scene_0/{newname}/base_link"):
     m = re.match(r"\s*#(\d+)", ln)
     if m:
         first = int(m.group(1))
@@ -109,7 +109,8 @@ for sw, lst in sorted(per_sweep.items()):
 bp = os.path.join(rec, "harvest_base.json")
 base = json.load(open(bp)) if os.path.exists(bp) else {"windows": []}
 hm = json.load(open(os.path.join(rec, "harvest_map.json")))
-step = [e["step"] for e in hm if any(n["name"] == newname for n in e.get("new", []))][0]
+steps = [e["step"] for e in hm if any(n["name"] == newname for n in e.get("new", []))]
+step = steps[0] if steps else -1
 win = ([w for w in base["windows"] if w["step"] == step] + [{"objects": []}])[0]
 for o in win["objects"]:
     for lp, ls in (o.get("link_scale") or {}).items():
@@ -122,3 +123,10 @@ if len(sys.argv) > 4:  # 진단: 이 이름이 든 행위자의 창 안 자세 �
     for i, c, h, a, v in blk:
         if a == "PxRigidActor.globalPose" and sys.argv[4] in names.get(h, ""):
             print(i, names.get(h), v)
+if os.environ.get("SWEEP_LAYOUT"):  # 진단: 창 안 행위자 생성·정적 벌 구간·동적 쓰기 수
+    cr = [i for i, c, h, a, v in blk if c == "create" and cls.get(h) == "PxRigidDynamic"]
+    print("동적 생성", cr[:3], "...", cr[-3:], len(cr))
+    for r in runs:
+        print("정적 묶음", r[0], r[-1], len(r))
+    dyn_w = [i for i, c, h, a, v in blk if a == "PxRigidActor.globalPose" and cls.get(h) == "PxRigidDynamic"]
+    print("동적 자세 쓰기", len(dyn_w), "처음", dyn_w[:3], "끝", dyn_w[-3:])
