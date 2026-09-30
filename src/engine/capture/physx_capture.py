@@ -102,6 +102,22 @@ class Capture:
                 k = f"{id(view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
         return k
 
+    def _fresh_view(self, kind, paths):
+        # og.sim 의 지금 시뮬 뷰에서 같은 prim 으로 만든 확인용 뷰 (읽기 전용). 시뮬 뷰가 바뀌면 새로 만든다.
+        # 시뮬 뷰·확인용 뷰를 강하게 쥐고 있어 id 재사용이 없다
+        import omnigibson as og
+        sv = getattr(og.sim, "physics_sim_view", None)
+        if sv is None:
+            return None
+        cache = getattr(self, "_fresh", None)
+        if cache is None or cache[0] is not sv:
+            cache = self._fresh = (sv, {})
+        key = (kind, tuple(paths))
+        if key not in cache[1]:
+            pat = paths if len(paths) > 1 else paths[0]
+            cache[1][key] = sv.create_articulation_view(pat) if kind == "art" else sv.create_rigid_body_view(pat)
+        return cache[1][key]
+
     def install_sidelog(self):
         if not self.sidelog:
             return
@@ -115,6 +131,24 @@ class Capture:
             elif hasattr(x, "numpy") and not isinstance(x, np.ndarray):
                 x = x.numpy()
             return np.ascontiguousarray(np.asarray(x), dtype=dt)
+
+        FRESH_CHECK = {"art": ("set_dof_positions", "set_dof_velocities", "set_root_transforms", "set_root_velocities"),
+                       "rb": ("set_transforms", "set_velocities")}
+
+        def same_as_written(got, data, indices, view):  # 1 = 쓴 값과 비트 같음, 0 = 다름, -1 = 비교 못함
+            got = to_np(got, np.float32).reshape(-1)
+            want = to_np(data, np.float32).reshape(-1)
+            if got.size == want.size:
+                return int(np.array_equal(got.view(np.uint32), want.view(np.uint32)))
+            idx = to_np(indices, np.int64).reshape(-1)
+            n = view.count if hasattr(view, "count") else 0
+            if n and got.size % n == 0 and want.size % max(len(idx), 1) == 0 and len(idx):
+                per = got.size // n
+                sel = got.reshape(n, per)[idx].reshape(-1)
+                w = want.reshape(-1)[: sel.size] if want.size >= sel.size else want
+                if sel.size == w.size:
+                    return int(np.array_equal(sel.view(np.uint32), w.view(np.uint32)))
+            return -1
 
         def wrap(cls, name, kind):
             orig = getattr(cls, name)
@@ -140,21 +174,22 @@ class Capture:
                 try:
                     getter = getattr(view, "get_" + name[4:], None)
                     if getter is not None:
-                        got = to_np(getter(), np.float32).reshape(-1)
-                        want = to_np(data, np.float32).reshape(-1)
-                        if got.size == want.size:
-                            eff = int(np.array_equal(got.view(np.uint32), want.view(np.uint32)))
-                        else:
-                            idx = to_np(indices, np.int64).reshape(-1)
-                            n = view.count if hasattr(view, "count") else 0
-                            if n and got.size % n == 0 and want.size % max(len(idx), 1) == 0 and len(idx):
-                                per = got.size // n
-                                sel = got.reshape(n, per)[idx].reshape(-1)
-                                w = want.reshape(-1)[: sel.size] if want.size >= sel.size else want
-                                if sel.size == w.size:
-                                    eff = int(np.array_equal(sel.view(np.uint32), w.view(np.uint32)))
+                        eff = same_as_written(getter(), data, indices, view)
                 except Exception:
                     eff = -1
+                # 같은 뷰로 다시 읽으면 뷰 자기 캐시를 읽을 수 있다(09-30 radio500_c: post 43 로봇 set_dof_positions 가
+                # 같은 뷰로는 "들어감" 인데 공식 상태에는 없음). 지금 og.sim 의 시뮬 뷰에서 만든 새 뷰로 한 번 더 읽는다.
+                # 2 = 새 뷰로도 들어감, 0 = 새 뷰로는 안 들어감 (같은 뷰 판정이 1 이고 새 뷰 확인이 된 경우에만 바꾼다)
+                if eff == 1 and name in FRESH_CHECK.get(kind, ()) and paths:
+                    try:
+                        fv = self._fresh_view(kind, paths)
+                        g2 = getattr(fv, "get_" + name[4:], None) if fv is not None else None
+                        if g2 is not None:
+                            e2 = same_as_written(g2(), data, indices, fv)
+                            if e2 in (0, 1):
+                                eff = 2 if e2 == 1 else 0
+                    except Exception:
+                        pass
                 self.log.append((self.n_post, self.n_pre, kind, name, vid, to_np(indices, np.uint32),
                                  to_np(data, np.float32), eff))
                 return ret
