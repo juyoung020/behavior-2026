@@ -20,6 +20,7 @@
 #include "core/scene/bp_log.h"
 #include "core/scene/pairs_log.h"
 #include "core/scene/omni_filter.h"
+#include "core/scene/sc_state_io.h"
 
 namespace eng {
 namespace scene {
@@ -125,6 +126,8 @@ struct SceneFile {
   // v8: 모양별 요소 번호(ElementSim 번호 = 넓은 단계 칸 = 변환 캐시 칸, 쌍 관리층·좁은 단계가 이 번호로 부름)와 omni 거르개 표
   std::vector<uint32_t> shapeElems;  // shapes 와 같은 순서
   OmniFilterSpec omniFilter;
+  // v8 뒤 선택 절 (머리 "SCSTATE1", 옛 파일엔 없음): Sc 입력 조각 상태 (sc_state_io.h) — PhysX 없이 env 를 세울 때
+  ScState sc;
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -193,6 +196,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
     ok = fwrite(&ne, 8, 1, f) == 1 && wr(f, s.shapeElems) && fwrite(&ng, 8, 1, f) == 1 && wr(f, s.omniFilter.groupPairs) && fwrite(&nf, 8, 1, f) == 1 &&
          wr(f, s.omniFilter.filteredPairs) && fwrite(fl, 1, 4, f) == 4;
   }
+  if (ok && s.sc.valid) ok = writeScState(f, s.sc);
   ok = fclose(f) == 0 && ok;
   return ok;
 }
@@ -236,6 +240,7 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
     s.omniFilter.anyContactReport = fl[1];
     s.omniFilter.reportAll = fl[2];
   }
+  if (ok) readScState(f, s.sc);  // 선택 절 (없으면 s.sc.valid = false)
   fclose(f);
   return ok ? true : fail("짧음");
 }

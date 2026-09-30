@@ -43,6 +43,20 @@ physx::PxCpuDispatcher* g1_dispatcher() __attribute__((weak));  // G1 solver 그
 void g1_report() __attribute__((weak));
 // G1 닫힌 고리 (2b): 재생기가 부른 PhysX API 를 엔진 쪽에도 알린다 (g1_loop.cpp). 옮긴 호출은 따로, 나머지는 "건드림"(그 객체는 PhysX 로 다시 맞춤)
 void g1_api_touch(physx::PxBase* obj) __attribute__((weak));
+// 건드림 알림 + 진단(G1_TOUCH_NAME: 이름에 든 강체를 건드린 자리·지금 자세 출력 — particles B10 생성 뒤 자세 쓰기 찾기)
+static void touch_site(physx::PxBase* b, const char* site) {
+  if (!b) return;
+  if (const char* want = getenv("G1_TOUCH_NAME")) {
+    const physx::PxRigidActor* ra = b->is<physx::PxRigidActor>();
+    if (!ra)
+      if (const physx::PxShape* sh = b->is<physx::PxShape>()) ra = sh->getActor();
+    if (ra && ra->getName() && strstr(ra->getName(), want)) {
+      const physx::PxTransform t = ra->getGlobalPose();
+      fprintf(stderr, "[건드림] %s 자리 %s 지금 자세 q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g\n", ra->getName(), site, t.q.x, t.q.y, t.q.z, t.q.w, t.p.x, t.p.y, t.p.z);
+    }
+  }
+  if (g1_api_touch) g1_api_touch(b);
+}
 void g1_api_art_drive(physx::PxArticulationJointReducedCoordinate* j, int axis, float v, bool velocity) __attribute__((weak));
 void g1_api_art_wake(physx::PxArticulationReducedCoordinate* a, bool sleep) __attribute__((weak));
 #include "core/omni/states.h"
@@ -1780,7 +1794,7 @@ class Replayer {
     const std::string key = cl + "." + an;
     PxBase* b = target ? target : o.px;
     bool ok = true;
-    if (sims > 0 && g1_api_touch && b && !(cl == "PxArticulationJointReducedCoordinate" && (an == "driveTarget" || an == "driveVelocity"))) g1_api_touch(b);
+    if (sims > 0 && b && !(cl == "PxArticulationJointReducedCoordinate" && (an == "driveTarget" || an == "driveVelocity"))) touch_site(b, key.c_str());
     if (cl == "PxScene") {
       PxScene* s = o.scene;
       if (!s) ok = false;
@@ -2073,7 +2087,7 @@ class Replayer {
     auto dat = [&](const char* n) { return F.data(*v[n]); };
     auto AX = [](int i) { return PxArticulationAxis::Enum(i); };
     const std::string first = g[0];
-    if (sims > 0 && g1_api_touch && o.px) g1_api_touch(o.px);
+    if (sims > 0 && o.px) touch_site(o.px, ("묶음 " + first).c_str());
     if (first == "stiffness") {  // PxD6JointDrive 값 객체 (px 없음): 값 갱신 후 연결돼 있으면 setDrive
       const uint64_t h = v.begin()->second->obj;
       D6DriveRef& r = d6drive[h];
@@ -2457,12 +2471,12 @@ class Replayer {
     if (idx.empty()) for (uint32_t i = 0; i < v.prims.size(); ++i) idx.push_back(i);
     const bool sideWrites = m == "set_dof_positions" || m == "set_dof_velocities" || m == "set_dof_actuation_forces" || m == "set_root_transforms" ||
                             m == "set_root_velocities" || ((m == "set_transforms" || m == "set_velocities") && v.kind == 1) || m == "add_force";
-    if (g1_api_touch && sideWrites)  // 실제로 PhysX 에 넣는 텐서 쓰기(applyCache·자세·속도·힘): 아직 옮기지 않음 -> 건드림 (목표값 등은 OVD 로 이미 옴)
+    if (sideWrites)  // 실제로 PhysX 에 넣는 텐서 쓰기(applyCache·자세·속도·힘): 아직 옮기지 않음 -> 건드림 (목표값 등은 OVD 로 이미 옴)
       for (uint32_t i : idx) {
-        if (PxArticulationReducedCoordinate* a = arti(i)) g1_api_touch(a);
+        if (PxArticulationReducedCoordinate* a = arti(i)) touch_site(a, ("곁 " + m).c_str());
         else if (i < v.prims.size()) {
           auto ib = actor_by_name.find(v.prims[i]);
-          if (ib != actor_by_name.end()) g1_api_touch(ib->second);
+          if (ib != actor_by_name.end()) touch_site(ib->second, ("곁 " + m).c_str());
         }
       }
     for (uint32_t i : idx) {
@@ -2526,7 +2540,7 @@ class Replayer {
         auto ib = actor_by_name.find(path);
         if (ib != actor_by_name.end()) if (auto* rd = ib->second->is<PxRigidDynamic>()) {
           if (m == "wake_up") rd->wakeUp(); else rd->putToSleep();
-          if (g1_api_touch) g1_api_touch(rd);
+          touch_site(rd, ("곁 " + m).c_str());
           applied["side:" + m]++;
         }
       } else {

@@ -407,6 +407,14 @@ void dumpScene(PxScene* scene, uint64_t sim) {
     F.omniFilter.reportAll = cb && static_cast<engine::OmniFilterCallback*>(cb)->report_all;
     F.omniFilter.sort();
   }  // 쌍 관리층 입력 기록 (G1_PAIRS)  // 넓은 단계 입력 기록 (G1_BP 로 모은 것, 이 simulate 앞까지)
+  {  // Sc 입력 조각 상태 (선택 절): PhysX 장면 -> 우리 Sc 장면 -> 요소 번호를 장면 파일 모양 번호로
+    sc::ScScene cap;
+    g1_sc_capture(scene, cap);
+    std::vector<uint32_t> e2s(cap.shapes.size(), sc::kNone);
+    for (uint32_t k = 0; k < F.shapeElems.size(); ++k)
+      if (F.shapeElems[k] != sc::kNone && F.shapeElems[k] < e2s.size()) e2s[F.shapeElems[k]] = k;
+    F.sc = sc::scSave(cap, e2s);
+  }
   if (!sc::writeScene(D.out.c_str(), F)) {
     fprintf(stderr, "[장면 뜨기] 쓰기 실패: %s\n", D.out.c_str());
     return;

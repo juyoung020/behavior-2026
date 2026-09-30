@@ -133,6 +133,7 @@ void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_solver_before(scene, sim);
   g1_art_before(scene);
   g1_dump_before(scene, sim);
+  g1_env_before(scene, sim);  // env 적재 대조: 파일 경계에서 (쌍 관리층 창 연산 전 — 파일의 쌍 기록도 그 앞까지)
   g1_islands_before(scene, sim);
   g1_bp_before(scene, sim);
   g1_pairs_before(scene, sim);

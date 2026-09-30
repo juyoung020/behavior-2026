@@ -470,11 +470,9 @@ bool sameTracker(const es::IdTracker& o, Sc::ObjectIDTracker& t) {
   return true;
 }
 
-// 첫 simulate 앞: PhysX 장면 전체를 우리 Sc 장면으로 (넘겨받기)
-void edInit() {
-  ES.inited = true;
-  Sc::Scene& sc = static_cast<NpScene*>(SS.scene)->getScScene();
-  es::ScScene& E = ES.E;
+// PhysX 장면 전체 -> 우리 Sc 장면 (record = 편집 그림자의 행위자 표도 채움)
+void scCapture(PxScene* scene, es::ScScene& E, bool record) {
+  Sc::Scene& sc = static_cast<NpScene*>(scene)->getScScene();
   copyTracker(E.elementIds, sc.getElementIDPool());
   copyTracker(E.actorIds, sc.getActorIDTracker());
   const uint32_t maxE = E.elementIds.maxId();
@@ -482,7 +480,7 @@ void edInit() {
   PxsTransformCache& tc = sc.getLowLevelContext()->getTransformCache();
   Bp::BoundsArray& ba = sc.getBoundsArray();
   const float* cd = sc.getLowLevelContext()->getContactDistances();
-  for (PxRigidActor* a : actorsOf(SS.scene)) {
+  for (PxRigidActor* a : actorsOf(scene)) {
     const PxU32 n = a->getNbShapes();
     if (!n) continue;
     std::vector<PxShape*> sh(n);
@@ -518,7 +516,7 @@ void edInit() {
       es::ScShapeRec& s = E.shapes[e];
       bool ok = true;
       s.in = shapeIn(ss->getCore(), &ok);
-      if (!ok) ++ES.unsup;
+      if (!ok && record) ++ES.unsup;
       s.actor = h;
       s.alive = 1;
       s.inBp = ss->isInBroadPhase() ? 1 : 0;
@@ -529,10 +527,16 @@ void edInit() {
       if (cd) E.contactDist[e] = cd[e];
       E.cacheFlags[e] = tc.getTransformCache(e).flags;
     }
+    if (!record) continue;
     ES.handle[&as] = h;
     if (ES.hPx.size() <= size_t(h)) ES.hPx.resize(size_t(h) + 1, nullptr);
     ES.hPx[size_t(h)] = as.getPxActor();
   }
+}
+// 첫 simulate 앞: PhysX 장면 전체를 우리 Sc 장면으로 (넘겨받기)
+void edInit() {
+  ES.inited = true;
+  scCapture(SS.scene, ES.E, true);
 }
 
 void edBegin() {
@@ -1000,6 +1004,11 @@ void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf&
   ES.E.updateActorCached(it->second, tf(b2w), tf(b2a), frozen);
 }
 eng::scene::ScScene* g1_sc_scene() { return g1_sc_loop_on() ? &ES.E : nullptr; }
+// 장면 파일 뜨기(g1_dump.cpp)·env 적재 대조(g1_env.cpp): 지금 PhysX 장면을 우리 Sc 장면으로 (편집 그림자와 무관)
+void g1_sc_capture(physx::PxScene* scene, eng::scene::ScScene& out) {
+  out = eng::scene::ScScene{};
+  scCapture(scene, out, false);
+}
 const PxActor* g1_sc_actor_px(int32_t h) { return h >= 0 && size_t(h) < ES.hPx.size() ? ES.hPx[size_t(h)] : nullptr; }
 
 // 진단 (G1_SEGV=1): 덤프 없이 호출 스택만 찍고 끝냄. 프로그램 시작 때 걸고, 스택 넘침도 잡게 대체 스택을 쓴다

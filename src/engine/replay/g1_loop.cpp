@@ -264,6 +264,23 @@ void g1_loop_after(PxScene* scene, uint64_t) {
 }
 
 void g1_loop_before(PxScene* scene, uint64_t sim) {
+  if (const char* want = getenv("G1_TOUCH_NAME")) {  // 진단: 이름에 want 가 든 강체의 simulate 앞 자세 (처음 나온 뒤 3 번)
+    static int shown = 0;
+    if (shown < 3) {
+      const PxU32 n = scene->getNbActors(PxActorTypeFlag::eRIGID_DYNAMIC);
+      std::vector<PxActor*> as(n);
+      scene->getActors(PxActorTypeFlag::eRIGID_DYNAMIC, as.data(), n);
+      bool any = false;
+      for (PxActor* x : as)
+        if (x->getName() && strstr(x->getName(), want)) {
+          const PxTransform t = static_cast<PxRigidActor*>(x)->getGlobalPose();
+          fprintf(stderr, "[simulate %llu 앞] %s q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g\n", (unsigned long long)sim, x->getName(), t.q.x, t.q.y, t.q.z, t.q.w, t.p.x,
+                  t.p.y, t.p.z);
+          any = true;
+        }
+      if (any) ++shown;
+    }
+  }
   if (!LS.on || !LS.haveS0 || scene != LS.scene) return;
   snapshot(scene, LS.s1);
   ++LS.windows;

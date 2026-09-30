@@ -78,8 +78,10 @@ const eng::ig::IslandManager* g1_islands_ours();  // g1_islands.cpp: 우리 섬 
 void g1_host_before(physx::PxScene* scene, uint64_t sim);
 void g1_host_after(physx::PxScene* scene, uint64_t sim);
 void g1_host_report();
+void g1_env_before(physx::PxScene* scene, uint64_t sim);  // g1_env.cpp: 장면 파일로 세운 env 상태 = PhysX 대조 (G1_ENV_FROM)
 void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf& b2a, bool frozen);
 eng::scene::ScScene* g1_sc_scene();
+void g1_sc_capture(physx::PxScene* scene, eng::scene::ScScene& out);  // 지금 PhysX 장면 -> 우리 Sc 장면 (g1_sc.cpp)
 const physx::PxActor* g1_sc_actor_px(int32_t h);
 const void* g1_art_link_sim(const void* fa, uint32_t creationIdx);  // g1_art.cpp: 관절체 링크 -> Sc::ActorSim*
 namespace eng { namespace sv { struct SolverCM; struct ContactPatchIn; struct ContactIn; } }
