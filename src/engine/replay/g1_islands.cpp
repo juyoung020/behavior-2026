@@ -82,12 +82,14 @@ PxNodeIndex W(_ZN5physx2IG19SimpleIslandManager7addNodeEbbNS0_4Node8NodeTypeEPv)
   Depth d;
   const PxNodeIndex r = R(_ZN5physx2IG19SimpleIslandManager7addNodeEbbNS0_4Node8NodeTypeEPv)(s, act, kin, t, o);
   if (d.top) rec(Rec{OP_ADD_NODE, 0, act, kin, uint32_t(t), 0, 0, uint64_t(o), 0, {}, r.index()});
+  if (d.top) g1_sc_note_island(0, r.getInd(), act, kin);
   return r;
 }
 void R(_ZN5physx2IG19SimpleIslandManager10removeNodeENS_11PxNodeIndexE)(SIM*, PxNodeIndex);
 void W(_ZN5physx2IG19SimpleIslandManager10removeNodeENS_11PxNodeIndexE)(SIM* s, PxNodeIndex n) {
   Depth d;
   if (d.top) rec(Rec{OP_REMOVE_NODE, 0, n.index(), 0, 0, 0, 0, ni(n), 0, {}, 0});
+  if (d.top) g1_sc_note_island(2, ni(n), 0, 0);
   R(_ZN5physx2IG19SimpleIslandManager10removeNodeENS_11PxNodeIndexE)(s, n);
 }
 PxU32 R(_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE)(
@@ -137,7 +139,13 @@ PxU32 W(_ZN5physx2IG19SimpleIslandManager13addConstraintEPNS_2Dy10ConstraintENS_
     R(MANGLED)(s, n);                                                  \
   }
 WRAP_NODE(OP_ACTIVATE, _ZN5physx2IG19SimpleIslandManager12activateNodeENS_11PxNodeIndexE)
-WRAP_NODE(OP_DEACTIVATE, _ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11PxNodeIndexE)
+void R(_ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11PxNodeIndexE)(SIM*, PxNodeIndex);
+void W(_ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11PxNodeIndexE)(SIM* s, PxNodeIndex n) {
+  Depth d;
+  if (d.top) rec(Rec{OP_DEACTIVATE, 0, n.index(), 0, 0, 0, 0, ni(n), 0, {}, 0});
+  if (d.top) g1_sc_note_island(1, ni(n), 0, 0);
+  R(_ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11PxNodeIndexE)(s, n);
+}
 WRAP_NODE(OP_SLEEP, _ZN5physx2IG19SimpleIslandManager14putNodeToSleepENS_11PxNodeIndexE)
 WRAP_NODE(OP_SET_KINEMATIC, _ZN5physx2IG19SimpleIslandManager12setKinematicENS_11PxNodeIndexE)
 WRAP_NODE(OP_SET_DYNAMIC, _ZN5physx2IG19SimpleIslandManager10setDynamicENS_11PxNodeIndexE)

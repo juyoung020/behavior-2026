@@ -56,4 +56,8 @@ const eng::scene::PairsLog* g1_pairs_log();
 void g1_sc_before(physx::PxScene* scene, uint64_t sim);
 void g1_sc_task(const char* name);
 void g1_sc_report();
+void g1_sc_after(physx::PxScene* scene, uint64_t sim);
+// Sc 편집 그림자(G1_SC_EDIT)가 PhysX 의 넓은 단계·섬 호출을 받는다 (g1_bp.cpp·g1_islands.cpp 가로채기에서 넘김)
+void g1_sc_note_bp(uint32_t type, uint32_t index, uint32_t group, uint32_t agg, uint32_t vt, uint32_t env, float cd, uint32_t result);
+void g1_sc_note_island(int op, uint64_t node, int a, int b);
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)

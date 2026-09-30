@@ -99,6 +99,15 @@ target_link_options(ovd_replay_g1 PRIVATE
   -Wl,--wrap=_ZN5physx2Bp13BroadPhaseABPC1Ejjjmb
   -Wl,--wrap=_ZN5physx2Sc8BodyCore17setCMassLocalPoseERKNS_12PxTransformTIfEE
   -Wl,--wrap=_ZN5physx2Sc8BodyCore13setBody2WorldERKNS_12PxTransformTIfEE
+  -Wl,--wrap=_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3Eb
+  -Wl,--wrap=_ZN5physx2Sc5Scene9addStaticERNS0_10StaticCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3E
+  -Wl,--wrap=_ZN5physx2Sc5Scene10removeBodyERNS0_8BodyCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb
+  -Wl,--wrap=_ZN5physx2Sc5Scene12removeStaticERNS0_10StaticCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb
+  -Wl,--wrap=_ZN5physx2Sc12ShapeSimBase18reinsertBroadPhaseEv
+  -Wl,--wrap=_ZN5physx2Sc9RigidCore15addShapeToSceneERNS0_9ShapeCoreE
+  -Wl,--wrap=_ZN5physx2Sc9RigidCore20removeShapeFromSceneERNS0_9ShapeCoreEb
+  -Wl,--wrap=_ZN5physx2Sc9RigidCore13onShapeChangeERNS0_9ShapeCoreENS_7PxFlagsINS0_21ShapeChangeNotifyFlag4EnumEjEE
+  -Wl,--wrap=_ZN5physx2Sc12ShapeSimBase12onFlagChangeENS_7PxFlagsINS_11PxShapeFlag4EnumEhEE
   -Wl,--wrap=_ZNK5physx2Sc10NPhaseCore17runOverlapFiltersEjPNS_2Bp11AABBOverlapEPNS0_10FilterInfoERjS7_
   -Wl,--wrap=_ZN5physx2Sc10NPhaseCore23onTriggerOverlapCreatedEPKNS_2Bp11AABBOverlapEj
   -Wl,--wrap=_ZN5physx2Sc10NPhaseCore16onOverlapRemovedEPNS0_10ElementSimES3_jPvRNS_31PxsContactManagerOutputIteratorE

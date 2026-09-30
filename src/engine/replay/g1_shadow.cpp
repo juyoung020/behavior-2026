@@ -77,8 +77,7 @@ struct Shadow {
   long long lastSim = 0;
 
   bool shapeGeom(const PxsShapeCore* c, ec::ShapeGeom& g) {
-    auto it = geom.find(c);
-    if (it != geom.end()) { g = it->second; return g.type >= 0; }
+    // 모양 핵 주소로 기억해 두지 않는다: 판 도중 삭제 뒤 새 모양이 같은 주소를 다시 쓴다(chop_slice0 simulate 354, 반쪽 통나무)
     ec::ShapeGeom o;
     o.type = -1;
     const PxGeometry& pg = c->mGeometry.getGeometry();
@@ -239,6 +238,7 @@ void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_art_after(scene, sim);
   g1_islands_after(scene, sim);
   g1_pairs_after(scene, sim);
+  g1_sc_after(scene, sim);
   if (!G.on) return;
   (void)phys;
   G.lastSim = (long long)sim;

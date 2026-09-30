@@ -4,6 +4,7 @@
 // "그 순간 자세로 다시 계산한 값 = PhysX 값" 이 성립한다는 뜻.) 바뀜 비트맵·접촉 거리도 같이 본다.
 // 켜기: G1_SC=1 (디스패처 필요).
 #include <cinttypes>
+#include <execinfo.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,11 @@
 #include "ScStaticSim.h"
 #include "core/contact/narrowphase.h"
 #include "core/scene/id_pool.h"
+#include "core/scene/sc_scene.h"
+#include <unordered_map>
+#include "foundation/PxInlineArray.h"
+#include "core/scene/bp_log.h"
+#include "core/scene/pairs_log.h"
 #include "g1_hooks.h"
 
 using namespace physx;
@@ -30,7 +36,7 @@ void g1sc_update(const float* s2a, const unsigned char* flags, const float* a2w,
 namespace {
 
 struct ScShadow {
-  bool inited = false, on = false;
+  bool inited = false, on = false, inSim = false;
   PxScene* scene = nullptr;
   uint64_t sim = 0, steps = 0, shapes = 0, badPose = 0, badBounds = 0, badDist = 0, unsup = 0, holds = 0, heldShapes = 0, artHolds = 0;
   long long firstPose = -1, firstBounds = -1;
@@ -320,19 +326,524 @@ void idsCheck() {
 
 }  // namespace
 
+#define W(name) __wrap_##name
+#define R(name) __real_##name
+
+// ==== Sc 편집 그림자 (G1_SC_EDIT=1): 판 도중 추가·삭제·다시 넣기를 우리 API(core/scene/sc_scene.h)로도 돌려 PhysX 와 비교 ====
+// PhysX Sc::Scene::addBody/addStatic/removeBody/removeStatic, ShapeSimBase::reinsertBroadPhase 를 가로채, 진짜 호출 동안의 넓은 단계·섬 호출을
+// 받아 두고(g1_sc_note_*), 같은 입력으로 우리 API 를 돌린다. 우리 API 가 모듈에서 돌려받는 값(넣기 대기였나·섬 노드 번호)은 PhysX 가 받은 값을
+// 차례대로 준다. 비교: 모듈 호출 열(종류·인자), 행위자·요소 번호, 새 칸의 변환 캐시·경계 상자·접촉 거리, 스텝마다 번호 추적기 상태.
+namespace {
+namespace es = eng::scene;
+struct EdCall {
+  int kind;  // 0 bpAdd 1 bpRemove 2 islandAdd 3 islandDeactivate 4 islandRemove
+  uint32_t idx = 0, group = 0, agg = 0, vt = 0, env = 0, result = 0;
+  float cd = 0.f;
+  uint64_t node = 0;
+  int a = 0, b = 0;
+};
+struct EditShadow {
+  bool on = false, inited = false, capturing = false;
+  es::ScScene E;
+  std::unordered_map<const void*, int32_t> handle;  // Sc::ActorSim* -> 우리 손잡이
+  std::vector<EdCall> px;
+  uint64_t adds = 0, removes = 0, reinserts = 0, flagChanges = 0, untracked = 0, attaches = 0, detaches = 0, shapeChanges = 0, calls = 0, bad = 0, unsup = 0, idBad = 0, cellBad = 0, trackerBad = 0;
+  long long firstBad = -1;
+  int show = 5;
+  std::map<uint64_t, std::map<std::string, int>> bySim;  // 진단: simulate 별 사건 수
+} ES;
+void edNote(const char* what) { ES.bySim[SS.sim][what]++; }
+
+struct ReplayModules : es::ScModules {
+  const std::vector<EdCall>& px;
+  std::vector<EdCall> ours;
+  explicit ReplayModules(const std::vector<EdCall>& p) : px(p) {}
+  const EdCall* at() const { return ours.size() < px.size() ? &px[ours.size()] : nullptr; }
+  bool bpAdd(const es::BpOp& o) override {
+    const EdCall* p = at();
+    EdCall c{0};
+    c.idx = o.index; c.group = o.group; c.agg = o.agg; c.vt = o.volumeType; c.env = o.env; c.cd = o.contactDistance;
+    c.result = p && p->kind == 0 ? p->result : 1u;
+    ours.push_back(c);
+    return c.result != 0;
+  }
+  bool bpRemove(uint32_t index) override {
+    const EdCall* p = at();
+    EdCall c{1};
+    c.idx = index;
+    c.result = p && p->kind == 1 ? p->result : 0u;
+    ours.push_back(c);
+    return c.result != 0;
+  }
+  uint64_t islandAddNode(bool awake, bool kine) override {
+    const EdCall* p = at();
+    EdCall c{2};
+    c.a = awake; c.b = kine;
+    c.node = p && p->kind == 2 ? p->node : ~0ull;
+    ours.push_back(c);
+    return c.node;
+  }
+  void islandDeactivateNode(uint64_t n) override { EdCall c{3}; c.node = n; ours.push_back(c); }
+  void islandRemoveNode(uint64_t n) override { EdCall c{4}; c.node = n; ours.push_back(c); }
+};
+
+bool sameCall(const EdCall& x, const EdCall& y) {
+  if (x.kind != y.kind) return false;
+  switch (x.kind) {
+    case 0: return x.idx == y.idx && x.group == y.group && x.agg == y.agg && x.vt == y.vt && x.env == y.env && !memcmp(&x.cd, &y.cd, 4) && x.result == y.result;
+    case 1: return x.idx == y.idx && x.result == y.result;
+    case 2: return x.a == y.a && x.b == y.b && x.node == y.node;
+    default: return x.node == y.node;
+  }
+}
+void printCall(const char* who, const EdCall& c) {
+  fprintf(stderr, "    %s 종류 %d 칸 %u 무리 %u 집합 %u 부피 %u 판 %u 거리 %.9g 결과 %u 노드 %llx 인자 %d/%d\n", who, c.kind, c.idx, c.group, c.agg, c.vt, c.env, c.cd,
+          c.result, (unsigned long long)c.node, c.a, c.b);
+}
+void edBad(const char* what) {
+  ++ES.bad;
+  if (ES.firstBad < 0) ES.firstBad = (long long)SS.sim;
+  if (ES.show > 0) {
+    --ES.show;
+    fprintf(stderr, "[g1 sc 편집 다름] sim %llu %s\n", (unsigned long long)SS.sim, what);
+  }
+}
+void compareCalls(const ReplayModules& m, const char* what) {
+  ES.calls += m.ours.size();
+  static const bool all = getenv("G1_SC_EDIT_ALL") != nullptr;
+  if (all && SS.sim < 690) {
+    fprintf(stderr, "[g1 sc 편집] sim %llu %s\n",(unsigned long long)SS.sim, what);
+    for (const EdCall& c : ES.px) printCall("PhysX", c);
+    for (const EdCall& c : m.ours) printCall("우리 ", c);
+  }
+  bool ok = m.ours.size() == ES.px.size();
+  for (size_t i = 0; ok && i < m.ours.size(); ++i) ok = sameCall(m.ours[i], ES.px[i]);
+  if (!ok) {
+    const bool showIt = ES.show > 0;
+    edBad(what);
+    if (showIt) {
+      for (const EdCall& c : ES.px) printCall("PhysX", c);
+      for (const EdCall& c : m.ours) printCall("우리 ", c);
+    }
+  }
+}
+
+es::ScShapeIn shapeIn(const Sc::ShapeCore& core, bool* okOut) {
+  es::ScShapeIn si;
+  const PxsShapeCore& pc = core.getCore();
+  memset(static_cast<void*>(&si.geom), 0, sizeof(si.geom));
+  *okOut = geomOf(pc.mGeometry.getGeometry(), si.geom);
+  const PxTransform t = pc.getTransform();
+  si.localPose = ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w));
+  si.contactOffset = pc.mContactOffset;
+  si.shapeFlags = uint32_t(pc.mShapeFlags);
+  si.idtShape = pc.mShapeCoreFlags.isSet(PxShapeCoreFlag::eIDT_TRANSFORM) ? 1 : 0;
+  return si;
+}
+ep::PxTransform toEp(const PxTransform& t) { return ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w)); }
+
+void copyTracker(es::IdTracker& o, Sc::ObjectIDTracker& t) {
+  o.pool.cur = t.mIDPool.mCurrentID;
+  o.pool.freeIds.assign(t.mIDPool.mFreeIDs.begin(), t.mIDPool.mFreeIDs.end());
+  o.pending.assign(t.mPendingReleasedIDs.begin(), t.mPendingReleasedIDs.end());
+  o.deleted.clear();
+  for (uint32_t id : o.pending) {
+    if (o.deleted.size() <= id) o.deleted.resize(id + 1, 0);
+    o.deleted[id] = 1;
+  }
+}
+bool sameTracker(const es::IdTracker& o, Sc::ObjectIDTracker& t) {
+  if (!samePool(o.pool, t) || o.pending.size() != t.mPendingReleasedIDs.size()) return false;
+  for (size_t i = 0; i < o.pending.size(); ++i)
+    if (o.pending[i] != t.mPendingReleasedIDs[PxU32(i)]) return false;
+  return true;
+}
+
+// 첫 simulate 앞: PhysX 장면 전체를 우리 Sc 장면으로 (넘겨받기)
+void edInit() {
+  ES.inited = true;
+  Sc::Scene& sc = static_cast<NpScene*>(SS.scene)->getScScene();
+  es::ScScene& E = ES.E;
+  copyTracker(E.elementIds, sc.getElementIDPool());
+  copyTracker(E.actorIds, sc.getActorIDTracker());
+  const uint32_t maxE = E.elementIds.maxId();
+  E.grow(maxE ? maxE - 1 : 0);
+  PxsTransformCache& tc = sc.getLowLevelContext()->getTransformCache();
+  Bp::BoundsArray& ba = sc.getBoundsArray();
+  const float* cd = sc.getLowLevelContext()->getContactDistances();
+  for (PxRigidActor* a : actorsOf(SS.scene)) {
+    const PxU32 n = a->getNbShapes();
+    if (!n) continue;
+    std::vector<PxShape*> sh(n);
+    a->getShapes(sh.data(), n);
+    Sc::ShapeSim* first = static_cast<NpShape*>(sh[0])->getCore().getExclusiveSim();
+    if (!first) continue;
+    Sc::ActorSim& as = first->getActor();
+    const int32_t h = int32_t(E.actors.size());
+    E.actors.emplace_back();
+    es::ScActorRec& r = E.actors.back();
+    r.alive = 1;
+    r.actorID = as.getActorID();
+    if (as.getActorType() == PxActorType::eRIGID_STATIC) {
+      r.kind = 0;
+      r.pose = toEp(static_cast<Sc::StaticSim&>(as).getStaticCore().getActor2World());
+      r.body2Actor = ep::PxTransform(ep::PxIdentity);
+    } else {
+      Sc::BodySim& bs = static_cast<Sc::BodySim&>(as);
+      const PxsBodyCore& bc = bs.getBodyCore().getCore();
+      r.kind = as.getActorType() == PxActorType::eARTICULATION_LINK ? 2 : 1;
+      r.pose = toEp(bc.body2World);
+      r.body2Actor = toEp(bc.getBody2Actor());
+      r.idtBody2Actor = bc.hasIdtBody2Actor() ? 1 : 0;
+      r.kinematic = bs.isKinematic() ? 1 : 0;
+      r.forcedKineNotif = bs.hasForcedKinematicNotif() ? 1 : 0;
+      r.node = bs.getNodeIndex().getInd();
+    }
+    Sc::ElementSim** el = as.getElements();
+    for (PxU32 k = 0, ne = as.getNbElements(); k < ne; ++k) {
+      Sc::ShapeSim* ss = static_cast<Sc::ShapeSim*>(el[k]);
+      const uint32_t e = ss->getElementID();
+      E.grow(e);
+      es::ScShapeRec& s = E.shapes[e];
+      bool ok = true;
+      s.in = shapeIn(ss->getCore(), &ok);
+      if (!ok) ++ES.unsup;
+      s.actor = h;
+      s.alive = 1;
+      s.inBp = ss->isInBroadPhase() ? 1 : 0;
+      r.elements.push_back(e);
+      const PxTransform& t = tc.getTransformCache(e).transform;
+      E.cache[e] = toEp(t);
+      memcpy(&E.bounds[e], &ba.getBounds(e), 24);
+      if (cd) E.contactDist[e] = cd[e];
+    }
+    ES.handle[&as] = h;
+  }
+}
+
+void edBegin() {
+  ES.px.clear();
+  ES.capturing = true;
+}
+// 새로 넣은 우리 행위자를 PhysX 결과와 비교 (번호·칸)
+void edCheckAdded(int32_t h, Sc::ActorSim& as) {
+  Sc::Scene& sc = static_cast<NpScene*>(SS.scene)->getScScene();
+  const es::ScActorRec& r = ES.E.actors[size_t(h)];
+  bool ok = r.actorID == as.getActorID() && r.elements.size() == as.getNbElements();
+  Sc::ElementSim** el = as.getElements();
+  for (PxU32 k = 0; ok && k < as.getNbElements(); ++k) ok = r.elements[k] == el[k]->getElementID();
+  if (!ok) {
+    ++ES.idBad;
+    edBad("행위자·요소 번호");
+    return;
+  }
+  PxsTransformCache& tc = sc.getLowLevelContext()->getTransformCache();
+  Bp::BoundsArray& ba = sc.getBoundsArray();
+  const float* cd = sc.getLowLevelContext()->getContactDistances();
+  for (uint32_t e : r.elements) {
+    const PxTransform& t = tc.getTransformCache(e).transform;
+    const ep::PxTransform& o = ES.E.cache[e];
+    const float a7[7] = {t.q.x, t.q.y, t.q.z, t.q.w, t.p.x, t.p.y, t.p.z}, b7[7] = {o.q.x, o.q.y, o.q.z, o.q.w, o.p.x, o.p.y, o.p.z};
+    if (memcmp(a7, b7, 28) || memcmp(&ba.getBounds(e), &ES.E.bounds[e], 24) || (cd && memcmp(&cd[e], &ES.E.contactDist[e], 4))) {
+      ++ES.cellBad;
+      edBad("새 칸(변환 캐시·경계 상자·접촉 거리)");
+    }
+  }
+}
+}  // namespace
+
+void g1_sc_note_bp(uint32_t type, uint32_t index, uint32_t group, uint32_t agg, uint32_t vt, uint32_t env, float cd, uint32_t result) {
+  if (!ES.capturing) {
+    // 편집 API 로 못 덮은 넓은 단계 구조 변경 (simulate 밖에서 일어난 것만 — 안쪽 집합체 등은 BpRuntime 이 스스로)
+    if (ES.on && ES.inited && !SS.inSim) {
+      ++ES.untracked;
+      edNote("덮지 못한 넓은 단계 호출");
+      if (getenv("G1_SC_EDIT_ALL") && SS.sim < 690) {
+        fprintf(stderr, "[g1 sc 편집 밖 bp] sim %llu 종류 %u 칸 %u 결과 %u\n", (unsigned long long)SS.sim, type, index, result);
+        void* bt[16];
+        const int nb = backtrace(bt, 16);
+        backtrace_symbols_fd(bt, nb, 2);
+      }
+    }
+    return;
+  }
+  EdCall c{int(type == 0 ? 0 : 1)};
+  c.idx = index;
+  c.result = result;
+  if (type == 0) { c.group = group; c.agg = agg; c.vt = vt; c.env = env; c.cd = cd; }
+  ES.px.push_back(c);
+}
+void g1_sc_note_island(int op, uint64_t node, int a, int b) {
+  if (!ES.capturing) return;
+  EdCall c{2 + op};
+  c.node = node;
+  c.a = a;
+  c.b = b;
+  ES.px.push_back(c);
+}
+
+// ---- 가로채기 (NpScene -> ScScene, ScActorCore -> ShapeSimBase)
+extern "C" {
+void R(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3Eb)(Sc::Scene*, Sc::BodyCore&, NpShape* const*, PxU32, size_t, PxBounds3*, bool);
+void W(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3Eb)(Sc::Scene* self, Sc::BodyCore& body, NpShape* const* shapes, PxU32 n,
+                                                                                       size_t off, PxBounds3* ob, bool compound) {
+  const bool track = ES.on && ES.inited;
+  es::ScActorIn in{};
+  bool ok = true;
+  if (track) {
+    const PxsBodyCore& bc = body.getCore();
+    in.kind = 1;
+    in.pose = toEp(bc.body2World);
+    in.body2Actor = toEp(bc.getBody2Actor());
+    in.idtBody2Actor = bc.hasIdtBody2Actor() ? 1 : 0;
+    in.kinematic = (body.getFlags() & PxRigidBodyFlag::eKINEMATIC) ? 1 : 0;
+    in.forcedKineNotif = (body.getFlags() & (PxRigidBodyFlag::eFORCE_KINE_KINE_NOTIFICATIONS | PxRigidBodyFlag::eFORCE_STATIC_KINE_NOTIFICATIONS)) ? 1 : 0;
+    in.awake = (body.getWakeCounter() > 0.f || !body.getLinearVelocity().isZero() || !body.getAngularVelocity().isZero()) ? 1 : 0;
+    for (PxU32 i = 0; i < n; ++i) {
+      bool gok = true;
+      in.shapes.push_back(shapeIn(*reinterpret_cast<Sc::ShapeCore*>(size_t(shapes[i]) + off), &gok));
+      ok = ok && gok;
+    }
+    edBegin();
+  }
+  R(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3Eb)(self, body, shapes, n, off, ob, compound);
+  if (!track) return;
+  ES.capturing = false;
+  if (!ok || compound) { ++ES.unsup; return; }
+  ReplayModules m(ES.px);
+  const int32_t h = ES.E.addActor(in, m);
+  ++ES.adds;
+  edNote("추가");
+  compareCalls(m, "추가(동적) 모듈 호출");
+  if (Sc::BodySim* sim = body.getSim()) {
+    ES.handle[sim] = h;
+    edCheckAdded(h, *sim);
+  }
+}
+void R(_ZN5physx2Sc5Scene9addStaticERNS0_10StaticCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3E)(Sc::Scene*, Sc::StaticCore&, NpShape* const*, PxU32, size_t, PxBounds3*);
+void W(_ZN5physx2Sc5Scene9addStaticERNS0_10StaticCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3E)(Sc::Scene* self, Sc::StaticCore& st, NpShape* const* shapes, PxU32 n,
+                                                                                         size_t off, PxBounds3* ob) {
+  const bool track = ES.on && ES.inited;
+  es::ScActorIn in{};
+  bool ok = true;
+  if (track) {
+    in.kind = 0;
+    in.pose = toEp(st.getActor2World());
+    in.body2Actor = ep::PxTransform(ep::PxIdentity);
+    in.idtBody2Actor = 1;
+    for (PxU32 i = 0; i < n; ++i) {
+      bool gok = true;
+      in.shapes.push_back(shapeIn(*reinterpret_cast<Sc::ShapeCore*>(size_t(shapes[i]) + off), &gok));
+      ok = ok && gok;
+    }
+    edBegin();
+  }
+  R(_ZN5physx2Sc5Scene9addStaticERNS0_10StaticCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3E)(self, st, shapes, n, off, ob);
+  if (!track) return;
+  ES.capturing = false;
+  if (!ok) { ++ES.unsup; return; }
+  ReplayModules m(ES.px);
+  const int32_t h = ES.E.addActor(in, m);
+  ++ES.adds;
+  edNote("추가 정적");
+  compareCalls(m, "추가(정적) 모듈 호출");
+  if (Sc::StaticSim* sim = st.getSim()) {
+    ES.handle[sim] = h;
+    edCheckAdded(h, *sim);
+  }
+}
+void R(_ZN5physx2Sc5Scene10removeBodyERNS0_8BodyCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb)(
+    Sc::Scene*, Sc::BodyCore&, PxInlineArray<const Sc::ShapeCore*, 64>&, bool);
+void W(_ZN5physx2Sc5Scene10removeBodyERNS0_8BodyCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb)(
+    Sc::Scene* self, Sc::BodyCore& body, PxInlineArray<const Sc::ShapeCore*, 64>& rs, bool wake) {
+  int32_t h = -1;
+  const void* key = body.getSim();
+  if (ES.on && ES.inited && key) {
+    auto it = ES.handle.find(key);
+    if (it != ES.handle.end()) h = it->second;
+    if (h >= 0 && ES.E.actors[size_t(h)].kind == 2) { ++ES.unsup; h = -1; }  // 링크는 아직
+    if (h >= 0) edBegin();
+  }
+  R(_ZN5physx2Sc5Scene10removeBodyERNS0_8BodyCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb)(self, body, rs, wake);
+  if (h < 0) return;
+  ES.capturing = false;
+  ReplayModules m(ES.px);
+  ES.E.removeActor(h, m);
+  ++ES.removes;
+  edNote("삭제");
+  ES.handle.erase(key);
+  compareCalls(m, "삭제(동적) 모듈 호출");
+}
+void R(_ZN5physx2Sc5Scene12removeStaticERNS0_10StaticCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb)(
+    Sc::Scene*, Sc::StaticCore&, PxInlineArray<const Sc::ShapeCore*, 64>&, bool);
+void W(_ZN5physx2Sc5Scene12removeStaticERNS0_10StaticCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb)(
+    Sc::Scene* self, Sc::StaticCore& st, PxInlineArray<const Sc::ShapeCore*, 64>& rs, bool wake) {
+  int32_t h = -1;
+  const void* key = st.getSim();
+  if (ES.on && ES.inited && key) {
+    auto it = ES.handle.find(key);
+    if (it != ES.handle.end()) h = it->second;
+    if (h >= 0) edBegin();
+  }
+  R(_ZN5physx2Sc5Scene12removeStaticERNS0_10StaticCoreERNS_13PxInlineArrayIPKNS0_9ShapeCoreELj64ENS_21PxReflectionAllocatorIS7_EEEEb)(self, st, rs, wake);
+  if (h < 0) return;
+  ES.capturing = false;
+  ReplayModules m(ES.px);
+  ES.E.removeActor(h, m);
+  ++ES.removes;
+  edNote("삭제 정적");
+  ES.handle.erase(key);
+  compareCalls(m, "삭제(정적) 모듈 호출");
+}
+void R(_ZN5physx2Sc12ShapeSimBase12onFlagChangeENS_7PxFlagsINS_11PxShapeFlag4EnumEhEE)(Sc::ShapeSimBase*, PxShapeFlags);
+void W(_ZN5physx2Sc12ShapeSimBase12onFlagChangeENS_7PxFlagsINS_11PxShapeFlag4EnumEhEE)(Sc::ShapeSimBase* self, PxShapeFlags oldFlags) {
+  const bool track = ES.on && ES.inited;
+  const uint32_t e = self->getElementID();
+  const uint32_t nf = uint32_t(PxU8(self->getCore().getFlags()));
+  if (track) edBegin();
+  R(_ZN5physx2Sc12ShapeSimBase12onFlagChangeENS_7PxFlagsINS_11PxShapeFlag4EnumEhEE)(self, oldFlags);
+  if (!track) return;
+  ES.capturing = false;
+  if (e >= ES.E.shapes.size() || !ES.E.shapes[e].alive) { ++ES.unsup; return; }
+  if (ES.E.shapes[e].in.shapeFlags != uint32_t(PxU8(oldFlags))) edBad("플래그 바꾸기 전 값");
+  ReplayModules m(ES.px);
+  ES.E.setShapeFlags(e, nf, m);
+  ++ES.flagChanges;
+  edNote("플래그");
+  compareCalls(m, "플래그 바꾸기 모듈 호출");
+}
+// 모양 붙이기·떼기·바꾸기 (NpShapeManager·NpShape·NpScene -> ScRigidCore)
+void R(_ZN5physx2Sc9RigidCore15addShapeToSceneERNS0_9ShapeCoreE)(Sc::RigidCore*, Sc::ShapeCore&);
+void W(_ZN5physx2Sc9RigidCore15addShapeToSceneERNS0_9ShapeCoreE)(Sc::RigidCore* self, Sc::ShapeCore& sc) {
+  const bool track = ES.on && ES.inited && self->getSim();
+  int32_t h = -1;
+  if (track) {
+    auto it = ES.handle.find(static_cast<Sc::ActorSim*>(self->getSim()));
+    if (it != ES.handle.end()) h = it->second;
+    if (h >= 0) edBegin();
+  }
+  R(_ZN5physx2Sc9RigidCore15addShapeToSceneERNS0_9ShapeCoreE)(self, sc);
+  if (h < 0) {
+    if (track) ++ES.unsup;
+    return;
+  }
+  ES.capturing = false;
+  bool ok = true;
+  const es::ScShapeIn si = shapeIn(sc, &ok);
+  if (!ok) { ++ES.unsup; return; }
+  ReplayModules m(ES.px);
+  const uint32_t e = ES.E.attachShape(h, si, m);
+  ++ES.attaches;
+  edNote("모양 붙이기");
+  compareCalls(m, "모양 붙이기 모듈 호출");
+  Sc::ShapeSim* ss = sc.getExclusiveSim();
+  if (!ss || ss->getElementID() != e) {
+    ++ES.idBad;
+    edBad("모양 붙이기 요소 번호");
+  }
+}
+void R(_ZN5physx2Sc9RigidCore20removeShapeFromSceneERNS0_9ShapeCoreEb)(Sc::RigidCore*, Sc::ShapeCore&, bool);
+void W(_ZN5physx2Sc9RigidCore20removeShapeFromSceneERNS0_9ShapeCoreEb)(Sc::RigidCore* self, Sc::ShapeCore& sc, bool wake) {
+  const bool track = ES.on && ES.inited && self->getSim();
+  uint32_t e = 0xffffffffu;
+  if (track) {
+    if (Sc::ShapeSim* ss = sc.getExclusiveSim()) e = ss->getElementID();
+    if (e < ES.E.shapes.size() && ES.E.shapes[e].alive) edBegin();
+    else e = 0xffffffffu;
+  }
+  R(_ZN5physx2Sc9RigidCore20removeShapeFromSceneERNS0_9ShapeCoreEb)(self, sc, wake);
+  if (e == 0xffffffffu) {
+    if (track) ++ES.unsup;
+    return;
+  }
+  ES.capturing = false;
+  ReplayModules m(ES.px);
+  ES.E.detachShape(e, m);
+  ++ES.detaches;
+  edNote("모양 떼기");
+  compareCalls(m, "모양 떼기 모듈 호출");
+}
+void R(_ZN5physx2Sc9RigidCore13onShapeChangeERNS0_9ShapeCoreENS_7PxFlagsINS0_21ShapeChangeNotifyFlag4EnumEjEE)(Sc::RigidCore*, Sc::ShapeCore&,
+                                                                                                                   Sc::ShapeChangeNotifyFlags);
+void W(_ZN5physx2Sc9RigidCore13onShapeChangeERNS0_9ShapeCoreENS_7PxFlagsINS0_21ShapeChangeNotifyFlag4EnumEjEE)(Sc::RigidCore* self, Sc::ShapeCore& sc,
+                                                                                                                   Sc::ShapeChangeNotifyFlags f) {
+  const bool track = ES.on && ES.inited && self->getSim();
+  uint32_t e = 0xffffffffu;
+  if (track) {
+    if (Sc::ShapeSim* ss = sc.getExclusiveSim()) e = ss->getElementID();
+    if (e < ES.E.shapes.size() && ES.E.shapes[e].alive) edBegin();
+    else e = 0xffffffffu;
+  }
+  R(_ZN5physx2Sc9RigidCore13onShapeChangeERNS0_9ShapeCoreENS_7PxFlagsINS0_21ShapeChangeNotifyFlag4EnumEjEE)(self, sc, f);
+  if (e == 0xffffffffu) {
+    if (track) ++ES.unsup;
+    return;
+  }
+  ES.capturing = false;
+  ReplayModules m(ES.px);
+  bool ok = true;
+  const es::ScShapeIn si = shapeIn(sc, &ok);
+  es::ScShapeRec& r = ES.E.shapes[e];
+  // PhysX RigidCore::onShapeChange 순서: 기하 -> 거르기 다시 -> 모양 자세 -> 거르기 자료 -> 접촉 거리 -> 쉼 거리
+  if (f & Sc::ShapeChangeNotifyFlag::eGEOMETRY) { r.in.geom = si.geom; edNote("모양 바꾸기(기하)"); }
+  if (f & Sc::ShapeChangeNotifyFlag::eRESET_FILTERING) { ES.E.resetFiltering(e, m); edNote("거르기 다시"); }
+  if (f & Sc::ShapeChangeNotifyFlag::eSHAPE2BODY) { r.in.localPose = si.localPose; r.in.idtShape = si.idtShape; edNote("모양 바꾸기(자세)"); }
+  if (f & Sc::ShapeChangeNotifyFlag::eCONTACTOFFSET) { ES.E.setContactOffset(e, si.contactOffset); edNote("모양 바꾸기(접촉 거리)"); }
+  ++ES.shapeChanges;
+  compareCalls(m, "모양 바꾸기 모듈 호출");
+}
+void R(_ZN5physx2Sc12ShapeSimBase18reinsertBroadPhaseEv)(Sc::ShapeSimBase*);
+void W(_ZN5physx2Sc12ShapeSimBase18reinsertBroadPhaseEv)(Sc::ShapeSimBase* self) {
+  const bool track = ES.on && ES.inited;
+  const uint32_t e = self->getElementID();
+  if (track) edBegin();
+  R(_ZN5physx2Sc12ShapeSimBase18reinsertBroadPhaseEv)(self);
+  if (!track) return;
+  ES.capturing = false;
+  if (e >= ES.E.shapes.size() || !ES.E.shapes[e].alive) { ++ES.unsup; return; }
+  ReplayModules m(ES.px);
+  ES.E.reinsertShape(e, m);
+  ++ES.reinserts;
+  edNote("다시 넣기");
+  compareCalls(m, "다시 넣기 모듈 호출");
+  const int32_t h = ES.E.shapes.size() > self->getElementID() ? ES.E.shapes[self->getElementID()].actor : -1;
+  if (h < 0 || !ES.E.shapes[self->getElementID()].alive) {
+    ++ES.idBad;
+    edBad("다시 넣기 요소 번호");
+  }
+}
+}
+
 void g1_sc_before(PxScene* scene, uint64_t sim) {
   if (!SS.inited) {
     SS.inited = true;
     SS.on = getenv("G1_SC") != nullptr;
     SS.show = getenv("G1_SC_SHOW") ? atoi(getenv("G1_SC_SHOW")) : 0;
+    ES.on = SS.on && getenv("G1_SC_EDIT") != nullptr;
     if (getenv("G1_SC_TRACE")) SS.trace = atoll(getenv("G1_SC_TRACE"));
     if (getenv("G1_SC_TRACE_SIM")) sscanf(getenv("G1_SC_TRACE_SIM"), "%lld:%lld", &SS.traceFrom, &SS.traceTo);
   }
   if (!SS.on) return;
   SS.scene = scene;
   SS.sim = sim;
+  SS.inSim = true;
   traceElem("(simulate 시작)");
   if (getenv("G1_SC_IDS")) idsCheck();
+  if (ES.on) {
+    Sc::Scene& sc = static_cast<NpScene*>(scene)->getScScene();
+    if (!ES.inited) edInit();
+    else if (!sameTracker(ES.E.elementIds, sc.getElementIDPool()) || !sameTracker(ES.E.actorIds, sc.getActorIDTracker())) {
+      ++ES.trackerBad;
+      edBad("번호 추적기 상태 (simulate 앞)");
+      copyTracker(ES.E.elementIds, sc.getElementIDPool());
+      copyTracker(ES.E.actorIds, sc.getActorIDTracker());
+    }
+  }
+}
+// fetchResults 뒤: 스텝 끝 번호 풀기 (postReportsCleanup)
+void g1_sc_after(PxScene*, uint64_t) {
+  SS.inSim = false;
+  if (ES.on && ES.inited) ES.E.endStep();
 }
 void g1_sc_task(const char* name) {
   if (!SS.on || !SS.scene) return;
@@ -344,8 +855,50 @@ void g1_sc_task(const char* name) {
     artSleepHold();
   }
 }
+// 진단 (G1_EDIT_DUMP=from:to, G1_DUMP_AT 로 기록을 켜야 함): 판 도중 추가·삭제 때 넓은 단계 연산·쌍 관리층 앞 연산을 찍는다
+static void editDump() {
+  const char* e = getenv("G1_EDIT_DUMP");
+  if (!e) return;
+  long long a = 0, b = -1;
+  sscanf(e, "%lld:%lld", &a, &b);
+  if (const eng::scene::BpLog* bl = g1_bp_log()) {
+    for (const eng::scene::BpOp& o : bl->ops)
+      if ((long long)o.frame >= a && (long long)o.frame <= b)
+        printf("[편집 bp] 프레임 %u 종류 %u 칸 %u 무리 %u 집합 %u 부피 %u 판 %u 최대 %u 거리 %.9g 결과 %u\n", o.frame, o.type, o.index, o.group, o.agg, o.volumeType, o.env,
+               o.maxNum, o.contactDistance, o.result);
+  }
+  if (const eng::scene::PairsLog* pl = g1_pairs_log()) {
+    for (size_t k = 0; k < pl->steps.size(); ++k) {
+      const eng::scene::PairsStep& st = pl->steps[k];
+      const size_t prevA = k ? pl->steps[k - 1].actors.size() : pl->actors0.size(), prevS = k ? pl->steps[k - 1].shapes.size() : pl->shapes0.size();
+      bool any = st.actors.size() != prevA || st.shapes.size() != prevS;
+      for (const auto& o : st.ops) any |= o.type != eng::scene::PPO_API_RESET && o.type != eng::scene::PPO_REFILTER;
+      if (!any || (long long)k < a || (long long)k > b) continue;
+      printf("[편집 쌍] 기록 스텝 %zu 행위자 %zu->%zu 모양 %zu->%zu 연산", k, prevA, st.actors.size(), prevS, st.shapes.size());
+      for (const auto& o : st.ops)
+        if (o.type != eng::scene::PPO_API_RESET) printf(" (%d %d %d %d)", o.type, o.a, o.b, o.c);
+      printf("\n");
+    }
+  }
+}
+
 void g1_sc_report() {
   if (!SS.on) return;
+  if (ES.on && getenv("G1_SC_EDIT_SIMS")) {
+    int k = 0;
+    for (auto& kv : ES.bySim) {
+      if (k++ >= 30) break;
+      printf("  [편집 simulate %llu]", (unsigned long long)kv.first);
+      for (auto& w : kv.second) printf(" %s %d", w.first.c_str(), w.second);
+      printf("\n");
+    }
+  }
+  if (ES.on)
+    printf("  편집 API(sc_scene.h): 추가 %" PRIu64 ", 삭제 %" PRIu64 ", 다시 넣기 %" PRIu64 ", 플래그 %" PRIu64 ", 모양 붙이기 %" PRIu64 " 떼기 %" PRIu64 " 바꾸기 %" PRIu64 ", 모듈 호출 %" PRIu64 " — 다름 %" PRIu64 " (번호 %" PRIu64 ", 칸 %" PRIu64
+           ", 추적기 %" PRIu64 ")%s, 못 받은 것 %" PRIu64 ", 덮지 못한 넓은 단계 호출 %" PRIu64 "\n",
+           ES.adds, ES.removes, ES.reinserts, ES.flagChanges, ES.attaches, ES.detaches, ES.shapeChanges, ES.calls, ES.bad, ES.idBad, ES.cellBad, ES.trackerBad,
+           ES.firstBad >= 0 ? (" 첫 simulate " + std::to_string(ES.firstBad)).c_str() : "", ES.unsup, ES.untracked);
+  editDump();
   for (const IdShadow& S : gIds)
     if (S.steps)
       printf("  번호 매김 %s: 스텝 %" PRIu64 ", 새로 받기 %" PRIu64 ", 지움 %" PRIu64 ", 다름 %" PRIu64 "%s\n", S.name, S.steps, S.creates, S.releases, S.bad,

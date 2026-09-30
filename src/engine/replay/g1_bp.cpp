@@ -120,6 +120,7 @@ bool hkAdd(Bp::AABBManager* self, Bp::BoundsIndex index, PxReal cd, Bp::FilterGr
   o.type = eng::scene::BP_ADD; o.index = index; o.contactDistance = cd; o.group = uint32_t(g); o.userData = uint64_t(uintptr_t(ud)); o.agg = agg;
   o.volumeType = uint32_t(vt); o.env = env; o.result = r;
   logOp(o);
+  g1_sc_note_bp(o.type, o.index, o.group, o.agg, o.volumeType, o.env, o.contactDistance, o.result);
   if (Mirror* M = mirrorOf(self))
     if (M->rt) {
       const uint32_t before = M->rt->handleBad;
@@ -134,6 +135,7 @@ bool hkRemove(Bp::AABBManager* self, Bp::BoundsIndex index) {
   eng::scene::BpOp o{};
   o.type = eng::scene::BP_REMOVE; o.index = index; o.result = r;
   logOp(o);
+  g1_sc_note_bp(o.type, o.index, 0, 0, 0, 0, 0.f, o.result);
   if (Mirror* M = mirrorOf(self))
     if (M->rt) {
       const uint32_t before = M->rt->handleBad;
