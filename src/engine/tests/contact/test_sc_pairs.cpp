@@ -358,6 +358,7 @@ struct Hooks : public ss::IslandHooks {
     cap = c; step = s;
     for (auto& p : pos) p = 0;
     for (auto& v : mine) v.clear();
+    lost.clear();
     preallocPos = addCmPos = 0;
   }
   uint64_t pairOf(int32_t it) const { return it < 0 ? 0 : packPair({m->inters[size_t(it)].elem0, m->inters[size_t(it)].elem1}); }
@@ -393,7 +394,8 @@ struct Hooks : public ss::IslandHooks {
   int forcedDeact = -1;  // 비활성화 재생: PhysX 결과가 참이면 두 행위자 모두 비활성으로 답한다
   bool isActorActive(int32_t a) override { return forcedDeact >= 0 ? forcedDeact == 0 : !m->actors[size_t(a)].isStatic(); }
   void internalWakeUp(int32_t) override {}
-  void addToLostTouchList(int32_t, int32_t) override {}
+  std::vector<std::pair<int32_t, int32_t>> lost;  // Scene::addToLostTouchList (이번 스텝, 차례)
+  void addToLostTouchList(int32_t a0, int32_t a1) override { lost.push_back({a0, a1}); }
 };
 
 // --np: 좁은 단계 칸 자료 (다양체 + 출력 스트림). 쌍 관리층이 목록을 바꿀 때 같이 옮긴다.
@@ -725,7 +727,7 @@ int main(int argc, char** argv) {
     if (ci && extIndex.count(ci)) jointExt[j] = extIndex[ci];
   }
   printf("조인트·관절 상호작용 자리표 %zu 개\n", extIndex.size());
-  uint64_t bad = 0, cmpList = 0, cmpEvents = 0, cmpCalls = 0, cmpActor = 0, cmpNp = 0, npPoints = 0;
+  uint64_t bad = 0, cmpList = 0, cmpEvents = 0, cmpCalls = 0, cmpActor = 0, cmpLost = 0, cmpNp = 0, npPoints = 0;
   int firstBad = -1;
   auto fail = [&](int s, const char* what) {
     if (!bad) { firstBad = s; printf("  [스텝 %d] 첫 다름: %s\n", s, what); }
@@ -1144,12 +1146,25 @@ int main(int argc, char** argv) {
       for (PxU32 i = 0; same && i < M.npMain.size(); ++i) same = int32_t(L.mContactManagerMapping[i]->getIndex()) == M.npMain.cms[i];
       if (!same) fail(step, "스텝 끝 좁은 단계 목록");
     }
+    {  // 잃은 닿음 쌍 (Scene::mLostTouchPairs: 이번 스텝에 넣은 것 — 다음 simulate 의 processLostTouchPairs 가 비운다).
+       // 행위자 번호로. 관리자가 있는데 한 번도 안 닿은 쌍을 "닿음 모름"으로 보면 여기가 다르다 (리드 dd475a0, ScShapeInteraction.h:329 hasKnownTouchState)
+      const auto& L = gSc->mLostTouchPairs;
+      bool same = L.size() == hooks.lost.size();
+      for (PxU32 i = 0; same && i < L.size(); ++i) {
+        ++cmpLost;
+        same = L[i].body1ID == M.actors[size_t(hooks.lost[i].first)].actorID && L[i].body2ID == M.actors[size_t(hooks.lost[i].second)].actorID;
+      }
+      if (!same) {
+        if (!bad) printf("    잃은 닿음 쌍 PhysX %u / 우리 %zu\n", L.size(), hooks.lost.size());
+        fail(step, "잃은 닿음 쌍");
+      }
+    }
     if (bad && step > firstBad + 2) break;
   }
   printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 ", 뺀 행위자 %" PRIu64 ", 거르기 자료 바꿈 %" PRIu64 ", 운동학 전환 %" PRIu64 ", 조인트 만듦·없앰 %" PRIu64 "\n", steps, nCreated,
          nTrig, nRemoved, nTouch, nAct, nDeact, nRemovedActors, nRefilterApi, nKinToggle, nJointOps);
-  printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents, cmpCalls, cmpActor,
-         bad);
+  printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 ", 잃은 닿음 쌍 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents,
+         cmpCalls, cmpActor, cmpLost, bad);
   if (bad) printf(" (첫 다름 스텝 %d)", firstBad);
   if (ourNp) printf("\n우리 좁은 단계(np_step.h): 칸 %" PRIu64 " (상태·패치 수·점 수·패치/점 바이트), 접촉점 %" PRIu64, cmpNp, npPoints);
   printf("\n%s\n", bad ? "결과: 다름 있음" : "결과: 쌍 관리 전부 같음");
