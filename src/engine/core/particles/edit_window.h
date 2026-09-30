@@ -13,6 +13,10 @@
 //   ④ 다음 스텝 처음에 비물리 상태 물려받기                                                            [EDIT_INHERIT_STATES — 물리 아님, 호출자]
 // 물체(강체 여럿)의 전체 상태 뜨기·되돌리기(자세·속도·관절)는 omni/리드 쪽 창(base)이 하고, 여기서는 그 앞뒤에 입자 계를 붙인다(공식 등록부 차례).
 // 몸체 상태(자세·속도·깸)는 풀이 모듈이 들고 있으므로 BodyApi 로 부른다 (core/joints/rigid_api.h setGlobalPose·setLinearVelocity 부수효과 포함).
+// 새 강체의 두 자세 (B10, 리드 곁기록 쓰기 열 09-30): 생성 = 입력 자세(방향은 PhysX getNormalized) 그대로, 그 뒤 omni.physx 의 USD→PhysX 동기화가
+//   USD 왕복 자세(spawn.h usd_roundtrip_quat) + 속도 0 을 setGlobalPose·속도로 다시 쓴다. 동기화는 "다음 물체 넣기 직전"과 "simulate 직전"에 일어나고,
+//   그때마다 이 창에서 넣은 물체 전부를 넣은 차례대로 다시 쓴다(양파 반쪽: 생성 0 → 동기 {0} → 생성 1 → 동기 {0,1} → simulate).
+//   다진 입자: 생성(자세 없음) → 입자 자세 set(입력 A) → 속도 → 동기 (왕복 C) → simulate. [pending/flushSync]
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -67,6 +71,31 @@ struct TransitionEditWindow : scene::EditWindow {
   float scenePose[16], scenePoseInv[16];  // scene._pose_info (float 4x4 행 우선)
   const std::vector<Edit>* edits = nullptr;
   int32_t failed = 0;                     // 틀을 못 찾은 편집 수
+  struct Pending {
+    int32_t h;
+    Tf pose;  // USD 왕복 행위자 자세
+  };
+  std::vector<Pending> pending;           // 이 창에서 넣어 USD 동기화를 기다리는 몸체 (넣은 차례)
+
+  // USD → PhysX 동기화 한 번: 기다리는 몸체 전부 자세·속도 0 을 다시 쓴다
+  void flushSync() {
+    const V3 z{0, 0, 0};
+    for (const Pending& q : pending) {
+      body->setActorPose(q.h, q.pose);
+      body->setVelocity(q.h, z, z);
+    }
+  }
+  // 새 몸체 하나: 생성은 입력 자세, 동기화 대기에 USD 왕복 자세
+  int32_t spawnOne(scene::EnvStep& E, const SpawnSource& src, const Pose7& p) {
+    Body b, rt;
+    const int32_t h = spawn_add(*E.sc, E.modules(), *src.T, src.actor, p, b);  // 생성: normalized(입력)
+    if (h < 0) return h;
+    body->bodyAdded(h, b);
+    scene::ScActorIn tmp;
+    actor_from_template(*src.T, src.actor, p, tmp, rt, src.usd_scale, src.raw_q);  // 왕복 몸체 자세 → 행위자 자세
+    pending.push_back(Pending{h, getGlobalPose(rt)});
+    return h;
+  }
 
   TransitionEditWindow() {
     for (int i = 0; i < 16; ++i) scenePose[i] = scenePoseInv[i] = (i % 5 == 0) ? 1.0f : 0.0f;
@@ -100,13 +129,11 @@ struct TransitionEditWindow : scene::EditWindow {
         set[i] = particle_frame_from_center(c, t + 3, S.off);  // 공식: 중심이 그대로 원점
       }
       for (const Pose7& p : e.poses) {  // 새 입자 강체 (원점 자세, 방향 정규화 전)
-        Body b;
-        const int32_t h = spawn_add(*E.sc, E.modules(), *src.T, src.actor, p, b, src.usd_scale, src.raw_q);
+        const int32_t h = spawnOne(E, src, p);
         if (h < 0) {
           ++failed;
           continue;
         }
-        body->bodyAdded(h, b);
         S.actors.push_back(h);
         set.push_back(p);
       }
@@ -146,6 +173,7 @@ struct TransitionEditWindow : scene::EditWindow {
         ++i;
       }
     }
+    flushSync();  // step_physics 의 simulate 직전 동기화 (① 에서 만든 입자)
   }
   bool extraPhysicsStep() const override { return hasRemoval(); }
   void edit(scene::EnvStep& E) override {
@@ -178,24 +206,28 @@ struct TransitionEditWindow : scene::EditWindow {
         ++failed;
         continue;
       }
-      Body b;
-      const int32_t h = spawn_add(*E.sc, E.modules(), *src.T, src.actor, e.poses[0], b, src.usd_scale, src.raw_q);
+      flushSync();  // 다음 물체 넣기 직전 동기화 (앞서 넣은 것들)
+      const int32_t h = spawnOne(E, src, e.poses[0]);
       if (h < 0) {
         ++failed;
         continue;
       }
-      body->bodyAdded(h, b);
       if (size_t(e.object) >= objects->size()) objects->resize(size_t(e.object) + 1);
       (*objects)[size_t(e.object)].actors.push_back(h);
     }
   }
 };
 
-// 한 스텝의 전이 편집 전부 (규칙 step 뒤, 환경 스텝 사이): ① → (지울 것 있으면 ② 창 + ③, 없으면 ③ 만)
+// 한 스텝의 전이 편집 전부 (규칙 step 뒤, 환경 스텝 사이): ① → (지울 것 있으면 ② 창 + ③, 없으면 ③ 만) → 동기화
+// 주의: 다진 입자가 있는 창에서는 ① 뒤의 동기화가 removing_objects 의 step_physics(물리 한 스텝) 직전에도 한 번 든다(그 simulate 앞) — extraPhysicsStep 앞 flushSync.
+// 끝에 simulate 직전 동기화 (기다리던 몸체 전부) — 다음 envStep 앞
 inline void runTransitionEdits(scene::EnvStep& E, TransitionEditWindow& w) {
+  w.pending.clear();
   w.runRuleEdits(E);
   if (w.hasRemoval()) scene::envEditWindow(E, w);
   else w.addObjects(E);
+  w.flushSync();
+  w.pending.clear();
 }
 
 }  // namespace particles
