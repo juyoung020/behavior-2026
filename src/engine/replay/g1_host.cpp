@@ -28,6 +28,8 @@ void g1_islands_compare_store(const sc2::IslandStore& O, uint64_t* n, uint64_t* 
 ss::ScPairs* g1_pairs_M();
 void g1_pairs_actor_active(std::vector<int8_t>& out);
 void g1_pairs_wake(sc2::HostWake& out);
+bool g1_scene_ours(uint64_t sim, std::vector<int32_t>& created, std::vector<int32_t>& createdTrigger, std::vector<int32_t>& removed,
+                   std::vector<uint8_t>& npStatus, std::vector<uint8_t>& npPatches);
 
 namespace {
 
@@ -54,6 +56,9 @@ struct Host {
   sc2::HostWake wake;  // 우리 깸 카운터 표 (창 앞마다 PhysX 값으로 = API 는 아직 바깥)
   size_t cursor = 0, boundary = 0;
   Stat ops, ext, isl, acts, act, pairs, win, wk;
+  bool ours = false;  // G1_HOST_OURS: 넓은·좁은 단계 결과도 우리 것 (contact 장면 그림자 G1_SCENE 에서)
+  uint64_t oursSteps = 0, oursMissing = 0;
+  Stat bpnp;
   int neg = 0;  // G1_HOST_NEG: 1 = 활성화 몰이 빼기, 2 = 재우기 몰이 빼기, 3 = 풀이 뒤 깸/잠 요청 빼기 (비교가 살아 있나)
   uint64_t nWakeOps = 0, winActMatched = 0, extInSim = 0;
   uint64_t wakeReq = 0, woken = 0, slept = 0, nActs = 0, winChanged = 0;
@@ -112,6 +117,7 @@ void g1_host_before(physx::PxScene* scene, uint64_t sim) {
     H.on = getenv("G1_HOST") != nullptr;
     H.show = getenv("G1_HOST_SHOW") != nullptr;
     if (const char* n = getenv("G1_HOST_NEG")) H.neg = atoi(n);
+    H.ours = getenv("G1_HOST_OURS") != nullptr;
     if (const char* a = getenv("G1_ISLANDS_AT")) H.at = atoll(a);
     if (H.on && (H.at < 0 || !getenv("G1_ISLANDS") || !getenv("G1_PAIRS"))) {
       printf("G1 순서기: G1_ISLANDS=1 G1_ISLANDS_AT=<sim> G1_PAIRS=1 이 함께 있어야 한다 — 끔\n");
@@ -156,7 +162,30 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   if (!H.on || !H.running) return;
   const sc2::PairsStep* Sp = g1_pairs_step();
   if (!Sp) return;
-  const sc2::PairsStep& S = *Sp;
+  // 넓은·좁은 단계 결과: G1_HOST_OURS 면 우리 contact 장면 단위(g1_scene)가 낸 것으로 바꾼다 (PhysX 기록과 같은지도 센다)
+  sc2::PairsStep Sours;
+  const sc2::PairsStep* Sx = Sp;
+  if (H.ours) {
+    Sours = *Sp;
+    if (g1_scene_ours(sim, Sours.created, Sours.createdTrigger, Sours.removedPairs, Sours.npStatus, Sours.npPatches)) {
+      ++H.oursSteps;
+      H.bpnp.chk(Sours.created == Sp->created && Sours.createdTrigger == Sp->createdTrigger, at("우리 새 겹침 = PhysX"));
+      const bool npSame = Sours.npStatus == Sp->npStatus && Sours.npPatches == Sp->npPatches;
+      if (!npSame && H.show && H.bpnp.bad == 0) {
+        printf("    좁은 단계 칸 수 우리 %zu / PhysX %zu\n", Sours.npStatus.size(), Sp->npStatus.size());
+        for (size_t k = 0, shown = 0; k < Sours.npStatus.size() && k < Sp->npStatus.size() && shown < 6; ++k)
+          if (Sours.npStatus[k] != Sp->npStatus[k] || Sours.npPatches[k] != Sp->npPatches[k]) {
+            printf("    칸 %zu 상태 우리 %x / PhysX %x, 패치 %u / %u\n", k, Sours.npStatus[k], Sp->npStatus[k], Sours.npPatches[k], Sp->npPatches[k]);
+            ++shown;
+          }
+      }
+      H.bpnp.chk(npSame, at("우리 좁은 단계 칸 결과 = PhysX"));
+      Sx = &Sours;
+    } else {
+      ++H.oursMissing;
+    }
+  }
+  const sc2::PairsStep& S = *Sx;
   ss::ScPairs& P = *H.P;
   eng::ig::IslandManager& M = H.store.M;
   sc2::LiveIslands& L = H.live;
@@ -381,6 +410,9 @@ void g1_host_report() {
   line("쌍 관리층 상태 (g1_pairs 와)", H.pairs);
   line("순서 점검 (창·마디)", H.win);
   line("깸 카운터 표 (스텝 끝)", H.wk);
+  if (H.ours)
+    printf("  넓은·좁은 단계 결과 = 우리 contact 장면 단위: %" PRIu64 " 스텝 (없어 PhysX 기록 쓴 스텝 %" PRIu64 "), 참고 PhysX 기록과 비교 %" PRIu64 " 다름 %" PRIu64 " %s\n", H.oursSteps,
+           H.oursMissing, H.bpnp.n, H.bpnp.bad, H.bpnp.first.c_str());
   printf("  깨움/잠 요청: afterIntegration %" PRIu64 ", 창에서 우리 것과 맞춘 activateNode %" PRIu64 ", simulate 안 바깥 호출 %" PRIu64 "\n", H.nWakeOps,
          H.winActMatched, H.extInSim);
   printf("  몰이 횟수: 활성화 호출 %" PRIu64 ", 깨움 노드 %" PRIu64 ", 재운 노드 %" PRIu64 ", internalWakeUp %" PRIu64 ", 창에서 바뀐 활성 표시 %" PRIu64 "\n", H.nActs,

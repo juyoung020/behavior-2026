@@ -75,9 +75,10 @@ EHD bool discreteNarrowPhasePCM(const NpWorkUnit& wu, const NpShape* shapes, con
   }
   out.statusFlag &= uint8_t(~NpStatus::eDIRTY_MANAGER);
   const float contactDist = contactDistances[wu.shape0] + contactDistances[wu.shape1];
-  // startContacts (:52)
+  // startContacts (:52) — 상태도 0 으로 (등록 때 켠 eREQUEST_CONSTRAINTS 가 여기서 지워진다; 09-30 리드: 빠져 있어 상태 바이트가 PhysX 와 달랐음)
   out.nbContacts = 0;
   out.nbPatches = 0;
+  out.statusFlag = 0;
   // 접촉 함수 (뒤집기·법선 반전 포함)
   bool flipped;
   pcmPair(s0.geom, s1.geom, ct0.transform, ct1.transform, contactDist, params.meshContactMargin, params.toleranceLength, cache, buf, flipped);

@@ -238,8 +238,8 @@ bool g1_simulate(PxScene* scene, float dt, uint64_t sim) {
 // ovd_replay 가 fetchResults 뒤에 부른다
 void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_pairs_after(scene, sim);
-  g1_host_after(scene, sim);  // 순서기: 이번 스텝 쌍 관리층 입력·섬 기록이 다 모인 뒤, 다른 그림자가 PhysX 를 건드리기 전
   g1_scene_after(scene, sim);  // 우리 contact 한 스텝 (닫힌 고리 2단: solver 가 이 접촉 입력을 쓴다 -> 먼저)
+  g1_host_after(scene, sim);  // 순서기: 쌍 관리층 입력·섬 기록·우리 넓은/좁은 단계 결과가 다 모인 뒤, 다른 그림자가 PhysX 를 건드리기 전
   g1_islands_after(scene, sim);  // 우리 섬 스텝 끝 상태 (3단: solver 가 잠들 노드를 여기서 읽는다 -> 먼저)
   g1_solver_after(scene, sim);
   g1_art_after(scene, sim);

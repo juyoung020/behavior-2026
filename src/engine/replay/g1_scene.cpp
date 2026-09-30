@@ -99,6 +99,8 @@ struct SceneShadow {
   std::vector<ep::PxTransform> actorStaticPose;
   std::vector<sv::SolverCM> solverCms;
   ec::SolverInputOut solverIn;
+  std::vector<uint8_t> ourNpStatus, ourNpPatches;  // 순서기 그림자용
+  uint64_t ourStep = ~0ull;
   uint64_t cmpSolver = 0, badSolver = 0;
   // 닫힌 고리 2단: Sc 입력 조각을 우리 Sc 장면(g1_sc)에서
   uint64_t lsSteps = 0, lsCells = 0, lsResync = 0, lsBoundsDiff = 0, lsWordDiff = 0, lsCacheDiff = 0, lsDistDiff = 0, lsNonShape = 0, lsAggOurs = 0, lsAggDiff = 0;
@@ -350,6 +352,14 @@ void runStep(PxScene* scene) {
     }
     FtzScope fz;
     ec::contactNarrowPhase(S, tc.data(), SC.dist.data());
+    // 순서기 그림자(g1_host)가 쓰는 우리 좁은 단계 결과: 합친 뒤 목록 칸 순서 (PhysX fillManagerTouchEvents 때 뜬 것과 같은 자리)
+    SC.ourNpStatus.clear();
+    SC.ourNpPatches.clear();
+    for (uint32_t slot = 0; slot < M.npMain.size(); ++slot) {
+      SC.ourNpStatus.push_back(S.caches.L[0][slot].out.statusFlag);
+      SC.ourNpPatches.push_back(S.caches.L[0][slot].out.nbPatches);
+    }
+    SC.ourStep = SC.sim;
   }
   // 닿음 사건·좁은 단계 목록·칸 출력 비교 (PhysX 관리자 번호 -> 출력)
   {
@@ -653,6 +663,19 @@ void g1_scene_report() {
          "), solver 입력 관리자 %" PRIu64 " (다름 %" PRIu64 "), 활성화 재생 어긋남 %" PRIu64 ", PhysX 에 없는 칸 %" PRIu64 " — 다름 합 %" PRIu64 "%s\n",
          SC.cmpOverlap, SC.badOverlap, SC.cmpSlot, SC.cmpVal, SC.badSlot, SC.cmpList, SC.badEnd, SC.cmpSolver, SC.badSolver, SC.actBad, SC.goneCm, SC.bad,
          SC.firstBad >= 0 ? ("  첫 다름 simulate " + std::to_string(SC.firstBad) + " " + SC.firstWhat).c_str() : "");
+}
+
+// 순서기 그림자(g1_host.cpp): 이번 스텝 우리 넓은 단계 겹침(생성·소멸, AABB 관리자 출력 순서)과 우리 좁은 단계 칸 결과. 없으면 false
+bool g1_scene_ours(uint64_t sim, std::vector<int32_t>& created, std::vector<int32_t>& createdTrigger, std::vector<int32_t>& removed,
+                   std::vector<uint8_t>& npStatus, std::vector<uint8_t>& npPatches) {
+  if (!SC.on || !SC.started || !SC.S || SC.ourStep != sim) return false;
+  created = SC.S->createdShape;
+  createdTrigger = SC.S->createdTrigger;
+  removed = SC.S->destroyedShape;
+  removed.insert(removed.end(), SC.S->destroyedTrigger.begin(), SC.S->destroyedTrigger.end());
+  npStatus = SC.ourNpStatus;
+  npPatches = SC.ourNpPatches;
+  return true;
 }
 
 // 닫힌 고리 2단: 이번 스텝 우리 solver 입력 (관리자 번호 = PhysX 접촉 관리자 풀 번호). 없으면 false
