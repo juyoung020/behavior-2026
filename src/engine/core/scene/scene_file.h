@@ -16,6 +16,7 @@
 #include "core/contact/patches.h"
 #include "core/joints/joint_types.h"
 #include "core/solver/solver_io.h"  // FrictionPatch (지난 스텝 마찰 패치)
+#include "core/scene/island_state.h"
 
 namespace eng {
 namespace scene {
@@ -88,6 +89,7 @@ struct SceneHeader {
   uint32_t artMaxLinks, artMaxDofs;
   uint32_t nActors, nShapes, nJoints, nBodies, nArts, nMaterials, nHulls;
   uint32_t nCMs, nManifolds, nFriction, sizeCM, sizeManifold, sizeFriction;
+  uint32_t hasIslands, sizeIgNode, sizeIgIsland, padH;
   uint64_t hullBytes, nameBytes;
   float gravity[3], dt, lengthScale, speedScale;
   uint32_t sceneFlags, solverType, posIters, velIters;
@@ -113,6 +115,7 @@ struct SceneFile {
   std::vector<SceneCM> cms;
   std::vector<contact::ManifoldSlot> manifolds;  // 파일에는 바이트 그대로 (읽은 뒤 relocateManifold)
   std::vector<sv::FrictionPatch> friction;
+  IslandMgrState islands;  // 섬 관리자 (v1-b)
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -133,7 +136,9 @@ inline bool rd(FILE* f, std::vector<T>& v, size_t n) { v.resize(n); return n == 
 
 inline void fillSizes(SceneHeader& h) {
   memcpy(h.magic, "ENGSCN1", 8);
-  h.version = 3;
+  h.version = 4;
+  h.sizeIgNode = sizeof(ig::Node);
+  h.sizeIgIsland = sizeof(ig::Island);
   h.sizeCM = sizeof(SceneCM);
   h.sizeManifold = sizeof(contact::ManifoldSlot);
   h.sizeFriction = sizeof(sv::FrictionPatch);
@@ -160,6 +165,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
   s.h.nCMs = uint32_t(s.cms.size());
   s.h.nManifolds = uint32_t(s.manifolds.size());
   s.h.nFriction = uint32_t(s.friction.size());
+  s.h.hasIslands = s.islands.valid ? 1u : 0u;
   s.h.hullBytes = s.hulls.size();
   s.h.nameBytes = s.names.size();
   FILE* f = fopen(path, "wb");
@@ -168,7 +174,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
   bool ok = fwrite(&s.h, sizeof(s.h), 1, f) == 1 && wr(f, s.materials) && wr(f, s.actors) && wr(f, s.shapes) && wr(f, s.hullOffsets) && wr(f, s.hulls) &&
             wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.artName) && wr(f, s.shapeFilters) && wr(f, s.cms) &&
             (s.manifolds.empty() || fwrite(static_cast<const void*>(s.manifolds.data()), sizeof(contact::ManifoldSlot), s.manifolds.size(), f) == s.manifolds.size()) &&
-            wr(f, s.friction);
+            wr(f, s.friction) && (!s.islands.valid || writeIslands(f, s.islands));
   ok = fclose(f) == 0 && ok;
   return ok;
 }
@@ -184,7 +190,7 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
   if (s.h.version != want.version || s.h.sizeActor != want.sizeActor || s.h.sizeShape != want.sizeShape || s.h.sizeJoint != want.sizeJoint ||
       s.h.sizeBody != want.sizeBody || s.h.sizeArt != want.sizeArt || s.h.sizeMaterial != want.sizeMaterial || s.h.sizeGeom != want.sizeGeom ||
       s.h.artMaxLinks != want.artMaxLinks || s.h.artMaxDofs != want.artMaxDofs || s.h.sizeCM != want.sizeCM || s.h.sizeManifold != want.sizeManifold ||
-      s.h.sizeFriction != want.sizeFriction) {
+      s.h.sizeFriction != want.sizeFriction || s.h.sizeIgNode != want.sizeIgNode || s.h.sizeIgIsland != want.sizeIgIsland) {
     fclose(f);
     return fail("구조체 크기·판이 이 빌드와 다름 (ENG_ART_MAX_LINKS 등)");
   }
@@ -199,6 +205,7 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
     for (contact::ManifoldSlot& m : s.manifolds) contact::relocateManifold(m);  // 자기 버퍼 포인터를 새 자리로
   }
   ok = ok && rd(f, s.friction, s.h.nFriction);
+  if (ok && s.h.hasIslands) ok = readIslands(f, s.islands);
   fclose(f);
   return ok ? true : fail("짧음");
 }

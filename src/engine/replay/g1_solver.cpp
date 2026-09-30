@@ -478,6 +478,7 @@ class HookDispatcher : public PxCpuDispatcher {
         t = mQ.front();
         mQ.pop_front();
       }
+      g1_islands_task(t->getName());
       if (!strcmp(t->getName(), "UpdateContinuationTask")) {
         takeSnapshot();
         gPrep.clear();
@@ -496,7 +497,7 @@ class HookDispatcher : public PxCpuDispatcher {
 }  // namespace
 
 PxCpuDispatcher* g1_dispatcher() {
-  if (!getenv("G1_SOLVER") && !getenv("G1_ART")) return nullptr;
+  if (!getenv("G1_SOLVER") && !getenv("G1_ART") && !getenv("G1_ISLANDS")) return nullptr;
   static HookDispatcher* d = new HookDispatcher();  // 프로세스 끝까지 (PxPhysics 여러 개가 같이 씀)
   GS.on = true;
   GS.cmpOn = getenv("G1_SOLVER") != nullptr;

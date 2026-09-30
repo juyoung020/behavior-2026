@@ -78,7 +78,7 @@ set(G1_PX_INC
   ${PHYSX_ROOT}/source/common/include ${PHYSX_ROOT}/source/common/src ${PHYSX_ROOT}/source/foundation/include)
 # G1_CORE_ROOT: solver 를 가져올 엔진 뿌리 (기본 = 이 저장소 src/engine). 다른 작업자가 core/solver 를 고치는 중이면 커밋본을 풀어 둔 곳을 준다.
 set(G1_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "G1 solver 그림자가 쓸 src/engine 뿌리")
-add_executable(ovd_replay_g1 ovd_replay.cpp g1_shadow.cpp g1_solver.cpp g1_art.cpp g1_dump.cpp ${G1_CORE_ROOT}/core/solver/solver_host.cpp px_gpu_stub.cpp)
+add_executable(ovd_replay_g1 ovd_replay.cpp g1_shadow.cpp g1_solver.cpp g1_art.cpp g1_dump.cpp g1_islands.cpp ${G1_CORE_ROOT}/core/solver/solver_host.cpp px_gpu_stub.cpp)
 target_include_directories(ovd_replay_g1 BEFORE PRIVATE ${G1_CORE_ROOT})  # "core/..." 꼴 include 도 같은 뿌리에서
 target_include_directories(ovd_replay_g1 PRIVATE ${PHYSX_ROOT}/include ${PHYSX_ROOT}/pvdruntime/include ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_source_files_properties(g1_shadow.cpp PROPERTIES INCLUDE_DIRECTORIES "${G1_PX_INC}"
@@ -89,12 +89,38 @@ set(G1S_PX_INC ${G1_PX_INC}
   ${PHYSX_ROOT}/source/lowleveldynamics/shared ${PHYSX_ROOT}/source/lowleveldynamics/src ${PHYSX_ROOT}/source/immediatemode/include)
 set_source_files_properties(g1_solver.cpp PROPERTIES INCLUDE_DIRECTORIES "${G1S_PX_INC}"
   COMPILE_DEFINITIONS "PX_PHYSX_STATIC_LIB;PX_PUBLIC_RELEASE=1;PX_NVTX=0;G1_SOLVER_IO=\"${G1_CORE_ROOT}/core/solver/solver_io.h\"" COMPILE_OPTIONS "-Wno-macro-redefined")
-set_source_files_properties(g1_art.cpp g1_dump.cpp PROPERTIES INCLUDE_DIRECTORIES "${G1S_PX_INC}"
+set_source_files_properties(g1_art.cpp g1_dump.cpp g1_islands.cpp PROPERTIES INCLUDE_DIRECTORIES "${G1S_PX_INC}"
   COMPILE_DEFINITIONS "PX_PHYSX_STATIC_LIB;PX_PUBLIC_RELEASE=1;PX_NVTX=0" COMPILE_OPTIONS "-Wno-everything")
 target_compile_definitions(ovd_replay_g1 PRIVATE ${PX_DEFS})
 target_compile_options(ovd_replay_g1 PRIVATE ${COMMON_FLAGS})
 target_link_libraries(ovd_replay_g1 ovd ${PHYSX_LIBS})
-# 진단: PhysX 접촉 준비(4 개 묶음/하나씩) 호출을 가로챈다 (g1_solver.cpp)
+# 진단: PhysX 접촉 준비(4 개 묶음/하나씩) 호출을 가로챈다 (g1_solver.cpp) + 섬 관리자 호출 기록 (g1_islands.cpp, tests/solver test_islands 와 같은 목록)
 target_link_options(ovd_replay_g1 PRIVATE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager7addNodeEbbNS0_4Node8NodeTypeEPv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager10removeNodeENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager26preallocateContactManagersEjPj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager13addConstraintEPNS_2Dy10ConstraintENS_11PxNodeIndexES5_PNS_2Sc11InteractionE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager12activateNodeENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14putNodeToSleepENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager12setKinematicENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager10setDynamicENS_11PxNodeIndexE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16removeConnectionEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCMEj
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager18firstPassIslandGenEv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager31additionalSpeculativeActivationEv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager24secondPassIslandGenPart1Ev
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager24secondPassIslandGenPart2Ev
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager19secondPassIslandGenEv
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager18thirdPassIslandGenEPNS_10PxBaseTaskE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE
+  -Wl,--wrap=_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE
+  -Wl,--wrap=_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj
+  -Wl,--wrap=_ZN5physx2IG9IslandSim20removeDestroyedEdgesEv
+  -Wl,--wrap=_ZN5physx2IG9IslandSim16processLostEdgesERKNS_7PxArrayINS_11PxNodeIndexENS_21PxReflectionAllocatorIS3_EEEEbbj
   -Wl,--wrap=_ZN5physx2Dy33createFinalizeSolverContacts4StepEPPNS_23PxsContactManagerOutputERNS0_13ThreadContextEPNS_22PxTGSSolverContactDescEffffffffRNS_21PxConstraintAllocatorE
   -Wl,--wrap=_ZN5physx2Dy32createFinalizeSolverContactsStepERNS_22PxTGSSolverContactDescERNS_23PxsContactManagerOutputERNS0_13ThreadContextEffffffffRNS_21PxConstraintAllocatorE)

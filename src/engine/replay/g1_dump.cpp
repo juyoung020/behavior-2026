@@ -333,6 +333,39 @@ void dumpScene(PxScene* scene, uint64_t sim) {
       F.cms.push_back(c);
     }
   }
+  // 섬 관리자 (v1-b): 노드 객체 -> 행위자 번호(강체) / 0x80000000 | 관절체 번호, 간선 객체 -> 접촉 관리자 번호 / 0x80000000 | 조인트 번호
+  {
+    struct Maps {
+      std::unordered_map<const void*, uint32_t> node, edge;
+    } maps;
+    for (auto& kv : actorOfLL) maps.node[kv.first] = kv.second;
+    for (uint32_t k = 0; k < arts.size(); ++k) maps.node[llArticulation(arts[k])] = 0x80000000u | k;
+    {
+      const PxU32 nInter = scs.getNbInteractions(Sc::InteractionType::eOVERLAP);
+      Sc::ElementSimInteraction** inter = scs.getInteractions(Sc::InteractionType::eOVERLAP);
+      uint32_t ci = 0;
+      for (PxU32 ii = 0; ii < nInter; ++ii) {
+        const PxsContactManager* cm = static_cast<const Sc::ShapeInteraction*>(inter[ii])->getContactManager();
+        if (cm) maps.edge[cm] = ci++;
+      }
+      const PxU32 nc = scene->getNbConstraints();
+      std::vector<PxConstraint*> cs(nc);
+      scene->getConstraints(cs.data(), nc);
+      for (PxU32 k = 0; k < nc; ++k)
+        if (Sc::ConstraintSim* sim = static_cast<NpConstraint*>(cs[k])->getCore().getSim()) maps.edge[&sim->getLowLevelConstraint()] = 0x80000000u | k;
+    }
+    auto nodeId = [](const void* o, uint32_t, void* u) -> uint32_t {
+      auto& m = static_cast<Maps*>(u)->node;
+      auto it = m.find(o);
+      return it == m.end() ? 0xffffffffu : it->second;
+    };
+    auto edgeId = [](const void* o, void* u) -> uint32_t {
+      auto& m = static_cast<Maps*>(u)->edge;
+      auto it = m.find(o);
+      return it == m.end() ? 0xfffffffeu : it->second;
+    };
+    g1_islands_capture(scene, F.islands, nodeId, edgeId, &maps);
+  }
   if (!sc::writeScene(D.out.c_str(), F)) {
     fprintf(stderr, "[장면 뜨기] 쓰기 실패: %s\n", D.out.c_str());
     return;
@@ -456,6 +489,8 @@ void dumpScene(PxScene* scene, uint64_t sim) {
   printf("  판 %u 개 배치에 다시 넣음: 틀 %zu 벌 공유, 판당 상태 %.2f MB (몸체 %zu B, 관절체 %zu B/개, 조인트 %zu B/개)\n", D.envs, B.shareds.size(),
          double(B.stateBytes()) / D.envs / 1e6, sizeof(eng::Body), sizeof(eng::art::Articulation), sizeof(sc::SceneJoint));
   printf("  접촉 관리자 %zu (다양체 %zu, 마찰 패치 %zu, 캐시 못 찾음 %" PRIu64 ")\n", R.cms.size(), R.manifolds.size(), R.friction.size(), nNoCache);
+  printf("  섬 관리자: 노드 %zu, 간선 %zu, 섬 %zu (활성 %zu)\n", R.islands.accurate.nodes.size(), R.islands.edgeNodeIndices.size() / 2, R.islands.accurate.islands.size(),
+         R.islands.accurate.activeIslands.size());
   printf("  PhysX 공개 API 값과 비교 %" PRIu64 ", 비트 다름 %" PRIu64 "%s\n", D.cmp, D.bad, D.bad ? ("  첫 다름: " + D.firstBad).c_str() : "");
 }
 

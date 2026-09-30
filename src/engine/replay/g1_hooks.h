@@ -27,4 +27,12 @@ void g1_art_after(physx::PxScene* scene, uint64_t sim);
 void g1_art_report();
 // 엔진 장면 파일의 모양 순서대로 PxsShapeCore* (g1_dump.cpp, 뜨기와 같은 열거)
 std::vector<const void*> g1_shape_cores(physx::PxScene* scene);
+namespace eng { namespace scene { struct IslandMgrState; } }
+// 섬 관리자 그림자·넘겨받기 (g1_islands.cpp, G1_ISLANDS)
+void g1_islands_before(physx::PxScene* scene, uint64_t sim);
+void g1_islands_after(physx::PxScene* scene, uint64_t sim);
+void g1_islands_task(const char* name);  // 가로채기 디스패처가 작업을 돌리기 직전에
+void g1_islands_report();
+bool g1_islands_capture(physx::PxScene* scene, eng::scene::IslandMgrState& s, uint32_t (*objectId)(const void*, uint32_t, void*),
+                        uint32_t (*edgeObject)(const void*, void*), void* user);
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)
