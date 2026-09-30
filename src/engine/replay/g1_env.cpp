@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -15,6 +16,7 @@
 #include "core/scene/env_load.h"
 #include "core/scene/env_solve.h"
 #include "core/scene/env_body_api.h"
+#include "core/scene/env_window.h"
 namespace physx { class PxActor; }
 #include "g1_hooks.h"
 
@@ -61,7 +63,13 @@ struct EnvCheck {
   // 판 도중 조인트 (보조 잡기): 우리 조인트 번호 -> PhysX 제약 주소 (상수 블록을 창 입력으로 다시 뜸 — 옮기지 않은 API)
   std::map<uint32_t, const void*> rtJoints;
   uint64_t jointsAdded = 0, jointsRemoved = 0, jointsBad = 0;
-  uint64_t ctlWindows = 0, ctlSkipped = 0;  // 편집 뒤 창(훅 4): 제어만 넣은 창, 뺀 기록 섬 호출
+  uint64_t ctlWindows = 0, ctlSkipped = 0;
+  // 창 입력 흐름 (G2-0): 이번 창, 쌍 관리층 앞 입력 표, 기록 파일 (G1_ENV_REC)
+  sc2::EnvWindow win;
+  sc2::PairsStep front;
+  bool frontSet = false;
+  FILE* rec = nullptr;
+  uint64_t recWindows = 0, recUnsup = 0;  // 편집 뒤 창(훅 4): 제어만 넣은 창, 뺀 기록 섬 호출
   // 대조
   uint64_t cmpBody = 0, badBody = 0, cmpArt = 0, badArt = 0, cmpWake = 0, badWake = 0;
   long long firstBad = -1;
@@ -240,6 +248,16 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
     g1_env_fric_scene(scene);
     EC.pxArts = g1_env_px_arts(scene);
     EC.running = true;
+    if (const char* rp = getenv("G1_ENV_REC")) {  // 창 입력 흐름 (G2-0): 머리 + 장면 파일 simulate
+      EC.rec = fopen(rp, "wb");
+      if (EC.rec) {
+        fwrite(sc2::kEnvWinMagic, 1, 8, EC.rec);
+        const uint64_t s0 = EC.f.h.sim;
+        fwrite(&s0, 8, 1, EC.rec);
+      } else {
+        printf("G1 env 창 입력 흐름: 파일을 못 엶 %s\n", rp);
+      }
+    }
     EC.first = true;
     EC.cursor = EC.boundary = g1_islands_rec_count();
     if (EC.pxArts.size() != EC.solver.arts.size()) printf("G1 env 닫힌 고리: 관절체 수가 다름 (PhysX %zu / 파일 %zu)\n", EC.pxArts.size(), EC.solver.arts.size());
@@ -301,24 +319,36 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
   const int editFlags = g1_env_edit_hook ? g1_env_edit_hook(sim, E, EC.solver, *EC.api) : (getenv("G1_ENV_CTL_ONLY") && !EC.first ? 5 : 0);
   if (editFlags) ++EC.editWindows;
   // 1. 창: 쌍 관리층 앞 연산 (섬 호출은 모아 둠), 섬 바깥 호출은 기록 차례대로, 우리 쌍 호출은 기록의 쌍 호출 자리에
-  if (!(editFlags & 1)) {  // 기록 창 (편집 창이 대신하지 않은 simulate)
-  L.clearStep();
-  L.defer = true;
-  sc2::pairsPreOps(P, *Sp);
-  L.defer = false;
-  size_t gi = 0;
+  sc2::EnvWindow& W = EC.win;
+  W = sc2::EnvWindow{};
+  W.sim = sim;
+  W.first = EC.first ? 1 : 0;
+  W.edit = editFlags ? 1 : 0;
+  if (!(editFlags & 1)) {  // 기록 창 (편집 창이 대신하지 않은 simulate): PhysX 창에서 창 입력(EnvWindow)을 떠 envApplyWindow 로 — 단독 실행기와 같은 함수
+  // 1. 쌍 관리층 앞 입력 표 (바뀐 창만 담음)
+  auto sameVec = [](const auto& a, const auto& b) { return a.size() == b.size() && (a.empty() || !memcmp(a.data(), b.data(), a.size() * sizeof(a[0]))); };
+  if (!EC.frontSet || !sameVec(Sp->actors, EC.front.actors) || !sameVec(Sp->shapes, EC.front.shapes) || !sameVec(Sp->joints, EC.front.joints)) {
+    W.tables = 1;
+    W.actors = Sp->actors;
+    W.shapes = Sp->shapes;
+    W.joints = Sp->joints;
+    EC.frontSet = true;
+  }
+  W.ops = Sp->ops;
+  // 2. 섬: 기록 차례 (바깥 호출 그대로, 쌍 관리층 호출은 우리 호출 자리 표시), 새 조인트는 PhysX 제약에서 뜸
+  std::vector<const void*> newDyc;
   if (!EC.first) {
     for (size_t i = EC.cursor; i < EC.boundary; ++i) {
       sc2::IslOp r;
       g1_islands_rec(i, r);
-      if (r.op == sc2::ISL_ADD_CONSTRAINT && r.list.size() == 2) {  // 판 도중 새 조인트: PhysX 제약에서 조인트 칸을 떠 우리 조인트 표에 붙임
-        const void* dyc = reinterpret_cast<const void*>(uintptr_t(r.list[0]) | (uintptr_t(r.list[1]) << 32));
-        uint32_t kind[2], body[2], link[2];
+      if (r.op == sc2::ISL_ADD_CONSTRAINT) {
         sc2::SceneJoint j{};
-        uint32_t obj = 0;
-        if (g1_env_px_joint(EC.scene, dyc, kind, body, link, j)) {
+        uint8_t ok = 0;
+        const void* dyc = r.list.size() == 2 ? reinterpret_cast<const void*>(uintptr_t(r.list[0]) | (uintptr_t(r.list[1]) << 32)) : nullptr;
+        uint32_t kind[2], body[2], link[2];
+        if (dyc && g1_env_px_joint(EC.scene, dyc, kind, body, link, j)) {
           uint32_t* act[2] = {&j.actor0, &j.actor1};
-          bool ok = true;
+          ok = 1;
           for (int s = 0; s < 2; ++s) {
             if (kind[s] == 0xffffffffu) continue;
             bool found = false;
@@ -329,112 +359,112 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
                 found = true;
               }
             }
-            ok = ok && found;
+            if (!found) ok = 0;
           }
-          if (ok) {
-            const uint32_t k = EC.solver.addJoint(j);
-            EC.rtJoints[k] = dyc;
-            obj = 0x80000000u | k;
-            ++EC.jointsAdded;
-            if (getenv("G1_ENV_TRACE"))
-              fprintf(stderr, "[g1 env] sim %llu 새 조인트 %u (제약 번호 %u, 행위자 %u/%u)\n", (unsigned long long)sim, k, j.index, j.actor0, j.actor1);
-          } else {
-            ++EC.jointsBad;
-          }
-        } else {
-          ++EC.jointsBad;
         }
-        if (eng::ig::addConstraint(M, obj, sc2::islNode(r.p), sc2::islNode(r.q)) != r.result) ++EC.winMismatch;
-        ++EC.winExt;
+        r.list.clear();  // 주소는 이 실행에서만 뜻이 있다
+        W.isl.push_back(r);
+        W.newJoints.push_back(j);
+        W.newJointOk.push_back(ok);
+        newDyc.push_back(dyc);
       } else if (sc2::islExternalOp(r)) {
-        if (r.op == sc2::ISL_REMOVE_CONN && 2 * r.a + 1 < M.cpu.cap) {  // 조인트 간선 끊기 = 조인트 해제
-          const uint32_t o = M.constraintOrCm[r.a];
-          if (o != eng::ig::INVALID_EDGE && (o & 0x80000000u)) {
-            EC.solver.removeJoint(o & 0x7fffffffu);
-            EC.rtJoints.erase(o & 0x7fffffffu);
-            ++EC.jointsRemoved;
-          }
-        }
-        sc2::islApplyExternal(M, r);
-        ++EC.winExt;
+        W.isl.push_back(r);
       } else if (sc2::islPairsOp(r)) {
-        if (gi < L.out.size()) {
-          if (!sc2::islSame(L.out[gi], r)) ++EC.winMismatch;
-          L.apply(gi++);
-          ++EC.winOurs;
-        } else {
-          ++EC.winMismatch;
-        }
+        r.op |= sc2::kIslOurs;
+        W.isl.push_back(r);
       }
     }
-    for (; gi < L.out.size(); ++gi) {
-      L.apply(gi);
-      ++EC.winMismatch;
-    }
-  }  // 경계 simulate: 파일 섬 상태가 이미 창을 담았다 -> 우리 쌍 호출은 버림
-  L.clearStep();
-  EC.cursor = g1_islands_rec_count();
-  // 2. 깸 카운터·활성 = 창 뒤 PhysX (API 는 바깥)
-  E.wake = EC.preWake;
-  if (E.active.size() < P.actors.size()) E.active.resize(P.actors.size(), 0);
-  for (size_t k = 0; k < EC.preActive.size() && k < E.active.size(); ++k)
-    if (EC.preActive[k] >= 0) E.active[k] = uint8_t(EC.preActive[k]);
-  // 3. 몸체: 건드린 것은 창 뒤 PhysX 값으로 (자세·속도·깸) + Sc 칸
+  }
+  // 3. 깸 카운터·활성 = 창 뒤 PhysX (API 는 바깥) — 지난 스텝 우리 값과 다른 칸만
+  if (EC.preWake.bodies.size() != E.wake.bodies.size() || EC.preWake.arts.size() != E.wake.arts.size()) W.unsup |= 2;
+  for (size_t k = 0; k < EC.preWake.bodies.size(); ++k) {
+    const sc2::HostBodyWake& p = EC.preWake.bodies[k];
+    const sc2::HostBodyWake* q = E.wake.body(p.node);
+    if (!q || memcmp(q, &p, sizeof(p))) W.wakeBodies.push_back(p);
+  }
+  for (const sc2::HostArtWake& p : EC.preWake.arts) {
+    const sc2::HostArtWake* q = E.wake.art(p.node);
+    if (!q || q->wc != p.wc || memcmp(&q->wc, &p.wc, 4) || q->links != p.links) W.wakeArts.push_back(p);
+  }
+  for (size_t k = 0; k < EC.preActive.size(); ++k)
+    if (EC.preActive[k] >= 0 && (k >= E.active.size() || E.active[k] != uint8_t(EC.preActive[k]))) W.active.push_back({uint32_t(k), uint8_t(EC.preActive[k])});
+  // 4. 건드린 몸체: 창 뒤 PhysX 값 (자세·속도·깸) + Sc 칸
   std::unordered_map<uint64_t, int32_t> scByNode;
   for (size_t h = 0; h < o.sc.actors.size(); ++h)
     if (o.sc.actors[h].alive && o.sc.actors[h].kind != 0) scByNode[o.sc.actors[h].node] = int32_t(h);
   for (const G1BodyState& b : EC.pre) {
     if (b.link || !b.touched) continue;
-    const int32_t bi = EC.solver.bodyOf(uint32_t(b.node & 0xffffffffu));
-    if (bi < 0) continue;
-    eng::Body& x = EC.solver.bodies[size_t(bi)];
-    x.body2World = tfOf(b.b2w);
-    x.body2Actor = tfOf(b.b2a);
-    x.linVel = eng::V3{b.lin[0], b.lin[1], b.lin[2]};
-    x.angVel = eng::V3{b.ang[0], b.ang[1], b.ang[2]};
-    x.wakeCounter = b.wc;
+    if (EC.solver.bodyOf(uint32_t(b.node & 0xffffffffu)) < 0) continue;
+    sc2::EnvBodySet x{};
+    x.node = b.node;
+    memcpy(x.b2w, b.b2w, 28);
+    memcpy(x.b2a, b.b2a, 28);
+    memcpy(x.lin, b.lin, 12);
+    memcpy(x.ang, b.ang, 12);
+    x.wc = b.wc;
+    auto it = scByNode.find(b.node);
+    x.sc = it == scByNode.end() ? -1 : it->second;
+    W.bodySets.push_back(x);
     ++EC.resyncBodies;
     if (getenv("G1_ENV_TRACE") && !EC.first) fprintf(stderr, "[g1 env] sim %llu 다시 맞춤 몸체 노드 %llx\n", (unsigned long long)sim, (unsigned long long)b.node);
-    auto it = scByNode.find(b.node);
-    if (it != scByNode.end()) {
-      eng::px::PxTransform t;
-      memcpy(&t, b.b2w, 28);
-      eng::px::PxTransform a;
-      memcpy(&a, b.b2a, 28);
-      o.sc.updateActorCached(it->second, t, a, false);
-    }
   }
-  // 4. 관절체: 옮긴 호출, 건드린 것은 창 뒤 PhysX 값 (+ 링크 Sc 칸)
+  // 5. 관절체 호출 (건드린 관절체는 아래에서 통째로 다시 맞춤)
   for (size_t k = 0; k < EC.pxArts.size() && k < EC.solver.arts.size(); ++k) {
-    if (EC.artTouched[k] && EC.artSnap[k]) {
-      EC.solver.arts[k] = *EC.artSnap[k];
-      ++EC.resyncArts;
-      if (getenv("G1_ENV_TRACE") && !EC.first) fprintf(stderr, "[g1 env] sim %llu 다시 맞춤 관절체 %zu\n", (unsigned long long)sim, k);
-      for (const G1BodyState& b : EC.pre) {
-        if (!b.link || EC.solver.artOf(uint32_t(b.node & 0xffffffffu)) != int32_t(k)) continue;
-        auto it = scByNode.find(b.node);
-        if (it == scByNode.end()) continue;
-        eng::px::PxTransform t, a;
-        memcpy(&t, b.b2w, 28);
-        memcpy(&a, b.b2a, 28);
-        o.sc.updateActorCached(it->second, t, a, false);
-      }
-    } else if (!EC.artOps[k].empty()) {
-      g1_env_art_apply_ops(EC.solver.arts[k], EC.artOps[k]);
-      EC.artOpsN += EC.artOps[k].size();
-    }
+    if (EC.artTouched[k] && EC.artSnap[k]) continue;
+    for (const G1ArtOp& op : EC.artOps[k]) W.artOps.push_back(sc2::EnvArtOp{uint32_t(k), op.type, op.axis, {0, 0}, op.link, op.v});
+    EC.artOpsN += EC.artOps[k].size();
   }
-  // 판 도중 조인트의 상수 블록 = 이번 simulate 에 PhysX 가 쓴 값 (조인트 자세 등 창 API 는 아직 옮기지 않음)
+  // 6. 판 도중 조인트의 상수 블록 = 이번 simulate 에 PhysX 가 쓴 값 (조인트 자세 등 창 API 는 아직 옮기지 않음) — 바뀐 것만
   for (const auto& kv : EC.rtJoints) {
     uint32_t kind[2], body[2], link[2];
     sc2::SceneJoint j{};
     if (!g1_env_px_joint(EC.scene, kv.second, kind, body, link, j)) continue;
-    sc2::SceneJoint& J = EC.solver.joints[kv.first];
-    J.flags = j.flags;
-    J.linBreakForce = j.linBreakForce;
-    J.angBreakForce = j.angBreakForce;
-    J.minResponseThreshold = j.minResponseThreshold;
-    J.data = j.data;
+    const sc2::SceneJoint& J = EC.solver.joints[kv.first];
+    if (J.flags != j.flags || memcmp(&J.linBreakForce, &j.linBreakForce, 12) || memcmp(&J.data, &j.data, sizeof(j.data))) {
+      sc2::SceneJoint n = J;
+      n.flags = j.flags;
+      n.linBreakForce = j.linBreakForce;
+      n.angBreakForce = j.angBreakForce;
+      n.minResponseThreshold = j.minResponseThreshold;
+      n.data = j.data;
+      W.jointData.push_back({kv.first, n});
+    }
+  }
+  // 넣기
+  sc2::EnvWinStats st;
+  std::vector<uint32_t> nji;
+  sc2::envApplyWindow(E, o.sc, EC.solver, P, M, W, EC.front, st, &nji);
+  EC.winExt += st.ext;
+  EC.winOurs += st.ours;
+  EC.winMismatch += st.mismatch;
+  EC.jointsAdded += st.jointsAdded;
+  EC.jointsRemoved += st.jointsRemoved;
+  EC.jointsBad += st.jointsBad;
+  for (size_t n = 0; n < nji.size() && n < newDyc.size(); ++n)
+    if (nji[n] != ~0u) {
+      EC.rtJoints[nji[n]] = newDyc[n];
+      if (getenv("G1_ENV_TRACE"))
+        fprintf(stderr, "[g1 env] sim %llu 새 조인트 %u (제약 번호 %u, 행위자 %u/%u)\n", (unsigned long long)sim, nji[n], EC.solver.joints[nji[n]].index,
+                EC.solver.joints[nji[n]].actor0, EC.solver.joints[nji[n]].actor1);
+    }
+  for (auto it = EC.rtJoints.begin(); it != EC.rtJoints.end();)  // 해제된 조인트
+    it = EC.solver.jointDead[it->first] ? EC.rtJoints.erase(it) : std::next(it);
+  // 7. 건드린 관절체: 창 뒤 PhysX 값 (+ 링크 Sc 칸) — 흐름으로 못 옮김 (단독 실행기에서는 이 창 무효)
+  for (size_t k = 0; k < EC.pxArts.size() && k < EC.solver.arts.size(); ++k) {
+    if (!(EC.artTouched[k] && EC.artSnap[k])) continue;
+    W.unsup |= 1;
+    EC.solver.arts[k] = *EC.artSnap[k];
+    ++EC.resyncArts;
+    if (getenv("G1_ENV_TRACE") && !EC.first) fprintf(stderr, "[g1 env] sim %llu 다시 맞춤 관절체 %zu\n", (unsigned long long)sim, k);
+    for (const G1BodyState& b : EC.pre) {
+      if (!b.link || EC.solver.artOf(uint32_t(b.node & 0xffffffffu)) != int32_t(k)) continue;
+      auto it = scByNode.find(b.node);
+      if (it == scByNode.end()) continue;
+      eng::px::PxTransform t, a;
+      memcpy(&t, b.b2w, 28);
+      memcpy(&a, b.b2a, 28);
+      o.sc.updateActorCached(it->second, t, a, false);
+    }
   }
   }  // 기록 창 끝
   else if (editFlags & 4) {  // 편집 뒤 창: 로봇 제어만
@@ -474,6 +504,13 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
     fprintf(stderr, "[g1 env] sim %llu 앞: 활성 섬 %u, 몸체 %zu, 관리자 목록 %u, 상호작용 %u\n", (unsigned long long)sim, M.accurate.activeIslands.size,
             EC.solver.bodies.size(), P.npMain.size(), P.inters.size());
   if (!(editFlags & 2)) sc2::envStep(E);
+  // 창 입력 흐름: 스텝 뒤 요약값과 함께 적음
+  if (EC.rec) {
+    sc2::envDigest(E, EC.solver, EC.win.dBody, EC.win.dArt, EC.win.dWake);
+    sc2::envWriteWindow(EC.rec, EC.win);
+    ++EC.recWindows;
+    if (EC.win.edit || EC.win.unsup) ++EC.recUnsup;
+  }
   if (getenv("G1_ENV_TRACE"))
     fprintf(stderr, "[g1 env] sim %llu 뒤: 판 섬 %zu 몸체 %zu 관리자 %zu 1D %zu 관절체 %zu\n", (unsigned long long)sim, EC.solver.islands.size(), EC.solver.ib.size(),
             EC.solver.icm.size(), EC.solver.c1d.size(), EC.solver.ia.size());
@@ -621,6 +658,11 @@ void g1_env_report() {
          "; 풀이: 섬 안 운동학 %" PRIu64 ", 모르는 간선 %" PRIu64 ", 모르는 노드 %" PRIu64 ", 판 오류 %" PRIu64 "\n",
          EC.winExt, EC.winOurs, EC.winMismatch, EC.artOpsN, EC.resyncBodies, EC.resyncArts, EC.solver.kinInIsland, EC.solver.unknownEdge, EC.solver.unknownNode,
          EC.solver.engineErr);
+  if (EC.rec) {
+    fclose(EC.rec);
+    EC.rec = nullptr;
+    printf("  창 입력 흐름(G1_ENV_REC): 창 %" PRIu64 " (단독 실행기가 못 따라 하는 창 %" PRIu64 ")\n", EC.recWindows, EC.recUnsup);
+  }
   if (EC.ctlWindows) printf("  편집 뒤 창(훅 4, 로봇 제어만): %" PRIu64 " 번, 뺀 기록 섬 호출 %" PRIu64 "\n", EC.ctlWindows, EC.ctlSkipped);
   if (EC.jointsAdded || EC.jointsRemoved || EC.jointsBad)
     printf("  판 도중 조인트: 새로 %" PRIu64 ", 해제 %" PRIu64 ", 못 뜬 것 %" PRIu64 "\n", EC.jointsAdded, EC.jointsRemoved, EC.jointsBad);
