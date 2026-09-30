@@ -670,6 +670,43 @@ class Capture:
                 rob["camera_chain"] = cams
             except Exception as e:
                 rob["camera_chain_error"] = repr(e)
+            # 보조 잡기(AG) 입력 (robot.py:835~3620): 광선 시작·끝 점(링크 틀, float32 비트), 손가락·손끝 링크, 로봇 척도.
+            # 장면 물체마다 척도·고정 바닥·뿌리 링크·링크 질량(float32)·동적 여부·관절 나무(부모 링크, 자식 링크, 관절 종류)
+            try:
+                from omnigibson.prims.rigid_dynamic_prim import RigidDynamicPrim
+
+                def f32bits(t):
+                    return [int(np.float32(x).view(np.uint32)) for x in np.asarray(t, np.float32).reshape(-1)]
+
+                ag = {}
+                for arm in r.arm_names:
+                    ag[arm] = {
+                        "start": [[p.link_name, f32bits(p.position)] for p in (r.assisted_grasp_start_points[arm] or [])],
+                        "end": [[p.link_name, f32bits(p.position)] for p in (r.assisted_grasp_end_points[arm] or [])],
+                        "fingers": [l.prim_path for l in r.finger_links[arm]],
+                        "eef": r.eef_links[arm].prim_path,
+                    }
+                rob["ag"] = ag
+                rob["scale_bits"] = f32bits(r.scale)
+                rob["link_prim_paths"] = list(r.link_prim_paths)
+                scene_objs = {}
+                for o in st.env_accessor.scene.objects:
+                    try:
+                        tree = [[u, v, str(d.get("joint_type"))] for u, v, d in o.articulation_tree.edges(data=True)]
+                    except Exception:
+                        tree = []
+                    links = {}
+                    for ln, l in o.links.items():
+                        try:
+                            m = f32bits([float(l.mass)])[0]
+                        except Exception:
+                            m = None
+                        links[ln] = {"prim_path": l.prim_path, "mass_bits": m, "dynamic": isinstance(l, RigidDynamicPrim)}
+                    scene_objs[o.prim_path] = {"name": o.name, "scale_bits": f32bits(o.scale), "fixed_base": bool(getattr(o, "fixed_base", False)),
+                                               "root_link_name": getattr(o, "root_link_name", None), "links": links, "tree": tree}
+                rob["ag_scene_objects"] = scene_objs
+            except Exception as e:
+                rob["ag_error"] = repr(e)
             out.append({"env_idx": st.env_idx, "instance_id": st.instance_id, "objects": objs, "robot": rob})
         with open(os.path.join(self.dump_dir, "scope.json"), "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=1)

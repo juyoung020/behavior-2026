@@ -37,6 +37,7 @@
 #include "core/omni/controllers.h"
 #include "core/omni/states.h"
 #include "core/omni/bddl.h"
+#include "core/omni/agframe.h"
 
 using namespace physx;
 
@@ -90,7 +91,9 @@ struct S3ContactCb : physx::PxSimulationEventCallback {
   std::map<std::pair<const void*, const void*>, physx::PxVec3> pair_imp;  // (작은 주소, 큰 주소) -> 합 (방향은 판정에 무관)
   std::unordered_map<const void*, physx::PxVec3> net;
   std::vector<physx::PxContactPairPoint> buf;
-  void clear() { pair_imp.clear(); net.clear(); }
+  std::map<std::pair<const void*, const void*>, physx::PxVec3> first_pt;  // 쌍의 첫 접촉점 (첫 PxContactPair 의 첫 점)
+  std::map<std::pair<const void*, const void*>, physx::PxVec3> last_first_pt;  // 직전 simulate 몫 (다음 서브스텝의 AG 가 읽음)
+  void clear() { pair_imp.clear(); net.clear(); last_first_pt.swap(first_pt); first_pt.clear(); }
   void onContact(const physx::PxContactPairHeader& h, const physx::PxContactPair* pairs, physx::PxU32 n) override {
     using namespace physx;
     if (h.flags & (PxContactPairHeaderFlag::eREMOVED_ACTOR_0 | PxContactPairHeaderFlag::eREMOVED_ACTOR_1)) return;
@@ -108,6 +111,7 @@ struct S3ContactCb : physx::PxSimulationEventCallback {
       net.emplace(b, physx::PxVec3(0.0f)).first->second -= sum;
       auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
       pair_imp.emplace(key, physx::PxVec3(0.0f)).first->second += sum;
+      if (np) first_pt.emplace(key, buf[0].position);
     }
   }
   void onConstraintBreak(physx::PxConstraintInfo*, physx::PxU32) override {}
@@ -443,6 +447,7 @@ class Replayer {
     // --free: 에피소드 시작 뒤로는 OVD 입력(set·create·destroy·목록)을 넣지 않고 제어기(--ctrl) 입력만으로 돈다 (S4 준비:
     // 엔진이 에피소드 동안 스스로 만들어야 하는 입력이 무엇인지 센다). 출력 비교는 그대로.
     bool free_run = false;
+    std::set<uint64_t> skip_objs_dummy;
     std::map<std::string, uint64_t> free_skipped;
     uint64_t dropped_flush = 0;
   } C;
@@ -904,6 +909,69 @@ class Replayer {
            S3.n_steps, S3.n_goal_true, S3.bad_val, S3.bad_time, S3.bad_goal, fb.c_str());
   }
 
+  // ------------------------------------------------------------------ 보조 잡기(AG) 관절 만들기 (robot.py:3497 _maybe_establish_grasp ~ :3570)
+  // 단계 A(09-30): 언제·무엇을 잡는지는 옵션으로 주고(공식 기록에서), 관절 틀·생성 호출만 엔진이 한다 -> 물리 비트 비교로 틀·호출 순서 확인.
+  struct AGForce {
+    int64_t post = -1;  // 이 번호의 simulate 직전 서브스텝에서 (= 곁기록 post 번호 + 1 의 simulate)
+    std::string eef, target;
+    std::vector<std::string> fingers;
+    float scale1[3] = {1.0f, 1.0f, 1.0f};
+    bool done = false;
+    PxD6Joint* joint = nullptr;
+    PxTransform lp0, lp1;
+  } AGF;
+  bool ag_contact_point(const PxRigidActor* target, PxVec3& out) {  // _find_finger_contact_position (손가락 순서대로 첫 점)
+    for (auto& fp : AGF.fingers) {
+      auto it = actor_by_name.find(fp);
+      if (it == actor_by_name.end()) continue;
+      const void* a = target;
+      const void* b = it->second;
+      auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+      auto ip = s3_cb.last_first_pt.find(key);
+      if (ip != s3_cb.last_first_pt.end()) { out = ip->second; return true; }
+    }
+    return false;
+  }
+  void ag_create(const PxRigidActor* eef, const PxRigidActor* target, const PxVec3& contact) {
+    namespace agf = eng::omni::agf;
+    const PxTransform te = eef->getGlobalPose(), tt = target->getGlobalPose();
+    const float c[3] = {contact.x, contact.y, contact.z};
+    const float ep[3] = {te.p.x, te.p.y, te.p.z}, eq[4] = {te.q.x, te.q.y, te.q.z, te.q.w};
+    const float tp[3] = {tt.p.x, tt.p.y, tt.p.z}, tq[4] = {tt.q.x, tt.q.y, tt.q.z, tt.q.w};
+    const float one[3] = {1.0f, 1.0f, 1.0f};
+    float p0[3], q0[4], p1[3], q1[4];
+    agf::grasp_frame(c, ep, eq, one, p0, q0);
+    agf::grasp_frame(c, tp, tq, AGF.scale1, p1, q1);
+    // omni: USD localPos 에 몸체 척도를 곱해 PhysX 국소 자세로 (추정 — OVD 값과 비교)
+    for (int i = 0; i < 3; ++i) p1[i] = p1[i] * AGF.scale1[i];
+    AGF.lp0 = PxTransform(PxVec3(p0[0], p0[1], p0[2]), PxQuat(q0[0], q0[1], q0[2], q0[3]));
+    AGF.lp1 = PxTransform(PxVec3(p1[0], p1[1], p1[2]), PxQuat(q1[0], q1[1], q1[2], q1[3]));
+    PxD6Joint* j = PxD6JointCreate(*phys, const_cast<PxRigidActor*>(eef), prenorm(AGF.lp0), const_cast<PxRigidActor*>(target), prenorm(AGF.lp1));
+    // 공식 OVD 의 생성 뒤 호출 순서 (radio 시연 0, simulate 4465 직전): setMotion x6(잠금) -> setBreakForce -> 제약 플래그 0 -> DRIVE_LIMITS_ARE_FORCES -> 이름
+    for (int a = 0; a < 6; ++a) j->setMotion(PxD6Axis::Enum(a), PxD6Motion::eLOCKED);
+    j->setBreakForce(PX_MAX_F32, PX_MAX_F32);
+    j->setConstraintFlags(PxConstraintFlags());
+    j->setConstraintFlag(PxConstraintFlag::eDRIVE_LIMITS_ARE_FORCES, true);
+    static std::string nm;
+    nm = AGF.eef + "/ag_constraint";
+    j->setName(nm.c_str());
+    AGF.joint = j;
+    C.joint_event = true;  // update_handles -> 이 서브스텝 flush 비움
+    fprintf(stderr, "[AG] 관절 만듦 post %lld: lp0 q(%.9g %.9g %.9g %.9g) p(%.9g %.9g %.9g) lp1 q(%.9g %.9g %.9g %.9g) p(%.9g %.9g %.9g)\n",
+            (long long)(sims + side_offset), AGF.lp0.q.x, AGF.lp0.q.y, AGF.lp0.q.z, AGF.lp0.q.w, AGF.lp0.p.x, AGF.lp0.p.y, AGF.lp0.p.z,
+            AGF.lp1.q.x, AGF.lp1.q.y, AGF.lp1.q.z, AGF.lp1.q.w, AGF.lp1.p.x, AGF.lp1.p.y, AGF.lp1.p.z);
+  }
+  void ag_before_simulate() {  // 제어기 step 다음, 목표 쓰기 전 (simulator.py:1579~1587 순서)
+    if (AGF.post < 0 || AGF.done) return;
+    if (int64_t(sims + side_offset) != AGF.post) return;
+    AGF.done = true;
+    auto ie = actor_by_name.find(AGF.eef), it = actor_by_name.find(AGF.target);
+    if (ie == actor_by_name.end() || it == actor_by_name.end()) { fprintf(stderr, "[AG] 몸체 없음\n"); return; }
+    PxVec3 cp;
+    if (!ag_contact_point(it->second, cp)) { fprintf(stderr, "[AG] 접촉점 없음 -> 안 잡음\n"); return; }
+    ag_create(ie->second, it->second, cp);
+  }
+  std::set<uint64_t> skip_objs;
   bool in_free(bool out_block) const { return C.free_run && C.on && !out_block && sims + side_offset >= C.episode_start; }
   bool is_ext_joint_cls(uint32_t cls) {
     const std::string n = cname(cls);
@@ -931,6 +999,7 @@ class Replayer {
     for (int d = 0; d < C.n_dof; ++d) q[d] = C.sign[d] * C.joint[d]->getJointPosition(PxArticulationAxis::Enum(C.axis[d]));
     ct::DriveTargets out{};
     ct::step(C.cfg, C.st, q, out);
+    ag_before_simulate();
     if (C.joint_event) {  // 이 서브스텝은 flush 가 비었다 (위 설명)
       C.joint_event = false;
       C.dropped_flush++;
@@ -2301,6 +2370,8 @@ class Replayer {
                          : e.cmd == ovd::kCreate ? std::string("create:") + cname(e.cls) : std::string("cmd:") + std::to_string(int(e.cmd));
         C.free_skipped[what]++;
         if (e.cmd == ovd::kSet || e.cmd == ovd::kAddToList || e.cmd == ovd::kRemoveFromList) continue;  // 생성·파괴는 넣는다(객체 대응 유지, 개수만 보고)
+        if (AGF.post >= 0 && e.cmd == ovd::kCreate && is_ext_joint_cls(e.cls)) { C.free_skipped["AG 관절 생성(엔진이 만듦)"]++; skip_objs.insert(e.obj); continue; }
+        if (e.cmd == ovd::kDestroy && skip_objs.count(e.obj)) continue;
       }
       switch (e.cmd) {
         case ovd::kCreate: {
@@ -2489,6 +2560,11 @@ int main(int argc, char** argv) {
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
     else if (a == "--free") R.C.free_run = true;
     else if (a == "--s3-own-contact") R.S3.own = true;
+    else if (a == "--ag-force" && i + 4 < argc) {
+      R.AGF.post = atoll(argv[++i]); R.AGF.eef = argv[++i]; R.AGF.target = argv[++i];
+      std::stringstream ss(argv[++i]); std::string t; while (std::getline(ss, t, ',')) R.AGF.fingers.push_back(t);
+      if (i + 1 < argc && argv[i + 1][0] != '-') { std::stringstream s2(argv[++i]); for (int k = 0; k < 3 && std::getline(s2, t, ','); ++k) R.AGF.scale1[k] = strtof(t.c_str(), nullptr); }
+    }
     else if (a == "--s3" && i + 1 < argc) { if (!R.load_s3(argv[++i])) { fprintf(stderr, "--s3 입력을 못 읽음\n"); return 1; } }
     else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }
     else if (a == "--dump-art-at" && i + 1 < argc) R.dump_art_at = atoll(argv[++i]);
