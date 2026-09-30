@@ -56,12 +56,12 @@ int main(int argc, char** argv) {
     const int N = (int)p_link.shape[0], S = (int)link_tf.shape[0], NL = (int)link_tf.shape[1], R = (int)rem_tf.shape[1],
               H = (int)rem_hull.shape[1], P = (int)proj_pts.shape[2];
     const int32_t* pl = p_link.as<int32_t>();
-    std::vector<int> gsize(NL, 0);
-    for (int i = 0; i < N; ++i) gsize[pl[i]]++;
+  
+  
     // 국소 행렬 (_load_state: 무리마다 한 번에 set → 배치 크기 = 무리 크기)
     std::vector<float> lm(N * 16);
     for (int i = 0; i < N; ++i) {
-      local_mat(lpos.as<float>() + 3 * i, lquat.as<float>() + 4 * i, gsize[pl[i]] == 1, &lm[16 * i]);
+      local_mat(lpos.as<float>() + 3 * i, lquat.as<float>() + 4 * i, &lm[16 * i]);
       bool ok = true;
       for (int k = 0; k < 16; ++k) ok &= fb(lm[16 * i + k]) == fb(ref_lm.as<float>()[16 * i + k]);
       snprintf(where, sizeof where, "사례 %d 입자 %d", c, i);

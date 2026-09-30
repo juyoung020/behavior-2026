@@ -61,12 +61,19 @@ def rand_quat(rng):
     return (q / np.linalg.norm(q)).astype(np.float32)
 
 
+def warm_torch_compile():
+    """평가기 프로세스처럼 T.quat2mat 을 여러 모양으로 먼저 불러 마지막 축까지 동적인 커널이 쓰이게 한다 (docs 20.5)"""
+    for shp in [(4,), (3, 4), (5, 4), (2, 5), (3, 6)]:
+        T.quat2mat(th.rand(*shp))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--n", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=11)
     a = ap.parse_args()
+    warm_torch_compile()
     os.makedirs(a.out, exist_ok=True)
     rng = np.random.default_rng(a.seed)
     TR.DatasetObject = FakeDO

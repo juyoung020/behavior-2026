@@ -13,7 +13,9 @@
 //   Covered     object_states/covered.py:59 (무리 입자 수 ≥ 1)
 //
 // 찾은 연산 순서 (Zen5, torch 2.7.0 MKL, Linux 평가기와 같은 venv):
-//   T.quat2mat 배치: 노름 = sqrt(((x²+y²)+z²)+w²) 순차. 단 배치 크기 1 이면 inductor 가 따로 특수화해 나비 (x²+z²)+(y²+w²)
+//   T.quat2mat 배치: 노름 = sqrt(0 + ((x²+z²)+(y²+w²))) 나비 합. 평가기 프로세스 안에서는 quat2mat 이 여러 모양으로 불려
+//     마지막 축까지 동적인 커널(ks1, 16 칸 마스크 합 + vec_reduce_all)이 쓰인다 — 실제 과제 기록 60 입자로 확인 (20.5).
+//     단독 스크립트에서 처음 부르면 다른 커널(행 벡터화, 순차 합)이 나와 끝비트가 다르다 → 정답 생성기는 예열한다.
 //   bmm·torch.mm(4 원소 내적): 왼쪽부터 순차 곱·합, FMA 없음
 //   th.linalg.inv(4x4, MKL getrf+getrs): 부분 피벗 LU, 열 스케일은 역수 곱, 갱신 c - l*u (FMA 없음),
 //     뒤 대입은 곱들을 k 내림차순으로 먼저 합한 뒤 빼고 대각 역수를 곱함: x_i = (b_i - ((p3 + p2) + p1)) * (1/u_ii)
@@ -54,10 +56,10 @@ PEHD float div_rn(float a, float b) {
 }
 
 // ---- 국소 행렬 ----------------------------------------------------------------------------------------------
-// T.quat2mat (transform_utils.py:367): q / norm(q) → 바깥곱 → 1 - 2*(yy+zz) ...  single = 배치 크기 1
-PEHD void quat2mat_batched(const float q[4], bool single, float r[9]) {
+// T.quat2mat (transform_utils.py:367): q / norm(q) → 바깥곱 → 1 - 2*(yy+zz) ...  (평가기 커널: 나비 합)
+PEHD void quat2mat_batched(const float q[4], float r[9]) {
   const float a = q[0] * q[0], b = q[1] * q[1], c = q[2] * q[2], d = q[3] * q[3];
-  const float s = single ? 0.0f + ((a + c) + (b + d)) : ((a + b) + c) + d;
+  const float s = 0.0f + ((a + c) + (b + d));
   const float n = sqrt_rn(s);
   const float x = div_rn(q[0], n), y = div_rn(q[1], n), z = div_rn(q[2], n), w = div_rn(q[3], n);
   const float xx = x * x, yy = y * y, zz = z * z, xy = x * y, xz = x * z, yz = y * z, xw = x * w, yw = y * w, zw = z * w;
@@ -71,16 +73,32 @@ PEHD void quat2mat_batched(const float q[4], bool single, float r[9]) {
   r[7] = 2.0f * (yz + xw);
   r[8] = 1.0f - 2.0f * (xx + yy);
 }
-// 국소 4x4 (행 우선). single = 이 입자가 든 set_*_local_pose 호출의 배치 크기가 1
-PEHD void local_mat(const float p[3], const float q[4], bool single, float m[16]) {
+// 국소 4x4 (행 우선)
+PEHD void local_mat(const float p[3], const float q[4], float m[16]) {
   float r[9];
-  quat2mat_batched(q, single, r);
+  quat2mat_batched(q, r);
   for (int i = 0; i < 3; ++i) {
     for (int j = 0; j < 3; ++j) m[i * 4 + j] = r[i * 3 + j];
     m[i * 4 + 3] = p[i];
   }
   m[12] = m[13] = m[14] = 0.0f;
   m[15] = 1.0f;
+}
+
+// ---- 링크 scaled_transform (엔진 입력) ------------------------------------------------------------------------------
+// 공식: th.tensor(Fabric 세계 행렬 double, float32).T (usd_utils.py:2168). Fabric 은 링크 국소(물체 기준)×물체 세계로 다시 합성해
+// double 끝자리가 PhysX 자세 행렬과 다르지만, float32 로 자르면 같다 (실제 과제 기록 180/180, 20.5). 척도 ≠ 1 물체는 아직 미확인.
+// 식: double 행렬 diag(척도)·R(q)·T(p) (pxr 행 벡터, R 은 GfMatrix4d::SetRotate 식) → float32 → 전치.
+PEHD void link_scaled_transform(const float p[3], const float q[4], const float scale[3], float out[16]) {
+  const double x = q[0], y = q[1], z = q[2], w = q[3];
+  double m[4][4] = {{1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (z * x - y * w), 0.0},
+                    {2.0 * (x * y - z * w), 1.0 - 2.0 * (z * z + x * x), 2.0 * (y * z + x * w), 0.0},
+                    {2.0 * (z * x + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (y * y + x * x), 0.0},
+                    {(double)p[0], (double)p[1], (double)p[2], 1.0}};
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c) m[r][c] *= (double)scale[r];
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c) out[r * 4 + c] = (float)m[c][r];
 }
 
 // ---- 세계 위치 (bmm 의 3 열) -------------------------------------------------------------------------------------

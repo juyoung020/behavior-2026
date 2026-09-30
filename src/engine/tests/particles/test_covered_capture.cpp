@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
   long bad_lm = 0, bad_ev = 0, bad_cnt = 0, n_rm = 0, skipped = 0;
   std::vector<float> lm(N * 16);
   for (int i = 0; i < N; ++i) {
-    local_mat(in_pos.as<float>() + 3 * i, in_quat.as<float>() + 4 * i, in_batch.as<int32_t>()[i] == 1, &lm[16 * i]);
+    local_mat(in_pos.as<float>() + 3 * i, in_quat.as<float>() + 4 * i, &lm[16 * i]);
     for (int k = 0; k < 16; ++k)
       if (fb(lm[16 * i + k]) != fb(p_lm.as<float>()[16 * i + k])) {
         if (!bad_lm) printf("  국소 행렬 첫 다름: 입자 %d 칸 %d\n", i, k);
@@ -74,12 +74,13 @@ int main(int argc, char** argv) {
   }
   // 3) Fabric 행렬 가설
   const int S = (int)s_tf.shape[0], SL = (int)s_tf.shape[1];
-  long bad_fab = 0, bad_tf = 0, n_fab = 0;
+  long bad_fab = 0, bad_tf = 0, n_fab = 0, bad_f32 = 0;
   for (int s = 0; s < S; ++s)
     for (int l = 0; l < SL; ++l) {
       const float* pose = s_pose.as<float>() + ((size_t)s * SL + l) * 7;
       const float* sc = s_scale.as<float>() + ((size_t)s * SL + l) * 6;
-      const double* fab = s_fab.as<double>() + ((size_t)s * SL + l) * 16;
+      const int nfm = s_fab.shape.size() == 5 ? (int)s_fab.shape[2] : 1;  // 새 기록: 링크 세계·국소, 부모 세계·국소, 장면 세계
+      const double* fab = s_fab.as<double>() + ((size_t)s * SL + l) * 16 * nfm;
       eng::omni::gf::M4 m = eng::omni::gf::from_physx_pose(pose, pose + 3);
       for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c) m.m[r][c] *= (double)sc[r];
@@ -87,12 +88,18 @@ int main(int argc, char** argv) {
       for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c) okf &= m.m[r][c] == fab[r * 4 + c];
       bad_fab += !okf;
+      // 엔진이 쓰는 값: float32(PhysX 자세 행렬 · 척도)^T == 공식 scaled_transform ?
+      bool ok32 = true;
+      float lt[16];
+      link_scaled_transform(pose, pose + 3, sc, lt);
+      for (int k = 0; k < 16; ++k) ok32 &= fb(lt[k]) == fb(s_tf.as<float>()[((size_t)s * SL + l) * 16 + k]);
+      bad_f32 += !ok32;
       // scaled_transform = float32(fabric).T
       bool okt = true;
       for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c) okt &= fb((float)fab[c * 4 + r]) == fb(s_tf.as<float>()[((size_t)s * SL + l) * 16 + r * 4 + c]);
       bad_tf += !okt;
-      if (!okf && bad_fab == 1) {
+      if (false) {
         printf("  Fabric 가설 첫 다름: 스텝 %d 링크 %d  척도 %g %g %g (물체 %g %g %g)\n", s, l, sc[0], sc[1], sc[2], sc[3], sc[4], sc[5]);
         for (int r = 0; r < 4; ++r) printf("    %.17g %.17g %.17g %.17g | %.17g %.17g %.17g %.17g\n", m.m[r][0], m.m[r][1], m.m[r][2], m.m[r][3],
                                            fab[r * 4], fab[r * 4 + 1], fab[r * 4 + 2], fab[r * 4 + 3]);
@@ -101,7 +108,8 @@ int main(int argc, char** argv) {
     }
   printf("실제 과제 기록 재생: 입자 %d, 제거 사건 %d (건너뜀 %ld: Mesh 투영), 우리 판단으로 지운 입자 %ld\n", N, E, skipped, n_rm);
   printf("  국소 행렬 다름 %ld / %d\n  사건 생존 다름 %ld / %ld\n  누적 수 다름 %ld\n", bad_lm, N, bad_ev, E - skipped, bad_cnt);
-  printf("  scaled_transform = float32(Fabric)^T : 다름 %ld / %ld\n  Fabric = diag(척도) R(q) T(p) 가설 : 다름 %ld / %ld\n", bad_tf,
-         n_fab, bad_fab, n_fab);
-  return (bad_lm || bad_ev || bad_cnt) ? 1 : 0;
+  printf("  scaled_transform = float32(Fabric)^T : 다름 %ld / %ld\n", bad_tf, n_fab);
+  printf("  scaled_transform = float32(diag(척도) R(q) T(p))^T (엔진 식) : 다름 %ld / %ld  (double 로는 %ld 다름: Fabric 은 국소*부모로 다시 합성)\n",
+         bad_f32, n_fab, bad_fab);
+  return (bad_lm || bad_ev || bad_cnt || bad_f32) ? 1 : 0;
 }

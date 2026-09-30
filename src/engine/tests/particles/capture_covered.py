@@ -62,6 +62,19 @@ def main():
 
     Vis._modify_batch_particles_position_orientation = mod_wrap
 
+    # 국소 행렬이 마지막으로 어디서 정해졌나 (입자별 호출 출처 사슬)
+    import inspect
+
+    mat_origin = {}
+    orig_set_mat = Vis._modify_particle_local_mat
+
+    def set_mat_wrap(self, name, mat):
+        st = inspect.stack()
+        mat_origin[name] = " < ".join(f.function for f in st[1:6])
+        return orig_set_mat(self, name, mat)
+
+    Vis._modify_particle_local_mat = set_mat_wrap
+
     events = []  # 제거 사건
     cur_step = [-1]
     orig_rm = PM.ParticleRemover._modify_particles
@@ -137,6 +150,23 @@ def main():
         for sysn, names, pos, orn in load_calls:
             for i, nm in enumerate(names):
                 inp[(sysn, nm)] = (pos[i], orn[i], len(names))
+        q2m_check = {}
+        # 평가기 프로세스 안의 T.quat2mat 이 마지막 불러오기 입력에서 같은 행렬을 내는가 (컴파일 판 / 원본 eager)
+        import omnigibson.utils.transform_utils as T
+        import torch._dynamo.utils as DU
+
+        if load_calls:
+            q_last = th.from_numpy(load_calls[-1][3])
+            names_last = load_calls[-1][1]
+            lm_at_load = {p[1]: p[4] for p in P}  # 불러온 직후 스냅숏 (스텝 동안 입자가 지워지므로)
+            want = np.stack([lm_at_load[nm][:3, :3] for nm in names_last if nm in lm_at_load])
+            if len(want) == len(names_last):
+                rc = T.quat2mat(q_last).numpy()
+                orig_f = getattr(T.quat2mat, "_torchdynamo_orig_callable", None)
+                re_ = orig_f(q_last).numpy() if orig_f else rc
+                q2m_check["q2m_inproc_compiled_diff"] = int(sum(not np.array_equal(rc[i].view(np.uint32), want[i].view(np.uint32)) for i in range(len(want))))
+                q2m_check["q2m_inproc_eager_diff"] = int(sum(not np.array_equal(re_[i].view(np.uint32), want[i].view(np.uint32)) for i in range(len(want))))
+                np.save(os.path.join(a.out, "q2m_last_in.npy"), load_calls[-1][3])
         lo, hi = target.aabb
         lo, hi = lo.numpy(), hi.numpy()
         link_objs = {p[3]: s._particles_info[p[1]]["link"] for s in vis for p in P if p[1] in s._particles_info}
@@ -157,8 +187,14 @@ def main():
                 ltf.append(lk.scaled_transform.numpy())
                 p_, q_ = lk.get_position_orientation()
                 pose.append(np.r_[p_.numpy(), q_.numpy()])
-                M = og.sim.fabric_hierarchy.get_world_xform(lazy.usdrt.Sdf.Path(lp))
-                fab.append(np.array([[M[i][j] for j in range(4)] for i in range(4)], np.float64))
+                fh = og.sim.fabric_hierarchy
+                mats = []
+                par = lp.rsplit("/", 1)[0]
+                for M in (fh.get_world_xform(lazy.usdrt.Sdf.Path(lp)), fh.get_local_xform(lazy.usdrt.Sdf.Path(lp)),
+                          fh.get_world_xform(lazy.usdrt.Sdf.Path(par)), fh.get_local_xform(lazy.usdrt.Sdf.Path(par)),
+                          fh.get_world_xform(lazy.usdrt.Sdf.Path(par.rsplit("/", 1)[0]))):
+                    mats.append(np.array([[M[i][j] for j in range(4)] for i in range(4)], np.float64))
+                fab.append(np.stack(mats))  # 링크 세계·국소, 부모(물체) 세계·국소, 장면 세계
                 scl.append(np.r_[lk.scale.numpy(), lk.obj.scale.numpy() if hasattr(lk, "obj") else np.ones(3)])
             rec_ltf.append(ltf)
             rec_pose.append(pose)
@@ -228,6 +264,11 @@ def main():
                 parsed_systems=list(st.conditions.keys()),
                 n_conds={k: (None if v is None else len(v)) for k, v in st.conditions.items()},
                 limit_visual=int(st.visual_particle_modification_limit)))
+        spec["mat_origin"] = {p[1]: mat_origin.get(p[1]) for p in P}
+        spec.update(q2m_check)
+        spec["dynamo_counters"] = {k: dict(v) for k, v in DU.counters.items() if k in ("stats", "recompiles", "unimplemented", "frames")}
+        spec["torch_threads"] = th.get_num_threads()
+        spec["load_calls"] = [(c[0], len(c[1]), c[1][:3]) for c in load_calls]
         with open(os.path.join(a.out, "scene_spec.json"), "w") as f:
             json.dump(spec, f, indent=1, ensure_ascii=False)
         with open(os.path.join(a.out, "meta.txt"), "w") as f:

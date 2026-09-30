@@ -52,9 +52,7 @@ __global__ void run_envs(int n_env, int ncase, const Case* cs, const float* F, c
   int32_t* mod = mod_all + e * max_r;
   const int32_t* pl = I + c.p_link;
   for (int i = 0; i < c.N; ++i) {
-    int gs = 0;
-    for (int j = 0; j < c.N; ++j) gs += pl[j] == pl[i];
-    local_mat(F + c.lpos + 3 * i, F + c.lquat + 4 * i, gs == 1, lm + 16 * i);
+    local_mat(F + c.lpos + 3 * i, F + c.lquat + 4 * i, lm + 16 * i);
     alive[i] = 1;
   }
   for (int r = 0; r < c.R; ++r) mod[r] = 0;
