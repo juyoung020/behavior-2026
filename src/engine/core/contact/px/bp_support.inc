@@ -25,37 +25,37 @@ namespace px {
 class PxTaskManager;
 class PxBaseTask {
  public:
-  PxBaseTask() : mContextID(0), mTm(nullptr) {}
-  virtual ~PxBaseTask() {}
-  virtual void run() = 0;
-  virtual const char* getName() const = 0;
-  virtual void addReference() = 0;
-  virtual void removeReference() = 0;
-  virtual int32_t getReference() const = 0;
-  virtual void release() = 0;
-  virtual bool isHighPriority() const { return false; }
-  PxTaskManager* getTaskManager() const { return mTm; }
-  void setContextId(PxU64 id) { mContextID = id; }
-  PxU64 getContextId() const { return mContextID; }
+  EHDI PxBaseTask() : mContextID(0), mTm(nullptr) {}
+  EHDI virtual ~PxBaseTask() {}
+  EHDI virtual void run() = 0;
+  EHDI virtual const char* getName() const = 0;
+  EHDI virtual void addReference() = 0;
+  EHDI virtual void removeReference() = 0;
+  EHDI virtual int32_t getReference() const = 0;
+  EHDI virtual void release() = 0;
+  EHDI virtual bool isHighPriority() const { return false; }
+  EHDI PxTaskManager* getTaskManager() const { return mTm; }
+  EHDI void setContextId(PxU64 id) { mContextID = id; }
+  EHDI PxU64 getContextId() const { return mContextID; }
  protected:
   PxU64 mContextID;
   PxTaskManager* mTm;
 };
 class PxLightCpuTask : public PxBaseTask {
  public:
-  PxLightCpuTask() : mCont(nullptr), mRefCount(0) {}
-  void setContinuation(PxTaskManager& tm, PxBaseTask* c) { mRefCount = 1; mCont = c; mTm = &tm; if (mCont) mCont->addReference(); }
-  void setContinuation(PxBaseTask* c) { mRefCount = 1; mCont = c; if (mCont) { mCont->addReference(); mTm = c->getTaskManager(); } }
-  PxBaseTask* getContinuation() const { return mCont; }
-  void removeReference() override {
+  EHDI PxLightCpuTask() : mCont(nullptr), mRefCount(0) {}
+  EHDI void setContinuation(PxTaskManager& tm, PxBaseTask* c) { mRefCount = 1; mCont = c; mTm = &tm; if (mCont) mCont->addReference(); }
+  EHDI void setContinuation(PxBaseTask* c) { mRefCount = 1; mCont = c; if (mCont) { mCont->addReference(); mTm = c->getTaskManager(); } }
+  EHDI PxBaseTask* getContinuation() const { return mCont; }
+  EHDI void removeReference() override {
     if (--mRefCount == 0) {
       run();
       release();
     }
   }
-  int32_t getReference() const override { return mRefCount; }
-  void addReference() override { ++mRefCount; }
-  void release() override {
+  EHDI int32_t getReference() const override { return mRefCount; }
+  EHDI void addReference() override { ++mRefCount; }
+  EHDI void release() override {
     PxBaseTask* c = mCont;
     mCont = nullptr;
     if (c) c->removeReference();
@@ -69,18 +69,18 @@ class PxLightCpuTask : public PxBaseTask {
 class EndTask : public PxLightCpuTask {
  public:
   bool done = false;
-  void run() override { done = true; }
-  const char* getName() const override { return "EndTask"; }
+  EHDI void run() override { done = true; }
+  EHDI const char* getName() const override { return "EndTask"; }
 };
 
 // PxcScratchAllocator (lowlevel/common/include/utils/PxcScratchAllocator.h): 층 1 에서는 늘 힙으로
 class PxcScratchAllocator {
  public:
-  void* alloc(PxU32 requestedSize, bool fallBackToHeap = false) {
+  EHDI void* alloc(PxU32 requestedSize, bool fallBackToHeap = false) {
     (void)fallBackToHeap;
     return malloc((requestedSize + 15) & ~15u);
   }
-  void free(void* addr) { ::free(addr); }
+  EHDI void free(void* addr) { ::free(addr); }
 };
 
 }  // namespace px
@@ -106,18 +106,18 @@ struct PxBroadPhaseCaps {
 };
 class PxBroadPhaseRegions {
  public:
-  virtual ~PxBroadPhaseRegions() {}
-  virtual PxU32 getNbRegions() const = 0;
-  virtual PxU32 getRegions(PxBroadPhaseRegionInfo* userBuffer, PxU32 bufferSize, PxU32 startIndex = 0) const = 0;
-  virtual PxU32 addRegion(const PxBroadPhaseRegion& region, bool populateRegion, const PxBounds3* bounds, const PxReal* distances) = 0;
-  virtual bool removeRegion(PxU32 handle) = 0;
-  virtual PxU32 getNbOutOfBoundsObjects() const = 0;
-  virtual const PxU32* getOutOfBoundsObjects() const = 0;
+  EHDI virtual ~PxBroadPhaseRegions() {}
+  EHDI virtual PxU32 getNbRegions() const = 0;
+  EHDI virtual PxU32 getRegions(PxBroadPhaseRegionInfo* userBuffer, PxU32 bufferSize, PxU32 startIndex = 0) const = 0;
+  EHDI virtual PxU32 addRegion(const PxBroadPhaseRegion& region, bool populateRegion, const PxBounds3* bounds, const PxReal* distances) = 0;
+  EHDI virtual bool removeRegion(PxU32 handle) = 0;
+  EHDI virtual PxU32 getNbOutOfBoundsObjects() const = 0;
+  EHDI virtual const PxU32* getOutOfBoundsObjects() const = 0;
 };
 namespace Cm {
 // common/src/CmUtils.h:278
 template <class T>
-inline T* reserveContainerMemory(PxArray<T>& container, PxU32 nb) {
+EHDI T* reserveContainerMemory(PxArray<T>& container, PxU32 nb) {
   const PxU32 maxNbEntries = container.capacity();
   const PxU32 requiredSize = container.size() + nb;
   if (requiredSize > maxNbEntries) {

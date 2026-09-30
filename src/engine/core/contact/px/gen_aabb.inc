@@ -4,7 +4,7 @@ namespace px
 template <class Entry, class Key, class HashFn, class GetKey, class PxAllocator, bool compacting>
 class PxHashBase : private PxAllocator
 {
-	void init(uint32_t initialTableSize, float loadFactor)
+	EHDI void init(uint32_t initialTableSize, float loadFactor)
 	{
 		mBuffer = NULL;
 		mEntries = NULL;
@@ -24,22 +24,22 @@ class PxHashBase : private PxAllocator
   public:
 	typedef Entry EntryType;
 
-	PxHashBase(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : PxAllocator("hashBase")
+	EHDI PxHashBase(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : PxAllocator("hashBase")
 	{
 		init(initialTableSize, loadFactor);
 	}
 
-	PxHashBase(uint32_t initialTableSize, float loadFactor, const PxAllocator& alloc) : PxAllocator(alloc)
+	EHDI PxHashBase(uint32_t initialTableSize, float loadFactor, const PxAllocator& alloc) : PxAllocator(alloc)
 	{
 		init(initialTableSize, loadFactor);
 	}
 
-	PxHashBase(const PxAllocator& alloc) : PxAllocator(alloc)
+	EHDI PxHashBase(const PxAllocator& alloc) : PxAllocator(alloc)
 	{
 		init(64, 0.75f);
 	}
 
-	~PxHashBase()
+	EHDI ~PxHashBase()
 	{
 		destroy(); // No need to clear()
 
@@ -138,7 +138,7 @@ class PxHashBase : private PxAllocator
 		return mHashSize;
 	}
 
-	void clear()
+	EHDI void clear()
 	{
 		if(!mHashSize || mEntriesCount == 0)
 			return;
@@ -158,7 +158,7 @@ class PxHashBase : private PxAllocator
 		mEntriesCount = 0;
 	}
 
-	void reserve(uint32_t size)
+	EHDI void reserve(uint32_t size)
 	{
 		if(size > mHashSize)
 			reserveInternal(size);
@@ -186,7 +186,7 @@ class PxHashBase : private PxAllocator
 	}
 
   private:
-	void destroy()
+	EHDI void destroy()
 	{
 		for(uint32_t i = 0; i < mHashSize; i++)
 		{
@@ -196,7 +196,7 @@ class PxHashBase : private PxAllocator
 	}
 
 	template <typename HK, typename GK, class A, bool comp>
-	 void copy(const PxHashBase<Entry, Key, HK, GK, A, comp>& other);
+	 EHDV void copy(const PxHashBase<Entry, Key, HK, GK, A, comp>& other);
 
 	// free list management - if we're coalescing, then we use mFreeList to hold
 	// the top of the free list and it should always be equal to size(). Otherwise,
@@ -297,7 +297,7 @@ class PxHashBase : private PxAllocator
 		return true;
 	}
 
-	 void reserveInternal(uint32_t size)
+	 EHDI void reserveInternal(uint32_t size)
 	{
 		if(!PxIsPowerOfTwo(size))
 			size = PxNextPowerOfTwo(size);
@@ -386,7 +386,7 @@ class PxHashBase : private PxAllocator
 		freeListAdd(oldEntriesCapacity, newEntriesCapacity);
 	}
 
-	void grow()
+	EHDI void grow()
 	{
 		E_ASSERT((mFreeList == EOL) || (compacting && (mEntriesCount == mEntriesCapacity)));
 
@@ -560,7 +560,7 @@ class PxHashBase : private PxAllocator
 
 template <class Entry, class Key, class HashFn, class GetKey, class PxAllocator, bool compacting>
 template <typename HK, typename GK, class A, bool comp>
- void
+ EHDI void
 PxHashBase<Entry, Key, HashFn, GetKey, PxAllocator, compacting>::copy(const PxHashBase<Entry, Key, HK, GK, A, comp>& other)
 {
 	reserve(other.mEntriesCount);
@@ -596,20 +596,20 @@ class PxHashSetBase
 	typedef PxHashBase<Key, Key, HashFn, GetKey, PxAllocator, Coalesced> BaseMap;
 	typedef typename BaseMap::Iter Iterator;
 
-	PxHashSetBase(uint32_t initialTableSize, float loadFactor, const PxAllocator& alloc)
+	EHDI PxHashSetBase(uint32_t initialTableSize, float loadFactor, const PxAllocator& alloc)
 	: mBase(initialTableSize, loadFactor, alloc)
 	{
 	}
 
-	PxHashSetBase(const PxAllocator& alloc) : mBase(64, 0.75f, alloc)
+	EHDI PxHashSetBase(const PxAllocator& alloc) : mBase(64, 0.75f, alloc)
 	{
 	}
 
-	PxHashSetBase(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : mBase(initialTableSize, loadFactor)
+	EHDI PxHashSetBase(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : mBase(initialTableSize, loadFactor)
 	{
 	}
 
-	bool insert(const Key& k)
+	EHDI bool insert(const Key& k)
 	{
 		bool exists;
 		Key* e = mBase.create(k, exists);
@@ -666,20 +666,20 @@ class PxHashMapBase
 	typedef typename BaseMap::Iter Iterator;
 	typedef typename BaseMap::PxEraseIterator EraseIterator;
 
-	PxHashMapBase(uint32_t initialTableSize, float loadFactor, const PxAllocator& alloc)
+	EHDI PxHashMapBase(uint32_t initialTableSize, float loadFactor, const PxAllocator& alloc)
 	: mBase(initialTableSize, loadFactor, alloc)
 	{
 	}
 
-	PxHashMapBase(const PxAllocator& alloc) : mBase(64, 0.75f, alloc)
+	EHDI PxHashMapBase(const PxAllocator& alloc) : mBase(64, 0.75f, alloc)
 	{
 	}
 
-	PxHashMapBase(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : mBase(initialTableSize, loadFactor)
+	EHDI PxHashMapBase(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : mBase(initialTableSize, loadFactor)
 	{
 	}
 
-	bool insert(const Key /*&*/ k, const Value /*&*/ v)
+	EHDI bool insert(const Key /*&*/ k, const Value /*&*/ v)
 	{
 		bool exists;
 		Entry* e = mBase.create(k, exists);
@@ -688,7 +688,7 @@ class PxHashMapBase
 		return !exists;
 	}
 
-	Value& operator[](const Key& k)
+	EHDI Value& operator[](const Key& k)
 	{
 		bool exists;
 		Entry* e = mBase.create(k, exists);
@@ -788,17 +788,17 @@ class PxHashMap : public px::PxHashMapBase<Key, Value, HashFn, Allocator>
 	typedef px::PxHashMapBase<Key, Value, HashFn, Allocator> HashMapBase;
 	typedef typename HashMapBase::Iterator Iterator;
 
-	PxHashMap(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : HashMapBase(initialTableSize, loadFactor)
+	EHDI PxHashMap(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : HashMapBase(initialTableSize, loadFactor)
 	{
 	}
-	PxHashMap(uint32_t initialTableSize, float loadFactor, const Allocator& alloc)
+	EHDI PxHashMap(uint32_t initialTableSize, float loadFactor, const Allocator& alloc)
 	: HashMapBase(initialTableSize, loadFactor, alloc)
 	{
 	}
-	PxHashMap(const Allocator& alloc) : HashMapBase(64, 0.75f, alloc)
+	EHDI PxHashMap(const Allocator& alloc) : HashMapBase(64, 0.75f, alloc)
 	{
 	}
-	Iterator getIterator()
+	EHDI Iterator getIterator()
 	{
 		return Iterator(HashMapBase::mBase);
 	}
@@ -810,11 +810,11 @@ class PxCoalescedHashMap : public px::PxHashMapBase<Key, Value, HashFn, Allocato
   public:
 	typedef px::PxHashMapBase<Key, Value, HashFn, Allocator> HashMapBase;
 
-	PxCoalescedHashMap(uint32_t initialTableSize = 64, float loadFactor = 0.75f)
+	EHDI PxCoalescedHashMap(uint32_t initialTableSize = 64, float loadFactor = 0.75f)
 	: HashMapBase(initialTableSize, loadFactor)
 	{
 	}
-	const PxPair<const Key, Value>* getEntries() const
+	EHDI const PxPair<const Key, Value>* getEntries() const
 	{
 		return HashMapBase::mBase.getEntries();
 	}
@@ -868,17 +868,17 @@ class PxHashSet : public px::PxHashSetBase<Key, HashFn, Allocator, false>
 	typedef px::PxHashSetBase<Key, HashFn, Allocator, false> HashSetBase;
 	typedef typename HashSetBase::Iterator Iterator;
 
-	PxHashSet(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : HashSetBase(initialTableSize, loadFactor)
+	EHDI PxHashSet(uint32_t initialTableSize = 64, float loadFactor = 0.75f) : HashSetBase(initialTableSize, loadFactor)
 	{
 	}
-	PxHashSet(uint32_t initialTableSize, float loadFactor, const Allocator& alloc)
+	EHDI PxHashSet(uint32_t initialTableSize, float loadFactor, const Allocator& alloc)
 	: HashSetBase(initialTableSize, loadFactor, alloc)
 	{
 	}
-	PxHashSet(const Allocator& alloc) : HashSetBase(64, 0.75f, alloc)
+	EHDI PxHashSet(const Allocator& alloc) : HashSetBase(64, 0.75f, alloc)
 	{
 	}
-	Iterator getIterator()
+	EHDI Iterator getIterator()
 	{
 		return Iterator(HashSetBase::mBase);
 	}
@@ -890,20 +890,20 @@ class PxCoalescedHashSet : public px::PxHashSetBase<Key, HashFn, Allocator, true
   public:
 	typedef typename px::PxHashSetBase<Key, HashFn, Allocator, true> HashSetBase;
 
-	PxCoalescedHashSet(uint32_t initialTableSize = 64, float loadFactor = 0.75f)
+	EHDI PxCoalescedHashSet(uint32_t initialTableSize = 64, float loadFactor = 0.75f)
 	: HashSetBase(initialTableSize, loadFactor)
 	{
 	}
 
-	PxCoalescedHashSet(uint32_t initialTableSize, float loadFactor, const Allocator& alloc)
+	EHDI PxCoalescedHashSet(uint32_t initialTableSize, float loadFactor, const Allocator& alloc)
 	: HashSetBase(initialTableSize, loadFactor, alloc)
 	{
 	}
-	PxCoalescedHashSet(const Allocator& alloc) : HashSetBase(64, 0.75f, alloc)
+	EHDI PxCoalescedHashSet(const Allocator& alloc) : HashSetBase(64, 0.75f, alloc)
 	{
 	}
 
-	const Key* getEntries() const
+	EHDI const Key* getEntries() const
 	{
 		return HashSetBase::mBase.getEntries();
 	}
@@ -946,7 +946,7 @@ namespace px
 	public:
 
 		// EPX_SERIALIZATION
-		/* todo: explicit */ PxBitMapBase(const PxEMPTY)
+		/* todo: explicit */ EHDI PxBitMapBase(const PxEMPTY)
 		{
 			if(mMap)
 				mWordCount |= EPX_SIGN_BITMASK;
@@ -1045,31 +1045,31 @@ namespace px
 			mMap[bitIndex >> 5] |= (mask << shift);
 		}
 
-		void clear()
+		EHDI void clear()
 		{
 			PxMemSet(mMap, 0, getWordCount() * sizeof(PxU32));
 		}
 
-		void resizeAndClear(PxU32 newBitCount)
+		EHDI void resizeAndClear(PxU32 newBitCount)
 		{
 			extendUninitialized(newBitCount);
 			PxMemSet(mMap, 0, getWordCount() * sizeof(PxU32));
 		}
 
-		void setEmpty()
+		EHDI void setEmpty()
 		{
 			mMap = NULL;
 			mWordCount = 0;
 		}
 
-		void setWords(PxU32* map, PxU32 wordCount)
+		EHDI void setWords(PxU32* map, PxU32 wordCount)
 		{
 			mMap = map;
 			mWordCount = wordCount | EPX_SIGN_BITMASK;
 		}
 
 		// !!! only sets /last/ bit to value
-		void resize(PxU32 newBitCount, bool value = false)
+		EHDI void resize(PxU32 newBitCount, bool value = false)
 		{
 			E_ASSERT(!value); // only new class supports this
 			E_UNUSED(value);
@@ -1078,7 +1078,7 @@ namespace px
 
 		EHD	PxU32 size() const { return getWordCount() * 32; }
 
-		void copy(const PxBitMapBase& a)
+		EHDI void copy(const PxBitMapBase& a)
 		{
 			extendUninitialized(a.getWordCount() << 5);
 			PxMemCopy(mMap, a.mMap, a.getWordCount() * sizeof(PxU32));
@@ -1108,7 +1108,7 @@ namespace px
 		}
 
 		//! returns 0 if no bits set (!!!)
-		PxU32 findLast() const
+		EHDI PxU32 findLast() const
 		{
 			const PxU32 wordCount = getWordCount();
 			for(PxU32 i = wordCount; i-- > 0;)
@@ -1119,7 +1119,7 @@ namespace px
 			return PxU32(0);
 		}
 
-		bool hasAnyBitSet() const
+		EHDI bool hasAnyBitSet() const
 		{
 			const PxU32 wordCount = getWordCount();
 			for(PxU32 i = 0; i<wordCount; i++)
@@ -1329,7 +1329,7 @@ namespace px
 		PxAllocator	mAllocator;
 		PxU8		mPadding[3];	// PT: "mAllocator" is empty but consumes 1 byte
 
-		void extend(PxU32 size)
+		EHDI void extend(PxU32 size)
 		{
 			const PxU32 newWordCount = (size + 31) >> 5;
 			if (newWordCount > getWordCount())
@@ -1349,7 +1349,7 @@ namespace px
 			}
 		}
 
-		void extendUninitialized(PxU32 size)
+		EHDI void extendUninitialized(PxU32 size)
 		{
 			PxU32 newWordCount = (size + 31) >> 5;
 			if (newWordCount > getWordCount())
@@ -1364,7 +1364,7 @@ namespace px
 		}
 
 		template<class Combiner>
-		void combine1(const PxU32* words, PxU32 length)
+		EHDI void combine1(const PxU32* words, PxU32 length)
 		{
 			extend(length << 5);
 			PxU32 combineLength = PxMin(getWordCount(), length);
@@ -1373,7 +1373,7 @@ namespace px
 		}
 
 		template<class Combiner>
-		void combine2(const PxU32* words1, PxU32 length1,
+		EHDI void combine2(const PxU32* words1, PxU32 length1,
 			const PxU32* words2, PxU32 length2)
 		{
 			extendUninitialized(PxMax(length1, length2) << 5);
@@ -1493,17 +1493,17 @@ class PxStack
 	bool mRealloc;
 
   public:
-	PxStack(int32_t* memory, uint32_t capacity, const PxAllocator& inAllocator)
+	EHDI PxStack(int32_t* memory, uint32_t capacity, const PxAllocator& inAllocator)
 	: mAllocator(inAllocator), mSize(0), mCapacity(capacity), mMemory(memory), mRealloc(false)
 	{
 	}
-	~PxStack()
+	EHDI ~PxStack()
 	{
 		if(mRealloc)
 			mAllocator.deallocate(mMemory);
 	}
 
-	void grow()
+	EHDI void grow()
 	{
 		mCapacity *= 2;
 		int32_t* newMem =
@@ -1552,7 +1552,7 @@ that the predicate implements the < operator:
 namespace px
 {
 template <class T, class Predicate, class PxAllocator>
-void PxSort(T* elements, uint32_t count, const Predicate& compare, const PxAllocator& inAllocator,
+EHDI void PxSort(T* elements, uint32_t count, const Predicate& compare, const PxAllocator& inAllocator,
           const uint32_t initialStackSize = 32)
 {
 	static const uint32_t SMALL_SORT_CUTOFF = 5; // must be >= 3 since we need 3 for median
@@ -1602,13 +1602,13 @@ void PxSort(T* elements, uint32_t count, const Predicate& compare, const PxAlloc
 }
 
 template <class T, class Predicate>
-void PxSort(T* elements, uint32_t count, const Predicate& compare)
+EHDI void PxSort(T* elements, uint32_t count, const Predicate& compare)
 {
 	PxSort(elements, count, compare, typename PxAllocatorTraits<T>::Type());
 }
 
 template <class T>
-void PxSort(T* elements, uint32_t count)
+EHDI void PxSort(T* elements, uint32_t count)
 {
 	PxSort(elements, count, PxLess<T>(), typename PxAllocatorTraits<T>::Type());
 }
@@ -1872,19 +1872,19 @@ namespace Bp
 	{
 		E_NOCOPY(AggregateBoundsComputationTask)
 		public:
-								AggregateBoundsComputationTask(PxU64 contextId) :
+								EHDI AggregateBoundsComputationTask(PxU64 contextId) :
 									Cm::Task	(contextId),
 									mManager	(NULL),
 									mStart		(0),
 									mNbToGo		(0),
 									mAggregates	(NULL)
 								{}
-								~AggregateBoundsComputationTask()	{}
+								EHDI ~AggregateBoundsComputationTask()	{}
 
-		virtual const char*		getName() const { return "AggregateBoundsComputationTask"; }
-		virtual void			runInternal();
+		EHDI virtual const char*		getName() const { return "AggregateBoundsComputationTask"; }
+		EHDV virtual void			runInternal();
 
-				void			Init(AABBManager* manager, PxU32 start, PxU32 nb, Aggregate** aggregates)
+				EHDI void			Init(AABBManager* manager, PxU32 start, PxU32 nb, Aggregate** aggregates)
 								{
 									mManager	= manager;
 									mStart		= start;
@@ -1902,13 +1902,13 @@ namespace Bp
 	{
 		E_NOCOPY(PreBpUpdateTask)
 	public:
-								PreBpUpdateTask(PxU64 contextId) : Cm::Task(contextId), mManager(NULL), mNumCpuTasks(0)	{}
-								~PreBpUpdateTask() {}
+								EHDI PreBpUpdateTask(PxU64 contextId) : Cm::Task(contextId), mManager(NULL), mNumCpuTasks(0)	{}
+								EHDI ~PreBpUpdateTask() {}
 
-		virtual const char*		getName() const { return "PreBpUpdateTask"; }
-		virtual void			runInternal();
+		EHDI virtual const char*		getName() const { return "PreBpUpdateTask"; }
+		EHDV virtual void			runInternal();
 
-				void			Init(AABBManager* manager, PxU32 numCpuTasks)
+				EHDI void			Init(AABBManager* manager, PxU32 numCpuTasks)
 								{
 									mManager = manager;
 									mNumCpuTasks = numCpuTasks;
@@ -1973,7 +1973,7 @@ namespace Bp
 		PxArray<AABBOverlap> mCreatedPairs[2];
 		PxArray<AABBOverlap> mDeletedPairs[2];
 
-		void reset()
+		EHDI void reset()
 		{
 			mCreatedPairs[0].resizeUninitialized(0);
 			mCreatedPairs[1].resizeUninitialized(0);
@@ -1990,9 +1990,9 @@ namespace Bp
 	{
 												E_NOCOPY(BoundsArray)
 	public:
-												BoundsArray(PxVirtualAllocator& allocator) : mBounds(allocator), mHasAnythingChanged(true)	{} //needs to be set explicitly for PxgBounds first copy
+												EHDI BoundsArray(PxVirtualAllocator& allocator) : mBounds(allocator), mHasAnythingChanged(true)	{} //needs to be set explicitly for PxgBounds first copy
 
-		virtual									~BoundsArray(){}
+		EHDI virtual									~BoundsArray(){}
 
 		EHD	void					initEntry(PxU32 index)
 												{
@@ -2006,14 +2006,14 @@ namespace Bp
 													}
 												}
 
-		virtual void							updateBounds(const PxTransform& transform, const PxGeometry& geom, PxU32 index, PxU32 /*indexFrom*/)
+		EHDI virtual void							updateBounds(const PxTransform& transform, const PxGeometry& geom, PxU32 index, PxU32 /*indexFrom*/)
 												{
 													Gu::computeBounds(mBounds[index], geom, transform, 0.0f, 1.0f);
 													mHasAnythingChanged = true;
 												}
 
 
-		virtual void							setBounds(const PxBounds3& bounds, PxU32 index)
+		EHDI virtual void							setBounds(const PxBounds3& bounds, PxU32 index)
 												{
 	//												EPX_CHECK_AND_RETURN(bounds.isValid() && !bounds.isEmpty(), "BoundsArray::setBounds - illegal bounds\n");
 													mBounds[index] = bounds;
@@ -2029,7 +2029,7 @@ namespace Bp
 		EHD	void					resetChangedState()				{ mHasAnythingChanged = false;	}
 		EHD	void					setChangedState()				{ mHasAnythingChanged = true;	}
 
-						void					shiftOrigin(const PxVec3& shift)
+						EHDI void					shiftOrigin(const PxVec3& shift)
 												{
 													// we shift some potential NaNs here because we don't know what's active, but should be harmless
 													const PxU32 nbBounds = mBounds.size();
@@ -2057,21 +2057,21 @@ namespace Bp
 	{
 												E_NOCOPY(AABBManagerBase)
 	public:
-												AABBManagerBase(BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
+												EHDV AABBManagerBase(BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
 																PxU32 maxNbAggregates, PxU32 maxNbShapes, PxVirtualAllocator& allocator, PxU64 contextID,
 																PxPairFilteringMode::Enum kineKineFilteringMode, PxPairFilteringMode::Enum staticKineFilteringMode);
 
-		virtual									~AABBManagerBase() {}
+		EHDI virtual									~AABBManagerBase() {}
 
-		virtual			void					destroy() = 0;
+		EHDV virtual			void					destroy() = 0;
 
-		virtual			AggregateHandle			createAggregate(BoundsIndex index, Bp::FilterGroup::Enum group, void* userData, PxU32 maxNumShapes, PxAggregateFilterHint filterHint, PxU32 envID) = 0;
-		virtual			bool					destroyAggregate(BoundsIndex& index, Bp::FilterGroup::Enum& group, AggregateHandle aggregateHandle) = 0;
+		EHDV virtual			AggregateHandle			createAggregate(BoundsIndex index, Bp::FilterGroup::Enum group, void* userData, PxU32 maxNumShapes, PxAggregateFilterHint filterHint, PxU32 envID) = 0;
+		EHDV virtual			bool					destroyAggregate(BoundsIndex& index, Bp::FilterGroup::Enum& group, AggregateHandle aggregateHandle) = 0;
 
-		virtual			bool					addBounds(BoundsIndex index, PxReal contactDistance, Bp::FilterGroup::Enum group, void* userdata, AggregateHandle aggregateHandle, ElementType::Enum volumeType, PxU32 envID) = 0;
-		virtual			bool					removeBounds(BoundsIndex index) = 0;
+		EHDV virtual			bool					addBounds(BoundsIndex index, PxReal contactDistance, Bp::FilterGroup::Enum group, void* userdata, AggregateHandle aggregateHandle, ElementType::Enum volumeType, PxU32 envID) = 0;
+		EHDV virtual			bool					removeBounds(BoundsIndex index) = 0;
 
-						void					reserveSpaceForBounds(BoundsIndex index);
+						EHDV void					reserveSpaceForBounds(BoundsIndex index);
 
 		EHD	PxIntBool				isMarkedForRemove(BoundsIndex index)	const	{ return mRemovedHandleMap.boundedTest(index);	}
 //		EHD	PxIntBool				isMarkedForAdd(BoundsIndex index)		const	{ return mAddedHandleMap.boundedTest(index);	}
@@ -2082,7 +2082,7 @@ namespace Bp
 		EHD	PxBitMapPinned&			getChangedAABBMgActorHandleMap()				{ return mChangedHandleMap;						}
 		EHD void*					getUserData(const BoundsIndex index)	const	{ return (index<mVolumeData.size()) ? mVolumeData[index].getUserData() : NULL;	}
 
-						void					setContactDistance(BoundsIndex handle, PxReal offset)
+						EHDI void					setContactDistance(BoundsIndex handle, PxReal offset)
 												{
 													// PT: this works even for aggregated shapes, since the corresponding bit will also be set in the 'updated' map.
 													mContactDistance.begin()[handle] = offset;
@@ -2090,34 +2090,34 @@ namespace Bp
 													mChangedHandleMap.growAndSet(handle);
 												}
 
-						void					setBPGroup(BoundsIndex index, Bp::FilterGroup::Enum group)
+						EHDI void					setBPGroup(BoundsIndex index, Bp::FilterGroup::Enum group)
 												{
 													E_ASSERT((index + 1) < mVolumeData.size());
 													E_ASSERT(group != Bp::FilterGroup::eINVALID);	// PT: we use group == Bp::FilterGroup::eINVALID to mark removed/invalid entries
 													mGroups[index] = group;
 												}
 
-		virtual			void					updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool, bool hasContactDistanceUpdated, PxBaseTask* continuation) = 0;
-		virtual			void					updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBaseTask* continuation)	= 0;
+		EHDV virtual			void					updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool, bool hasContactDistanceUpdated, PxBaseTask* continuation) = 0;
+		EHDV virtual			void					updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBaseTask* continuation)	= 0;
 
-		virtual			void					postBroadPhase(PxBaseTask*, Cm::FlushPool& flushPool) = 0;
-		virtual			void					reallocateChangedAABBMgActorHandleMap(const PxU32 size) = 0;
+		EHDV virtual			void					postBroadPhase(PxBaseTask*, Cm::FlushPool& flushPool) = 0;
+		EHDV virtual			void					reallocateChangedAABBMgActorHandleMap(const PxU32 size) = 0;
 
-						AABBOverlap*			getCreatedOverlaps(ElementType::Enum type, PxU32& count)
+						EHDI AABBOverlap*			getCreatedOverlaps(ElementType::Enum type, PxU32& count)
 												{
 													E_ASSERT(type < ElementType::eCOUNT);
 													count = mCreatedOverlaps[type].size();
 													return mCreatedOverlaps[type].begin();
 												}
 
-						AABBOverlap*			getDestroyedOverlaps(ElementType::Enum type, PxU32& count)
+						EHDI AABBOverlap*			getDestroyedOverlaps(ElementType::Enum type, PxU32& count)
 												{
 													E_ASSERT(type < ElementType::eCOUNT);
 													count = mDestroyedOverlaps[type].size();
 													return mDestroyedOverlaps[type].begin();
 												}
 
-						void					freeBuffers();
+						EHDV void					freeBuffers();
 
 						struct OutOfBoundsData
 						{
@@ -2126,22 +2126,22 @@ namespace Bp
 							void**	mOutOfBoundsObjects;
 							void**	mOutOfBoundsAggregates;
 						};
-		virtual			bool					getOutOfBoundsObjects(OutOfBoundsData&)		{ return false;	}
-		virtual			void					clearOutOfBoundsObjects()					{}
+		EHDI virtual			bool					getOutOfBoundsObjects(OutOfBoundsData&)		{ return false;	}
+		EHDI virtual			void					clearOutOfBoundsObjects()					{}
 
-						void					shiftOrigin(const PxVec3& shift);
+						EHDV void					shiftOrigin(const PxVec3& shift);
 
-		virtual			void					visualize(PxRenderOutput& out) = 0;
+		EHDV virtual			void					visualize(PxRenderOutput& out) = 0;
 
-		virtual			void					releaseDeferredAggregateIds() = 0;
-		virtual			void					setGPUStateChanged()			{}
-		virtual			void					setPersistentStateChanged()		{}
+		EHDV virtual			void					releaseDeferredAggregateIds() = 0;
+		EHDI virtual			void					setGPUStateChanged()			{}
+		EHDI virtual			void					setPersistentStateChanged()		{}
 
 	
 
 
 	protected:
-						void					reserveShapeSpace(PxU32 nbShapes);
+						EHDV void					reserveShapeSpace(PxU32 nbShapes);
 
 		// PT: we have bitmaps here probably to quickly handle added/removed objects during same frame.
 		// PT: TODO: consider replacing with plain arrays (easier to parse, already existing below, etc)
@@ -2262,7 +2262,7 @@ namespace Bp
 using namespace px;
 using namespace Bp;
 
-AABBManagerBase::AABBManagerBase(	BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
+EHDI AABBManagerBase::AABBManagerBase(	BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
 									PxU32 maxNbAggregates, PxU32 maxNbShapes, PxVirtualAllocator& allocator, PxU64 contextID,
 									PxPairFilteringMode::Enum kineKineFilteringMode, PxPairFilteringMode::Enum staticKineFilteringMode) :
 	mAddedHandleMap			(allocator.getCallback()),
@@ -2291,7 +2291,7 @@ AABBManagerBase::AABBManagerBase(	BroadPhase& bp, BoundsArray& boundsArray, PxFl
 	//	mCreatedOverlaps.reserve(16000);
 }
 
-void AABBManagerBase::reserveShapeSpace(PxU32 nbTotalBounds)
+EHDI void AABBManagerBase::reserveShapeSpace(PxU32 nbTotalBounds)
 {
 	nbTotalBounds = PxNextPowerOfTwo(nbTotalBounds);
 	mGroups.resize(nbTotalBounds, Bp::FilterGroup::eINVALID);
@@ -2301,7 +2301,7 @@ void AABBManagerBase::reserveShapeSpace(PxU32 nbTotalBounds)
 	mRemovedHandleMap.resize(nbTotalBounds);
 }
 
-void AABBManagerBase::reserveSpaceForBounds(BoundsIndex index)
+EHDI void AABBManagerBase::reserveSpaceForBounds(BoundsIndex index)
 {
 	if ((index + 1) >= mVolumeData.size())
 		reserveShapeSpace(index + 1);
@@ -2309,13 +2309,13 @@ void AABBManagerBase::reserveSpaceForBounds(BoundsIndex index)
 	resetEntry(index); //KS - make sure this entry is flagged as invalid
 }
 
-void AABBManagerBase::freeBuffers()
+EHDI void AABBManagerBase::freeBuffers()
 {
 	// PT: TODO: investigate if we need more stuff here
 	mBroadPhase.freeBuffers();
 }
 
-void AABBManagerBase::shiftOrigin(const PxVec3& shift)
+EHDI void AABBManagerBase::shiftOrigin(const PxVec3& shift)
 {
 	mBroadPhase.shiftOrigin(shift, mBoundsArray.begin(), mContactDistance.begin());
 	mOriginShifted = true;
@@ -2394,15 +2394,15 @@ namespace Bp
 		E_NOCOPY(PostBroadPhaseStage2Task)
 	public:
 
-		PostBroadPhaseStage2Task(PxU64 contextID, AABBManager& manager) : Cm::Task(contextID), mFlushPool(NULL), mManager(manager)
+		EHDI PostBroadPhaseStage2Task(PxU64 contextID, AABBManager& manager) : Cm::Task(contextID), mFlushPool(NULL), mManager(manager)
 		{
 		}
 
-		virtual const char* getName() const { return "PostBroadPhaseStage2Task"; }
+		EHDI virtual const char* getName() const { return "PostBroadPhaseStage2Task"; }
 
-		void setFlushPool(Cm::FlushPool* pool) { mFlushPool = pool; }
+		EHDI void setFlushPool(Cm::FlushPool* pool) { mFlushPool = pool; }
 
-		virtual void runInternal();
+		EHDV virtual void runInternal();
 	};
 
 	class ProcessAggPairsBase;
@@ -2419,41 +2419,41 @@ namespace Bp
 	{
 													E_NOCOPY(AABBManager)
 	public:
-														AABBManager(BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
+														EHDV AABBManager(BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
 																	PxU32 maxNbAggregates, PxU32 maxNbShapes, PxVirtualAllocator& allocator, PxU64 contextID,
 																	PxPairFilteringMode::Enum kineKineFilteringMode, PxPairFilteringMode::Enum staticKineFilteringMode);
 
-		virtual											~AABBManager() {}
+		EHDI virtual											~AABBManager() {}
 
 		// AABBManagerBase
-		virtual			void							destroy()	EPX_OVERRIDE	EPX_FINAL;
-		virtual			AggregateHandle					createAggregate(BoundsIndex index, Bp::FilterGroup::Enum group, void* userData, PxU32 maxNumShapes, PxAggregateFilterHint filterHint, PxU32 envID)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			bool							destroyAggregate(BoundsIndex& index, Bp::FilterGroup::Enum& group, AggregateHandle aggregateHandle)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			bool							addBounds(BoundsIndex index, PxReal contactDistance, Bp::FilterGroup::Enum group, void* userdata, AggregateHandle aggregateHandle, ElementType::Enum volumeType, PxU32 envID)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			bool							removeBounds(BoundsIndex index)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool, bool hasContactDistanceUpdated, PxBaseTask* continuation)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBaseTask* continuation)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							postBroadPhase(PxBaseTask*, Cm::FlushPool& flushPool)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							reallocateChangedAABBMgActorHandleMap(const PxU32 size)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			bool							getOutOfBoundsObjects(OutOfBoundsData& data)			EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							clearOutOfBoundsObjects()								EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							visualize(PxRenderOutput& out)	EPX_OVERRIDE	EPX_FINAL;
-		virtual			void							releaseDeferredAggregateIds()	EPX_OVERRIDE	EPX_FINAL	{}
+		EHDV virtual			void							destroy()	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			AggregateHandle					createAggregate(BoundsIndex index, Bp::FilterGroup::Enum group, void* userData, PxU32 maxNumShapes, PxAggregateFilterHint filterHint, PxU32 envID)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			bool							destroyAggregate(BoundsIndex& index, Bp::FilterGroup::Enum& group, AggregateHandle aggregateHandle)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			bool							addBounds(BoundsIndex index, PxReal contactDistance, Bp::FilterGroup::Enum group, void* userdata, AggregateHandle aggregateHandle, ElementType::Enum volumeType, PxU32 envID)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			bool							removeBounds(BoundsIndex index)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			void							updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool, bool hasContactDistanceUpdated, PxBaseTask* continuation)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			void							updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBaseTask* continuation)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			void							postBroadPhase(PxBaseTask*, Cm::FlushPool& flushPool)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			void							reallocateChangedAABBMgActorHandleMap(const PxU32 size)	EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			bool							getOutOfBoundsObjects(OutOfBoundsData& data)			EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			void							clearOutOfBoundsObjects()								EPX_OVERRIDE	EPX_FINAL;
+		EHDV virtual			void							visualize(PxRenderOutput& out)	EPX_OVERRIDE	EPX_FINAL;
+		EHDI virtual			void							releaseDeferredAggregateIds()	EPX_OVERRIDE	EPX_FINAL	{}
 		//~AABBManagerBase
 
-						void							preBpUpdate_CPU(PxU32 numCpuTasks);
+						EHDV void							preBpUpdate_CPU(PxU32 numCpuTasks);
 
 						// PT: TODO: what is that BpCacheData for?
-						BpCacheData*					getBpCacheData();
-						void							putBpCacheData(BpCacheData*);
-						void							resetBpCacheData();
+						EHDV BpCacheData*					getBpCacheData();
+						EHDV void							putBpCacheData(BpCacheData*);
+						EHDV void							resetBpCacheData();
 
 						PxMutex							mMapLock;
 	private:
 						//void reserveShapeSpace(PxU32 nbShapes);
 
-						void							postBpStage2(PxBaseTask*, Cm::FlushPool&);
-						void							postBpStage3(PxBaseTask*);
+						EHDV void							postBpStage2(PxBaseTask*, Cm::FlushPool&);
+						EHDV void							postBpStage3(PxBaseTask*);
 
 						PostBroadPhaseStage2Task									mPostBroadPhase2;
 						Cm::DelegateTask<AABBManager, &AABBManager::postBpStage3>	mPostBroadPhase3;
@@ -2483,15 +2483,15 @@ namespace Bp
 															return mAggregates[handle];
 														}
 
-						void							startAggregateBoundsComputationTasks(PxU32 nbToGo, PxU32 numCpuTasks, Cm::FlushPool& flushPool);
-						PersistentActorAggregatePair*	createPersistentActorAggregatePair(ShapeHandle volA, ShapeHandle volB);
-					PersistentAggregateAggregatePair*	createPersistentAggregateAggregatePair(ShapeHandle volA, ShapeHandle volB);
-						void							updatePairs(PersistentPairs& p, BpCacheData* data = NULL);
-						void							handleOriginShift();
+						EHDV void							startAggregateBoundsComputationTasks(PxU32 nbToGo, PxU32 numCpuTasks, Cm::FlushPool& flushPool);
+						EHDV PersistentActorAggregatePair*	createPersistentActorAggregatePair(ShapeHandle volA, ShapeHandle volB);
+					EHDV PersistentAggregateAggregatePair*	createPersistentAggregateAggregatePair(ShapeHandle volA, ShapeHandle volB);
+						EHDV void							updatePairs(PersistentPairs& p, BpCacheData* data = NULL);
+						EHDV void							handleOriginShift();
 
 	public:
-						void							processBPCreatedPair(const BroadPhasePair& pair);
-						void							processBPDeletedPair(const BroadPhasePair& pair);
+						EHDV void							processBPCreatedPair(const BroadPhasePair& pair);
+						EHDV void							processBPDeletedPair(const BroadPhasePair& pair);
 
 		friend class PersistentActorAggregatePair;
 		friend class PersistentAggregateAggregatePair;
@@ -2548,8 +2548,8 @@ static EHD bool shouldPairBeDeleted(const GroupsArrayPinnedSafe& groups, ShapeHa
 	{
 		public:
 //														Aggregate(BoundsIndex index, bool selfCollisions);
-														Aggregate(BoundsIndex index, PxAggregateFilterHint filterHint);
-														~Aggregate();
+														EHDV Aggregate(BoundsIndex index, PxAggregateFilterHint filterHint);
+														EHDV ~Aggregate();
 
 						const BoundsIndex				mIndex;
 		private:
@@ -2580,8 +2580,8 @@ static EHD bool shouldPairBeDeleted(const GroupsArrayPinnedSafe& groups, ShapeHa
 															}
 														}
 
-						void							allocateBounds();
-						void							computeBounds(const PxBounds3*  bounds, const float*  contactDistances) /**/;
+						EHDV void							allocateBounds();
+						EHDV void							computeBounds(const PxBounds3*  bounds, const float*  contactDistances) /**/;
 
 		EHD	const AABB_Xi*					getBoundsX()	const	{ return mInflatedBoundsX;	}
 		EHD	const AABB_YZ*					getBoundsYZ()	const	{ return mInflatedBoundsYZ;	}
@@ -2596,7 +2596,7 @@ static EHD bool shouldPairBeDeleted(const GroupsArrayPinnedSafe& groups, ShapeHa
 						PxAggregateFilterHint			mFilterHint;
 						bool							mDirtySort;
 
-						void							sortBounds();
+						EHDV void							sortBounds();
 						E_NOCOPY(Aggregate)
 	};
 
@@ -2615,8 +2615,8 @@ namespace
 	class MBP_PairManager : public PairManagerData
 	{
 		public:
-											MBP_PairManager()	{}
-											~MBP_PairManager()	{}
+											EHDI MBP_PairManager()	{}
+											EHDI ~MBP_PairManager()	{}
 
 		EHD	InternalPair*		addPair(PxU32 id0, PxU32 id1);
 	};
@@ -2641,17 +2641,17 @@ EHD InternalPair* MBP_PairManager::addPair(PxU32 id0, PxU32 id1)
 class PersistentPairs : public PxUserAllocated
 {
 	public:
-									PersistentPairs() : mTimestamp(EPX_INVALID_U32), mShouldBeDeleted(false)	{}
-	virtual							~PersistentPairs()														{}
+									EHDI PersistentPairs() : mTimestamp(EPX_INVALID_U32), mShouldBeDeleted(false)	{}
+	EHDI virtual							~PersistentPairs()														{}
 
-	virtual			bool			update(AABBManager& /*manager*/, BpCacheData* /*data*/ = NULL) { return false; }
+	EHDI virtual			bool			update(AABBManager& /*manager*/, BpCacheData* /*data*/ = NULL) { return false; }
 
 
 	EHD	void			updatePairs(PxU32 timestamp, const PxBounds3* bounds, const float* contactDistances, const Bp::FilterGroup::Enum* groups,
 												const bool* lut, VolumeData* volumeData, PxArray<AABBOverlap>* createdOverlaps, PxArray<AABBOverlap>* destroyedOverlaps);
-					void			outputDeletedOverlaps(PxArray<AABBOverlap>* overlaps, const VolumeData* volumeData);
+					EHDV void			outputDeletedOverlaps(PxArray<AABBOverlap>* overlaps, const VolumeData* volumeData);
 	private:
-	virtual			void			findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut)	= 0;
+	EHDV virtual			void			findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut)	= 0;
 	protected:
 					PxU32			mTimestamp;
 					MBP_PairManager	mPM;
@@ -2685,7 +2685,7 @@ class PersistentPairs : public PxUserAllocated
 
 	struct outputPair_Bipartite
 	{
-		outputPair_Bipartite(PairArray* pairManager, const BoundsIndex* remap0, const BoundsIndex* remap1, const Bp::FilterGroup::Enum* groups, const bool* lut) :
+		EHDI outputPair_Bipartite(PairArray* pairManager, const BoundsIndex* remap0, const BoundsIndex* remap1, const Bp::FilterGroup::Enum* groups, const bool* lut) :
 			mPairManager	(pairManager),
 			mRemap0			(remap0),
 			mRemap1			(remap1),
@@ -2710,7 +2710,7 @@ class PersistentPairs : public PxUserAllocated
 	};
 
 template<int codepath>
-static void boxPruningKernel(	PairArray*  pairManager, const bool*  lut,
+EHDI static void boxPruningKernel(	PairArray*  pairManager, const bool*  lut,
 								PxU32 nb0, const BoundsIndex*  remap0, const AABB_Xi*  boxes0_X, const AABB_YZ*  boxes0_YZ,
 								PxU32 nb1, const BoundsIndex*  remap1, const AABB_Xi*  boxes1_X, const AABB_YZ*  boxes1_YZ,
 								const Bp::FilterGroup::Enum*  groups)
@@ -2860,7 +2860,7 @@ static EHD void doBipartiteBoxPruning_Leaf(
 
 	struct outputPair_Complete
 	{
-		outputPair_Complete(PairArray* pairManager, Aggregate* aggregate, const Bp::FilterGroup::Enum* groups, const bool* lut) :
+		EHDI outputPair_Complete(PairArray* pairManager, Aggregate* aggregate, const Bp::FilterGroup::Enum* groups, const bool* lut) :
 			mPairManager	(pairManager),
 			mAggregate		(aggregate),
 			mGroups			(groups),
@@ -2883,7 +2883,7 @@ static EHD void doBipartiteBoxPruning_Leaf(
 		const bool*						mLUT;
 	};
 
-static void doCompleteBoxPruning_Leaf(	PairArray*  pairManager, const bool*  lut,
+EHDI static void doCompleteBoxPruning_Leaf(	PairArray*  pairManager, const bool*  lut,
 										Aggregate*  aggregate, const Bp::FilterGroup::Enum*  groups)
 {
 	outputPair_Complete pm(pairManager, aggregate, groups, lut);
@@ -3013,25 +3013,25 @@ StartLoop:
 class PersistentActorAggregatePair : public PersistentPairs
 {
 	public:
-								PersistentActorAggregatePair(Aggregate* aggregate, ShapeHandle actorHandle);
-	virtual						~PersistentActorAggregatePair()	{}
+								EHDV PersistentActorAggregatePair(Aggregate* aggregate, ShapeHandle actorHandle);
+	EHDI virtual						~PersistentActorAggregatePair()	{}
 
-	virtual			void		findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut);
-	virtual			bool		update(AABBManager& manager, BpCacheData* data);
+	EHDV virtual			void		findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut);
+	EHDV virtual			bool		update(AABBManager& manager, BpCacheData* data);
 
 					ShapeHandle	mAggregateHandle;
 					ShapeHandle	mActorHandle;
 					Aggregate*	mAggregate;
 };
 
-PersistentActorAggregatePair::PersistentActorAggregatePair(Aggregate* aggregate, ShapeHandle actorHandle) :
+EHDI PersistentActorAggregatePair::PersistentActorAggregatePair(Aggregate* aggregate, ShapeHandle actorHandle) :
 	mAggregateHandle	(aggregate->mIndex),
 	mActorHandle		(actorHandle),
 	mAggregate			(aggregate)
 {
 }
 
-void PersistentActorAggregatePair::findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut)
+EHDI void PersistentActorAggregatePair::findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut)
 {
 	if(0)
 	{
@@ -3084,7 +3084,7 @@ void PersistentActorAggregatePair::findOverlaps(PairArray& pairs, const PxBounds
 	}
 }
 
-bool PersistentActorAggregatePair::update(AABBManager& manager, BpCacheData* data)
+EHDI bool PersistentActorAggregatePair::update(AABBManager& manager, BpCacheData* data)
 {
 	if(mShouldBeDeleted || shouldPairBeDeleted(manager.mGroups, mAggregateHandle, mActorHandle))
 		return true;
@@ -3103,11 +3103,11 @@ bool PersistentActorAggregatePair::update(AABBManager& manager, BpCacheData* dat
 class PersistentAggregateAggregatePair : public PersistentPairs
 {
 	public:
-								PersistentAggregateAggregatePair(Aggregate* aggregate0, Aggregate* aggregate1);
-	virtual						~PersistentAggregateAggregatePair()	{}
+								EHDV PersistentAggregateAggregatePair(Aggregate* aggregate0, Aggregate* aggregate1);
+	EHDI virtual						~PersistentAggregateAggregatePair()	{}
 
-	virtual			void		findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut);
-	virtual			bool		update(AABBManager& manager, BpCacheData*);
+	EHDV virtual			void		findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut);
+	EHDV virtual			bool		update(AABBManager& manager, BpCacheData*);
 
 					ShapeHandle	mAggregateHandle0;
 					ShapeHandle	mAggregateHandle1;
@@ -3115,7 +3115,7 @@ class PersistentAggregateAggregatePair : public PersistentPairs
 					Aggregate*	mAggregate1;
 };
 
-PersistentAggregateAggregatePair::PersistentAggregateAggregatePair(Aggregate* aggregate0, Aggregate* aggregate1) :
+EHDI PersistentAggregateAggregatePair::PersistentAggregateAggregatePair(Aggregate* aggregate0, Aggregate* aggregate1) :
 	mAggregateHandle0	(aggregate0->mIndex),
 	mAggregateHandle1	(aggregate1->mIndex),
 	mAggregate0			(aggregate0),
@@ -3123,14 +3123,14 @@ PersistentAggregateAggregatePair::PersistentAggregateAggregatePair(Aggregate* ag
 {
 }
 
-void PersistentAggregateAggregatePair::findOverlaps(PairArray& pairs, const PxBounds3*  /*bounds*/, const float*  /*contactDistances*/, const Bp::FilterGroup::Enum*  groups, const bool*  lut)
+EHDI void PersistentAggregateAggregatePair::findOverlaps(PairArray& pairs, const PxBounds3*  /*bounds*/, const float*  /*contactDistances*/, const Bp::FilterGroup::Enum*  groups, const bool*  lut)
 {
 	mAggregate0->getSortedMinBounds();
 	mAggregate1->getSortedMinBounds();
 	doBipartiteBoxPruning_Leaf(&pairs, lut, mAggregate0, mAggregate1, groups);
 }
 
-bool PersistentAggregateAggregatePair::update(AABBManager& manager, BpCacheData* data)
+EHDI bool PersistentAggregateAggregatePair::update(AABBManager& manager, BpCacheData* data)
 {
 	if(mShouldBeDeleted || shouldPairBeDeleted(manager.mGroups, mAggregateHandle0, mAggregateHandle1))
 		return true;
@@ -3149,20 +3149,20 @@ bool PersistentAggregateAggregatePair::update(AABBManager& manager, BpCacheData*
 class PersistentSelfCollisionPairs : public PersistentPairs
 {
 	public:
-						PersistentSelfCollisionPairs(Aggregate* aggregate);
-	virtual				~PersistentSelfCollisionPairs()	{}
+						EHDV PersistentSelfCollisionPairs(Aggregate* aggregate);
+	EHDI virtual				~PersistentSelfCollisionPairs()	{}
 
-	virtual	void		findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut);
+	EHDV virtual	void		findOverlaps(PairArray& pairs, const PxBounds3*  bounds, const float*  contactDistances, const Bp::FilterGroup::Enum*  groups, const bool*  lut);
 
 			Aggregate*	mAggregate;
 };
 
-PersistentSelfCollisionPairs::PersistentSelfCollisionPairs(Aggregate* aggregate) :
+EHDI PersistentSelfCollisionPairs::PersistentSelfCollisionPairs(Aggregate* aggregate) :
 	mAggregate	(aggregate)
 {
 }
 
-void PersistentSelfCollisionPairs::findOverlaps(PairArray& pairs, const PxBounds3* /*bounds*/, const float* /*contactDistances*/, const Bp::FilterGroup::Enum*  groups, const bool*  lut)
+EHDI void PersistentSelfCollisionPairs::findOverlaps(PairArray& pairs, const PxBounds3* /*bounds*/, const float* /*contactDistances*/, const Bp::FilterGroup::Enum*  groups, const bool*  lut)
 {
 	mAggregate->getSortedMinBounds();
 	doCompleteBoxPruning_Leaf(&pairs, lut, mAggregate, groups);
@@ -3170,7 +3170,7 @@ void PersistentSelfCollisionPairs::findOverlaps(PairArray& pairs, const PxBounds
 
 /////
 
-Aggregate::Aggregate(BoundsIndex index, PxAggregateFilterHint filterHint) :
+EHDI Aggregate::Aggregate(BoundsIndex index, PxAggregateFilterHint filterHint) :
 	mIndex				(index),
 	mInflatedBoundsX	(NULL),
 	mInflatedBoundsYZ	(NULL),
@@ -3183,7 +3183,7 @@ Aggregate::Aggregate(BoundsIndex index, PxAggregateFilterHint filterHint) :
 	mSelfCollisionPairs = selfCollisions ? EPX_NEW(PersistentSelfCollisionPairs)(this) : NULL;
 }
 
-Aggregate::~Aggregate()
+EHDI Aggregate::~Aggregate()
 {
 	E_FREE(mInflatedBoundsYZ);
 	E_FREE(mInflatedBoundsX);
@@ -3191,7 +3191,7 @@ Aggregate::~Aggregate()
 	E_DELETE(mSelfCollisionPairs);
 }
 
-void Aggregate::sortBounds()
+EHDI void Aggregate::sortBounds()
 {
 	mDirtySort = false;
 	const PxU32 nbObjects = getNbAggregated();
@@ -3264,7 +3264,7 @@ void Aggregate::sortBounds()
 	}
 }
 
-void Aggregate::allocateBounds()
+EHDI void Aggregate::allocateBounds()
 {
 	const PxU32 size = getNbAggregated();
 	if(size!=mAllocatedSize)
@@ -3277,7 +3277,7 @@ void Aggregate::allocateBounds()
 	}
 }
 
-void Aggregate::computeBounds(const PxBounds3*  bounds, const float*  contactDistances) /**/
+EHDI void Aggregate::computeBounds(const PxBounds3*  bounds, const float*  contactDistances) /**/
 {
 //	EPX_PROFILE_ZONE("Aggregate::computeBounds",0);
 
@@ -3351,7 +3351,7 @@ void Aggregate::computeBounds(const PxBounds3*  bounds, const float*  contactDis
 
 /////
 
-static void buildFreeBitmap(PxBitMap& bitmap, PxU32 currentFree, const PxArray<Aggregate*>& aggregates)
+EHDI static void buildFreeBitmap(PxBitMap& bitmap, PxU32 currentFree, const PxArray<Aggregate*>& aggregates)
 {
 	const PxU32 N = aggregates.size();
 
@@ -3365,7 +3365,7 @@ static void buildFreeBitmap(PxBitMap& bitmap, PxU32 currentFree, const PxArray<A
 }
 
 
-AABBManager::AABBManager(	BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
+EHDI AABBManager::AABBManager(	BroadPhase& bp, BoundsArray& boundsArray, PxFloatArrayPinnedSafe& contactDistance,
 							PxU32 maxNbAggregates, PxU32 maxNbShapes, PxVirtualAllocator& allocator, PxU64 contextID,
 							PxPairFilteringMode::Enum kineKineFilteringMode, PxPairFilteringMode::Enum staticKineFilteringMode) :
 	AABBManagerBase			(bp, boundsArray, contactDistance, maxNbAggregates, maxNbShapes, allocator, contextID, kineKineFilteringMode, staticKineFilteringMode),
@@ -3379,13 +3379,13 @@ AABBManager::AABBManager(	BroadPhase& bp, BoundsArray& boundsArray, PxFloatArray
 {
 }
 
-static void releasePairs(AggPairMap& map)
+EHDI static void releasePairs(AggPairMap& map)
 {
 	for(AggPairMap::Iterator iter = map.getIterator(); !iter.done(); ++iter)
 		E_DELETE(iter->second);
 }
 
-void AABBManager::destroy()
+EHDI void AABBManager::destroy()
 {
 	releasePairs(mActorAggregatePairs);
 	releasePairs(mAggregateAggregatePairs);
@@ -3416,7 +3416,7 @@ void AABBManager::destroy()
 	EPX_DELETE_THIS;
 }
 
-static void removeAggregateFromDirtyArray(Aggregate* aggregate, PxArray<Aggregate*>& dirtyAggregates)
+EHDI static void removeAggregateFromDirtyArray(Aggregate* aggregate, PxArray<Aggregate*>& dirtyAggregates)
 {
 	// PT: TODO: do this lazily like for interactions?
 	if(aggregate->isDirty())
@@ -3435,7 +3435,7 @@ static void removeAggregateFromDirtyArray(Aggregate* aggregate, PxArray<Aggregat
 }
 
 // PT: userData = Sc::ElementSim
-bool AABBManager::addBounds(BoundsIndex index, PxReal contactDistance, Bp::FilterGroup::Enum group, void* userData, AggregateHandle aggregateHandle, ElementType::Enum volumeType, PxU32 envID)
+EHDI bool AABBManager::addBounds(BoundsIndex index, PxReal contactDistance, Bp::FilterGroup::Enum group, void* userData, AggregateHandle aggregateHandle, ElementType::Enum volumeType, PxU32 envID)
 {
 	if(envID!=EPX_INVALID_U32)
 	{
@@ -3474,7 +3474,7 @@ bool AABBManager::addBounds(BoundsIndex index, PxReal contactDistance, Bp::Filte
 	return true;
 }
 
-bool AABBManager::removeBounds(BoundsIndex index)
+EHDI bool AABBManager::removeBounds(BoundsIndex index)
 {
 	// PT: TODO: shouldn't it be compared to mUsedSize?
 	E_ASSERT(index < mVolumeData.size());
@@ -3509,7 +3509,7 @@ bool AABBManager::removeBounds(BoundsIndex index)
 }
 
 // PT: TODO: the userData is actually a PxAggregate pointer. Maybe we could expose/use that.
-AggregateHandle AABBManager::createAggregate(BoundsIndex index, Bp::FilterGroup::Enum group, void* userData, PxU32 /*maxNumShapes*/, PxAggregateFilterHint filterHint, PxU32 envID)
+EHDI AggregateHandle AABBManager::createAggregate(BoundsIndex index, Bp::FilterGroup::Enum group, void* userData, PxU32 /*maxNumShapes*/, PxAggregateFilterHint filterHint, PxU32 envID)
 {
 //	E_ASSERT(checkID(index));
 
@@ -3554,7 +3554,7 @@ AggregateHandle AABBManager::createAggregate(BoundsIndex index, Bp::FilterGroup:
 	return handle;
 }
 
-bool AABBManager::destroyAggregate(BoundsIndex& index_, Bp::FilterGroup::Enum& group_, AggregateHandle aggregateHandle)
+EHDI bool AABBManager::destroyAggregate(BoundsIndex& index_, Bp::FilterGroup::Enum& group_, AggregateHandle aggregateHandle)
 {
 
 	Aggregate* aggregate = getAggregateFromHandle(aggregateHandle);
@@ -3587,7 +3587,7 @@ bool AABBManager::destroyAggregate(BoundsIndex& index_, Bp::FilterGroup::Enum& g
 	return true;
 }
 
-void AABBManager::handleOriginShift()
+EHDI void AABBManager::handleOriginShift()
 {
 	mOriginShifted = false;
 
@@ -3622,7 +3622,7 @@ void AABBManager::handleOriginShift()
 	}
 }
 
-void AggregateBoundsComputationTask::runInternal()
+EHDI void AggregateBoundsComputationTask::runInternal()
 {
 	const BoundsArray& boundArray = mManager->getBoundsArray();
 	const float* contactDistances = mManager->getContactDistances();
@@ -3643,12 +3643,12 @@ void AggregateBoundsComputationTask::runInternal()
 	}
 }
 
-void PreBpUpdateTask::runInternal()
+EHDI void PreBpUpdateTask::runInternal()
 {
 	mManager->preBpUpdate_CPU(mNumCpuTasks);
 }
 
-void AABBManager::startAggregateBoundsComputationTasks(PxU32 nbToGo, PxU32 numCpuTasks, Cm::FlushPool& flushPool)
+EHDI void AABBManager::startAggregateBoundsComputationTasks(PxU32 nbToGo, PxU32 numCpuTasks, Cm::FlushPool& flushPool)
 {
 	const PxU32 nbAggregatesPerTask = nbToGo > numCpuTasks ? nbToGo / numCpuTasks : nbToGo;
 
@@ -3669,7 +3669,7 @@ void AABBManager::startAggregateBoundsComputationTasks(PxU32 nbToGo, PxU32 numCp
 	}
 }
 
-void AABBManager::updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool, bool /*hasContactDistanceUpdated*/, PxBaseTask* continuation)
+EHDI void AABBManager::updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool, bool /*hasContactDistanceUpdated*/, PxBaseTask* continuation)
 {
 	EPX_PROFILE_ZONE("AABBManager::updateBPFirstPass", mContextID);
 
@@ -3840,7 +3840,7 @@ void AABBManager::updateBPFirstPass(PxU32 numCpuTasks, Cm::FlushPool& flushPool,
 }
 
 // PT: previously known as AABBManager::updateAABBsAndBP
-void AABBManager::updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBaseTask* continuation)
+EHDI void AABBManager::updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBaseTask* continuation)
 {
 	EPX_PROFILE_ZONE("AABBManager::updateBPSecondPass", mContextID);
 
@@ -3868,7 +3868,7 @@ void AABBManager::updateBPSecondPass(PxcScratchAllocator* scratchAllocator, PxBa
 		mBroadPhase.update(scratchAllocator, updateData, continuation);
 }
 
-void AABBManager::preBpUpdate_CPU(PxU32 numCpuTasks)
+EHDI void AABBManager::preBpUpdate_CPU(PxU32 numCpuTasks)
 {
 	EPX_PROFILE_ZONE("AABBManager::preBpUpdate", mContextID);
 
@@ -3910,7 +3910,7 @@ static EHD void deleteOverlap(PxArray<AABBOverlap>* overlaps, const VolumeData* 
 		outputOverlap(overlaps, volumeData, id0, id1);
 }
 
-void PersistentPairs::outputDeletedOverlaps(PxArray<AABBOverlap>* overlaps, const VolumeData* volumeData)
+EHDI void PersistentPairs::outputDeletedOverlaps(PxArray<AABBOverlap>* overlaps, const VolumeData* volumeData)
 {
 	const PxU32 nbActivePairs = mPM.mNbActivePairs;
 	for(PxU32 i=0;i<nbActivePairs;i++)
@@ -3964,7 +3964,7 @@ EHD void PersistentPairs::updatePairs(	PxU32 timestamp, const PxBounds3* bounds,
 	mPM.shrinkMemory();
 }
 
-void AABBManager::updatePairs(PersistentPairs& p, BpCacheData* data)
+EHDI void AABBManager::updatePairs(PersistentPairs& p, BpCacheData* data)
 {
 	if (data)
 		p.updatePairs(mTimestamp, mBoundsArray.begin(), mContactDistance.begin(), mGroups.begin(), mFilters.getLUT(), mVolumeData.begin(), data->mCreatedPairs, data->mDeletedPairs);
@@ -3982,7 +3982,7 @@ static EHD Bp::FilterType::Enum convertFilterType(PxAggregateType::Enum	agType)
 	return Bp::FilterType::KINEMATIC;
 }
 
-PersistentActorAggregatePair* AABBManager::createPersistentActorAggregatePair(ShapeHandle volA, ShapeHandle volB)
+EHDI PersistentActorAggregatePair* AABBManager::createPersistentActorAggregatePair(ShapeHandle volA, ShapeHandle volB)
 {
 	ShapeHandle	actorHandle;
 	ShapeHandle	aggregateHandle;
@@ -4015,7 +4015,7 @@ PersistentActorAggregatePair* AABBManager::createPersistentActorAggregatePair(Sh
 	return EPX_NEW(PersistentActorAggregatePair)(aggregate, actorHandle);	// PT: TODO: use a pool or something
 }
 
-PersistentAggregateAggregatePair* AABBManager::createPersistentAggregateAggregatePair(ShapeHandle volA, ShapeHandle volB)
+EHDI PersistentAggregateAggregatePair* AABBManager::createPersistentAggregateAggregatePair(ShapeHandle volA, ShapeHandle volB)
 {
 	E_ASSERT(mVolumeData[volA].isAggregate() && mVolumeData[volB].isAggregate());
 	const AggregateHandle h0 = mVolumeData[volA].getAggregate();
@@ -4038,7 +4038,7 @@ PersistentAggregateAggregatePair* AABBManager::createPersistentAggregateAggregat
 	return EPX_NEW(PersistentAggregateAggregatePair)(aggregate0, aggregate1);	// PT: TODO: use a pool or something
 }
 
-void AABBManager::processBPCreatedPair(const BroadPhasePair& pair)
+EHDI void AABBManager::processBPCreatedPair(const BroadPhasePair& pair)
 {
 	E_ASSERT(!mVolumeData[pair.mVolA].isAggregated());
 	E_ASSERT(!mVolumeData[pair.mVolB].isAggregated());
@@ -4079,7 +4079,7 @@ void AABBManager::processBPCreatedPair(const BroadPhasePair& pair)
 	}
 }
 
-void AABBManager::processBPDeletedPair(const BroadPhasePair& pair)
+EHDI void AABBManager::processBPDeletedPair(const BroadPhasePair& pair)
 {
 	E_ASSERT(!mVolumeData[pair.mVolA].isAggregated());
 	E_ASSERT(!mVolumeData[pair.mVolB].isAggregated());
@@ -4124,7 +4124,7 @@ struct DeletedPairHandler
 };
 
 template<class FunctionT>
-static void processBPPairs(PxU32 nbPairs, const BroadPhasePair* pairs, AABBManager& manager)
+EHDI static void processBPPairs(PxU32 nbPairs, const BroadPhasePair* pairs, AABBManager& manager)
 {
 	// PT: TODO: figure out this ShapeHandle/BpHandle thing. Is it ok to use "BP_INVALID_BP_HANDLE" for a "ShapeHandle"?
 	while(nbPairs--)
@@ -4139,7 +4139,7 @@ static void processBPPairs(PxU32 nbPairs, const BroadPhasePair* pairs, AABBManag
 	}
 }
 
-static void processAggregatePairs(AggPairMap& map, AABBManager& manager)
+EHDI static void processAggregatePairs(AggPairMap& map, AABBManager& manager)
 {
 	// PT: TODO: hmmm we have a list of dirty aggregates but we don't have a list of dirty pairs.
 	// PT: not sure how the 3.4 trunk solves this but let's just iterate all pairs for now
@@ -4171,7 +4171,7 @@ struct PairData
 	PxU32 mStartIdx;
 	PxU32 mCount;
 
-	PairData() : mArray(NULL), mStartIdx(0), mCount(0)
+	EHDI PairData() : mArray(NULL), mStartIdx(0), mCount(0)
 	{
 	}
 };
@@ -4184,11 +4184,11 @@ public:
 	PairData mCreatedPairs[2];
 	PairData mDestroyedPairs[2];
 
-	ProcessAggPairsBase(PxU64 contextID) : Cm::Task(contextID)
+	EHDI ProcessAggPairsBase(PxU64 contextID) : Cm::Task(contextID)
 	{
 	}
 
-	void setCache(BpCacheData& data)
+	EHDI void setCache(BpCacheData& data)
 	{
 		for (PxU32 i = 0; i < 2; ++i)
 		{
@@ -4199,7 +4199,7 @@ public:
 		}
 	}
 
-	void updateCounters()
+	EHDI void updateCounters()
 	{
 		for (PxU32 i = 0; i < 2; ++i)
 		{
@@ -4220,12 +4220,12 @@ public:
 	PxMutex* mMutex;
 	const char* mName;
 
-	ProcessAggPairsParallelTask(PxU64 contextID, PxMutex* mutex, AABBManager* manager, AggPairMap* map, const char* name) : ProcessAggPairsBase(contextID),
+	EHDI ProcessAggPairsParallelTask(PxU64 contextID, PxMutex* mutex, AABBManager* manager, AggPairMap* map, const char* name) : ProcessAggPairsBase(contextID),
 		mNbPairs(0), mManager(manager), mMap(map), mMutex(mutex), mName(name)
 	{
 	}
 
-	void runInternal()
+	EHDI void runInternal()
 	{
 		BpCacheData* data = mManager->getBpCacheData();
 
@@ -4257,7 +4257,7 @@ public:
 		}
 	}
 
-	virtual const char* getName() const { return mName; }
+	EHDI virtual const char* getName() const { return mName; }
 };
 
 class SortAggregateBoundsParallel : public Cm::Task
@@ -4267,12 +4267,12 @@ public:
 	Aggregate** mAggregates;
 	PxU32 mNbAggs;
 
-	SortAggregateBoundsParallel(PxU64 contextID, Aggregate** aggs, PxU32 nbAggs) : Cm::Task(contextID),
+	EHDI SortAggregateBoundsParallel(PxU64 contextID, Aggregate** aggs, PxU32 nbAggs) : Cm::Task(contextID),
 		mAggregates(aggs), mNbAggs(nbAggs)
 	{
 	}
 
-	void runInternal()
+	EHDI void runInternal()
 	{
 		EPX_PROFILE_ZONE("SortBounds", mContextID);
 		for (PxU32 i = 0; i < mNbAggs; i++)
@@ -4283,7 +4283,7 @@ public:
 		}
 	}
 
-	virtual const char* getName() const { return "SortAggregateBoundsParallel"; }
+	EHDI virtual const char* getName() const { return "SortAggregateBoundsParallel"; }
 };
 
 class ProcessSelfCollisionPairsParallel : public ProcessAggPairsBase
@@ -4293,12 +4293,12 @@ public:
 	PxU32 mNbAggs;
 	AABBManager* mManager;
 
-	ProcessSelfCollisionPairsParallel(PxU64 contextID, Aggregate** aggs, PxU32 nbAggs, AABBManager* manager) : ProcessAggPairsBase(contextID),
+	EHDI ProcessSelfCollisionPairsParallel(PxU64 contextID, Aggregate** aggs, PxU32 nbAggs, AABBManager* manager) : ProcessAggPairsBase(contextID),
 		mAggregates(aggs), mNbAggs(nbAggs), mManager(manager)
 	{
 	}
 
-	void runInternal()
+	EHDI void runInternal()
 	{
 		BpCacheData* data = mManager->getBpCacheData();
 		setCache(*data);
@@ -4315,10 +4315,10 @@ public:
 		mManager->putBpCacheData(data);
 	}
 
-	virtual const char* getName() const { return "ProcessSelfCollisionPairsParallel"; }
+	EHDI virtual const char* getName() const { return "ProcessSelfCollisionPairsParallel"; }
 };
 
-static void processAggregatePairsParallel(AggPairMap& map, AABBManager& manager, Cm::FlushPool& flushPool,
+EHDI static void processAggregatePairsParallel(AggPairMap& map, AABBManager& manager, Cm::FlushPool& flushPool,
 	PxBaseTask* continuation, const char* taskName, PxArray<ProcessAggPairsBase*>& pairTasks)
 {
 	// PT: TODO: hmmm we have a list of dirty aggregates but we don't have a list of dirty pairs.
@@ -4362,7 +4362,7 @@ static void processAggregatePairsParallel(AggPairMap& map, AABBManager& manager,
 	}
 }
 
-void AABBManager::postBroadPhase(PxBaseTask* continuation, Cm::FlushPool& flushPool)
+EHDI void AABBManager::postBroadPhase(PxBaseTask* continuation, Cm::FlushPool& flushPool)
 {
 	EPX_PROFILE_ZONE("AABBManager::postBroadPhase", mContextID);
 
@@ -4427,17 +4427,17 @@ void AABBManager::postBroadPhase(PxBaseTask* continuation, Cm::FlushPool& flushP
 	}
 }
 
-void AABBManager::reallocateChangedAABBMgActorHandleMap(const PxU32 size)
+EHDI void AABBManager::reallocateChangedAABBMgActorHandleMap(const PxU32 size)
 {
 	mChangedHandleMap.resizeAndClear(size);
 }
 
-void PostBroadPhaseStage2Task::runInternal()
+EHDI void PostBroadPhaseStage2Task::runInternal()
 {
 	mManager.postBpStage2(mCont, *mFlushPool);
 }
 
-void AABBManager::postBpStage2(PxBaseTask* continuation, Cm::FlushPool& flushPool)
+EHDI void AABBManager::postBpStage2(PxBaseTask* continuation, Cm::FlushPool& flushPool)
 {
 	{
 		const PxU32 size = mDirtyAggregates.size();
@@ -4473,7 +4473,7 @@ void AABBManager::postBpStage2(PxBaseTask* continuation, Cm::FlushPool& flushPoo
 	}
 }
 
-void AABBManager::postBpStage3(PxBaseTask*)
+EHDI void AABBManager::postBpStage3(PxBaseTask*)
 {
 	{
 		EPX_PROFILE_ZONE("SimpleAABBManager::postBroadPhase - aggregate self-collisions", mContextID);
@@ -4607,7 +4607,7 @@ void AABBManager::postBpStage3(PxBaseTask*)
 	}
 }
 
-BpCacheData* AABBManager::getBpCacheData()
+EHDI BpCacheData* AABBManager::getBpCacheData()
 {
 	BpCacheData* rv = static_cast<BpCacheData*>(mBpThreadContextPool.pop());
 	if (rv == NULL)
@@ -4617,12 +4617,12 @@ BpCacheData* AABBManager::getBpCacheData()
 	return rv;
 }
 
-void AABBManager::putBpCacheData(BpCacheData* data)
+EHDI void AABBManager::putBpCacheData(BpCacheData* data)
 {
 	mBpThreadContextPool.push(*data);
 }
 
-void AABBManager::resetBpCacheData()
+EHDI void AABBManager::resetBpCacheData()
 {
 	PxInlineArray<BpCacheData*, 16> bpCache;
 	BpCacheData* entry = static_cast<BpCacheData*>(mBpThreadContextPool.pop());
@@ -4640,7 +4640,7 @@ void AABBManager::resetBpCacheData()
 	}
 }
 
-bool AABBManager::getOutOfBoundsObjects(OutOfBoundsData& data)
+EHDI bool AABBManager::getOutOfBoundsObjects(OutOfBoundsData& data)
 {
 	data.mNbOutOfBoundsObjects = mOutOfBoundsObjects.size();
 	data.mOutOfBoundsObjects = mOutOfBoundsObjects.begin();
@@ -4649,7 +4649,7 @@ bool AABBManager::getOutOfBoundsObjects(OutOfBoundsData& data)
 	return data.mNbOutOfBoundsObjects || data.mNbOutOfBoundsAggregates;
 }
 
-void AABBManager::clearOutOfBoundsObjects()
+EHDI void AABBManager::clearOutOfBoundsObjects()
 {
 	mOutOfBoundsObjects.clear();
 	mOutOfBoundsAggregates.clear();
@@ -4657,7 +4657,7 @@ void AABBManager::clearOutOfBoundsObjects()
 
 // PT: disabled this by default, since it bypasses all per-shape/per-actor visualization flags
 //static const bool gVisualizeAggregateElems = false;
-void AABBManager::visualize(PxRenderOutput& out)
+EHDI void AABBManager::visualize(PxRenderOutput& out)
 {
 	const PxTransform idt = PxTransform(PxIdentity);
 	out << idt;

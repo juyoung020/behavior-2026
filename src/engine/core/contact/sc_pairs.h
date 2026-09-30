@@ -23,8 +23,8 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
-#include <unordered_map>
-#include <vector>
+
+#include "core/contact/sc_containers.h"
 
 namespace eng {
 namespace contact {
@@ -113,11 +113,11 @@ struct Actor {
   float offsetSlop = 0.0f;           // PxsBodyCore::offsetSlop (강체만)
   bool forceStaticKineNotif = false, forceKineKineNotif = false;  // PxRigidBodyFlag::eFORCE_*_NOTIFICATIONS
   // 이 층이 관리
-  std::vector<int32_t> interactions;  // ActorSim::mInteractions (등록 순서, 지우면 마지막을 그 자리로)
+  Vec<int32_t> interactions;  // ActorSim::mInteractions (등록 순서, 지우면 마지막을 그 자리로)
   uint32_t countedInteractions = 0;    // BodySim::registerCountedInteraction 수
-  bool isStatic() const { return (filterAttr & FilterObj::eEX_RIGID_STATIC) != 0; }
-  bool isDynamicRigid() const { return (filterAttr & FilterObj::eEX_RIGID_DYNAMIC) != 0; }
-  bool isKinematic() const { return (filterAttr & FilterObj::eKINEMATIC) != 0; }
+  SCHD bool isStatic() const { return (filterAttr & FilterObj::eEX_RIGID_STATIC) != 0; }
+  SCHD bool isDynamicRigid() const { return (filterAttr & FilterObj::eEX_RIGID_DYNAMIC) != 0; }
+  SCHD bool isKinematic() const { return (filterAttr & FilterObj::eKINEMATIC) != 0; }
 };
 
 struct Shape {
@@ -145,22 +145,22 @@ typedef void (*FilterPairLostFn)(uint64_t pairID, uint32_t attr0, const FilterDa
 
 // ---- 섬 갈고리 (solver 가 구현: PxsSimpleIslandManager.cpp 의 같은 이름 함수)
 struct IslandHooks {
-  virtual ~IslandHooks() {}
-  virtual uint32_t addContactManager(int32_t cm, uint64_t node0, uint64_t node1, int32_t inter, int32_t edgeType) = 0;
-  virtual void preallocateContactManagers(uint32_t nb, uint32_t* handles) = 0;
-  virtual bool addPreallocatedContactManager(uint32_t edge, int32_t cm, uint64_t node0, uint64_t node1, int32_t inter, int32_t edgeType) = 0;
-  virtual void addDelayedDirtyEdges(uint32_t nb, const uint32_t* edges) = 0;  // speculative IslandSim
-  virtual void setEdgeConnected(uint32_t edge, int32_t edgeType) = 0;
-  virtual void setEdgeDisconnected(uint32_t edge) = 0;
-  virtual void removeConnection(uint32_t edge) = 0;
-  virtual void setEdgeRigidCM(uint32_t edge, int32_t cm) = 0;
-  virtual void clearEdgeRigidCM(uint32_t edge) = 0;
-  virtual void deactivateEdge(uint32_t edge) = 0;
-  virtual bool isSpeculativeNodeActive(uint64_t node) = 0;             // IslandSim::getNode(n).isActive() (추측 섬)
-  virtual bool isSpeculativeNodeActiveOrActivating(uint64_t node) = 0;
-  virtual bool isActorActive(int32_t actor) = 0;                        // ActorSim::isActive
-  virtual void internalWakeUp(int32_t actor) = 0;                        // ActorSim::internalWakeUp
-  virtual void addToLostTouchList(int32_t actor0, int32_t actor1) = 0;  // Scene::addToLostTouchList
+  SCHD virtual ~IslandHooks() {}
+  SCHDV virtual uint32_t addContactManager(int32_t cm, uint64_t node0, uint64_t node1, int32_t inter, int32_t edgeType) = 0;
+  SCHDV virtual void preallocateContactManagers(uint32_t nb, uint32_t* handles) = 0;
+  SCHDV virtual bool addPreallocatedContactManager(uint32_t edge, int32_t cm, uint64_t node0, uint64_t node1, int32_t inter, int32_t edgeType) = 0;
+  SCHDV virtual void addDelayedDirtyEdges(uint32_t nb, const uint32_t* edges) = 0;  // speculative IslandSim
+  SCHDV virtual void setEdgeConnected(uint32_t edge, int32_t edgeType) = 0;
+  SCHDV virtual void setEdgeDisconnected(uint32_t edge) = 0;
+  SCHDV virtual void removeConnection(uint32_t edge) = 0;
+  SCHDV virtual void setEdgeRigidCM(uint32_t edge, int32_t cm) = 0;
+  SCHDV virtual void clearEdgeRigidCM(uint32_t edge) = 0;
+  SCHDV virtual void deactivateEdge(uint32_t edge) = 0;
+  SCHDV virtual bool isSpeculativeNodeActive(uint64_t node) = 0;             // IslandSim::getNode(n).isActive() (추측 섬)
+  SCHDV virtual bool isSpeculativeNodeActiveOrActivating(uint64_t node) = 0;
+  SCHDV virtual bool isActorActive(int32_t actor) = 0;                        // ActorSim::isActive
+  SCHDV virtual void internalWakeUp(int32_t actor) = 0;                        // ActorSim::internalWakeUp
+  SCHDV virtual void addToLostTouchList(int32_t actor0, int32_t actor1) = 0;  // Scene::addToLostTouchList
 };
 
 // ---- 이 층의 자료
@@ -176,6 +176,7 @@ struct Interaction {
   int32_t cm = -1;          // mManager
   uint32_t edge = INVALID;  // mEdgeIndex
   bool sceneRegistered = false;
+  uint32_t dirtyPos = INVALID;  // 더러움 목록 안 자리
 };
 
 struct ContactManager {  // PxsContactManager + PxcNpWorkUnit 중 좁은 단계·solver 가 읽는 것
@@ -200,28 +201,28 @@ struct NpOutput {  // PxsContactManagerOutput 중 이 층이 쓰는 칸
 
 // 좁은 단계 목록 (PxsContactManagers). 캐시(지속 다양체)는 목록 칸과 함께 움직인다 -> 갈고리로 옮김을 알린다.
 struct NpList {
-  std::vector<int32_t> cms;
-  std::vector<NpOutput> outputs;
-  std::vector<int32_t> cacheKind;  // PxsContext::createCache 결과 종류 (0 없음, 1 구 1점, 2 큰 4점, 3 다중)
-  uint32_t size() const { return uint32_t(cms.size()); }
+  Vec<int32_t> cms;
+  Vec<NpOutput> outputs;
+  Vec<int32_t> cacheKind;  // PxsContext::createCache 결과 종류 (0 없음, 1 구 1점, 2 큰 4점, 3 다중)
+  SCHD uint32_t size() const { return uint32_t(cms.size()); }
 };
 
 struct CacheHooks {  // 좁은 단계 모듈이 들고 있는 칸별 캐시(다양체)를 목록 변경에 맞춰 옮긴다
-  virtual ~CacheHooks() {}
-  virtual void create(bool newList, uint32_t slot, int32_t geomType0, int32_t geomType1) = 0;  // 새 칸 (목록 끝)
-  virtual void move(bool newListDst, uint32_t dst, bool newListSrc, uint32_t src) = 0;          // 칸 복사
-  virtual void destroy(bool newList, uint32_t slot) = 0;
-  virtual void resize(bool newList, uint32_t n) = 0;
+  SCHD virtual ~CacheHooks() {}
+  SCHDV virtual void create(bool newList, uint32_t slot, int32_t geomType0, int32_t geomType1) = 0;  // 새 칸 (목록 끝)
+  SCHDV virtual void move(bool newListDst, uint32_t dst, bool newListSrc, uint32_t src) = 0;          // 칸 복사
+  SCHDV virtual void destroy(bool newList, uint32_t slot) = 0;
+  SCHDV virtual void resize(bool newList, uint32_t n) = 0;
 };
 
 // CmPool.h PoolList 의 번호 흉내 (빈 칸 목록 순서 그대로)
 struct CmPool {
   uint32_t eltsPerSlab = 256;  // PxSceneDesc::contactPairSlabSize 기본값
   uint32_t slabCount = 0;
-  std::vector<int32_t> freeList;  // 원본 mFreeList (크기 = mFreeCount)
-  std::vector<uint8_t> used;
+  Vec<int32_t> freeList;  // 원본 mFreeList (크기 = mFreeCount)
+  Vec<uint8_t> used;
   // CmPool.h:59 preallocate
-  void preallocate(uint32_t nbRequired, int32_t* elements) {
+  SCHD void preallocate(uint32_t nbRequired, int32_t* elements) {
     uint32_t nbToAllocate = nbRequired > freeList.size() ? nbRequired - uint32_t(freeList.size()) : 0;
     uint32_t nbElements = nbRequired - nbToAllocate;
     const uint32_t freeCount = uint32_t(freeList.size());
@@ -247,7 +248,7 @@ struct CmPool {
     for (uint32_t a = 0; a < nbElements; ++a) used[size_t(elements[a])] = 1;
   }
   // CmPool.h:147 get / :183 extend
-  int32_t get() {
+  SCHD int32_t get() {
     if (freeList.empty()) {
       slabCount++;
       used.resize(size_t(slabCount) * eltsPerSlab, 0);
@@ -259,19 +260,19 @@ struct CmPool {
     used[size_t(e)] = 1;
     return e;
   }
-  void put(int32_t e) {  // CmPool.h:156
+  SCHD void put(int32_t e) {  // CmPool.h:156
     used[size_t(e)] = 0;
     freeList.push_back(e);
   }
-  uint32_t capacity() const { return slabCount * eltsPerSlab; }
+  SCHD uint32_t capacity() const { return slabCount * eltsPerSlab; }
 };
 
 // 닿음 변화 비트맵 (PxsContext::mContactManagerTouchEvent, 접촉 관리자 번호별)
 struct BitSet {
-  std::vector<uint32_t> w;
-  void growAndSet(uint32_t i) { if ((i >> 5) >= w.size()) w.resize((i >> 5) + 1, 0); w[i >> 5] |= 1u << (i & 31); }
-  void growAndReset(uint32_t i) { if ((i >> 5) >= w.size()) w.resize((i >> 5) + 1, 0); w[i >> 5] &= ~(1u << (i & 31)); }
-  void clear() { std::fill(w.begin(), w.end(), 0u); }
+  Vec<uint32_t> w;
+  SCHD void growAndSet(uint32_t i) { if ((i >> 5) >= w.size()) w.resize((i >> 5) + 1, 0); w[i >> 5] |= 1u << (i & 31); }
+  SCHD void growAndReset(uint32_t i) { if ((i >> 5) >= w.size()) w.resize((i >> 5) + 1, 0); w[i >> 5] &= ~(1u << (i & 31)); }
+  SCHD void clear() { for (uint32_t i = 0; i < w.size(); ++i) w[i] = 0u; }
 };
 
 // 이번 스텝 사건
@@ -280,10 +281,10 @@ struct TouchEvent { int32_t inter; };
 class ScPairs {
  public:
   // 장면 (엔진이 채움). shapes 는 ElementSim 번호로 바로 찾는다.
-  std::vector<Actor> actors;
-  std::vector<Shape> shapes;
+  Vec<Actor> actors;
+  Vec<Shape> shapes;
   // 조인트 충돌 표: 두 행위자 번호 (작은 것, 큰 것) -> 충돌 켜짐 여부. 행위자 쌍마다 첫 조인트 (findConstraintCore 가 첫 번째 것을 봄)
-  std::unordered_map<uint64_t, JointPairInfo> jointPairs;
+  Map<JointPairInfo> jointPairs;
   // 거르기 설정 (Sc::FilteringContext)
   FilterShaderFn filterShader = nullptr;
   const void* filterShaderData = nullptr;
@@ -300,22 +301,21 @@ class ScPairs {
   CacheHooks* caches = nullptr;  // 없으면 캐시 종류만 적는다
 
   // 이 층의 상태
-  std::vector<Interaction> inters;
-  std::vector<int32_t> freeInters;
-  std::unordered_map<uint64_t, int32_t> elementSimMap;  // NPhaseCore::mElementSimMap (찾기 전용)
-  std::vector<ContactManager> cmsData;                  // 풀 번호로 찾음
+  Vec<Interaction> inters;
+  Vec<int32_t> freeInters;
+  Map<int32_t> elementSimMap;  // NPhaseCore::mElementSimMap (찾기 전용)
+  Vec<ContactManager> cmsData;                  // 풀 번호로 찾음
   CmPool cmPool;
   NpList npMain, npNew;  // mNarrowPhasePairs, mNewNarrowPhasePairs
   BitSet touchEvent;     // mContactManagerTouchEvent
   uint32_t newTouchCount = 0, lostTouchCount = 0;
-  std::vector<int32_t> dirtyList;  // NPhaseCore::mDirtyInteractions (PxCoalescedHashSet: 넣은 순서, 지우면 마지막을 그 자리로)
-  std::unordered_map<int32_t, uint32_t> dirtyPos;
-  std::vector<TouchEvent> touchFound, touchLost;  // Scene::mTouchFoundEvents / mTouchLostEvents
+  Vec<int32_t> dirtyList;  // NPhaseCore::mDirtyInteractions (PxCoalescedHashSet: 넣은 순서, 지우면 마지막을 그 자리로)
+  Vec<TouchEvent> touchFound, touchLost;  // Scene::mTouchFoundEvents / mTouchLostEvents
   // 이번 스텝 사라진 겹침 (processLostContacts 1~3 이 공유: AABBOverlap::mPairUserData 자리)
   struct LostOverlap { int32_t e0, e1, inter; };
-  std::vector<LostOverlap> lostShape, lostTrigger;
+  Vec<LostOverlap> lostShape, lostTrigger;
 
-  ScPairs() {
+  SCHD ScPairs() {
     for (int i = 0; i < 32; ++i)
       for (int j = 0; j < 32; ++j) dominance[i][j][0] = dominance[i][j][1] = 1;
   }
@@ -328,11 +328,11 @@ class ScPairs {
   // =====================================================================================================
 
   // ---- ScNPhaseCore.cpp:886 updateDirtyInteractions (지배 그룹·시각화 전체 더러움은 아직 없음 — BEHAVIOR 에서 안 바뀜)
-  void updateDirtyInteractions() {
+  SCHD void updateDirtyInteractions() {
     // 목록 스냅샷을 차례로 (PxCoalescedHashSet::getEntries). 도중에 바뀐(convert) 상호작용의 번호는 끝난 뒤에 돌려준다
     // (PhysX 는 다른 풀이라 새 상호작용이 옛 것과 같은 주소일 수 없다 -> "interaction == refInt" 비교가 번호 재사용에 속지 않게).
     deferFree = true;
-    const std::vector<int32_t> entries = dirtyList;
+    const Vec<int32_t> entries = dirtyList;
     for (size_t i = 0; i < entries.size(); ++i) {
       const int32_t it = entries[i];
       int32_t refInt = it;
@@ -347,23 +347,22 @@ class ScPairs {
       }
     }
     dirtyList.clear();
-    dirtyPos.clear();
     deferFree = false;
     for (int32_t f : pendingFree) freeInters.push_back(f);
     pendingFree.clear();
   }
   // ActorSim::setActorsInteractionsDirty (ScActorSim.cpp:157): 운동학 전환(ScBodySim.cpp:249 eBODY_KINEMATIC/eFILTERABLE, :275 +eCONSTRAINT),
   // 지배 그룹(ScActorCore.cpp:74), 조인트 끊김(ScConstraintBreakage.cpp:101 eFILTER_STATE/eRB_ELEMENT). other < 0 이면 전부.
-  void setActorsInteractionsDirty(int32_t actor, uint8_t flag, int32_t other, uint8_t interactionFlagMask) {
-    const std::vector<int32_t> L = actors[size_t(actor)].interactions;
+  SCHD void setActorsInteractionsDirty(int32_t actor, uint8_t flag, int32_t other, uint8_t interactionFlagMask) {
+    const Vec<int32_t> L = actors[size_t(actor)].interactions;
     for (int32_t it : L) {
       const Interaction& I = inters[size_t(it)];
       if ((other < 0 || other == I.actor0 || other == I.actor1) && (I.iflags & interactionFlagMask)) setDirty(it, flag);
     }
   }
   // ShapeSimBase 의 setElementInteractionsDirty (ScShapeSimBase.cpp:65): 거르기 자료 바뀜(eFILTER_STATE/eFILTERABLE), restOffset(eREST_OFFSET/eRB_ELEMENT)
-  void setElementInteractionsDirty(int32_t elem, uint8_t flag, uint8_t interactionFlagMask) {
-    const std::vector<int32_t> L = actors[size_t(shapes[size_t(elem)].actor)].interactions;
+  SCHD void setElementInteractionsDirty(int32_t elem, uint8_t flag, uint8_t interactionFlagMask) {
+    const Vec<int32_t> L = actors[size_t(shapes[size_t(elem)].actor)].interactions;
     for (int32_t it : L) {
       const Interaction& I = inters[size_t(it)];
       if (I.type > eMARKER || !(I.elem0 == elem || I.elem1 == elem)) continue;  // ElementInteractionIterator (요소 상호작용만)
@@ -371,19 +370,19 @@ class ScPairs {
     }
   }
   // Interaction::setDirty + addToDirtyInteractionList (예: 조인트 끊김 -> ScConstraintBreakage.cpp:96 eFILTER_STATE, solver 가 부름)
-  void setDirty(int32_t it, uint8_t flags) {
+  SCHD void setDirty(int32_t it, uint8_t flags) {
     Interaction& I = inters[size_t(it)];
     I.dirty |= flags;
     if (!(I.iflags & IFlag::eIN_DIRTY_LIST)) {
       I.iflags |= IFlag::eIN_DIRTY_LIST;
-      dirtyPos[it] = uint32_t(dirtyList.size());
+      I.dirtyPos = uint32_t(dirtyList.size());
       dirtyList.push_back(it);
     }
   }
 
   // ---- ScPipeline.cpp:477 finishBroadPhase + :684 preallocateContactManagers + :985 postBroadPhaseStage2 의 쌍 부분
   //  triggerPairs/shapePairs = AABB 관리자 겹침 생성 목록(ElementSim 번호, mUserData0/1 순서 그대로)
-  void finishBroadPhase(const int32_t* triggerPairs, uint32_t nbTrigger, const int32_t* shapePairs, uint32_t nbShape) {
+  SCHD void finishBroadPhase(const int32_t* triggerPairs, uint32_t nbTrigger, const int32_t* shapePairs, uint32_t nbShape) {
     // 트리거: 거르고 바로 만든다 (NPhaseCore::onTriggerOverlapCreated, ScFiltering.cpp:629)
     for (uint32_t i = 0; i < nbTrigger; ++i) {
       const int32_t hi = triggerPairs[2 * i + 1], lo = triggerPairs[2 * i];
@@ -399,8 +398,8 @@ class ScPairs {
     if (!nbShape) return postBroadPhaseStage2();
     // 거르기 (OverlapFilterTask 64 개씩, 살아남은 쌍을 앞으로 모음 = 전체에서 순서 유지 필터)
     struct Kept { int32_t e0, e1; FilterInfo fi; };
-    std::vector<Kept> kept;
-    std::vector<uint32_t> taskKeep, taskSuppress;  // 작업별 수 (묶음 나누기가 이 단위)
+    Vec<Kept> kept;
+    Vec<uint32_t> taskKeep, taskSuppress;  // 작업별 수 (묶음 나누기가 이 단위)
     const uint32_t MaxPairs = 64;  // ScPipeline.cpp:444
     for (uint32_t a = 0; a < nbShape; a += MaxPairs) {
       const uint32_t n = nbShape - a < MaxPairs ? nbShape - a : MaxPairs;
@@ -429,7 +428,7 @@ class ScPairs {
     const uint32_t nbPairsPerTask = 256;
     uint32_t batchSize = 0, createdStartIdx = 0, suppressedStartIdx = 0, createdCurrIdx = 0, suppressedCurrIdx = 0, createdOverlapCount = 0;
     uint32_t nextCreatedOverlapCount = 0, nextCreatedStartIdx = 0, nextSuppressedStartIdx = 0;
-    std::vector<Batch> batches;
+    Vec<Batch> batches;
     for (size_t t = 0; t < taskKeep.size(); ++t) {
       if (!(taskKeep[t] || taskSuppress[t])) continue;
       const uint32_t nb = taskKeep[t] + taskSuppress[t];
@@ -480,7 +479,7 @@ class ScPairs {
 
   // ---- 좁은 단계 결과 반영 (PxsNphaseImplementationContext.cpp:321 processCms 의 관리 부분). 좁은 단계 모듈이 칸마다 부른다.
   //  statusFlag·nbPatches = 이번 좁은 단계 출력 (PxcDiscreteNarrowPhasePCM 이 쓴 값)
-  void narrowPhaseResult(bool newList, uint32_t slot, uint8_t newStatusFlag, uint8_t nbPatches) {
+  SCHD void narrowPhaseResult(bool newList, uint32_t slot, uint8_t newStatusFlag, uint8_t nbPatches) {
     NpList& L = newList ? npNew : npMain;
     NpOutput& out = L.outputs[slot];
     ContactManager& cm = cmsData[size_t(L.cms[slot])];
@@ -500,12 +499,12 @@ class ScPairs {
     }
   }
   // PxsNphaseImplementationContext.cpp:599 updateContactManager 의 앞부분: clearManagerTouchEvents
-  void beginNarrowPhase() {
+  SCHD void beginNarrowPhase() {
     touchEvent.clear();
     newTouchCount = lostTouchCount = 0;
   }
   // ---- PxsContext.cpp:431 mergeCMDiscreteUpdateResults -> appendContactManagers (:806)
-  void mergeNarrowPhase() {
+  SCHD void mergeNarrowPhase() {
     const uint32_t existingSize = npMain.size();
     const uint32_t nbToAdd = npNew.size();
     for (uint32_t a = 0; a < nbToAdd; ++a) {
@@ -528,19 +527,19 @@ class ScPairs {
     if (caches) caches->resize(true, 0);
   }
   // ---- PxsContext.cpp:528 fillManagerTouchEvents (접촉 관리자 번호 순서)
-  void fillTouchEvents() {
+  SCHD void fillTouchEvents() {
     touchFound.clear();
     touchLost.clear();
     for (uint32_t w = 0; w < touchEvent.w.size(); ++w)
       for (uint32_t b = touchEvent.w[w]; b; b &= b - 1) {
-        const uint32_t index = (w << 5) | uint32_t(__builtin_ctz(b));
+        const uint32_t index = (w << 5) | ctz32(b);
         const ContactManager& cm = cmsData[index];
         if (cm.statusFlags & WuStatus::eHAS_TOUCH) touchFound.push_back(TouchEvent{cm.inter});  // getTouchStatus (CCD 재닿음 없음)
         else touchLost.push_back(TouchEvent{cm.inter});
       }
   }
   // ---- ScPipeline.cpp:98 InteractionNewTouchTask: managerNewTouch (보고 쌍 처리는 없음) + :1726 setEdgesConnected
-  void processNewTouches() {
+  SCHD void processNewTouches() {
     for (const TouchEvent& e : touchFound) {
       Interaction& I = inters[size_t(e.inter)];
       if (!(I.siFlags & SiFlag::HAS_TOUCH)) {  // ScShapeInteraction.cpp:661
@@ -549,7 +548,7 @@ class ScPairs {
       }
     }
   }
-  void setEdgesConnected() {
+  SCHD void setEdgesConnected() {
     for (const TouchEvent& e : touchFound) {
       const Interaction& I = inters[size_t(e.inter)];
       if (I.edge == INVALID) continue;
@@ -557,20 +556,20 @@ class ScPairs {
     }
   }
   // ---- ScPipeline.cpp:2147 processLostContacts: 사라진 겹침의 상호작용 찾기. 잃은 닿음 섬 처리(:2220)도 여기서
-  void processLostContacts(const int32_t* shapePairs, uint32_t nbShape, const int32_t* triggerPairs, uint32_t nbTrigger) {
+  SCHD void processLostContacts(const int32_t* shapePairs, uint32_t nbShape, const int32_t* triggerPairs, uint32_t nbTrigger) {
     lostShape.clear();
     lostTrigger.clear();
     for (uint32_t i = 0; i < nbShape; ++i) lostShape.push_back(LostOverlap{shapePairs[2 * i], shapePairs[2 * i + 1], findInteraction(shapePairs[2 * i], shapePairs[2 * i + 1])});
     for (uint32_t i = 0; i < nbTrigger; ++i) lostTrigger.push_back(LostOverlap{triggerPairs[2 * i], triggerPairs[2 * i + 1], -1});
   }
-  void processNarrowPhaseLostTouchEventsIslands() {  // ScPipeline.cpp:2220
+  SCHD void processNarrowPhaseLostTouchEventsIslands() {  // ScPipeline.cpp:2220
     for (const TouchEvent& e : touchLost) {
       const Interaction& I = inters[size_t(e.inter)];
       if (I.edge == INVALID) continue;
       islands->setEdgeDisconnected(I.edge);
     }
   }
-  void processNarrowPhaseLostTouchEvents() {  // ScPipeline.cpp:2253
+  SCHD void processNarrowPhaseLostTouchEvents() {  // ScPipeline.cpp:2253
     for (const TouchEvent& e : touchLost) {
       Interaction& I = inters[size_t(e.inter)];
       if (I.edge == INVALID) continue;
@@ -578,17 +577,17 @@ class ScPairs {
     }
   }
   // ScPipeline.cpp:2283 processLostContacts2: 섬 간선 떼기
-  void processLostContacts2() {
+  SCHD void processLostContacts2() {
     for (const LostOverlap& p : lostShape)
       if (p.inter >= 0 && inters[size_t(p.inter)].type == eOVERLAP) clearIslandGenData(p.inter);
   }
   // ScPipeline.cpp:2324 lostTouchReports (보고 없음: 깨우기 규칙만)
-  void lostTouchReports() {
+  SCHD void lostTouchReports() {
     for (const LostOverlap& p : lostShape)
       if (p.inter >= 0 && inters[size_t(p.inter)].type == eOVERLAP) lostTouchReportsOne(p.inter, /*wakeOnLostTouch*/ true, -1);
   }
   // ScPipeline.cpp:2352 unregisterInteractions (Scene 목록, 순서 영향 없음 — 표시만)
-  void unregisterInteractions() {
+  SCHD void unregisterInteractions() {
     for (const LostOverlap& p : lostShape)
       if (p.inter >= 0) {
         Interaction& I = inters[size_t(p.inter)];
@@ -596,7 +595,7 @@ class ScPairs {
       }
   }
   // ScPipeline.cpp:2374 destroyManagers (섬 3차 뒤)
-  void destroyManagers() {
+  SCHD void destroyManagers() {
     for (const LostOverlap& p : lostShape)
       if (p.inter >= 0) {
         Interaction& I = inters[size_t(p.inter)];
@@ -604,31 +603,31 @@ class ScPairs {
       }
   }
   // ScPipeline.cpp:2403 processLostContacts3: onOverlapRemoved -> releaseElementPair
-  void processLostContacts3() {
+  SCHD void processLostContacts3() {
     for (const LostOverlap& p : lostShape) onOverlapRemoved(p.e0, p.e1, p.inter);
     for (const LostOverlap& p : lostTrigger) onOverlapRemoved(p.e0, p.e1, -1);
   }
 
   // ---- 행위자 활성화·비활성화 (Sc::Scene::wakeObjectsUp / putInteractionsToSleep 가 상호작용마다 부르는 것). solver 가 부른다.
-  bool activateInteraction(int32_t it) {  // ScInteraction activateInteraction -> ShapeInteraction::onActivate(NULL)
+  SCHD bool activateInteraction(int32_t it) {  // ScInteraction activateInteraction -> ShapeInteraction::onActivate(NULL)
     Interaction& I = inters[size_t(it)];
     if (I.type != eOVERLAP) return false;
     return onActivate(it, -1);
   }
-  bool deactivateInteraction(int32_t it) { return onDeactivate(it); }
+  SCHD bool deactivateInteraction(int32_t it) { return onDeactivate(it); }
 
   // ---- 조인트 끊김 등으로 캐시 지움 (ShapeInteraction::resetManagerCachedState, ScShapeInteraction.cpp:194). updateState 가 부른다.
 
   // ---- 모양 빼기 (API: 행위자·모양 제거) = NPhaseCore::onVolumeRemoved (ScNPhaseCore.cpp:109), ShapeSimBase::removeFromBroadPhase (ScShapeSimBase.cpp:173).
   // 행위자의 상호작용 목록을 뒤에서부터 보며 이 모양이 든 요소 상호작용을 푼다 (ElementInteractionReverseIterator, ScElementSim.cpp:62).
   // 행위자 제거는 모양 순서대로 (Scene::removeShapes, ScScene.cpp:2285). 넓은 단계에서 빼는 것은 AABB 관리자 몫.
-  void onVolumeRemoved(int32_t elem, bool wakeOnLostTouch) {
+  SCHD void onVolumeRemoved(int32_t elem, bool wakeOnLostTouch) {
     const uint32_t flags = PairRelease::eRUN_LOST_TOUCH_LOGIC | (wakeOnLostTouch ? PairRelease::eWAKE_ON_LOST_TOUCH : 0u);
     const int32_t actor = shapes[size_t(elem)].actor;
     size_t last = actors[size_t(actor)].interactions.size();
     while (last > 0) {
       --last;
-      const std::vector<int32_t>& L = actors[size_t(actor)].interactions;
+      const Vec<int32_t>& L = actors[size_t(actor)].interactions;
       if (last >= L.size()) continue;
       const int32_t it = L[last];
       const Interaction& I = inters[size_t(it)];
@@ -639,7 +638,7 @@ class ScPairs {
   }
 
   // ---- joints·articulation 의 상호작용 자리표 (Interaction::registerInActors: 행위자 0 다음 1). 돌려준 번호로 지운다.
-  int32_t addExternalInteraction(int32_t actor0, int32_t actor1, uint8_t type) {
+  SCHD int32_t addExternalInteraction(int32_t actor0, int32_t actor1, uint8_t type) {
     const int32_t it = allocInteraction();
     Interaction& I = inters[size_t(it)];
     I.alive = true;
@@ -651,15 +650,15 @@ class ScPairs {
     if (actor1 >= 0) registerInActor(actor1, it, 1);
     return it;
   }
-  void removeExternalInteraction(int32_t it) {  // ConstraintInteraction::destroy (ScConstraintInteraction.cpp:66): 더러움 목록에서 빼고(setClean(true)) 행위자 목록에서 뺌
+  SCHD void removeExternalInteraction(int32_t it) {  // ConstraintInteraction::destroy (ScConstraintInteraction.cpp:66): 더러움 목록에서 빼고(setClean(true)) 행위자 목록에서 뺌
     Interaction& I = inters[size_t(it)];
     if (I.iflags & IFlag::eIN_DIRTY_LIST) {
-      const uint32_t pos = dirtyPos[it];
+      const uint32_t pos = inters[size_t(it)].dirtyPos;
       const int32_t last = dirtyList.back();
       dirtyList[pos] = last;
-      dirtyPos[last] = pos;
+      inters[size_t(last)].dirtyPos = pos;
       dirtyList.pop_back();
-      dirtyPos.erase(it);
+      inters[size_t(it)].dirtyPos = INVALID;
       I.iflags &= uint8_t(~IFlag::eIN_DIRTY_LIST);
     }
     I.dirty = 0;
@@ -668,11 +667,11 @@ class ScPairs {
     freeInteraction(it);
   }
   // 시험·장면 적재용: 이미 있는 목록 그대로 채우기 (행위자 목록 끝에 붙이고 칸 번호를 적는다)
-  void appendToActorList(int32_t actor, int32_t it) {
+  SCHD void appendToActorList(int32_t actor, int32_t it) {
     const Interaction& I = inters[size_t(it)];
     registerInActor(actor, it, I.actor0 == actor ? 0 : 1);
   }
-  int32_t newInteractionRecord(int32_t actor0, int32_t actor1, uint8_t type) {
+  SCHD int32_t newInteractionRecord(int32_t actor0, int32_t actor1, uint8_t type) {
     const int32_t it = allocInteraction();
     Interaction& I = inters[size_t(it)];
     I.alive = true;
@@ -684,9 +683,9 @@ class ScPairs {
   }
 
   // ---- 조회
-  int32_t findInteraction(int32_t e0, int32_t e1) const {
-    const auto it = elementSimMap.find(key(e0, e1));
-    return it == elementSimMap.end() ? -1 : it->second;
+  SCHD int32_t findInteraction(int32_t e0, int32_t e1) const {
+    const int32_t* it = elementSimMap.findPtr(key(e0, e1));
+    return it ? *it : -1;
   }
 
  private:
@@ -697,22 +696,22 @@ class ScPairs {
   struct Batch {
     uint32_t overlapStart, cmStart, markerStart, nb, nbShapeInteractions;
   };
-  std::vector<int32_t> preCms, preSis;  // mPreallocatedContactManagers / mPreallocatedShapeInteractions
-  std::vector<uint8_t> preUsedCm, preUsedSi;
-  std::vector<int32_t> preMarkers;      // 쓰인 표시 = 0 아님
-  std::vector<Batch> lastBatches;
+  Vec<int32_t> preCms, preSis;  // mPreallocatedContactManagers / mPreallocatedShapeInteractions
+  Vec<uint8_t> preUsedCm, preUsedSi;
+  Vec<int32_t> preMarkers;      // 쓰인 표시 = 0 아님
+  Vec<Batch> lastBatches;
 
-  static uint64_t key(int32_t a, int32_t b) {  // ElementSimKey (작은 번호가 앞)
+  SCHD static uint64_t key(int32_t a, int32_t b) {  // ElementSimKey (작은 번호가 앞)
     uint32_t x = uint32_t(a), y = uint32_t(b);
     if (x > y) { const uint32_t t = x; x = y; y = t; }
     return (uint64_t(x) << 32) | y;
   }
-  static uint64_t pairID(int32_t a, int32_t b) {  // ScFiltering.cpp:45 getPairID
+  SCHD static uint64_t pairID(int32_t a, int32_t b) {  // ScFiltering.cpp:45 getPairID
     uint64_t x = uint32_t(a), y = uint32_t(b);
     if (y < x) { const uint64_t t = x; x = y; y = t; }
     return (x << 32) | y;
   }
-  uint32_t filterAttrOf(int32_t e, bool supportTriggers) const {  // ScFiltering.cpp:58
+  SCHD uint32_t filterAttrOf(int32_t e, bool supportTriggers) const {  // ScFiltering.cpp:58
     const Shape& s = shapes[size_t(e)];
     uint32_t a = actors[size_t(s.actor)].filterAttr;
     if (supportTriggers && s.trigger) a |= FilterObj::eTRIGGER;
@@ -720,7 +719,7 @@ class ScPairs {
   }
 
   // ScPipeline.cpp:332 processBatch: 풀에서 관리자·상호작용·표식을 미리 뽑는다
-  Batch processBatch(uint32_t nextCreatedOverlapCount, uint32_t nextCreatedStartIdx, uint32_t nextSuppressedStartIdx, uint32_t createdCurrIdx,
+  SCHD Batch processBatch(uint32_t nextCreatedOverlapCount, uint32_t nextCreatedStartIdx, uint32_t nextSuppressedStartIdx, uint32_t createdCurrIdx,
                      uint32_t& createdStartIdx, uint32_t suppressedCurrIdx, uint32_t& suppressedStartIdx, uint32_t batchSize) {
     Batch b{nextCreatedOverlapCount, nextCreatedStartIdx, nextSuppressedStartIdx, batchSize, 0};
     const uint32_t nbToCreate = createdCurrIdx - createdStartIdx;
@@ -735,7 +734,7 @@ class ScPairs {
   }
 
   // ScPipeline.cpp:985 postBroadPhaseStage2 의 쌍 부분 (잃은 닿음 쌍 처리는 solver)
-  void postBroadPhaseStage2() {
+  SCHD void postBroadPhaseStage2() {
     // registerContactManagers (:1176): 미리 뽑은 관리자 중 쓰인 것을 순서대로 좁은 단계 새 목록에
     for (size_t a = 0; a < preCms.size(); ++a)
       if (preUsedCm[a]) registerContactManager(preCms[a], 0, 0);
@@ -764,10 +763,10 @@ class ScPairs {
     uint32_t total = 0;
     for (const Batch& b : lastBatches) total += b.nbShapeInteractions;
     if (total) {
-      std::vector<uint32_t> handles(total);
+      Vec<uint32_t> handles(total);
       islands->preallocateContactManagers(total, handles.data());
       uint32_t h = 0;
-      std::vector<uint32_t> delayed;
+      Vec<uint32_t> delayed;
       for (const Batch& b : lastBatches) {
         if (!b.nbShapeInteractions) continue;
         delayed.clear();
@@ -803,9 +802,9 @@ class ScPairs {
     preMarkers.clear();
     lastBatches.clear();
   }
-  std::vector<std::vector<uint32_t>> delayedDirty;
+  Vec<Vec<uint32_t>> delayedDirty;
 
-  int32_t allocInteraction() {
+  SCHD int32_t allocInteraction() {
     int32_t it;
     if (!freeInters.empty()) {
       it = freeInters.back();
@@ -817,18 +816,18 @@ class ScPairs {
     inters[size_t(it)] = Interaction();
     return it;
   }
-  void freeInteraction(int32_t it) {
+  SCHD void freeInteraction(int32_t it) {
     inters[size_t(it)].alive = false;
     if (deferFree) pendingFree.push_back(it);
     else freeInters.push_back(it);
   }
-  void registerInActor(int32_t actor, int32_t it, int which) {  // ScActorSim.cpp:101
+  SCHD void registerInActor(int32_t actor, int32_t it, int which) {  // ScActorSim.cpp:101
     Actor& A = actors[size_t(actor)];
     const uint32_t id = uint32_t(A.interactions.size());
     A.interactions.push_back(it);
     (which == 0 ? inters[size_t(it)].actorSlot0 : inters[size_t(it)].actorSlot1) = id;
   }
-  void unregisterFromActor(int32_t actor, int32_t it, int which) {  // ScActorSim.cpp:108
+  SCHD void unregisterFromActor(int32_t actor, int32_t it, int which) {  // ScActorSim.cpp:108
     Actor& A = actors[size_t(actor)];
     const uint32_t i = which == 0 ? inters[size_t(it)].actorSlot0 : inters[size_t(it)].actorSlot1;
     A.interactions[i] = A.interactions.back();
@@ -840,26 +839,26 @@ class ScPairs {
       else J.actorSlot1 = i;
     }
   }
-  void unregisterFromActors(int32_t it) {  // Interaction::unregisterFromActors: 행위자 0 먼저
+  SCHD void unregisterFromActors(int32_t it) {  // Interaction::unregisterFromActors: 행위자 0 먼저
     const Interaction& I = inters[size_t(it)];
     unregisterFromActor(I.actor0, it, 0);
     unregisterFromActor(I.actor1, it, 1);
   }
 
   // ---- 거르기 (ScFiltering.cpp)
-  static bool filterObjectIsKinematic(uint32_t a) { return (a & FilterObj::eKINEMATIC) != 0; }
-  static bool filterObjectIsTrigger(uint32_t a) { return (a & FilterObj::eTRIGGER) != 0; }
-  static uint32_t filterType(uint32_t a) { return a & FilterObj::eTYPE_MASK; }
-  static void checkFilterFlags(uint32_t& f) {  // :115
+  SCHD static bool filterObjectIsKinematic(uint32_t a) { return (a & FilterObj::eKINEMATIC) != 0; }
+  SCHD static bool filterObjectIsTrigger(uint32_t a) { return (a & FilterObj::eTRIGGER) != 0; }
+  SCHD static uint32_t filterType(uint32_t a) { return a & FilterObj::eTYPE_MASK; }
+  SCHD static void checkFilterFlags(uint32_t& f) {  // :115
     if ((f & (FilterFlag::eKILL | FilterFlag::eSUPPRESS)) == (FilterFlag::eKILL | FilterFlag::eSUPPRESS)) f &= ~FilterFlag::eKILL;
   }
-  static uint32_t checkRbPairFlags(bool isKinePair, uint32_t pairFlags, uint32_t filterFlags, bool isNonRigid) {  // :137
+  SCHD static uint32_t checkRbPairFlags(bool isKinePair, uint32_t pairFlags, uint32_t filterFlags, bool isNonRigid) {  // :137
     if (filterFlags & (FilterFlag::eSUPPRESS | FilterFlag::eKILL)) return pairFlags;
     if (isKinePair && (pairFlags & PairFlag::eSOLVE_CONTACT)) pairFlags &= ~PairFlag::eSOLVE_CONTACT;
     if (isNonRigid && (pairFlags & PairFlag::eDETECT_CCD_CONTACT)) pairFlags &= ~PairFlag::eDETECT_CCD_CONTACT;
     return pairFlags;
   }
-  void filterSecondStage(FilterInfo& fi, int32_t s0, int32_t s1, bool isKinePair, uint32_t fa0, uint32_t fa1, bool runCallbacks, bool isNonRigid) {  // :184
+  SCHD void filterSecondStage(FilterInfo& fi, int32_t s0, int32_t s1, bool isKinePair, uint32_t fa0, uint32_t fa1, bool runCallbacks, bool isNonRigid) {  // :184
     const FilterData& fd0 = shapes[size_t(s0)].fd;
     const FilterData& fd1 = shapes[size_t(s1)].fd;
     fi.filterFlags = filterShader(fa0, fd0, fa1, fd1, fi.pairFlags, filterShaderData);
@@ -883,7 +882,7 @@ class ScPairs {
     }
     if (runCallbacks || !(fi.filterFlags & FilterFlag::eCALLBACK)) fi.pairFlags = checkRbPairFlags(isKinePair, fi.pairFlags, fi.filterFlags, isNonRigid);
   }
-  bool filterArticulationLinks(const Actor& b0, const Actor& b1) const {  // :276
+  SCHD bool filterArticulationLinks(const Actor& b0, const Actor& b1) const {  // :276
     if (b0.articulation == b1.articulation) {
       if (b0.artDisableSelfCollision) return true;
       if (b1.linkId < b0.linkId) return b0.parentLinkId == b1.linkId;
@@ -891,19 +890,19 @@ class ScPairs {
     }
     return false;
   }
-  bool filterJointedBodies(int32_t a0, int32_t a1) const {  // :299
+  SCHD bool filterJointedBodies(int32_t a0, int32_t a1) const {  // :299
     const Actor& A0 = actors[size_t(a0)];
     const Actor& A1 = actors[size_t(a1)];
     if (!A0.hasConstraints && !A1.hasConstraints) return false;
-    const auto it = jointPairs.find(key(a0, a1));
-    return it != jointPairs.end() ? !it->second.collisionEnabled : false;
+    const JointPairInfo* it = jointPairs.findPtr(key(a0, a1));
+    return it ? !it->collisionEnabled : false;
   }
-  static bool validateSuppress(const Actor* b0, const Actor* b1, bool staticKine) {  // :324
+  SCHD static bool validateSuppress(const Actor* b0, const Actor* b1, bool staticKine) {  // :324
     if (b0 && (staticKine ? b0->forceStaticKineNotif : b0->forceKineKineNotif)) return false;
     if (b1 && (staticKine ? b1->forceStaticKineNotif : b1->forceKineKineNotif)) return false;
     return true;
   }
-  bool filterKinematics(const Actor* b0, const Actor* b1, bool kine0, bool kine1) const {  // :335
+  SCHD bool filterKinematics(const Actor* b0, const Actor* b1, bool kine0, bool kine1) const {  // :335
     if (kine0 | kine1) {
       if (staticKineFilteringMode != eKEEP)
         if (!b0 || !b1) return validateSuppress(b0, b1, true);
@@ -913,7 +912,7 @@ class ScPairs {
     return false;
   }
   template <bool runAllTests>
-  bool filterShared(FilterInfo& fi, bool& isNonRigid, bool& isKinePair, int32_t s0, int32_t s1, uint32_t fa0, uint32_t fa1) {  // :356
+  SCHD bool filterShared(FilterInfo& fi, bool& isNonRigid, bool& isKinePair, int32_t s0, int32_t s1, uint32_t fa0, uint32_t fa1) {  // :356
     const bool kine0 = filterObjectIsKinematic(fa0), kine1 = filterObjectIsKinematic(fa1);
     const int32_t a0 = shapes[size_t(s0)].actor, a1 = shapes[size_t(s1)].actor;
     const Actor* bs0 = (fa0 & FilterObj::eEX_RIGID_DYNAMIC) ? &actors[size_t(a0)] : nullptr;
@@ -946,7 +945,7 @@ class ScPairs {
     isKinePair = kine0 && kine1;
     return false;
   }
-  void filterRbCollisionPair(FilterInfo& fi, int32_t s0, int32_t s1, bool& isTriggerPair, bool runCallbacks) {  // :467
+  SCHD void filterRbCollisionPair(FilterInfo& fi, int32_t s0, int32_t s1, bool& isTriggerPair, bool runCallbacks) {  // :467
     const uint32_t fa0 = filterAttrOf(s0, true), fa1 = filterAttrOf(s1, true);
     const bool trigger0 = filterObjectIsTrigger(fa0), trigger1 = filterObjectIsTrigger(fa1);
     isTriggerPair = trigger0 || trigger1;
@@ -959,7 +958,7 @@ class ScPairs {
     }
     filterSecondStage(fi, s0, s1, isKinePair, fa0, fa1, runCallbacks, isNonRigid);
   }
-  void filterRbCollisionPairAllTests(FilterInfo& fi, int32_t s0, int32_t s1) {  // :501 (runOverlapFilters :586 가 부름)
+  SCHD void filterRbCollisionPairAllTests(FilterInfo& fi, int32_t s0, int32_t s1) {  // :501 (runOverlapFilters :586 가 부름)
     fi = FilterInfo();
     const uint32_t fa0 = filterAttrOf(s0, false), fa1 = filterAttrOf(s1, false);
     bool isNonRigid = false, isKinePair = false;
@@ -968,7 +967,7 @@ class ScPairs {
   }
 
   // ---- 재거르기 (ScFiltering.cpp:669 refilterInteraction, 사용자 정보 없음 경로) / ScNPhaseCore.cpp:424 convert
-  int32_t refilterInteraction(int32_t it) {
+  SCHD int32_t refilterInteraction(int32_t it) {
     Interaction& I = inters[size_t(it)];
     const int32_t s0 = I.elem0, s1 = I.elem1;
     if ((I.iflags & IFlag::eIS_FILTER_PAIR) && filterPairLost)
@@ -990,7 +989,7 @@ class ScPairs {
     else if (I.type == eTRIGGER) I.siFlags = fi.pairFlags;
     return it;
   }
-  int32_t convert(int32_t it, uint8_t newType, FilterInfo& fi) {
+  SCHD int32_t convert(int32_t it, uint8_t newType, FilterInfo& fi) {
     Interaction& I = inters[size_t(it)];
     const int32_t eA = I.elem0, eB = I.elem1;
     const int32_t a0 = I.actor0, a1 = I.actor1;
@@ -1006,10 +1005,10 @@ class ScPairs {
     return result;
   }
   bool deferFree = false;
-  std::vector<int32_t> pendingFree;
+  Vec<int32_t> pendingFree;
 
   // ---- 상호작용 만들기 (ScNPhaseCore.cpp:132, :182, :260, :297)
-  bool shouldSwapBodies(int32_t s0, int32_t s1) const {
+  SCHD bool shouldSwapBodies(int32_t s0, int32_t s1) const {
     const Actor& rs0 = actors[size_t(shapes[size_t(s0)].actor)];
     if (rs0.type == eRIGID_STATIC) return true;
     const Actor& rs1 = actors[size_t(shapes[size_t(s1)].actor)];
@@ -1029,7 +1028,7 @@ class ScPairs {
     return false;
   }
   // parallelCreate = OnOverlapCreatedTask 경로 (관리자·상호작용을 미리 뽑아 둠, 등록은 나중에 몰아서)
-  int32_t createRbElementInteraction(const FilterInfo& fi, int32_t s0, int32_t s1, int32_t preCm, bool parallelCreate, bool isTriggerPair,
+  SCHD int32_t createRbElementInteraction(const FilterInfo& fi, int32_t s0, int32_t s1, int32_t preCm, bool parallelCreate, bool isTriggerPair,
                                      bool fromOverlapTask, int32_t preSi = -1) {
     int32_t it;
     if (!(fi.filterFlags & FilterFlag::eSUPPRESS)) {
@@ -1041,7 +1040,7 @@ class ScPairs {
     if (fi.hasPairID) inters[size_t(it)].iflags |= IFlag::eIS_FILTER_PAIR;
     return it;
   }
-  int32_t createShapeInteraction(int32_t s0, int32_t s1, uint32_t pairFlags, int32_t preCm, int32_t preSi) {  // :260
+  SCHD int32_t createShapeInteraction(int32_t s0, int32_t s1, uint32_t pairFlags, int32_t preCm, int32_t preSi) {  // :260
     if (shouldSwapBodies(s0, s1)) { const int32_t t = s0; s0 = s1; s1 = t; }
     const int32_t it = preSi >= 0 ? preSi : allocInteraction();
     Interaction& I = inters[size_t(it)];
@@ -1078,7 +1077,7 @@ class ScPairs {
     }
     return it;
   }
-  int32_t createTriggerInteraction(int32_t s0, int32_t s1, uint32_t triggerFlags) {  // :277 (트리거 모양이 앞)
+  SCHD int32_t createTriggerInteraction(int32_t s0, int32_t s1, uint32_t triggerFlags) {  // :277 (트리거 모양이 앞)
     int32_t trig = s0, other = s1;
     if (shapes[size_t(s1)].trigger) { trig = s1; other = s0; }
     const int32_t it = allocInteraction();
@@ -1098,7 +1097,7 @@ class ScPairs {
     I.sceneRegistered = true;
     return it;
   }
-  int32_t createMarker(int32_t e0, int32_t e1, bool createParallel) {  // :297, ScElementInteractionMarker.h:171
+  SCHD int32_t createMarker(int32_t e0, int32_t e1, bool createParallel) {  // :297, ScElementInteractionMarker.h:171
     const int32_t it = allocInteraction();
     Interaction& I = inters[size_t(it)];
     I.alive = true;
@@ -1116,10 +1115,10 @@ class ScPairs {
     }
     return it;
   }
-  static void setPairFlags(Interaction& I, uint32_t flags) {  // ScShapeInteraction.h:208
+  SCHD static void setPairFlags(Interaction& I, uint32_t flags) {  // ScShapeInteraction.h:208
     I.siFlags = (I.siFlags & ~SiFlag::PAIR_FLAGS_MASK) | (flags & SiFlag::PAIR_FLAGS_MASK);
   }
-  void updateFlags(Interaction& I, uint32_t pairFlags) {  // ScShapeInteraction.cpp:747
+  SCHD void updateFlags(Interaction& I, uint32_t pairFlags) {  // ScShapeInteraction.cpp:747
     const Actor& b0 = actors[size_t(I.actor0)];
     const Actor& b1 = actors[size_t(I.actor1)];
     bool enabled = true;
@@ -1132,12 +1131,12 @@ class ScPairs {
     if (collect) I.siFlags |= SiFlag::CONTACTS_COLLECT_POINTS;
     else I.siFlags &= ~SiFlag::CONTACTS_COLLECT_POINTS;
   }
-  bool activeManagerAllowed(const Interaction& I) {  // ScShapeInteraction.h:286
+  SCHD bool activeManagerAllowed(const Interaction& I) {  // ScShapeInteraction.h:286
     const Actor& b0 = actors[size_t(I.actor0)];
     const Actor& b1 = actors[size_t(I.actor1)];
     return islands->isSpeculativeNodeActive(b0.nodeIndex) || (!b1.isStatic() && islands->isSpeculativeNodeActive(b1.nodeIndex));
   }
-  bool onActivate(int32_t it, int32_t preCm) {  // ScShapeInteraction.cpp:921 (+ updateManager, ScShapeInteraction.h:257)
+  SCHD bool onActivate(int32_t it, int32_t preCm) {  // ScShapeInteraction.cpp:921 (+ updateManager, ScShapeInteraction.h:257)
     Interaction& I = inters[size_t(it)];
     bool ok = false;
     if (activeManagerAllowed(I)) {
@@ -1147,7 +1146,7 @@ class ScPairs {
     if (ok) I.iflags |= IFlag::eIS_ACTIVE;
     return ok;
   }
-  bool onDeactivate(int32_t it) {  // ScShapeInteraction.cpp:939
+  SCHD bool onDeactivate(int32_t it) {  // ScShapeInteraction.cpp:939
     Interaction& I = inters[size_t(it)];
     if (I.type != eOVERLAP) return false;
     const Actor& b0 = actors[size_t(I.actor0)];
@@ -1167,7 +1166,7 @@ class ScPairs {
     }
     return false;
   }
-  void createManager(int32_t it, int32_t preCm) {  // ScShapeInteraction.cpp:1004
+  SCHD void createManager(int32_t it, int32_t preCm) {  // ScShapeInteraction.cpp:1004
     Interaction& I = inters[size_t(it)];
     const uint32_t pairFlags = I.siFlags & SiFlag::PAIR_FLAGS_MASK;
     const bool disableCCDContact = !(pairFlags & PairFlag::eDETECT_CCD_CONTACT);
@@ -1235,7 +1234,7 @@ class ScPairs {
     }
   }
   // PxsNphaseImplementationContext.cpp:643 registerContactManager
-  void registerContactManager(int32_t cmi, int touching, uint32_t patchCount) {
+  SCHD void registerContactManager(int32_t cmi, int touching, uint32_t patchCount) {
     ContactManager& cm = cmsData[size_t(cmi)];
     NpOutput out;
     out.nbPatches = uint8_t(patchCount);
@@ -1255,7 +1254,7 @@ class ScPairs {
     }
     cm.npIndex = (slot << CM_BUCKET_BITS) | NEW_CM_MASK;
   }
-  int32_t cacheKindFor(int32_t g0, int32_t g1) const {  // PxsContext::createCache (PxsContext.cpp:282) 의 종류만
+  SCHD int32_t cacheKindFor(int32_t g0, int32_t g1) const {  // PxsContext::createCache (PxsContext.cpp:282) 의 종류만
     if (!pcm) return 0;
     static const bool tab[6][6] = {{false, false, false, false, false, true}, {false, false, true, true, false, true}, {false, true, false, true, false, true},
                                    {false, true, true, true, false, true},     {false, false, false, false, false, false}, {true, true, true, true, false, true}};
@@ -1264,7 +1263,7 @@ class ScPairs {
     return (g0 == 0 || g1 == 0) ? 1 : 2;
   }
   // PxsNphaseImplementationContext.cpp:709 unregisterContactManager -> unregisterAndForceSize -> :967 unregisterContactManagerInternal
-  void unregisterContactManager(int32_t cmi) {
+  SCHD void unregisterContactManager(int32_t cmi) {
     const uint32_t index = cmsData[size_t(cmi)].npIndex;
     const bool isNew = (index & NEW_CM_MASK) != 0;
     NpList& L = isNew ? npNew : npMain;
@@ -1285,7 +1284,7 @@ class ScPairs {
     L.outputs.pop_back();
   }
   // ShapeInteraction::destroyManager (ScShapeInteraction.h:270) -> PxsContext::destroyContactManager (PxsContext.cpp:321)
-  void destroyManager(int32_t it) {
+  SCHD void destroyManager(int32_t it) {
     Interaction& I = inters[size_t(it)];
     const int32_t cmi = I.cm;
     unregisterContactManager(cmi);
@@ -1295,7 +1294,7 @@ class ScPairs {
     I.cm = -1;
   }
   // ShapeInteraction::updateState (ScShapeInteraction.cpp:803)
-  void updateState(int32_t it, uint8_t externalDirtyFlags) {
+  SCHD void updateState(int32_t it, uint8_t externalDirtyFlags) {
     Interaction& I = inters[size_t(it)];
     const uint32_t oldContactState = I.siFlags & SiFlag::LL_MANAGER_RECREATE_EVENT;
     const uint8_t dirtyFlags = uint8_t(I.dirty | externalDirtyFlags);
@@ -1350,7 +1349,7 @@ class ScPairs {
     }
   }
   // ScShapeInteraction.cpp:194 resetManagerCachedState -> PxsNphaseImplementationContext.cpp:727 refreshContactManager
-  void resetManagerCachedState(int32_t it) {
+  SCHD void resetManagerCachedState(int32_t it) {
     Interaction& I = inters[size_t(it)];
     if (I.cm < 0) return;
     ContactManager& cm = cmsData[size_t(I.cm)];
@@ -1366,7 +1365,7 @@ class ScPairs {
     registerContactManager(I.cm, touching, output.nbPatches);
   }
   // ShapeInteraction::managerLostTouch (ScShapeInteraction.cpp:703), 보고 없음
-  bool managerLostTouch(int32_t it) {
+  SCHD bool managerLostTouch(int32_t it) {
     Interaction& I = inters[size_t(it)];
     if (!(I.siFlags & SiFlag::HAS_TOUCH)) return false;
     I.siFlags &= ~SiFlag::HAS_TOUCH;
@@ -1377,7 +1376,7 @@ class ScPairs {
     }
     return true;
   }
-  void clearIslandGenData(int32_t it) {  // ScShapeInteraction.cpp:150
+  SCHD void clearIslandGenData(int32_t it) {  // ScShapeInteraction.cpp:150
     Interaction& I = inters[size_t(it)];
     if (I.edge != INVALID) {
       islands->removeConnection(I.edge);
@@ -1385,7 +1384,7 @@ class ScPairs {
     }
   }
   // NPhaseCore::lostTouchReports (ScNPhaseCore.cpp:1003) 중 깨우기 규칙 (보고·행위자 쌍 셈 없음)
-  void lostTouchReportsOne(int32_t it, bool wakeOnLostTouch, int32_t removedElement) {
+  SCHD void lostTouchReportsOne(int32_t it, bool wakeOnLostTouch, int32_t removedElement) {
     const Interaction& I = inters[size_t(it)];
     const bool hasTouch = (I.siFlags & SiFlag::HAS_TOUCH) != 0;
     const bool touchKnown = (I.siFlags & SiFlag::TOUCH_KNOWN) != 0;
@@ -1406,22 +1405,22 @@ class ScPairs {
     }
   }
   // NPhaseCore::onOverlapRemoved (ScNPhaseCore.cpp:89) -> releaseElementPair (:946)
-  void onOverlapRemoved(int32_t e0, int32_t e1, int32_t knownInter) {
+  SCHD void onOverlapRemoved(int32_t e0, int32_t e1, int32_t knownInter) {
     const int32_t it = knownInter >= 0 ? knownInter : findInteraction(e1, e0);
     if (it < 0) return;
     releaseElementPair(it, PairRelease::eWAKE_ON_LOST_TOUCH, -1);
   }
-  void releaseElementPair(int32_t it, uint32_t flags, int32_t removedElement, bool removeFromDirtyList = true) {
+  SCHD void releaseElementPair(int32_t it, uint32_t flags, int32_t removedElement, bool removeFromDirtyList = true) {
     Interaction& I = inters[size_t(it)];
     // setClean(removeFromDirtyList) (ScInteraction.cpp:59)
     if (I.iflags & IFlag::eIN_DIRTY_LIST) {
       if (removeFromDirtyList) {
-        const uint32_t pos = dirtyPos[it];
+        const uint32_t pos = inters[size_t(it)].dirtyPos;
         const int32_t last = dirtyList.back();
         dirtyList[pos] = last;
-        dirtyPos[last] = pos;
+        inters[size_t(last)].dirtyPos = pos;
         dirtyList.pop_back();
-        dirtyPos.erase(it);
+        inters[size_t(it)].dirtyPos = INVALID;
       }
       I.iflags &= uint8_t(~IFlag::eIN_DIRTY_LIST);
     }

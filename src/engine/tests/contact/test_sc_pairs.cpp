@@ -110,6 +110,7 @@ struct Capture {
     touchFound.clear(); touchLost.clear();
   }
 } G;
+static std::mutex gCapMu;  // PhysX 작업 스레드들이 동시에 부르는 감싸개가 있다 (섬 넣기 작업 등)
 static std::map<const PxsShapeCore*, int32_t> gCoreToElem;
 static std::map<int32_t, Sc::ElementSim*> gElemSim;
 static Sc::Scene* gSc = nullptr;
@@ -149,8 +150,10 @@ bool R(_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17P
 bool W(_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE)(
     SIM* s, PxU32 e, PxsContactManager* cm, PxNodeIndex n0, PxNodeIndex n1, Sc::Interaction* it, IG::Edge::EdgeType t) {
   const bool r = R(_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE)(s, e, cm, n0, n1, it, t);
-  if (G.on)
+  if (G.on) {
+    std::lock_guard<std::mutex> lk(gCapMu);
     G.calls[OP_ADD_PREALLOC].push_back(IslandCall{OP_ADD_PREALLOC, e, cm ? cm->getIndex() : 0xffffffffull, n0.getInd(), n1.getInd(), it ? packPair(siElems(it)) : 0});
+  }
   return r;
 }
 void R(_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj)(IG::IslandSim*, PxU32, const PxU32*);
@@ -165,7 +168,7 @@ void W(_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj)(IG::IslandSim* s, PxU3
 #define WRAP_EDGE(OP, NAME)                                    \
   void R(NAME)(SIM*, PxU32);                                   \
   void W(NAME)(SIM * s, PxU32 e) {                             \
-    if (G.on) G.calls[OP].push_back(IslandCall{OP, e, 0, 0, 0, 0}); \
+    if (G.on) { std::lock_guard<std::mutex> lk(gCapMu); G.calls[OP].push_back(IslandCall{OP, e, 0, 0, 0, 0}); } \
     R(NAME)(s, e);                                             \
   }
 WRAP_EDGE(OP_DISCONNECT, _ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj)
@@ -182,7 +185,10 @@ WRAP_EDGE(OP_CLEAR_RIGID_CM, _ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCM
 WRAP_EDGE(OP_DEACT_EDGE, _ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj)
 void R(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)(SIM*, PxU32, IG::Edge::EdgeType);
 void W(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)(SIM* s, PxU32 e, IG::Edge::EdgeType t) {
-  if (G.on) G.calls[OP_CONNECT].push_back(IslandCall{OP_CONNECT, e, uint64_t(t), 0, 0, 0});
+  if (G.on) {
+    std::lock_guard<std::mutex> lk(gCapMu);
+    G.calls[OP_CONNECT].push_back(IslandCall{OP_CONNECT, e, uint64_t(t), 0, 0, 0});
+  }
   R(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)(s, e, t);
 }
 void R(_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE)(SIM*, PxU32, PxsContactManager*);
@@ -821,7 +827,7 @@ int main(int argc, char** argv) {
     }
     // 가끔 행위자 빼기(API) — 그때 PhysX 가 하는 섬 호출도 이 스텝 기록에 넣고, 우리 층도 스텝 재생 앞에서 같은 모양 순서로 뺀다
     std::vector<int32_t> removedElems;
-    if (removeEvery > 0 && step % removeEvery == removeEvery / 2) {
+    if (removeEvery > 0 && step % removeEvery == removeEvery / 2 && apiOps.empty() && jointOps.empty()) {  // 같은 스텝의 API 조작과 겹치지 않게
       for (int tries = 0; tries < 20; ++tries) {
         const size_t di = size_t(P(rng) * float(dyns.size())) % dyns.size();
         PxRigidDynamic* d = dyns[di];
@@ -880,6 +886,15 @@ int main(int argc, char** argv) {
     for (auto& c : G.createdShapeChunks) created.insert(created.end(), c.pairs.begin(), c.pairs.end());
     nCreated += created.size() / 2;
     nTrig += G.createdTrigger.size() / 2;
+    for (const ApiOp& op : apiOps) {
+      if (op.kind == 0) M.setElementInteractionsDirty(op.elem, ss::DirtyFlag::eFILTER_STATE, ss::IFlag::eFILTERABLE);
+      else {
+        M.setActorsInteractionsDirty(actorOf(op.actor), ss::DirtyFlag::eBODY_KINEMATIC, -1,
+                                     op.toKinematic ? ss::IFlag::eFILTERABLE : uint8_t(ss::IFlag::eFILTERABLE | ss::IFlag::eCONSTRAINT));
+        for (int32_t e : op.oldElems) M.onVolumeRemoved(e, true);  // updateBPGroup -> reinsertBroadPhase
+      }
+    }
+    // (PhysX 순서: 거르기 자료·운동학 전환 -> 조인트 -> 행위자 빼기)
     for (const JointOp& op : jointOps) {
       if (op.add) {
         const int32_t id = M.addExternalInteraction(actorOf(op.a0), actorOf(op.a1), ss::eCONSTRAINTSHADER);
@@ -893,14 +908,6 @@ int main(int argc, char** argv) {
           M.removeExternalInteraction(je->second);
           jointExt.erase(je);
         }
-      }
-    }
-    for (const ApiOp& op : apiOps) {
-      if (op.kind == 0) M.setElementInteractionsDirty(op.elem, ss::DirtyFlag::eFILTER_STATE, ss::IFlag::eFILTERABLE);
-      else {
-        M.setActorsInteractionsDirty(actorOf(op.actor), ss::DirtyFlag::eBODY_KINEMATIC, -1,
-                                     op.toKinematic ? ss::IFlag::eFILTERABLE : uint8_t(ss::IFlag::eFILTERABLE | ss::IFlag::eCONSTRAINT));
-        for (int32_t e : op.oldElems) M.onVolumeRemoved(e, true);  // updateBPGroup -> reinsertBroadPhase
       }
     }
     for (int32_t e : removedElems) M.onVolumeRemoved(e, true);
@@ -1043,7 +1050,7 @@ int main(int argc, char** argv) {
     }
     M.fillTouchEvents();
     {
-      auto cmpEv = [&](const std::vector<ss::TouchEvent>& ours, const std::vector<std::pair<int32_t, int32_t>>& px, const char* name) {
+      auto cmpEv = [&](const ss::Vec<ss::TouchEvent>& ours, const std::vector<std::pair<int32_t, int32_t>>& px, const char* name) {
         bool same = ours.size() == px.size();
         for (size_t i = 0; same && i < ours.size(); ++i) {
           ++cmpEvents;
