@@ -117,8 +117,15 @@ template <class V>
 class Map {
  public:
   SCHD Map() : keys_(nullptr), vals_(nullptr), used_(nullptr), cap_(0), n_(0) {}
-  SCHD Map(const Map&) = delete;
-  SCHD Map& operator=(const Map&) = delete;
+  // 복사 = 칸 배치(지움 표시 포함) 그대로 (순서기 그림자가 쌍 관리층을 통째로 떼어 낼 때)
+  SCHD Map(const Map& o) : keys_(nullptr), vals_(nullptr), used_(nullptr), cap_(0), n_(0) { copyFrom(o); }
+  SCHD Map& operator=(const Map& o) {
+    if (this != &o) {
+      release();
+      copyFrom(o);
+    }
+    return *this;
+  }
   SCHD ~Map() { release(); }
   SCHD V* findPtr(uint64_t k) {
     if (!cap_) return nullptr;
@@ -200,6 +207,20 @@ class Map {
     vals_ = nullptr;
     used_ = nullptr;
     cap_ = n_ = tomb_ = 0;
+  }
+  SCHD void copyFrom(const Map& o) {
+    if (!o.cap_) return;
+    keys_ = static_cast<uint64_t*>(malloc(sizeof(uint64_t) * o.cap_));
+    vals_ = static_cast<V*>(malloc(sizeof(V) * o.cap_));
+    used_ = static_cast<uint8_t*>(malloc(o.cap_));
+    for (uint32_t i = 0; i < o.cap_; ++i) {
+      used_[i] = o.used_[i];
+      keys_[i] = o.keys_[i];
+      if (used_[i] == 1) new (vals_ + i) V(o.vals_[i]);
+    }
+    cap_ = o.cap_;
+    n_ = o.n_;
+    tomb_ = o.tomb_;
   }
 };
 

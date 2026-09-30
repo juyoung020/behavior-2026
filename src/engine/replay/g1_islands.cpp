@@ -19,6 +19,7 @@
 #include "core/solver/islands.h"
 #include "core/scene/island_state.h"
 #include "core/scene/scene_file.h"
+#include "core/scene/step_host.h"
 #include "g1_hooks.h"
 
 using namespace physx;
@@ -31,6 +32,7 @@ enum Op : uint32_t {
   OP_SET_RIGID_CM, OP_CLEAR_RIGID_CM, OP_SET_KINEMATIC, OP_SET_DYNAMIC, OP_DELAYED_DIRTY, OP_SIM_REMOVE_DESTROYED, OP_SIM_PROCESS_LOST,
   OP_POST_THIRD, OP_SECOND,
 };
+static_assert(OP_SECOND == eng::scene::ISL_SECOND && OP_THIRD == eng::scene::ISL_THIRD, "기록 번호 = 순서기 번호");
 struct Rec {
   uint32_t op;
   uint32_t sim;  // 0 = 관리자, 1 = 정확, 2 = 추측
@@ -51,6 +53,13 @@ struct Depth {
 static bool gOn = false;
 static void rec(Rec r) {
   if (!gOn) return;
+  static const bool tr = getenv("G1_ISL_TRACE") != nullptr;
+  if (tr) {
+    static const char* nm[] = {"addNode", "removeNode", "addCM", "preallocCMs", "addPreallocCM", "addConstraint", "activateNode", "deactivateNode", "putNodeToSleep",
+                               "removeConnection", "firstPass", "addSpecAct", "second1", "second2", "third", "setConnected", "setDisconnected", "deactEdge",
+                               "setRigidCM", "clearRigidCM", "setKinematic", "setDynamic", "delayedDirty", "simRemoveDestroyed", "simProcessLost", "postThird", "second"};
+    fprintf(stderr, "[isl] %s sim%u a=%u b=%u n=%zu\n", r.op < 27 ? nm[r.op] : "?", r.sim, r.a, r.b, r.list.size());
+  }
   std::lock_guard<std::mutex> l(gRecM);
   gRecs.push_back(std::move(r));
 }
@@ -153,8 +162,9 @@ WRAP_NODE(OP_SET_DYNAMIC, _ZN5physx2IG19SimpleIslandManager10setDynamicENS_11PxN
   void R(MANGLED)(SIM*, PxU32);                                    \
   void W(MANGLED)(SIM * s, PxU32 e) {                              \
     Depth d;                                                       \
-    if (d.top) rec(Rec{OPC, 0, e, 0, 0, 0, 0, 0, 0, {}, 0});       \
-    if (PAIROP != 6 || !g1p_isConstraintEdge(s, e)) g1p_edge(PAIROP, e); \
+    const bool ce = PAIROP == 6 && g1p_isConstraintEdge(s, e);    \
+    if (d.top) rec(Rec{OPC, 0, e, 0, ce ? 1u : 0u, 0, 0, 0, 0, {}, 0}); \
+    if (!ce) g1p_edge(PAIROP, e);                                  \
     R(MANGLED)(s, e);                                              \
   }
 WRAP_EDGE(OP_REMOVE_CONN, 6, _ZN5physx2IG19SimpleIslandManager16removeConnectionEj)
@@ -616,3 +626,26 @@ void g1_islands_report() {
 }
 
 const eng::ig::IslandManager* g1_islands_ours() { return gOur ? &gOur->M : nullptr; }
+
+// 순서기 그림자(g1_host.cpp)에 내주는 것: 기록 호출(넘겨받은 뒤 쌓인 것), 아무 섬 저장소와 PhysX 비교
+size_t g1_islands_rec_count() {
+  std::lock_guard<std::mutex> l(gRecM);
+  return gRecs.size();
+}
+bool g1_islands_rec(size_t i, eng::scene::IslOp& o) {
+  std::lock_guard<std::mutex> l(gRecM);
+  if (i >= gRecs.size()) return false;
+  const Rec& r = gRecs[i];
+  o.op = r.op; o.sim = r.sim; o.a = r.a; o.b = r.b; o.c = r.c; o.p = r.p; o.q = r.q; o.list = r.list; o.result = r.result;
+  return true;
+}
+void g1_islands_compare_store(const eng::scene::IslandStore& O, uint64_t* n, uint64_t* bad, std::string* first) {
+  if (!gIM) return;
+  Cmp a, s, m;
+  compareAll(O, a, s, m);
+  *n += a.n + s.n + m.n;
+  *bad += a.bad + s.bad + m.bad;
+  if (first->empty() && a.bad) *first = "정확 " + a.first;
+  if (first->empty() && s.bad) *first = "추측 " + s.first;
+  if (first->empty() && m.bad) *first = "번호 " + m.first;
+}

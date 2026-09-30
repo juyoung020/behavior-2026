@@ -74,6 +74,10 @@ namespace eng { struct Tf; namespace scene { struct ScScene; } }
 bool g1_sc_loop_on();
 namespace eng { namespace ig { struct IslandManager; } }
 const eng::ig::IslandManager* g1_islands_ours();  // g1_islands.cpp: 우리 섬 관리 (넘겨받은 뒤)
+// 순서기 그림자 (g1_host.cpp, G1_HOST): 닫힌 고리 4단 ① 쌍 관리층↔섬 관리 직접 연결 + Sc 활성 몰이
+void g1_host_before(physx::PxScene* scene, uint64_t sim);
+void g1_host_after(physx::PxScene* scene, uint64_t sim);
+void g1_host_report();
 void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf& b2a, bool frozen);
 eng::scene::ScScene* g1_sc_scene();
 const physx::PxActor* g1_sc_actor_px(int32_t h);

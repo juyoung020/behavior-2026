@@ -154,8 +154,8 @@ inline std::vector<int32_t> pairsStart(ss::ScPairs& M, const PairsLog& L) {
   for (const auto& ap : L.appends) M.appendToActorList(ap.first, ids[size_t(ap.second)]);
   return ids;
 }
-// 한 스텝 앞 (simulate 직전). extIds: 조인트 상호작용 자리표 번호가 생기면 돌려줌 (EXT_ADD 순서)
-inline void pairsPre(ss::ScPairs& M, PairsHooks& H, const PairsStep& S, std::vector<int32_t>* extIds = nullptr) {
+// 앞 입력 값 + 장면 변경 연산만 (섬 갈고리 상태는 안 건드림: 순서기 step_host.h 도 이것을 쓴다)
+inline void pairsPreOps(ss::ScPairs& M, const PairsStep& S, std::vector<int32_t>* extIds = nullptr) {
   pairsSetInputs(M, S.actors, S.shapes, S.joints);
   for (const PairsPreOp& o : S.ops) {
     switch (o.type) {
@@ -177,6 +177,10 @@ inline void pairsPre(ss::ScPairs& M, PairsHooks& H, const PairsStep& S, std::vec
       }
     }
   }
+}
+// 한 스텝 앞 (simulate 직전). extIds: 조인트 상호작용 자리표 번호가 생기면 돌려줌 (EXT_ADD 순서)
+inline void pairsPre(ss::ScPairs& M, PairsHooks& H, const PairsStep& S, std::vector<int32_t>* extIds = nullptr) {
+  pairsPreOps(M, S, extIds);
   H.nodeActive.clear();
   for (const PairsNode& n : S.nodes) H.nodeActive[n.node] = n.active != 0;
 }

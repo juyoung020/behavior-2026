@@ -787,4 +787,21 @@ physx::Sc::ShapeSim* g1_elem_sim(int32_t e) {
   auto it = gElemSim.find(e);
   return it == gElemSim.end() ? nullptr : static_cast<physx::Sc::ShapeSim*>(it->second);
 }
+// 순서기 그림자(g1_host.cpp)에 내주는 것: 우리 쌍 관리층(PhysX 와 맞춰 둔 것), 행위자별 ActorSim::isActive (-1 = 장면에 없음)
+eng::contact::sc::ScPairs* g1_pairs_M() { return PS.on && PS.started ? PS.Mp.get() : nullptr; }
+void g1_pairs_actor_active(std::vector<int8_t>& out) {
+  out.assign(PS.Mp->actors.size(), int8_t(-1));
+  if (!PS.scene) return;
+  for (PxRigidActor* a : sceneActors(PS.scene)) {
+    const PxU32 n = a->getNbShapes();
+    std::vector<PxShape*> sh(n);
+    a->getShapes(sh.data(), n);
+    for (PxShape* s : sh) {
+      Sc::ShapeSim* sim = static_cast<NpShape*>(s)->getCore().getExclusiveSim();
+      if (!sim) continue;
+      const auto it = PS.actorIndex.find(&sim->getActor());
+      if (it != PS.actorIndex.end() && size_t(it->second) < out.size()) out[size_t(it->second)] = sim->getActor().isActive() ? 1 : 0;
+    }
+  }
+}
 const physx::PxActor* g1_pairs_actor(int32_t a) { return a >= 0 && size_t(a) < PS.actorPx.size() ? PS.actorPx[size_t(a)] : nullptr; }
