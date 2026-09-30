@@ -94,6 +94,14 @@ const PxsContactManagerOutput* outputOf(PxsNphaseImplementationContext* np, PxU3
   return idx < L.mOutputContactManagers.size() ? &L.mOutputContactManagers[idx] : nullptr;
 }
 
+// 조인트 되쓰기 칸 (Dy::ConstraintWriteback: 선·각 충격, 끊김·남은 위치 반복) — 풀이가 끝에 덮어쓰지만 끊김 비트는 이어진다
+void jnt_wb_push(sc::SceneFile& F, Dy::Context* dy, PxU32 index) {
+  eng::jnt::Writeback w;
+  static_assert(sizeof(w) == sizeof(Dy::ConstraintWriteback), "되쓰기 칸 배치");
+  memcpy(&w, &dy->getConstraintWriteBackPool()[index], sizeof(w));
+  F.jointWritebacks.push_back(w);
+}
+
 struct Dumper {
   bool inited = false, done = false;
   long long at = -1;
@@ -282,6 +290,7 @@ void dumpScene(PxScene* scene, uint64_t sim) {
       if (dc.constantBlockSize != sizeof(eng::jnt::D6Data)) ++D.unsup;
       else memcpy(&j.data, dc.constantBlock, sizeof(eng::jnt::D6Data));
       F.joints.push_back(j);
+      jnt_wb_push(F, dy, dc.index);
     }
   }
   // 접촉 관리자 (v1): 겹침 상호작용 순서

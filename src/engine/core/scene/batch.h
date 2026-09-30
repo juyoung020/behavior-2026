@@ -79,6 +79,7 @@ struct Batch {
   std::vector<Body> bodies;             // n * cap.bodies
   std::vector<art::Articulation> arts;  // n * cap.arts
   std::vector<SceneJoint> joints;       // n * cap.joints
+  std::vector<jnt::Writeback> jointWritebacks;  // n * cap.joints
   std::vector<ShapeFilter> filters;     // n * cap.shapes (모양 거르기 자료, 판마다 다름)
   std::vector<SceneCM> cms;             // n * cap.cms (접촉 관리자, v1)
   std::vector<contact::ManifoldSlot> manifolds;  // n * cap.cms (관리자 칸과 같은 번호)
@@ -97,6 +98,7 @@ struct Batch {
     bodies.assign(size_t(n) * cap.bodies, Body{});
     arts.resize(size_t(n) * cap.arts);
     joints.assign(size_t(n) * cap.joints, SceneJoint{});
+    jointWritebacks.assign(size_t(n) * cap.joints, jnt::Writeback{});
     filters.assign(size_t(n) * cap.shapes, ShapeFilter{});
     cms.assign(size_t(n) * cap.cms, SceneCM{});
     manifolds.assign(size_t(n) * cap.cms, contact::ManifoldSlot{});
@@ -106,13 +108,14 @@ struct Batch {
   Body* envBodies(uint32_t e) { return bodies.data() + size_t(e) * cap.bodies; }
   art::Articulation* envArts(uint32_t e) { return arts.data() + size_t(e) * cap.arts; }
   SceneJoint* envJoints(uint32_t e) { return joints.data() + size_t(e) * cap.joints; }
+  jnt::Writeback* envJointWritebacks(uint32_t e) { return jointWritebacks.data() + size_t(e) * cap.joints; }
   ShapeFilter* envFilters(uint32_t e) { return filters.data() + size_t(e) * cap.shapes; }
   SceneCM* envCMs(uint32_t e) { return cms.data() + size_t(e) * cap.cms; }
   contact::ManifoldSlot* envManifolds(uint32_t e) { return manifolds.data() + size_t(e) * cap.cms; }
   sv::FrictionPatch* envFriction(uint32_t e) { return friction.data() + size_t(e) * cap.friction; }
   const SceneShared* shared(uint32_t e) const { return sharedOf[e] == kNone ? nullptr : shareds[sharedOf[e]].get(); }
   size_t stateBytes() const {
-    return bodies.size() * sizeof(Body) + arts.size() * sizeof(art::Articulation) + joints.size() * sizeof(SceneJoint) + filters.size() * sizeof(ShapeFilter) +
+    return bodies.size() * sizeof(Body) + arts.size() * sizeof(art::Articulation) + joints.size() * sizeof(SceneJoint) + jointWritebacks.size() * sizeof(jnt::Writeback) + filters.size() * sizeof(ShapeFilter) +
            cms.size() * sizeof(SceneCM) + manifolds.size() * sizeof(contact::ManifoldSlot) + friction.size() * sizeof(sv::FrictionPatch);
   }
 
@@ -139,6 +142,7 @@ struct Batch {
     std::copy(f.bodies.begin(), f.bodies.end(), envBodies(e));
     std::copy(f.arts.begin(), f.arts.end(), envArts(e));
     std::copy(f.joints.begin(), f.joints.end(), envJoints(e));
+    std::copy(f.jointWritebacks.begin(), f.jointWritebacks.end(), envJointWritebacks(e));
     std::copy(f.shapeFilters.begin(), f.shapeFilters.end(), envFilters(e));
     // 관리자 칸 k 의 다양체는 manifolds[k] 로 (파일의 다양체 번호 -> 관리자 번호). ManifoldSlot 대입이 자기 버퍼 포인터를 다시 건다.
     nCMs[e] = uint32_t(f.cms.size());

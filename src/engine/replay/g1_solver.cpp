@@ -411,6 +411,18 @@ void takeSnapshot() {
         else if (m.frictionCount == 0 || actSet.count(k)) ++diffReset;
         else ++diffOther;
       }
+      // 조인트 되쓰기 칸: 풀이 직전 PhysX 칸(wbSeed) = 파일 칸 (조인트 번호로 맞춤)
+      uint64_t wbSame = 0, wbDiff = 0, wbMiss = 0;
+      {
+        std::unordered_map<uint32_t, uint32_t> byIndex;
+        for (uint32_t k = 0; k < ff.joints.size(); ++k) byIndex[ff.joints[k].index] = k;
+        for (auto& w : S.wbSeed) {
+          auto it = byIndex.find(w.first);
+          if (it == byIndex.end() || it->second >= ff.jointWritebacks.size()) { ++wbMiss; continue; }
+          (memcmp(&ff.jointWritebacks[it->second], &w.second, sizeof(w.second)) ? wbDiff : wbSame)++;
+        }
+      }
+      printf("G1 solver 넘겨받기 확인: 조인트 되쓰기 칸 같음 %" PRIu64 ", 다름 %" PRIu64 ", 파일에 없음 %" PRIu64 "\n", wbSame, wbDiff, wbMiss);
       printf("G1 solver 넘겨받기 확인: simulate %llu 풀이 입력 관리자 %zu — 파일 마찰 패치와 같음 %" PRIu64 ", 다름(PhysX 가 simulate 안에서 지움) %" PRIu64
              ", 다름(그 밖) %" PRIu64 ", 파일에 없음 %" PRIu64 "\n",
              (unsigned long long)GS.stepSim, S.cms.size(), same, diffReset, diffOther, miss);

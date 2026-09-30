@@ -110,6 +110,7 @@ struct SceneFile {
   std::vector<Body> bodies;
   std::vector<art::Articulation> arts;
   std::vector<SceneJoint> joints;
+  std::vector<jnt::Writeback> jointWritebacks;  // 조인트별 되쓰기 칸 (Dy::ConstraintWriteback, joints 와 같은 순서)
   std::vector<uint32_t> artName;  // 관절체별 이름 위치
   std::vector<ShapeFilter> shapeFilters;  // 모양별 (shapes 와 같은 순서)
   std::vector<SceneCM> cms;
@@ -136,7 +137,7 @@ inline bool rd(FILE* f, std::vector<T>& v, size_t n) { v.resize(n); return n == 
 
 inline void fillSizes(SceneHeader& h) {
   memcpy(h.magic, "ENGSCN1", 8);
-  h.version = 4;
+  h.version = 5;
   h.sizeIgNode = sizeof(ig::Node);
   h.sizeIgIsland = sizeof(ig::Island);
   h.sizeCM = sizeof(SceneCM);
@@ -172,7 +173,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
   if (!f) return false;
   using detail::wr;
   bool ok = fwrite(&s.h, sizeof(s.h), 1, f) == 1 && wr(f, s.materials) && wr(f, s.actors) && wr(f, s.shapes) && wr(f, s.hullOffsets) && wr(f, s.hulls) &&
-            wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.artName) && wr(f, s.shapeFilters) && wr(f, s.cms) &&
+            wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.jointWritebacks) && wr(f, s.artName) && wr(f, s.shapeFilters) && wr(f, s.cms) &&
             (s.manifolds.empty() || fwrite(static_cast<const void*>(s.manifolds.data()), sizeof(contact::ManifoldSlot), s.manifolds.size(), f) == s.manifolds.size()) &&
             wr(f, s.friction) && (!s.islands.valid || writeIslands(f, s.islands));
   ok = fclose(f) == 0 && ok;
@@ -197,7 +198,7 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
   using detail::rd;
   bool ok = rd(f, s.materials, s.h.nMaterials) && rd(f, s.actors, s.h.nActors) && rd(f, s.shapes, s.h.nShapes) && rd(f, s.hullOffsets, s.h.nHulls) &&
             rd(f, s.hulls, s.h.hullBytes) && rd(f, s.names, s.h.nameBytes) && rd(f, s.bodies, s.h.nBodies) && rd(f, s.arts, s.h.nArts) &&
-            rd(f, s.joints, s.h.nJoints) && rd(f, s.artName, s.h.nArts) && rd(f, s.shapeFilters, s.h.nShapes) &&
+            rd(f, s.joints, s.h.nJoints) && rd(f, s.jointWritebacks, s.h.nJoints) && rd(f, s.artName, s.h.nArts) && rd(f, s.shapeFilters, s.h.nShapes) &&
             rd(f, s.cms, s.h.nCMs);
   if (ok) {
     s.manifolds.resize(s.h.nManifolds);
