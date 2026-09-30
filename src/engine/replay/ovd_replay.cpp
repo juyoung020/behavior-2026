@@ -39,6 +39,7 @@
 void g1_before_simulate(physx::PxScene*, physx::PxPhysics*, uint64_t) __attribute__((weak));
 void g1_after_simulate(physx::PxScene*, physx::PxPhysics*, uint64_t) __attribute__((weak));
 bool g1_simulate(physx::PxScene*, float, uint64_t) __attribute__((weak));  // 참을 돌려주면 simulate+fetchResults 를 대신 했다는 뜻 (collide/advance 로 나눠 좁은 단계 입력을 잡는다)
+physx::PxCpuDispatcher* g1_dispatcher() __attribute__((weak));  // G1 solver 그림자: 작업 스레드 하나짜리 가로채기 디스패처 (없거나 NULL 이면 기본)
 void g1_report() __attribute__((weak));
 #include "core/omni/states.h"
 #include "core/omni/bddl.h"
@@ -1500,6 +1501,8 @@ class Replayer {
     if (pget(o, "PxScene", "sanityBounds", b)) sd.sanityBounds = b;
     if (pget(o, "PxScene", "contactPairSlabSize", u32)) sd.contactPairSlabSize = u32;
     sd.cpuDispatcher = disp;
+    if (g1_dispatcher)
+      if (PxCpuDispatcher* gd = g1_dispatcher()) sd.cpuDispatcher = gd;
     sd.filterShader = engine::OmniFilterShader;
     sd.filterShaderData = &specp;
     sd.filterShaderDataSize = sizeof(specp);
