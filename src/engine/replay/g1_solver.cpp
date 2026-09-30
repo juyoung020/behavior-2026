@@ -160,6 +160,13 @@ struct SolverShadow {
   uint64_t steps = 0, stepsNoSnap = 0, bodiesCmp = 0, cmsSolved = 0, contactsSolved = 0, c1dSolved = 0, engineErr = 0;
   uint64_t islandsAll = 0, islandsUsed = 0, bodiesSkipped = 0, batches = 0, batchesUsed = 0, skipArt = 0, skipKin = 0, skipMod = 0, skipOther = 0;
   int show = 0;
+  // 닫힌 고리 (2b) 지속 모드: 몸체·마찰 패치·조인트 되쓰기를 우리 결과로 들고 간다
+  bool persist = false;
+  std::unordered_map<const PxsRigidBody*, eng::Body> pBodies;
+  std::map<std::pair<const void*, const void*>, std::vector<sv::FrictionPatch>> pFric;  // (모양 핵 0, 1) -> 지난 마찰 패치
+  std::unordered_set<uint32_t> pWbSeen;
+  uint64_t pBodyUsed = 0, pBodyResync = 0, pBodyNew = 0, pBodyDiff = 0, pFricUsed = 0, pFricDiff = 0, pFricReset = 0, pFricNew = 0, pWbUsed = 0, pWbDiff = 0;
+  long long pFirstBody = -1, pFirstFric = -1, pFirstWb = -1;
 
   void init() {
     const uint32_t POOL = 1u << 14, DESC = 1u << 16;
@@ -284,6 +291,20 @@ void takeSnapshot() {
           S.rbIndex[rb] = bi;
           S.rbs.push_back(rb);
           S.bodies.push_back(bodyFrom(*rb));
+          if (GS.persist) {  // 우리 상태 = 지난 스텝 우리 결과 (옮기지 않은 API 로 건드렸으면 PhysX 로 다시 맞춤)
+            const Sc::BodySim* bs = reinterpret_cast<const Sc::BodySim*>(reinterpret_cast<const PxU8*>(rb) - Sc::BodySim::getRigidBodyOffset());
+            auto pit = GS.pBodies.find(rb);
+            if (pit == GS.pBodies.end()) ++GS.pBodyNew;
+            else if (g1_loop_touched(bs->getPxActor())) { ++GS.pBodyResync; GS.pBodies.erase(pit); }
+            else {
+              if (memcmp(&pit->second, &S.bodies.back(), sizeof(eng::Body))) {
+                ++GS.pBodyDiff;
+                if (GS.pFirstBody < 0) GS.pFirstBody = (long long)GS.stepSim;
+              }
+              S.bodies.back() = pit->second;
+              ++GS.pBodyUsed;
+            }
+          }
           S.ib.push_back(bi);
         }
         n = node.mNextNode;
@@ -374,6 +395,25 @@ void takeSnapshot() {
           for (PxU32 k = 0; k < u.mFrictionPatchCount; ++k) {
             if (!fp) { fail(4); m.frictionCount = 0; break; }
             S.friction.push_back(frictionFrom(fp[k]));
+          }
+          if (GS.persist) {
+            auto pf = GS.pFric.find({u.getShapeCore0(), u.getShapeCore1()});
+            if (pf == GS.pFric.end()) ++GS.pFricNew;
+            else {
+              bool eq = pf->second.size() == m.frictionCount;
+              for (uint32_t q = 0; eq && q < m.frictionCount; ++q) eq = sameFriction(pf->second[q], S.friction[m.frictionPtr + q]);
+              if (!eq) {
+                if (m.frictionCount == 0) ++GS.pFricReset;  // PhysX 가 지움 (Sc 층: 새로 활성화·관리자 다시 등록 -> 마찰 패치 0, 17.2 규칙)
+                else {
+                  ++GS.pFricDiff;
+                  if (GS.pFirstFric < 0) GS.pFirstFric = (long long)GS.stepSim;
+                }
+              }
+              if (pf->second.size() == m.frictionCount) {  // 수가 같으면 우리 값으로 (다르면 Sc 층 캐시 지움 = 섬·쌍 모듈 몫, 아직 PhysX 값)
+                for (uint32_t q = 0; q < m.frictionCount; ++q) S.friction[m.frictionPtr + q] = pf->second[q];
+                ++GS.pFricUsed;
+              }
+            }
           }
           const uint32_t ci = uint32_t(S.cms.size());
           S.cmIndex[cm] = ci;
@@ -603,7 +643,8 @@ PxCpuDispatcher* g1_dispatcher() {
   static HookDispatcher* d = new HookDispatcher();  // 프로세스 끝까지 (PxPhysics 여러 개가 같이 씀)
   GS.on = true;
   GS.cmpOn = getenv("G1_SOLVER") != nullptr;
-  GS.full = getenv("G1_SOLVER_RIGID") == nullptr;  // 기본 = 관절체 결합 전체 그림자, G1_SOLVER_RIGID=1 이면 예전 관절체 없는 섬만
+  GS.full = getenv("G1_SOLVER_RIGID") == nullptr;
+  GS.persist = GS.cmpOn && GS.full && g1_loop_persist();  // 기본 = 관절체 결합 전체 그림자, G1_SOLVER_RIGID=1 이면 예전 관절체 없는 섬만
   return d;
 }
 
@@ -652,7 +693,18 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
   uint32_t maxWb = 0;
   for (auto& w : S.wbSeed) maxWb = std::max(maxWb, w.first + 1);
   if (maxWb > GS.wbs.size()) GS.wbs.resize(maxWb);
-  for (auto& w : S.wbSeed) GS.wbs[w.first] = w.second;
+  for (auto& w : S.wbSeed) {
+    if (GS.persist && GS.pWbSeen.count(w.first)) {  // 지난 스텝 우리 되쓰기 칸 그대로
+      ++GS.pWbUsed;
+      if (memcmp(&GS.wbs[w.first], &w.second, sizeof(w.second))) {
+        ++GS.pWbDiff;
+        if (GS.pFirstWb < 0) GS.pFirstWb = (long long)sim;
+      }
+      continue;
+    }
+    GS.wbs[w.first] = w.second;
+    if (GS.persist) GS.pWbSeen.insert(w.first);
+  }
 
   // 이번 스텝 섬 관리자가 재운 몸체 (fetchResults 뒤 accurate IslandSim 에 남아 있다)
   std::vector<uint8_t> deactFlag(nb, 0);
@@ -788,6 +840,16 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
       sv::deactivateBodiesHost(B, deact.data(), uint32_t(deact.size()));
     }
     if (B.error) ++GS.engineErr;
+    if (g1_loop_persist()) {
+      for (uint32_t k = 0; k < na; ++k) g1_art_persist(S.artFa[k], arts[k], sim);
+      for (uint32_t i = 0; i < nb; ++i) GS.pBodies[S.rbs[i]] = S.bodies[i];
+      const sv::FrictionArena& fa2 = B.friction[B.frictionCurIdx];
+      for (size_t k = 0; k < S.cms.size(); ++k) {
+        const PxcNpWorkUnit& u = S.cmKeys[k]->getWorkUnit();
+        const sv::SolverCM& m = S.cms[k];
+        GS.pFric[{u.getShapeCore0(), u.getShapeCore1()}].assign(fa2.data + m.frictionPtr, fa2.data + m.frictionPtr + m.frictionCount);
+      }
+    }
     ++GS.fullSteps;
     GS.cmsSolved += S.cms.size();
     GS.c1dSolved += S.c1d.size();
@@ -975,6 +1037,12 @@ void g1_solver_report() {
   printf("  푼 것 누적: 몸체 %" PRIu64 ", 접촉 관리자 %" PRIu64 ", 접촉점 %" PRIu64 ", 조인트 %" PRIu64 "\n", GS.bodiesCmp, GS.cmsSolved, GS.contactsSolved, GS.c1dSolved);
   if (GS.full) printf("  전체 그림자(관절체 결합): 푼 스텝 %" PRIu64 ", 못 넣어 건너뛴 스텝 %" PRIu64 ", 늦은 스냅샷 없음 %" PRIu64 "\n", GS.fullSteps, GS.fullSkipped, GS.noLate);
   if (GS.full) printf("  simulate 안에서 깨어난 관절체 %" PRIu64 " 번\n", GS.artWoken);
+  if (GS.persist)
+    printf("  닫힌 고리 (2b): 우리 상태로 푼 몸체 %" PRIu64 " (처음 %" PRIu64 ", 다시 맞춤 %" PRIu64 ", 우리 != PhysX simulate 안 풀이 직전 %" PRIu64 "%s), 마찰 패치 관리자 %" PRIu64
+           " (처음 %" PRIu64 ", Sc 지움 %" PRIu64 ", 그 밖 다름 %" PRIu64 "%s), 조인트 되쓰기 %" PRIu64 " (다름 %" PRIu64 "%s)\n",
+           GS.pBodyUsed, GS.pBodyNew, GS.pBodyResync, GS.pBodyDiff, GS.pFirstBody >= 0 ? (" 첫 " + std::to_string(GS.pFirstBody)).c_str() : "", GS.pFricUsed,
+           GS.pFricNew, GS.pFricReset, GS.pFricDiff, GS.pFirstFric >= 0 ? (" 첫 " + std::to_string(GS.pFirstFric)).c_str() : "", GS.pWbUsed, GS.pWbDiff,
+           GS.pFirstWb >= 0 ? (" 첫 " + std::to_string(GS.pFirstWb)).c_str() : "");
   for (const Tally* t : {&GS.tPose, &GS.tLin, &GS.tAng, &GS.tWake, &GS.tSleep, &GS.tFric, &GS.tWb, &GS.tArt})
     printf("  %-20s 비교 %10" PRIu64 "  비트 다름 %8" PRIu64 "  최대|차| %.3e%s\n", t->name, t->cmp, t->bad, t->maxd,
            t->bad ? ("  첫 다름 simulate " + std::to_string(t->first)).c_str() : "");

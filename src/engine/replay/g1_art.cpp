@@ -39,16 +39,46 @@ struct ArtShadow {
   long long firstBad = -1;
   int show = 0;
   std::map<std::string, uint64_t> badByName;
+  // 닫힌 고리 (2b) 지속 모드: 관절체별 우리 상태 (지난 스텝 우리 결과 + 이번 창 API 호출)
+  std::unordered_map<const void*, std::unique_ptr<A::Articulation>> persisted;  // PxArticulationReducedCoordinate* -> 상태
+  uint64_t pUsed = 0, pResync = 0, pNew = 0, pDiff = 0, pOps = 0, pCmp = 0;
+  int arrShown = 0;
+  long long pFirst = -1;
+  std::map<std::string, uint64_t> pDiffByName;
+  uint64_t curSim = 0;
 } AS;
+
+bool diffTwin(Twin& t, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev);
+
+// 이번 창에 옮긴 API 호출을 우리 상태에 (core/articulation/articulation.h 의 API 판)
+void applyOps(A::Articulation& e, const std::vector<G1ArtOp>& ops) {
+  for (const G1ArtOp& o : ops) {
+    switch (o.type) {
+      case 0: A::jointSetDriveTarget(e, o.link, o.axis, o.v, true); break;
+      case 1: A::jointSetDriveVelocity(e, o.link, o.axis, o.v, true); break;
+      case 2: {  // NpArticulationReducedCoordinate::wakeUp (:1161): 링크마다 깸 카운터 = 재설정 값, 관절체도
+        const float reset = 20.0f * 0.02f;
+        for (uint32_t i = 0; i < e.nLinks; ++i) e.bodies[i].wakeCounter = reset;
+        e.wakeCounter = reset;
+        e.awake = 1;
+        e.readyForSleep = 0;
+        break;
+      }
+      default: break;  // putToSleep: 아직 (건드림으로 다시 맞춤)
+    }
+  }
+}
 
 }  // namespace
 
 // simulate 바로 앞 (이번 스텝 입력이 다 들어간 뒤): 깨어 있는 관절체를 전부 옮겨 담는다
 void g1_art_before(PxScene* scene) {
+  if (g1_loop_persist() && !AS.inited) AS.show = getenv("G1_ART_SHOW") ? atoi(getenv("G1_ART_SHOW")) : 5;
   if (!AS.inited) {
     AS.inited = true;
     AS.on = getenv("G1_ART") != nullptr;
-    AS.snap = AS.on || getenv("G1_SOLVER") != nullptr;  // solver 전체 그림자(관절체 결합)도 쌍둥이를 쓴다
+    AS.snap = AS.on || getenv("G1_SOLVER") != nullptr;
+    if (g1_loop_persist() && !getenv("G1_ART_SHOW")) AS.show = 5;  // solver 전체 그림자(관절체 결합)도 쌍둥이를 쓴다
     AS.show = getenv("G1_ART_SHOW") ? atoi(getenv("G1_ART_SHOW")) : 0;
   }
   if (!AS.snap) return;
@@ -75,6 +105,58 @@ void g1_art_before(PxScene* scene) {
     for (PxArticulationLink* l : t.links)
       AS.linkOfRb[&static_cast<NpArticulationLink*>(l)->getCore().getSim()->getLowLevelBody()] = {fa, l->getLinkIndex()};
     if (!t.ok) ++AS.snapFail;
+    if (t.ok && g1_loop_persist()) {
+      std::vector<G1ArtOp> ops;
+      g1_loop_take_art_ops(a, ops);
+      auto pit = AS.persisted.find(a);
+      bool sleepOp = false;
+      for (const G1ArtOp& o : ops) sleepOp |= o.type == 3;
+      if (pit == AS.persisted.end()) {
+        ++AS.pNew;
+      } else if (g1_loop_touched(a) || sleepOp) {
+        ++AS.pResync;  // 옮기지 않은 API 로 건드림 -> 이번 스텝은 PhysX 로 다시 맞춤
+        AS.persisted.erase(pit);
+      } else {
+        A::Articulation& pe = *pit->second;
+        AS.pOps += ops.size();
+        applyOps(pe, ops);
+        size_t fj = 0, nf = 0;
+        float pv = 0, ev = 0;
+        ++AS.pCmp;
+        if (diffTwin(t, pe, &fj, &nf, &pv, &ev)) {  // 우리 상태(지난 결과 + API) != PhysX simulate 앞 상태
+          ++AS.pDiff;
+          if (AS.pFirst < 0) AS.pFirst = (long long)AS.curSim;
+          AS.pDiffByName[a->getName() ? a->getName() : "?"]++;
+          if (AS.show > 0) {
+            --AS.show;
+            fprintf(stderr, "[g1 loop 관절체 다름] %s 칸 %zu/%zu: PhysX %.9g 우리 %.9g\n", a->getName() ? a->getName() : "?", fj, nf, pv, ev);
+          }
+        }
+        if (getenv("G1_LOOP_ARRDIFF") && AS.arrShown < 80 && (!getenv("G1_LOOP_ARRDIFF_NAME") || strstr(a->getName() ? a->getName() : "", getenv("G1_LOOP_ARRDIFF_NAME")))) {  // 진단: 우리 상태와 새 스냅샷의 배열별 차이 (공개 값은 같아도 안쪽이 다른 곳)
+          const A::Articulation& fe = *t.e;
+          const A::ArtCaps c{pe.nLinks, pe.dofs, pe.nPath, pe.nMimic};  // 쓰는 칸만
+          using namespace eng;
+          using namespace eng::art;
+          auto cmpArr = [&](const char* name, const void* xp, const void* yp, size_t bytes, size_t esz) {
+            const unsigned char* x = static_cast<const unsigned char*>(xp);
+            const unsigned char* y = static_cast<const unsigned char*>(yp);
+            size_t k = 0;
+            while (k < bytes && x[k] == y[k]) ++k;
+            if (k < bytes && AS.arrShown < 80) {
+              ++AS.arrShown;
+              fprintf(stderr, "[g1 loop 배열 다름] sim %llu %s: %s 바이트 %zu/%zu (원소 %zu)\n", (unsigned long long)AS.curSim, a->getName() ? a->getName() : "?", name, k,
+                      bytes, k / esz);
+            }
+          };
+#define ENG_ART_CMP(T, n, cnt) cmpArr(#n, static_cast<const T*>(pe.n), static_cast<const T*>(fe.n), sizeof(T) * size_t(cnt), sizeof(T));
+          ENG_ART_ARRAYS(ENG_ART_CMP)
+#undef ENG_ART_CMP
+          cmpArr("머리", &pe, &fe, offsetof(A::Articulation, ll), 1);
+        }
+        *t.e = pe;  // 닫힌 고리: 우리 상태로 푼다
+        ++AS.pUsed;
+      }
+    }
     AS.twins[fa] = std::move(t);
   }
 }
@@ -182,7 +264,10 @@ bool g1_art_link_of_rb(const void* rb, const void** fa, uint32_t* ll) {
 bool g1_art_diff(const void* fa, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev) {
   auto it = AS.twins.find(fa);
   if (it == AS.twins.end()) return true;
-  Twin& t = it->second;
+  return diffTwin(it->second, e, firstJ, nFields, pxv, ev);
+}
+namespace {
+bool diffTwin(Twin& t, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev) {
   std::vector<float> x, y;
   for (uint32_t l = 0; l < t.links.size(); ++l) {
     const PxTransform tp = t.links[l]->getGlobalPose();
@@ -223,12 +308,30 @@ bool g1_art_diff(const void* fa, const eng::art::Articulation& e, size_t* firstJ
   }
   return false;
 }
+}  // namespace
+// 풀이 뒤 우리 결과를 다음 스텝으로 (지속 모드)
+void g1_art_persist(const void* fa, const eng::art::Articulation& e, uint64_t sim) {
+  auto it = AS.twins.find(fa);
+  if (it == AS.twins.end()) return;
+  std::unique_ptr<A::Articulation>& p = AS.persisted[it->second.px];
+  if (!p) p.reset(new A::Articulation);
+  *p = e;
+  AS.curSim = sim + 1;
+}
 const char* g1_art_name(const void* fa) {
   auto it = AS.twins.find(fa);
   return it == AS.twins.end() || !it->second.px->getName() ? "?" : it->second.px->getName();
 }
 
 void g1_art_report() {
+  if (g1_loop_persist()) {
+    printf("G1 닫힌 고리 (2b) 관절체: 우리 상태로 푼 관절체·스텝 %" PRIu64 " (API 호출 %" PRIu64 " 넣음), 처음 %" PRIu64 ", 다시 맞춤(옮기지 않은 API) %" PRIu64
+           " — 우리 상태 != PhysX simulate 앞 %" PRIu64 "/%" PRIu64 "%s\n",
+           AS.pUsed, AS.pOps, AS.pNew, AS.pResync, AS.pDiff, AS.pCmp, AS.pDiff ? ("  첫 simulate " + std::to_string(AS.pFirst)).c_str() : "");
+    int k = 0;
+    for (auto& kv : AS.pDiffByName)
+      if (k++ < 8) printf("    다름 %6" PRIu64 "  %s\n", kv.second, kv.first.c_str());
+  }
   if (!AS.on) return;
   printf("G1 관절체 단독 그림자 (접촉·조인트 없는 관절체 섬, 스텝마다 PhysX 에서 옮겨 담음): simulate %" PRIu64 " (풀이 스냅샷 없음 %" PRIu64 ")\n", AS.steps,
          AS.stepsNoInfo);

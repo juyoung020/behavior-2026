@@ -12,6 +12,7 @@
 #include <tuple>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "PxPhysicsAPI.h"
@@ -189,7 +190,68 @@ const char* objName(const void* o) {
 
 }  // namespace
 
+// ---- (2b) API 거울
+namespace {
+struct ApiMirror {
+  bool inited = false, persist = false;
+  std::unordered_set<const void*> touched;
+  std::unordered_map<const void*, std::vector<G1ArtOp>> artOps;
+  uint64_t touches = 0, touchOther = 0, drives = 0, wakes = 0;
+} AM;
+void amInit() {
+  if (AM.inited) return;
+  AM.inited = true;
+  AM.persist = getenv("G1_LOOP_PERSIST") != nullptr;
+}
+}  // namespace
+bool g1_loop_persist() {
+  amInit();
+  return AM.persist;
+}
+bool g1_loop_touched(const void* obj) { return AM.touched.count(obj) != 0; }
+void g1_loop_take_art_ops(const void* art, std::vector<G1ArtOp>& out) {
+  out.clear();
+  auto it = AM.artOps.find(art);
+  if (it == AM.artOps.end()) return;
+  out.swap(it->second);
+  AM.artOps.erase(it);
+}
+void g1_api_touch(PxBase* b) {
+  amInit();
+  if (!AM.persist || !b) return;
+  ++AM.touches;
+  if (auto* j = b->is<PxArticulationJointReducedCoordinate>()) AM.touched.insert(&j->getChildArticulationLink().getArticulation());
+  else if (auto* l = b->is<PxArticulationLink>()) AM.touched.insert(&l->getArticulation());
+  else if (auto* a = b->is<PxArticulationReducedCoordinate>()) AM.touched.insert(a);
+  else if (auto* r = b->is<PxRigidActor>()) AM.touched.insert(r);
+  else if (auto* s = b->is<PxShape>()) { if (s->getActor()) AM.touched.insert(s->getActor()); }
+  else ++AM.touchOther;  // 장면·재질 등 (몸체 상태와 무관 추정)
+}
+void g1_api_art_drive(PxArticulationJointReducedCoordinate* j, int axis, float v, bool velocity) {
+  amInit();
+  if (!AM.persist) return;
+  ++AM.drives;
+  PxArticulationLink& l = j->getChildArticulationLink();
+  PxArticulationReducedCoordinate& art = l.getArticulation();
+  // 생성 순서 번호 (getLinks 순서; getLinkIndex 는 LL 번호라 다르다)
+  static std::vector<PxArticulationLink*> links;
+  links.resize(art.getNbLinks());
+  art.getLinks(links.data(), PxU32(links.size()));
+  uint32_t ci = 0;
+  while (ci < links.size() && links[ci] != &l) ++ci;
+  AM.artOps[&art].push_back(G1ArtOp{uint8_t(velocity ? 1 : 0), uint8_t(axis), ci, v});
+}
+void g1_api_art_wake(PxArticulationReducedCoordinate* a, bool sleep) {
+  amInit();
+  if (!AM.persist) return;
+  ++AM.wakes;
+  AM.artOps[a].push_back(G1ArtOp{uint8_t(sleep ? 3 : 2), 0, 0, 0.f});
+}
+
 void g1_loop_after(PxScene* scene, uint64_t) {
+  amInit();
+  AM.touched.clear();  // 다음 창부터 새로 (지난 창 것은 이번 simulate 에서 썼음)
+  AM.artOps.clear();
   if (!LS.inited) {
     LS.inited = true;
     LS.on = getenv("G1_LOOP") != nullptr;
@@ -241,6 +303,9 @@ void g1_loop_before(PxScene* scene, uint64_t sim) {
 }
 
 void g1_loop_report() {
+  if (AM.persist)
+    printf("G1 닫힌 고리 (2b) API 거울: 옮긴 관절 드라이브 %" PRIu64 ", 관절체 깨움·재움 %" PRIu64 ", 건드림(다시 맞춤) %" PRIu64 " (몸체와 무관 %" PRIu64 ")\n", AM.drives,
+           AM.wakes, AM.touches, AM.touchOther);
   if (!LS.on) return;
   printf("G1 닫힌 고리 (2a) API 창: 창 %" PRIu64 " (편집 있는 창 %" PRIu64 "), 칸 편집 %" PRIu64 ", 새로 생긴 칸 %" PRIu64 ", 없어진 칸 %" PRIu64 "\n", LS.windows,
          LS.windowsEdited, LS.edits, LS.appear, LS.vanish);

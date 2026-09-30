@@ -41,6 +41,10 @@ void g1_after_simulate(physx::PxScene*, physx::PxPhysics*, uint64_t) __attribute
 bool g1_simulate(physx::PxScene*, float, uint64_t) __attribute__((weak));  // 참을 돌려주면 simulate+fetchResults 를 대신 했다는 뜻 (collide/advance 로 나눠 좁은 단계 입력을 잡는다)
 physx::PxCpuDispatcher* g1_dispatcher() __attribute__((weak));  // G1 solver 그림자: 작업 스레드 하나짜리 가로채기 디스패처 (없거나 NULL 이면 기본)
 void g1_report() __attribute__((weak));
+// G1 닫힌 고리 (2b): 재생기가 부른 PhysX API 를 엔진 쪽에도 알린다 (g1_loop.cpp). 옮긴 호출은 따로, 나머지는 "건드림"(그 객체는 PhysX 로 다시 맞춤)
+void g1_api_touch(physx::PxBase* obj) __attribute__((weak));
+void g1_api_art_drive(physx::PxArticulationJointReducedCoordinate* j, int axis, float v, bool velocity) __attribute__((weak));
+void g1_api_art_wake(physx::PxArticulationReducedCoordinate* a, bool sleep) __attribute__((weak));
 #include "core/omni/states.h"
 #include "core/omni/bddl.h"
 #include "core/omni/agframe.h"
@@ -1776,6 +1780,7 @@ class Replayer {
     const std::string key = cl + "." + an;
     PxBase* b = target ? target : o.px;
     bool ok = true;
+    if (sims > 0 && g1_api_touch && b && !(cl == "PxArticulationJointReducedCoordinate" && (an == "driveTarget" || an == "driveVelocity"))) g1_api_touch(b);
     if (cl == "PxScene") {
       PxScene* s = o.scene;
       if (!s) ok = false;
@@ -1985,14 +1990,30 @@ class Replayer {
     // -> 바뀐 축이 없으면 축 0 에 같은 값을 다시 넣어 부수효과를 똑같이 낸다.
     if (an == "driveTarget") {
       bool any = false;
-      for (int i = 0; i < na && i < 6; ++i) if (changed(i, j->getDriveTarget(AX(i)))) { j->setDriveTarget(AX(i), f(i)); any = true; }
-      if (!any) j->setDriveTarget(AX(0), j->getDriveTarget(AX(0)));
+      for (int i = 0; i < na && i < 6; ++i)
+        if (changed(i, j->getDriveTarget(AX(i)))) {
+          j->setDriveTarget(AX(i), f(i));
+          if (g1_api_art_drive) g1_api_art_drive(j, i, f(i), false);
+          any = true;
+        }
+      if (!any) {
+        j->setDriveTarget(AX(0), j->getDriveTarget(AX(0)));
+        if (g1_api_art_drive) g1_api_art_drive(j, 0, j->getDriveTarget(AX(0)), false);
+      }
       return true;
     }
     if (an == "driveVelocity") {
       bool any = false;
-      for (int i = 0; i < na && i < 6; ++i) if (changed(i, j->getDriveVelocity(AX(i)))) { j->setDriveVelocity(AX(i), f(i)); any = true; }
-      if (!any) j->setDriveVelocity(AX(0), j->getDriveVelocity(AX(0)));
+      for (int i = 0; i < na && i < 6; ++i)
+        if (changed(i, j->getDriveVelocity(AX(i)))) {
+          j->setDriveVelocity(AX(i), f(i));
+          if (g1_api_art_drive) g1_api_art_drive(j, i, f(i), true);
+          any = true;
+        }
+      if (!any) {
+        j->setDriveVelocity(AX(0), j->getDriveVelocity(AX(0)));
+        if (g1_api_art_drive) g1_api_art_drive(j, 0, j->getDriveVelocity(AX(0)), true);
+      }
       return true;
     }
     if (an == "staticFrictionEffort" || an == "dynamicFrictionEffort" || an == "viscousFrictionCoefficient") {
@@ -2052,6 +2073,7 @@ class Replayer {
     auto dat = [&](const char* n) { return F.data(*v[n]); };
     auto AX = [](int i) { return PxArticulationAxis::Enum(i); };
     const std::string first = g[0];
+    if (sims > 0 && g1_api_touch && o.px) g1_api_touch(o.px);
     if (first == "stiffness") {  // PxD6JointDrive 값 객체 (px 없음): 값 갱신 후 연결돼 있으면 setDrive
       const uint64_t h = v.begin()->second->obj;
       D6DriveRef& r = d6drive[h];
@@ -2425,6 +2447,16 @@ class Replayer {
     };
     std::vector<uint32_t> idx = c.idx;
     if (idx.empty()) for (uint32_t i = 0; i < v.prims.size(); ++i) idx.push_back(i);
+    const bool sideWrites = m == "set_dof_positions" || m == "set_dof_velocities" || m == "set_dof_actuation_forces" || m == "set_root_transforms" ||
+                            m == "set_root_velocities" || ((m == "set_transforms" || m == "set_velocities") && v.kind == 1) || m == "add_force";
+    if (g1_api_touch && sideWrites)  // 실제로 PhysX 에 넣는 텐서 쓰기(applyCache·자세·속도·힘): 아직 옮기지 않음 -> 건드림 (목표값 등은 OVD 로 이미 옴)
+      for (uint32_t i : idx) {
+        if (PxArticulationReducedCoordinate* a = arti(i)) g1_api_touch(a);
+        else if (i < v.prims.size()) {
+          auto ib = actor_by_name.find(v.prims[i]);
+          if (ib != actor_by_name.end()) g1_api_touch(ib->second);
+        }
+      }
     for (uint32_t i : idx) {
       if (m == "set_dof_positions" || m == "set_dof_velocities" || m == "set_dof_actuation_forces") {
         auto* a = arti(i);
@@ -2477,9 +2509,18 @@ class Replayer {
           applied["side:put_to_sleep 뒤 텐서 쓰기로 깨어 있음"]++;
           continue;
         }
-        if (ia != art_by_name.end()) { if (m == "wake_up") ia->second->wakeUp(); else ia->second->putToSleep(); applied["side:" + m]++; continue; }
+        if (ia != art_by_name.end()) {
+          if (m == "wake_up") ia->second->wakeUp(); else ia->second->putToSleep();
+          if (g1_api_art_wake) g1_api_art_wake(ia->second, m != "wake_up");
+          applied["side:" + m]++;
+          continue;
+        }
         auto ib = actor_by_name.find(path);
-        if (ib != actor_by_name.end()) if (auto* rd = ib->second->is<PxRigidDynamic>()) { if (m == "wake_up") rd->wakeUp(); else rd->putToSleep(); applied["side:" + m]++; }
+        if (ib != actor_by_name.end()) if (auto* rd = ib->second->is<PxRigidDynamic>()) {
+          if (m == "wake_up") rd->wakeUp(); else rd->putToSleep();
+          if (g1_api_touch) g1_api_touch(rd);
+          applied["side:" + m]++;
+        }
       } else {
         // 목표값(드라이브)·질량 등은 OVD 에 이미 남는다
         applied["side-skip:" + m]++;

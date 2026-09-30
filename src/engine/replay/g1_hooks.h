@@ -73,6 +73,18 @@ void g1_scene_report();
 void g1_loop_before(physx::PxScene* scene, uint64_t sim);
 void g1_loop_after(physx::PxScene* scene, uint64_t sim);
 void g1_loop_report();
+// 닫힌 고리 (2b) 지속 모드 (G1_LOOP_PERSIST=1): 우리 상태를 스텝 사이에 들고 가고 창의 API 호출만 넣는다
+struct G1ArtOp {
+  uint8_t type;  // 0 드라이브 목표, 1 드라이브 목표 속도, 2 wakeUp, 3 putToSleep
+  uint8_t axis;
+  uint32_t link;  // 생성 순서 번호 (PxArticulationLink::getLinkIndex)
+  float v;
+};
+bool g1_loop_persist();                                        // 지속 모드인가
+bool g1_loop_touched(const void* obj);                          // 이번 창에 옮기지 않은 API 로 건드린 객체 (PxArticulationReducedCoordinate* / PxRigidActor*)
+void g1_loop_take_art_ops(const void* art, std::vector<G1ArtOp>& out);  // 이번 창에 옮긴 관절체 호출 (부른 순서)
+namespace eng { namespace art { struct Articulation; } }
+void g1_art_persist(const void* fa, const eng::art::Articulation& e, uint64_t sim);  // g1_art.cpp: 풀이 뒤 우리 관절체 상태를 다음 스텝으로
 // 다른 그림자가 내주는 것
 const physx::PxsCachedTransform* g1_contact_cache(size_t* n);   // g1_shadow: fetchCollision 뒤 변환 캐시
 const eng::contact::MaterialData* g1_contact_mats(size_t* n);    // g1_shadow: 재질 표
