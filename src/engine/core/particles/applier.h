@@ -51,6 +51,15 @@ inline void applier_cone_rays(TorchMT& rng, const float ext[3], const float link
   }
 }
 
+// B'. 범위(min·max)를 알 때 (무리 만들 때 정해진 값을 추출한 경우)
+inline void group_scales_mm(TorchMT& rng, const float mn[3], const float mx[3], const float grp_scale[3], int n, float* out) {
+  const float avg = avg_scale3(grp_scale);
+  for (int i = 0; i < n; ++i)
+    for (int k = 0; k < 3; ++k) {
+      const float u = torch_rand_float(rng);
+      out[3 * i + k] = (u * (mx[k] - mn[k]) + mn[k]) / avg;
+    }
+}
 // B. 무리 척도 n 개. rel = 상대 척도 계. grp_aabb = 무리 물체 aabb 범위(무리 만들 때), tmpl = 입자 틀 aabb 범위, grp_scale = 무리 물체 척도
 inline void group_scales(TorchMT& rng, bool rel, const float grp_aabb[3], const float tmpl[3], const float grp_scale[3], int n, float* out) {
   float mn[3] = {1, 1, 1}, mx[3] = {1, 1, 1};
@@ -66,12 +75,26 @@ inline void group_scales(TorchMT& rng, bool rel, const float grp_aabb[3], const 
     mn[0] = lo / tmpl[0], mn[1] = lo / tmpl[1], mn[2] = 1.0f;
     mx[0] = hi / tmpl[0], mx[1] = hi / tmpl[1], mx[2] = 1.0f;
   }
-  const float avg = avg_scale3(grp_scale);
-  for (int i = 0; i < n; ++i)
-    for (int k = 0; k < 3; ++k) {
-      const float u = torch_rand_float(rng);
-      out[3 * i + k] = (u * (mx[k] - mn[k]) + mn[k]) / avg;
-    }
+  group_scales_mm(rng, mn, mx, grp_scale, n, out);
+}
+
+// 도포기 한 스텝 (ParticleModifier._update, particle_modifier.py:697; 5 스텝마다, 조건 all() 은 앞에서부터 단락):
+//   [켜짐 == True] → [한도: 누적 != 한도(1e6)] → [겹침: _check_overlap] → Saturated 재확인 → _modify_particles
+// 겹침 질의는 joints 몫이라 overlap(half, center) 로 받는다(켜져 있고 한도 안일 때만 부름 — 공식과 같은 호출 횟수).
+// 반환: 이번 스텝에 _modify_particles 를 부르는가. step_counter 는 판마다 0 에서 시작(_current_step), 부를 때마다 갱신.
+template <class OverlapFn>
+inline bool applier_step(int32_t& step_counter, bool toggled, int64_t modified, int64_t limit, const float link_tf[16], const float* hull, int nh,
+                         OverlapFn overlap) {
+  bool go = false;
+  if (step_counter == 0 && toggled && modified != limit) {
+    float lo[3], hi[3];
+    visual_aabb(link_tf, hull, nh, lo, hi);  // 투영 방식: 여유 없이 visual_aabb 그대로 (particle_modifier.py:450)
+    float half[3], ctr[3];
+    for (int k = 0; k < 3; ++k) half[k] = (hi[k] - lo[k]) / 2.0f, ctr[k] = (hi[k] + lo[k]) / 2.0f;
+    go = overlap(half, ctr) && modified != limit;
+  }
+  step_counter = (step_counter + 1) % 5;  // m.N_STEPS_PER_APPLICATION
+  return go;
 }
 
 // C. 붙은 입자 하나의 국소 행렬 (set_particle_position_orientation): inv(link_tf) @ global
