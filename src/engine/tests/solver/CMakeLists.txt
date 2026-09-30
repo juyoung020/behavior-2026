@@ -77,3 +77,11 @@ target_compile_definitions(test_contact_solver_1lane PRIVATE ENG_AOS_FLOATV_ONE_
 target_link_options(test_contact_solver_1lane PRIVATE ${CS_WRAPS})
 engine_test(test_contact_solver_gpu_1lane test_contact_solver_gpu.cu)
 target_compile_definitions(test_contact_solver_gpu_1lane PRIVATE ENG_AOS_FLOATV_ONE_LANE)
+
+# 관절체 결합 (09-30, engine-solver-art): 바닥 위 무작위 관절체·R1Pro·강체·링크 조인트 섬을 PhysX 스냅샷으로 풀어 비교
+engine_test(test_art_solver test_art_solver.cpp ${CMAKE_SOURCE_DIR}/../core/solver/solver_host.cpp PHYSX)
+target_include_directories(test_art_solver PRIVATE ${PX_INTERNAL_INCS})
+target_compile_definitions(test_art_solver PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 PX_NVTX=0)
+target_compile_options(test_art_solver PRIVATE -Wno-everything)
+list(SUBLIST CS_WRAPS 0 3 ART_WRAPS)  # 새 관리자 표시 가로채기만 (준비 진단 가로채기는 안 씀)
+target_link_options(test_art_solver PRIVATE ${ART_WRAPS})

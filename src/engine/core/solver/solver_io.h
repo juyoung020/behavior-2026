@@ -11,6 +11,10 @@
 #include "sv_hd.h"
 
 namespace eng {
+namespace art {
+struct Articulation;  // core/articulation/articulation.h (관절체 결합, art_couple.h)
+struct StaticLists;   // core/articulation/art_static.h
+}  // namespace art
 namespace sv {
 
 constexpr uint32_t NONE = 0xffffffffu;
@@ -224,6 +228,7 @@ struct SolverParams {
   uint32_t solverBatchSize;       // desc.solverBatchSize (기본 128)
   uint32_t solverArticBatchSize;  // desc.solverArticulationBatchSize (기본 16)
   float lengthScale;              // PxTolerancesScale::length (1D 제약 준비, DynamicsTGSContext::mLengthScale)
+  bool solveArticulationContactLast = false;  // PxSceneFlag::eSOLVE_ARTICULATION_CONTACT_LAST (DyTGSDynamics.cpp:2595)
 };
 
 // 접촉 관리자 (PxsContactManager + PxcNpWorkUnit 에서 풀이가 쓰는 것)
@@ -234,6 +239,8 @@ struct SolverCM {
   float restDistance, torsionalPatchRadius, minTorsionalPatchRadius, offsetSlop;
   uint32_t patchStart, nbPatches, contactStart, nbContacts;  // 이번 스텝 좁은 단계 출력 (SolverBoard.patches / contacts)
   uint32_t frictionPtr, frictionCount;                       // 지난 스텝 마찰 패치 (frictionPrev arena)
+  // 관절체 링크 쪽 (09-30 결합, art_couple.h): 0 = 강체(body 는 Body 번호). 아니면 LL 링크 번호 + 1 이고 body 는 SolverBoard.arts 번호.
+  uint32_t artLink0, artLink1;
 };
 
 // 이번 스텝 활성 섬 (IslandSim 의 활성 섬 순서, 섬 안 몸체·접촉 간선은 PhysX 사슬 순서)
@@ -242,6 +249,7 @@ struct IslandIn {
   uint32_t cmStart, cmCount;      // SolverBoard.islandCMs 안 범위
   uint32_t staticTouchCount;      // IslandSim::getIslandStaticTouchCount (잠 판정의 hasStaticTouch)
   uint32_t c1dStart, c1dCount;    // SolverBoard.islandC1Ds 안 범위 (섬의 제약 간선 사슬 순서, island.mFirstEdge[eCONSTRAINT])
+  uint32_t artStart, artCount;    // SolverBoard.islandArts 안 범위 (섬 노드 사슬 순서의 관절체 번호, DyTGSDynamics.cpp:806)
 };
 
 // 1D 제약 (조인트) — Dy::Constraint (DyConstraint.h) 에서 풀이가 쓰는 것. 준비·풀이 식은 joints 모듈(core/joints/tgs_1d*.h).
@@ -254,6 +262,7 @@ struct Constraint1DIn {
   uint16_t flags;         // PxConstraintFlags (Dy::Constraint::flags)
   uint16_t pad;
   float linBreakForce, angBreakForce, minResponseThreshold;
+  uint32_t artLink0, artLink1;  // SolverCM 과 같은 뜻 (0 = 강체, 아니면 LL 링크 + 1, body 는 관절체 번호)
 };
 
 // 한 풀이 묶음의 반복 계획 (준비가 만들고 반복·마무리가 읽는다. GPU 판 안 여러 스레드가 공유)
@@ -264,6 +273,14 @@ struct BatchPlan {
   uint32_t firstSequential;        // 1 = 첫 분할에 넘침 제약(몸체를 나눌 수 있음)이 있어 차례로 풀어야 함
   uint32_t bodyOffset, nbBodies, posIters, velIters;
   float dt, invDt, stepDt;
+  uint32_t artStart, nbArts;       // 이 묶음의 관절체 = islandArts[artStart, artStart + nbArts)
+  float biasCoefficient;
+};
+
+// 분할 때 관절체 하나의 진행 칸 (FeatherstoneArticulation::solverProgress / maxSolverNormalProgress / maxSolverFrictionProgress)
+struct ArtProgress {
+  uint32_t partitionMask;
+  uint16_t maxDynamicPartition, nbStaticInteractions;
 };
 
 struct SolverBoard {
@@ -317,6 +334,19 @@ struct SolverBoard {
   uint64_t statBatches, statBlock4, statSingle, statHeaders, statMaxPartitions, statFreeBatches;
   uint64_t stat1DBlock4, stat1DSingle, stat1DZeroRows;
   uint32_t statMaxArena, statMaxFriction, statMaxDescs;
+  // ---- 관절체 (09-30 결합, art_couple.h / docs 17.6). nbArts = 0 이면 예전 강체·조인트 경로 그대로.
+  art::Articulation* arts;      // 판의 관절체 (번호 = SolverCM/Constraint1DIn/islandArts 의 관절체 번호)
+  uint32_t nbArts;
+  const uint32_t* islandArts;   // IslandIn.artStart/artCount 가 가리키는 관절체 번호
+  art::StaticLists* artLists;   // 관절체마다 링크별 정적 제약 개수·시작 (ArticulationData::mNbStatic*·m*StartIndex)
+  SDesc* artStatic1D;           // 관절체 k 의 정적 1D 목록 = [k * artStaticCap, ...) (mStatic1DConstraints)
+  SDesc* artStaticContact;      // 관절체 k 의 정적 접촉 목록 (mStaticContactConstraints)
+  uint32_t* artNbStatic1D;      // 관절체마다 목록 길이
+  uint32_t* artNbStaticContact;
+  uint32_t artStaticCap;
+  uint32_t* artBatchIndex;      // 관절체 -> 이번 묶음 안 번호 (mArticulationIndex)
+  ArtProgress* artProg;         // 묶음 안 번호별 분할 진행 (용량 nbArts)
+  uint64_t statArtExtContacts, statArtStaticContacts, statArtExt1D, statArtStatic1D;
 };
 
 enum : uint32_t {
@@ -333,6 +363,8 @@ enum : uint32_t {
 void solverStepHost(SolverBoard& B, const SolverParams& prm);
 void afterIntegrationHost(SolverBoard& B);
 void deactivateBodiesHost(SolverBoard& B, const uint32_t* list, uint32_t n);
+// 관절체 (ScPipeline.cpp:2694-2707): 이번 스텝 풀린 관절체 중 섬 관리가 재운 것(deact, 관절체 번호)은 putToSleep, 나머지는 sleepCheck
+void afterIntegrationArtsHost(SolverBoard& B, float dt, const uint32_t* deact, uint32_t n);
 
 }  // namespace sv
 }  // namespace eng

@@ -9,6 +9,7 @@ namespace sv {
 void solverStepHost(SolverBoard& B, const SolverParams& prm) { solverStep(B, prm); }
 void afterIntegrationHost(SolverBoard& B) { afterIntegration(B); }
 void deactivateBodiesHost(SolverBoard& B, const uint32_t* list, uint32_t n) { deactivateBodies(B, list, n); }
+void afterIntegrationArtsHost(SolverBoard& B, float dt, const uint32_t* deact, uint32_t n) { afterIntegrationArts(B, dt, deact, n); }
 
 }  // namespace sv
 }  // namespace eng
