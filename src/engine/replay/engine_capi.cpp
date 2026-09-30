@@ -48,7 +48,10 @@ void* ee_open(const char* rec_dir, const char* ovd_path, uint64_t side_offset, i
   R.C.acts.clear();  // 행동은 바깥에서 (ee_step)
   R.C.T = 0;
   R.C.free_run = true;
-  if (with_s3 && !R.load_s3(d)) fprintf(stderr, "ee_open: s3 입력 없음 (판정 끔)\n");
+  if (with_s3) {
+    if (!R.load_s3(d)) fprintf(stderr, "ee_open: s3 입력 없음 (판정 끔)\n");
+    else R.S3.own = true;  // S3 v1: 판정 접촉 행렬을 우리 PhysX 접촉 보고로 (기록의 접촉 행렬은 비교용)
+  }
   if (!R.init(threads)) {
     delete E;
     return nullptr;

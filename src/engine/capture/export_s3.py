@@ -12,9 +12,10 @@ s3_setup.txt (줄 단위, 공백 구분)
   rowcol nr nc                      접촉 행렬 부분(손가락 행 × 켜짐 물체 열) 크기
   with k c0 c1 ...                  물체 k 의 열 마스크(부분 행렬 열 번호)
   qrow r0 r1 ...                    질의 행 마스크(부분 행렬 행 번호)
+  rowpath i path / colpath j path   부분 행렬 행(손가락 몸체)·열(켜짐 물체 몸체) 경로
   episode_start P substeps N steps T bddl <경로>
 s3_meshes.bin   손가락마다 pts(float32 n_pts*3), tri(int32 n_tri*3)
-s3_rows.bin     u32 행 수, 행마다: u64 post, u8 value[S*O], f32 time[S*O], u8 cm[nr*nc], u8 ccm[nr*nc], u8 has_cm
+s3_rows.bin     u32 행 수, 행마다: u64 post, u8 value[S*O], f32 time[S*O], u8 cm[nr*nc], u8 ccm[nr*nc], u8 has_cm (cm·ccm 은 행 우선)
 s3_goal.txt     스텝마다 공식 trace 의 goal_satisfied 문자열 한 줄 (예: [] 또는 [0])
 설정이 기록 중 여러 벌이면 마지막 벌(에피소드 쪽)만 쓴다. 에피소드 전 행은 그 설정과 모양이 같을 때만 쓴다.
 """
@@ -90,6 +91,11 @@ def main():
         cw = [int(i) for i, c in enumerate(cols_sel) if w[k % w.shape[0], c]] if k < w.shape[0] else []
         out.append("with %d %s" % (k, " ".join(map(str, cw))))
     out.append("qrow " + " ".join(str(i) for i in range(len(rows_sel))))
+    # S3 v1(접촉 행렬을 우리 PhysX 접촉 보고로): 부분 행렬의 행·열 몸체 경로
+    for i, pth in enumerate(st.get("rows", [])):
+        out.append(f"rowpath {i} {pth}")
+    for j, pth in enumerate(st.get("cols", [])):
+        out.append(f"colpath {j} {pth}")
     out.append(f"episode_start {s1.get('episode_start_post', -1)} substeps {s1.get('substeps', 4)} steps {len(goals)} bddl {a.bddl}")
     open(os.path.join(d, "s3_setup.txt"), "w").write("\n".join(out) + "\n")
     open(os.path.join(d, "s3_meshes.bin"), "wb").write(bytes(mesh_bin))

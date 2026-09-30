@@ -84,6 +84,39 @@ static PxQuat prenorm(const PxQuat& r) {
 }
 static PxTransform prenorm(const PxTransform& t) { return PxTransform(t.p, prenorm(t.q)); }
 
+// S3 v1: OmniGibson RigidContactAPI 의 입력(텐서 접촉 뷰 get_contact_force_matrix·get_net_contact_forces)을 PhysX 접촉 보고로 만든다.
+// 서브스텝마다 쌍(액터 둘)별 충격 벡터 합, 액터별 알짜 충격 합. 판정은 0 이 아닌지만 본다(usd_utils.py:127·189).
+struct S3ContactCb : physx::PxSimulationEventCallback {
+  std::map<std::pair<const void*, const void*>, physx::PxVec3> pair_imp;  // (작은 주소, 큰 주소) -> 합 (방향은 판정에 무관)
+  std::unordered_map<const void*, physx::PxVec3> net;
+  std::vector<physx::PxContactPairPoint> buf;
+  void clear() { pair_imp.clear(); net.clear(); }
+  void onContact(const physx::PxContactPairHeader& h, const physx::PxContactPair* pairs, physx::PxU32 n) override {
+    using namespace physx;
+    if (h.flags & (PxContactPairHeaderFlag::eREMOVED_ACTOR_0 | PxContactPairHeaderFlag::eREMOVED_ACTOR_1)) return;
+    for (PxU32 i = 0; i < n; ++i) {
+      const PxContactPair& cp = pairs[i];
+      if (!cp.contactCount) continue;
+      buf.resize(cp.contactCount);
+      const PxU32 np = cp.extractContacts(buf.data(), cp.contactCount);
+      PxVec3 sum(0.0f);
+      for (PxU32 k = 0; k < np; ++k) sum += buf[k].impulse;
+      const void* a = h.actors[0];
+      const void* b = h.actors[1];
+      // PxVec3 기본 생성자는 값을 채우지 않는다 -> 0 으로 넣고 더한다
+      net.emplace(a, physx::PxVec3(0.0f)).first->second += sum;
+      net.emplace(b, physx::PxVec3(0.0f)).first->second -= sum;
+      auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+      pair_imp.emplace(key, physx::PxVec3(0.0f)).first->second += sum;
+    }
+  }
+  void onConstraintBreak(physx::PxConstraintInfo*, physx::PxU32) override {}
+  void onWake(physx::PxActor**, physx::PxU32) override {}
+  void onSleep(physx::PxActor**, physx::PxU32) override {}
+  void onTrigger(physx::PxTriggerPair*, physx::PxU32) override {}
+  void onAdvance(const physx::PxRigidBody* const*, const physx::PxTransform*, const physx::PxU32) override {}
+};
+
 // ------------------------------------------------------------------------------------------------ 재생기
 // 진단 전용 접촉 보고 (--trace-obj 가 있을 때만): 이름에 trace_sub 가 든 액터가 낀 쌍의 접촉점·분리 거리를 찍는다.
 // 알림 플래그(eNOTIFY_*)만 더하고 풀이 플래그는 건드리지 않는다.
@@ -508,7 +541,7 @@ class Replayer {
       uint64_t post;
       std::vector<uint8_t> val;
       std::vector<float> time;
-      std::vector<uint8_t> cm;
+      std::vector<uint8_t> cm, ccm;
       bool has_cm;
     };
     std::vector<Row> rows;
@@ -522,7 +555,19 @@ class Replayer {
     int64_t first_bad = -1;
     std::string first_bad_what;
     std::string last_goal = "[]";
+    // v1: 접촉 행렬을 우리 PhysX 로 (--s3-own-contact)
+    bool own = false;
+    std::vector<std::string> rowpath, colpath;
+    std::vector<const PxRigidActor*> body;  // 행 몸체(0..nr-1) 뒤에 열 몸체
+    std::vector<int32_t> row_to_rigid, col_to_rigid, b2r;
+    int R_ext = 0;
+    std::vector<float> pend_tf, pend_net, pend_imp, prev_tf;
+    int n_pend = 0;
+    std::vector<uint8_t> cm, ccm;
+    uint64_t cm_steps = 0, cm_bad = 0;
+    int64_t cm_first_bad = -1;
   } S3;
+  S3ContactCb s3_cb;
 
   static float hexf(const std::string& h) {
     uint32_t u = uint32_t(strtoul(h.c_str(), nullptr, 16));
@@ -584,6 +629,13 @@ class Replayer {
         S3.qrow.assign(S3.nr, 0);
         int r;
         while (is >> r) S3.qrow[r] = 1;
+      } else if (k == "rowpath" || k == "colpath") {
+        int i;
+        std::string pth;
+        is >> i >> pth;
+        auto& v = k == "rowpath" ? S3.rowpath : S3.colpath;
+        if (int(v.size()) <= i) v.resize(i + 1);
+        v[i] = pth;
       } else if (k == "episode_start") {
         std::string t;
         is >> S3.episode_start >> t >> S3.substeps >> t >> S3.steps >> t >> bddl_path;
@@ -621,6 +673,7 @@ class Replayer {
         return false;
       }
       r.has_cm = has != 0;
+      r.ccm = ccm;
       S3.rows.push_back(std::move(r));
     }
     fclose(fr);
@@ -661,9 +714,93 @@ class Replayer {
     M = eng::omni::wf::pose_to_mat(p7);
     return true;
   }
+  bool s3_bind_bodies() {
+    if (!S3.body.empty()) return true;
+    const PxRigidActor* none = nullptr;
+    for (auto& p : S3.rowpath) {
+      auto it = actor_by_name.find(p);
+      if (it == actor_by_name.end()) { fprintf(stderr, "S3: 행 몸체 없음 %s\n", p.c_str()); return false; }
+      S3.body.push_back(it->second);
+    }
+    S3.row_to_rigid.clear();
+    for (int r = 0; r < S3.nr; ++r) S3.row_to_rigid.push_back(r);
+    S3.b2r.assign(S3.nr, 0);
+    for (int r = 0; r < S3.nr; ++r) S3.b2r[r] = r;
+    S3.R_ext = S3.nr;
+    for (auto& p : S3.colpath) {
+      auto it = actor_by_name.find(p);
+      const PxRigidActor* a = it == actor_by_name.end() ? none : it->second;
+      const PxRigidDynamic* d = a ? a->is<PxRigidDynamic>() : nullptr;
+      const bool dyn = a && (a->is<PxArticulationLink>() || (d && !(d->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC)));
+      if (!dyn) { S3.col_to_rigid.push_back(-1); continue; }  // 키네마틱·정적 = 열에 몸체 없음 (_CONTACT_MATRIX_COLS_HAS_RIGID_BODY)
+      int b = -1;
+      for (size_t k = 0; k < S3.body.size(); ++k) if (S3.body[k] == a) b = int(k);
+      if (b < 0) { b = int(S3.body.size()); S3.body.push_back(a); S3.b2r.push_back(S3.R_ext++); }
+      S3.col_to_rigid.push_back(b);
+    }
+    return true;
+  }
+  void s3_collect_substep() {  // 방금 끝난 서브스텝의 몸체 자세·알짜 충격·쌍 충격 (read_from_physx 자리)
+    const int B = int(S3.body.size()), C = S3.nc;
+    const float dt = last_dt;
+    for (int b = 0; b < B; ++b) {
+      const PxTransform t = S3.body[b]->getGlobalPose();
+      const float v[7] = {t.p.x, t.p.y, t.p.z, t.q.x, t.q.y, t.q.z, t.q.w};
+      S3.pend_tf.insert(S3.pend_tf.end(), v, v + 7);
+    }
+    std::vector<float> net(size_t(S3.R_ext) * 3, 0.0f), imp(size_t(S3.R_ext) * C * 3, 0.0f);
+    for (int b = 0; b < B; ++b) {
+      const int r = S3.b2r[b];
+      if (r < 0) continue;
+      auto it = s3_cb.net.find(S3.body[b]);
+      if (it != s3_cb.net.end()) { net[r * 3] = it->second.x / dt; net[r * 3 + 1] = it->second.y / dt; net[r * 3 + 2] = it->second.z / dt; }
+    }
+    for (int r = 0; r < S3.nr; ++r)
+      for (int c = 0; c < C; ++c) {
+        auto ic = actor_by_name.find(S3.colpath[c]);
+        if (ic == actor_by_name.end()) continue;
+        const void* a = S3.body[r];
+        const void* b = ic->second;
+        auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+        auto ip = s3_cb.pair_imp.find(key);
+        if (ip == s3_cb.pair_imp.end()) continue;
+        float* v = &imp[(size_t(r) * C + c) * 3];
+        v[0] = ip->second.x / dt; v[1] = ip->second.y / dt; v[2] = ip->second.z / dt;
+      }
+    if (getenv("S3_DEBUG_PAIR")) {  // 진단: 손가락 행 × 열 칸의 서브스텝별 힘 크기
+      const int64_t st = int64_t((sims + side_offset - S3.episode_start - 1) / S3.substeps);
+      const int64_t lo = atoll(getenv("S3_DEBUG_PAIR")), hi = lo + 30;
+      if (st >= lo && st <= hi)
+        for (int r = 0; r < S3.nr; ++r)
+          for (int c = 0; c < C; ++c) {
+            const float* v = &imp[(size_t(r) * C + c) * 3];
+            if (v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f)
+              fprintf(stderr, "[S3 힘] 스텝 %lld sim %llu 행 %d 열 %d F (%.6g %.6g %.6g) net_r (%.6g %.6g %.6g) dt %.6g\n", (long long)st,
+                      (unsigned long long)(sims + side_offset), r, c, v[0], v[1], v[2], net[r * 3], net[r * 3 + 1], net[r * 3 + 2], double(last_dt));
+          }
+    }
+    S3.pend_net.insert(S3.pend_net.end(), net.begin(), net.end());
+    S3.pend_imp.insert(S3.pend_imp.end(), imp.begin(), imp.end());
+    S3.n_pend++;
+  }
+  void s3_update_contact() {  // RigidContactAPI.update (usd_utils.py:1511) 의 부분 행렬
+    namespace st = eng::omni::st;
+    const int B = int(S3.body.size());
+    st::ContactIn in{S3.pend_tf.data(), S3.prev_tf.data(), S3.pend_net.data(), S3.b2r.data(), B, S3.R_ext, 1e-6f, 1e-4f};
+    for (int r = 0; r < S3.nr; ++r)
+      for (int c = 0; c < S3.nc; ++c)
+        st::contact_update_rc(in, S3.pend_imp.data(), S3.nc, S3.row_to_rigid.data(), S3.col_to_rigid.data(), S3.n_pend, r, c,
+                              S3.cm.data(), S3.ccm.data());
+    std::vector<float> nt = S3.prev_tf;
+    for (int b = 0; b < B; ++b) st::body_transform_update(in, S3.n_pend, b, nt.data());
+    S3.prev_tf = nt;
+    S3.pend_tf.clear(); S3.pend_net.clear(); S3.pend_imp.clear(); S3.n_pend = 0;
+  }
   void s3_after_simulate() {
     if (!S3.on) return;
     const uint64_t g = sims + side_offset;  // 방금 끝난 simulate 의 전체 번호 = post 번호
+    if (S3.own && S3.init && g > S3.episode_start) s3_collect_substep();
+    if (S3.own) s3_cb.clear();
     if (g < S3.episode_start || (g - S3.episode_start) % S3.substeps != 0) return;
     const int SO = S3.S * S3.O;
     const S3Setup::Row* off = s3_row_at(g);
@@ -671,14 +808,42 @@ class Replayer {
     if (!S3.init) {  // 에피소드 시작 시점 공식 값·시간에서 출발
       S3.val = off->val;
       S3.time = off->time;
+      if (S3.own) {
+        if (!s3_bind_bodies()) { S3.own = false; } else {
+          S3.cm = off->cm;
+          S3.ccm = off->ccm;
+          S3.prev_tf.clear();
+          for (auto* a : S3.body) {
+            const PxTransform t = a->getGlobalPose();
+            const float v[7] = {t.p.x, t.p.y, t.p.z, t.q.x, t.q.y, t.q.z, t.q.w};
+            S3.prev_tf.insert(S3.prev_tf.end(), v, v + 7);
+          }
+        }
+      }
       S3.init = true;
       return;
+    }
+    const uint8_t* cm_in = off->cm.data();
+    if (S3.own) {
+      s3_update_contact();
+      cm_in = S3.cm.data();
+      S3.cm_steps++;
+      if (off->has_cm && memcmp(S3.cm.data(), off->cm.data(), S3.cm.size())) {
+        S3.cm_bad++;
+        if (S3.cm_first_bad < 0) S3.cm_first_bad = int64_t((g - S3.episode_start) / S3.substeps) - 1;
+        if (S3.cm_bad <= 10)
+          for (size_t k = 0; k < S3.cm.size(); ++k)
+            if (S3.cm[k] != off->cm[k])
+              fprintf(stderr, "[S3 접촉] 스텝 %lld 행 %s 열 %s: 우리 %d 공식 %d (현재 우리 %d 공식 %d)\n",
+                      (long long)((g - S3.episode_start) / S3.substeps) - 1, S3.rowpath[k / S3.nc].c_str(), S3.colpath[k % S3.nc].c_str(),
+                      S3.cm[k], off->cm[k], S3.ccm[k], off->ccm[k]);
+      }
     }
     const int64_t t = int64_t((g - S3.episode_start) / S3.substeps) - 1;  // 방금 끝난 평가 스텝
     namespace st = eng::omni::st;
     std::vector<int32_t> mask(SO, 0);
     for (int k = 0; k < SO; ++k)
-      mask[k] = off->has_cm ? st::toggle_contact(S3.qrow.data(), off->cm.data(), S3.nr, S3.nc, S3.with[k].data()) : 0;
+      mask[k] = (S3.own || off->has_cm) ? st::toggle_contact(S3.qrow.data(), cm_in, S3.nr, S3.nc, S3.with[k].data()) : 0;
     for (auto& pr : S3.pairs) {
       const int k = pr.first, f = pr.second;
       if (mask[k] != 1 || S3.fg_tri[f].empty()) continue;
@@ -732,6 +897,7 @@ class Replayer {
   }
   void s3_report() {
     if (!S3.on) return;
+    if (S3.own) printf("S3 접촉 행렬(--s3-own-contact, 우리 PhysX 접촉 보고): 평가 스텝 %" PRIu64 ", 공식과 다른 스텝 %" PRIu64 ", 첫 다름 %lld\n", S3.cm_steps, S3.cm_bad, (long long)S3.cm_first_bad);
     const std::string fb = S3.first_bad < 0 ? std::string("없음") : "스텝 " + std::to_string(S3.first_bad) + " " + S3.first_bad_what;
     printf("S3 판정(--s3): 평가 스텝 %" PRIu64 " (목표 참 %" PRIu64 "), ToggledOn 값 다름 %" PRIu64 ", 시간 다름 %" PRIu64
            ", 목표 다름 %" PRIu64 ", 첫 다름 %s\n",
@@ -954,6 +1120,7 @@ class Replayer {
     sd.filterCallback = &filter_cb;
     if (!trace_sub.empty()) { diag_cb.sub = trace_sub; diag_cb.sims = &sims; sd.simulationEventCallback = &diag_cb; filter_cb.diag_sub = trace_sub; }
     if (contact_report_all) { filter_cb.report_all = true; if (!sd.simulationEventCallback) sd.simulationEventCallback = &diag_cb; diag_cb.sims = &sims; }
+    if (S3.own) { filter_cb.report_all = true; sd.simulationEventCallback = &s3_cb; }  // omni: 접촉 보고 prim ≈ 모든 몸체
     o.scene = phys->createScene(sd);
     o.px = nullptr;
     if (verbose) fprintf(stderr, "[scene] flags=0x%x solver=%d bp=%d\n", uint32_t(sd.flags), int(sd.solverType), int(sd.broadPhaseType));
@@ -2321,6 +2488,7 @@ int main(int argc, char** argv) {
     else if (a == "--gravity-off" && i + 1 < argc) { std::ifstream gf(argv[++i]); std::string ln; while (std::getline(gf, ln)) if (!ln.empty()) R.gravity_off.push_back(ln); }
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
     else if (a == "--free") R.C.free_run = true;
+    else if (a == "--s3-own-contact") R.S3.own = true;
     else if (a == "--s3" && i + 1 < argc) { if (!R.load_s3(argv[++i])) { fprintf(stderr, "--s3 입력을 못 읽음\n"); return 1; } }
     else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }
     else if (a == "--dump-art-at" && i + 1 < argc) R.dump_art_at = atoll(argv[++i]);
