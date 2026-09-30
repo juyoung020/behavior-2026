@@ -424,6 +424,7 @@ struct EnvSolveImpl : public EnvSolve {
     B.artBatchIndex = artBatch.data();
     B.artProg = artProg.data();
     {
+      EnvTimer tm(E.times ? &E.times->solveCore : nullptr);
       EnvFtz f;
       sv::solverStepHost(B, prm);
       sv::afterIntegrationHost(B);

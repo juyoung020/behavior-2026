@@ -9,6 +9,7 @@
 //   -> destroyManagers·processLostContacts3 -> 번호 돌려주기 -> 재우기·상호작용 재우기 -> afterIntegration 깸/잠 요청 -> 스텝 끝
 // 호스트 전용. 판 N 개면 판마다 하나씩 (G2 는 같은 차례를 GPU 커널로).
 #pragma once
+#include <chrono>
 #include <cstring>
 #include <vector>
 
@@ -43,6 +44,16 @@ struct EnvModules : public ScModules {
   void pairsShapeAdded(int32_t h, uint32_t elem) override;
 };
 
+// 진단: 단계별 시간 (ms 누적, EnvStep::times 가 있으면)
+struct EnvTimes {
+  double bp = 0, np = 0, solve = 0, solveCore = 0, after = 0, lost = 0, total = 0;  // solveCore = solve 안의 solverStep + afterIntegration (판 조립 뺀 것)
+};
+struct EnvTimer {
+  double* acc;
+  std::chrono::steady_clock::time_point t0;
+  explicit EnvTimer(double* a) : acc(a) { if (acc) t0 = std::chrono::steady_clock::now(); }
+  ~EnvTimer() { if (acc) *acc += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+};
 struct EnvStep {
   EnvContact* C = nullptr;     // 넓은 단계(C->bp) + 쌍 관리층·좁은 단계(C->S)
   IslandStore* isl = nullptr;  // 섬 관리 (정확·추측)
@@ -55,6 +66,7 @@ struct EnvStep {
   EnvModules mods;
   bool contactDistChanged = false;  // Sc mHasContactDistanceChanged (편집 API 가 켬)
   uint64_t steps = 0;
+  EnvTimes* times = nullptr;  // 진단 (없으면 안 잼)
   // 묶기 (적재 뒤 한 번)
   void bind() {
     live.M = &isl->M;
@@ -152,6 +164,7 @@ struct EnvPhases {
   EnvStep& E;
   contact::ContactScene& S;
   void bp() {
+    EnvTimer tm(E.times ? &E.times->bp : nullptr);
     ScScene& sc = *E.sc;
     BpRuntime& bpr = *E.C->bp;
     sc.updateDirtyShapes();  // preRigidBodyNarrowPhase: API 로 바뀐 모양 칸 (넓은 단계 앞)
@@ -184,6 +197,7 @@ struct EnvPhases {
     contact::contactPairs(S);
   }
   void np() {
+    EnvTimer tm(E.times ? &E.times->np : nullptr);
     ScScene& sc = *E.sc;
     std::vector<contact::CachedTransform> tc(sc.cache.size());
     for (size_t k = 0; k < tc.size(); ++k) {
@@ -193,12 +207,15 @@ struct EnvPhases {
     contact::contactNarrowPhase(S, tc.data(), sc.contactDist.data());
   }
   void solve(HostWake& post) {
+    EnvTimer tm(E.times ? &E.times->solve : nullptr);
     if (E.solver) E.solver->solve(E, post);
   }
   void afterIntegration(HostWake& post) {
+    EnvTimer tm(E.times ? &E.times->after : nullptr);
     if (E.solver) E.solver->afterIntegration(E, post);
   }
   void lost() {
+    EnvTimer tm(E.times ? &E.times->lost : nullptr);
     ss::ScPairs& M = S.pairs;
     M.processLostContacts(S.destroyedShape.data(), uint32_t(S.destroyedShape.size() / 2), S.destroyedTrigger.data(), uint32_t(S.destroyedTrigger.size() / 2));
     M.processNarrowPhaseLostTouchEventsIslands();
@@ -208,12 +225,14 @@ struct EnvPhases {
     M.unregisterInteractions();
   }
   void lost3() {
+    EnvTimer tm(E.times ? &E.times->lost : nullptr);
     S.pairs.destroyManagers();
     S.pairs.processLostContacts3();
   }
   std::vector<PairsAct>* acts() { return nullptr; }
 };
 inline void envStep(EnvStep& E) {
+  EnvTimer tm(E.times ? &E.times->total : nullptr);
   contact::ContactScene& S = *E.C->S;
   E.live.clearStep();
   if (E.active.size() < S.pairs.actors.size()) E.active.resize(S.pairs.actors.size(), 0);

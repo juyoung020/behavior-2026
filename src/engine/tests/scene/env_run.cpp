@@ -40,6 +40,8 @@ int main(int argc, char** argv) {
   S->load(f);
   S->seedPairs(o->C.S->pairs);
   o->E.solver = S.get();
+  sc2::EnvTimes times;
+  o->E.times = &times;
   FILE* in = fopen(argv[2], "rb");
   if (!in) {
     fprintf(stderr, "흐름 파일 못 엶: %s\n", argv[2]);
@@ -91,6 +93,9 @@ int main(int argc, char** argv) {
          stopAt >= 0 ? ("  (simulate " + std::to_string(stopAt) + " 편집/다시 맞춤 창에서 멈춤)").c_str() : "");
   printf("  창: 바깥 섬 호출 %" PRIu64 ", 우리 쌍 호출 %" PRIu64 " (어긋남 %" PRIu64 "), 새 조인트 %" PRIu64 " 해제 %" PRIu64 "; 풀이: 모르는 간선 %" PRIu64 " 노드 %" PRIu64 " 판 오류 %" PRIu64 "\n",
          st.ext, st.ours, st.mismatch, st.jointsAdded, st.jointsRemoved, S->unknownEdge, S->unknownNode, S->engineErr);
-  printf("  시간: 창+스텝 %.3f ms/스텝 (CPU 한 판)\n", n ? ms / double(n) : 0.0);
+  const double k = n ? 1.0 / double(n) : 0.0;
+  printf("  시간: 창+스텝 %.3f ms/스텝 (CPU 한 판) — 스텝 %.3f = 넓은 단계+쌍 %.3f, 좁은 단계 %.3f, 풀이 %.3f (그중 풀이 본체 %.3f), 적분 뒤 %.3f, 사라진 겹침 %.3f, 나머지(섬·순서기) %.3f\n",
+         ms * k, times.total * k, times.bp * k, times.np * k, times.solve * k, times.solveCore * k, times.after * k, times.lost * k,
+         (times.total - times.bp - times.np - times.solve - times.after - times.lost) * k);
   return (badB || badA || badW || st.mismatch) ? 3 : 0;
 }
