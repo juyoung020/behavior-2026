@@ -53,6 +53,11 @@ def read_dump(path):
     return out
 
 
+def model_name(a):
+    o = f"_o{a.img_offset}-{a.llm_offset}" if (a.img_offset or a.llm_offset) else ""
+    return f"model_i{a.img_depth}_l{a.llm_depth}{o}.pi05w"
+
+
 def patch_depths(img_depth, llm_depth):
     from openpi.models import gemma as G
     from openpi.models import siglip as S
@@ -70,6 +75,8 @@ def main():
     ap.add_argument("--mode", choices=["expert", "lora"], default="expert")
     ap.add_argument("--img-depth", type=int, default=2)
     ap.add_argument("--llm-depth", type=int, default=2)
+    ap.add_argument("--img-offset", type=int, default=0, help="first SigLIP layer of the cut (real checkpoint layers)")
+    ap.add_argument("--llm-offset", type=int, default=0, help="first Gemma layer of the cut")
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--seed", type=int, default=7)
@@ -119,9 +126,9 @@ def main():
     part, cut = {}, {}
     for k, v in flat.items():
         if k.startswith("PaliGemma/img/Transformer/encoderblock/"):
-            v = v[:args.img_depth]
+            v = v[args.img_offset:args.img_offset + args.img_depth]
         elif k.startswith("PaliGemma/llm/layers/"):
-            v = v[:args.llm_depth]
+            v = v[args.llm_offset:args.llm_offset + args.llm_depth]
         cut[k] = v
         part[tuple(k.split("/"))] = np.asarray(v, np.float32)
     del flat
@@ -136,7 +143,7 @@ def main():
     M.c("llm.kv_heads", 1); M.c("llm.head_dim", 256); M.c("llm.vocab", 257152)
     M.c("ae.width", 1024); M.c("ae.mlp", 4096)
     export_backbone(cut, M, args.img_depth, args.llm_depth)
-    M.write(out_dir / f"model_i{args.img_depth}_l{args.llm_depth}.pi05w", manifest_copy=False)
+    M.write(out_dir / model_name(args), manifest_copy=False)
     del cut, M
     model = mcfg.create(jax.random.key(args.seed))  # LoRA factors keep this random init (normal 0.01)
     graphdef, state = nnx.split(model)
@@ -195,6 +202,7 @@ def main():
     # state file
     W = Writer()
     W.c("mode", args.mode); W.c("img.depth", args.img_depth); W.c("llm.depth", args.llm_depth)
+    W.c("img.offset", args.img_offset); W.c("llm.offset", args.llm_offset); W.c("model_file", model_name(args))
     W.c("batch", B); W.c("steps", args.steps)
     lr = tcfg.lr_schedule
     W.c("lr.warmup", lr.warmup_steps); W.c("lr.peak", repr(lr.peak_lr)); W.c("lr.decay_steps", lr.decay_steps)

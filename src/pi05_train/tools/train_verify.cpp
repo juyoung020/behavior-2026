@@ -64,8 +64,8 @@ int main(int argc, char** argv) {
   const bool hf = !floor_tag.empty() && FG.open(ref + "/" + floor_tag + "_grad.pi05d", &err) &&
                   FO.open(ref + "/" + floor_tag + "_opt.pi05d", &err);
   const int B = S.cfg_int("batch", 4), steps = S.cfg_int("steps", 10);
-  const std::string model = ref + "/model_i" + std::to_string(S.cfg_int("img.depth", 2)) + "_l" +
-                            std::to_string(S.cfg_int("llm.depth", 2)) + ".pi05w";
+  const std::string model = ref + "/" + S.cfg_str("model_file", "model_i" + std::to_string(S.cfg_int("img.depth", 2)) +
+                                                                 "_l" + std::to_string(S.cfg_int("llm.depth", 2)) + ".pi05w");
   // batch
   std::vector<uint8_t> img(S.find("in.img")->nbytes);
   S.read(*S.find("in.img"), img.data(), &err);
