@@ -30,6 +30,7 @@ import os
 import runpy
 import sys
 import time
+import zlib
 
 import numpy as np
 
@@ -107,12 +108,14 @@ class Capture:
 
             @functools.wraps(orig)
             def f(view, data, indices, *a, **kw):
-                vid = id(view)
+                # 뷰 열쇠 = id + 지금 prim 경로의 해시. 파이썬은 지운 객체의 id 를 새 객체에 다시 준다 -> id 만 쓰면
+                # 새 뷰가 옛 뷰의 prim 경로를 물려받는다(09-30 radio500_b: 전등 스위치 뷰로 적힌 라디오 쓰기)
+                try:
+                    paths = list(view.prim_paths)
+                except Exception:
+                    paths = []
+                vid = f"{id(view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
                 if vid not in self.views:
-                    try:
-                        paths = list(view.prim_paths)
-                    except Exception:
-                        paths = []
                     self.views[vid] = (kind, paths)
                     if kind == "art":
                         self.view_extra[vid] = self.view_meta(view) or {}
@@ -161,12 +164,13 @@ class Capture:
             def mk(orig, name):
                 @functools.wraps(orig)
                 def f(self_, data, indices, cast=True):
-                    vid = id(self_._view)
+                    try:
+                        paths = list(self_._view.prim_paths)
+                    except Exception:
+                        paths = []
+                    vid = f"{id(self_._view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
                     if vid not in self.views:
-                        try:
-                            self.views[vid] = ("art", list(self_._view.prim_paths))
-                        except Exception:
-                            self.views[vid] = ("art", [])
+                        self.views[vid] = ("art", paths)
                         self.view_extra[vid] = self.view_meta(self_._view) or {}
                         self.view_extra[vid]["max_dofs"] = int(getattr(self_._view, "max_dofs", 0))
                     self.log.append((self.n_post, self.n_pre, "batch", name, vid, to_np(indices, np.uint32),
