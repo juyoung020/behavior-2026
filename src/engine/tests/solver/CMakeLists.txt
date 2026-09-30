@@ -88,3 +88,6 @@ target_link_options(test_art_solver PRIVATE ${ART_WRAPS})
 
 # 층 2: test_art_solver --dump 흐름으로 판 N 개를 GPU 에서 (PhysX 링크 없음)
 engine_test(test_art_solver_gpu test_art_solver_gpu.cu)
+
+# contact 장면 한 서브스텝(core/contact/scene_step.h) 빌드 확인
+engine_test(test_contact_step_build test_contact_step_build.cpp)
