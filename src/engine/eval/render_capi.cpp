@@ -4,7 +4,8 @@
 // 매 스텝 물리 자세로 바꾸고(rr_set_anchor_pose, 축척은 기준 프레임 행렬의 열 길이), 나머지(정적·조명)는 기준 프레임 값 그대로 둔다.
 // 카메라 = 엔진이 계산한 카메라 prim 세계 자세(obs_engine.camera_world_gf 와 같은 값) + 기준 프레임의 tan·znear·zfar, 해상도는 부르는 쪽이 정함.
 // 관측 시점 규칙(10.1): 스텝 k 영상은 스텝 k-1 끝 자세로 그린다 — 부르는 쪽(backend_engine)이 물리 스텝 전에 부른다.
-// 빌드(WSL): g++ -O2 -ffp-contract=off -fno-fast-math -std=c++17 -fPIC -shared -I/mnt/c/behavior-2026/src/engine \n//   /mnt/c/behavior-2026/src/engine/eval/render_capi.cpp -o ~/engine-build/render-capi/librender_capi.so -pthread
+// 빌드(WSL): g++ -O2 -ffp-contract=off -fno-fast-math -std=c++17 -fPIC -shared -I/mnt/c/behavior-2026/src/engine
+//   /mnt/c/behavior-2026/src/engine/eval/render_capi.cpp -o ~/engine-build/render-capi/librender_capi.so -pthread
 #include <cmath>
 #include <cstdint>
 #include <cstring>
