@@ -34,25 +34,25 @@ namespace aos
 
 typedef union UnionM128
 {
-	UnionM128()
+	EHDI UnionM128()
 	{
 	}
-	UnionM128(em128 in)
+	EHDI UnionM128(em128 in)
 	{
 		m128 = in;
 	}
 
-	UnionM128(em128i in)
+	EHDI UnionM128(em128i in)
 	{
 		m128i = in;
 	}
 
-	operator em128()
+	EHDI operator em128()
 	{
 		return m128;
 	}
 
-	operator em128() const
+	EHDI operator em128() const
 	{
 		return m128;
 	}
@@ -108,10 +108,10 @@ struct VecShiftV
 
 struct Mat33V
 {
-	Mat33V()
+	EHDI Mat33V()
 	{
 	}
-	Mat33V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2) : col0(c0), col1(c1), col2(c2)
+	EHDI Mat33V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2) : col0(c0), col1(c1), col2(c2)
 	{
 	}
 	Vec3V col0;
@@ -122,10 +122,10 @@ struct Mat33V
 
 struct Mat34V
 {
-	Mat34V()
+	EHDI Mat34V()
 	{
 	}
-	Mat34V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2, const Vec3V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
+	EHDI Mat34V(const Vec3V& c0, const Vec3V& c1, const Vec3V& c2, const Vec3V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
 	{
 	}
 	Vec3V col0;
@@ -137,10 +137,10 @@ struct Mat34V
 
 struct Mat43V
 {
-	Mat43V()
+	EHDI Mat43V()
 	{
 	}
-	Mat43V(const Vec4V& c0, const Vec4V& c1, const Vec4V& c2) : col0(c0), col1(c1), col2(c2)
+	EHDI Mat43V(const Vec4V& c0, const Vec4V& c1, const Vec4V& c2) : col0(c0), col1(c1), col2(c2)
 	{
 	}
 	Vec4V col0;
@@ -151,10 +151,10 @@ struct Mat43V
 
 struct Mat44V
 {
-	Mat44V()
+	EHDI Mat44V()
 	{
 	}
-	Mat44V(const Vec4V& c0, const Vec4V& c1, const Vec4V& c2, const Vec4V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
+	EHDI Mat44V(const Vec4V& c0, const Vec4V& c1, const Vec4V& c2, const Vec4V& c3) : col0(c0), col1(c1), col2(c2), col3(c3)
 	{
 	}
 	Vec4V col0;
@@ -254,7 +254,7 @@ EHD QuatV QuatVLoadA(const PxF32* v);
 EHD QuatV QuatVLoadXYZW(const PxF32 x, const PxF32 y, const PxF32 z, const PxF32 w);
 
 // not added to public api
-Vec4V Vec4V_From_PxVec3_WUndefined(const PxVec3& v);
+EHDV Vec4V Vec4V_From_PxVec3_WUndefined(const PxVec3& v);
 
 ///////////////////////////////////////////////////
 // Construct a simd type from a different simd type
@@ -4399,7 +4399,7 @@ template<int index> EHD BoolV BSplatElement(BoolV a)
 */
 
 template <int index>
-BoolV BSplatElement(BoolV a)
+EHDI BoolV BSplatElement(BoolV a)
 {
 	float* data = reinterpret_cast<float*>(&a);
 	return V4Load(data[index]);

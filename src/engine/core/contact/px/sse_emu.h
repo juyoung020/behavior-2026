@@ -20,12 +20,15 @@
 
 #undef EHD  // core/common/pmath.h 도 EHD 를 정의한다(호스트는 inline). contact 쪽은 always_inline 으로 (값 영향 없음)
 #undef EHDI
+#undef EHDV
 #if defined(__CUDACC__)
 #define EHD __host__ __device__ __forceinline__
 #define EHDI __host__ __device__ inline
+#define EHDV __host__ __device__  // 선언용 (번역 조각 ANNOTATE)
 #else
 #define EHD inline __attribute__((always_inline))
 #define EHDI inline
+#define EHDV
 #endif
 
 namespace eng {

@@ -263,6 +263,13 @@ int main(int argc, char** argv) {
         rp = cxt::physxPcmPair(sa[p], sb[p], tf0[k], tf1[k], contactDist, slotP[k], bufP);
       }
       const long long c = (long long)k;
+      if (getenv("CX_DETAIL") && (outG[k].count != outH[k].count || outG[k].ret != outH[k].ret)) {
+        static int shown = 0;
+        if (shown++ < 6)
+          printf("  [자세히] 프레임 %d 쌍 %zu (종류 %d-%d): 반환 GPU %u 호스트 %u, 점 수 GPU %u 호스트 %u, 뒤집힘 %u/%u, 다양체 종류 %d, GPU 첫 점 분리 %.9g 호스트 %.9g\n", f, k,
+                 sa[p].e.type, sb[p].e.type, outG[k].ret, outH[k].ret, outG[k].count, outH[k].count, outG[k].flipped, outH[k].flipped, slotH[k].kind, slotG[k].kind,
+                 outG[k].count ? outG[k].c[0].separation : -1.0f, outH[k].count ? outH[k].c[0].separation : -1.0f);
+      }
       t21.u(outG[k].ret, outH[k].ret, c, f);
       t21.u(outG[k].count, outH[k].count, c, f);
       t21.u(outG[k].overflow + outH[k].overflow, 0, c, f);

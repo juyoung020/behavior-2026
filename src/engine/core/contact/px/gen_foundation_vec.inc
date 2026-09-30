@@ -1098,7 +1098,7 @@ class PxQuatT
 	/**
 	\brief returns true if all elements are finite (not NAN or INF, etc.)
 	*/
-	bool isFinite() const
+	EHDI bool isFinite() const
 	{
 		return PxIsFinite(x) && PxIsFinite(y) && PxIsFinite(z) && PxIsFinite(w);
 	}
@@ -1106,7 +1106,7 @@ class PxQuatT
 	/**
 	\brief returns true if finite and magnitude is close to unit
 	*/
-	bool isUnit() const
+	EHDI bool isUnit() const
 	{
 		const Type unitTolerance = Type(1e-3);
 		return isFinite() && PxAbs(magnitude() - Type(1.0)) < unitTolerance;
@@ -1116,7 +1116,7 @@ class PxQuatT
 	\brief returns true if finite and magnitude is reasonably close to unit to allow for some accumulation of error vs
 	isValid
 	*/
-	bool isSane() const
+	EHDI bool isSane() const
 	{
 		const Type unitTolerance = Type(1e-2);
 		return isFinite() && PxAbs(magnitude() - Type(1.0)) < unitTolerance;
@@ -1476,7 +1476,7 @@ class PxMat33T
 	}
 
 	//! Construct from three base vectors
-	PxMat33T(const PxVec3T<Type>& col0, const PxVec3T<Type>& col1, const PxVec3T<Type>& col2) :
+	EHDI PxMat33T(const PxVec3T<Type>& col0, const PxVec3T<Type>& col1, const PxVec3T<Type>& col2) :
 		column0(col0),
 		column1(col1),
 		column2(col2)
@@ -2008,7 +2008,7 @@ class PxTransformT
 	/**
 	\brief returns true if finite and q is a unit quaternion
 	*/
-	bool isValid() const
+	EHDI bool isValid() const
 	{
 		return p.isFinite() && q.isFinite() && q.isUnit();
 	}
@@ -2017,7 +2017,7 @@ class PxTransformT
 	\brief returns true if finite and quat magnitude is reasonably close to unit to allow for some accumulation of error
 	vs isValid
 	*/
-	bool isSane() const
+	EHDI bool isSane() const
 	{
 		return isFinite() && q.isSane();
 	}
