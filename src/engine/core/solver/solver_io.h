@@ -347,6 +347,8 @@ struct SolverBoard {
   uint32_t* artBatchIndex;      // 관절체 -> 이번 묶음 안 번호 (mArticulationIndex)
   ArtProgress* artProg;         // 묶음 안 번호별 분할 진행 (용량 nbArts)
   uint64_t statArtExtContacts, statArtStaticContacts, statArtExt1D, statArtStatic1D;
+  // 관절체가 용량 등급(크기가 다른 자리, art::createArticulationCap)이면 번호별 포인터 표를 준다(있으면 arts 대신 쓴다)
+  art::Articulation* const* artPtrs;
 };
 
 enum : uint32_t {

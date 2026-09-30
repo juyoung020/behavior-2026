@@ -38,6 +38,9 @@ SV_HD D bitCopy(const S& s) {
   return d;
 }
 
+// 판의 관절체 i (연속 배열 또는 용량 등급 포인터 표)
+SV_HD art::Articulation& artAt(const SolverBoard& B, uint32_t i) { return B.artPtrs ? *B.artPtrs[i] : B.arts[i]; }
+
 SV_HD bool isArtDesc(const SDesc& d) { return d.linkIndexA != RIGID_BODY || d.linkIndexB != RIGID_BODY; }  // isArticulationConstraint
 
 // ---------------- SolverExtBodyStep (DyTGSContactPrep.cpp:173)
@@ -649,12 +652,12 @@ SV_HD V4 v3to4(const V3& v) { return V4{v.x, v.y, v.z, 0.0f}; }  // V3LoadA(Spat
 SV_HD V3 v4to3(V4 v) { return V3{v.f[0], v.f[1], v.f[2]}; }
 
 // 분할 안의 EXT_CONTACT 하나 (:3209). vels = 풀이 몸체, arts = 판의 관절체.
-SV_HDN void solveExtContactDesc(const SDesc& desc, SBodyVel* vels, art::Articulation* arts, ByteArena& arena, float minPenetration,
+SV_HDN void solveExtContactDesc(const SDesc& desc, SBodyVel* vels, const SolverBoard& Bd, ByteArena& arena, float minPenetration,
                                 float elapsedTimeF32) {
   if (desc.constraint == NONE) return;
   V4 linVel0, angVel0, linVel1, angVel1, linDelta0, angDelta0, linDelta1, angDelta1;
-  art::Articulation* artA = desc.linkIndexA == RIGID_BODY ? nullptr : &arts[desc.bodyA];
-  art::Articulation* artB = desc.linkIndexB == RIGID_BODY ? nullptr : &arts[desc.bodyB];
+  art::Articulation* artA = desc.linkIndexA == RIGID_BODY ? nullptr : &artAt(Bd, desc.bodyA);
+  art::Articulation* artB = desc.linkIndexB == RIGID_BODY ? nullptr : &artAt(Bd, desc.bodyB);
   const bool same = artA && artA == artB;
   if (same) {
     V3 l0, a0, l1, a1;
@@ -706,12 +709,12 @@ SV_HDN void solveExtContactDesc(const SDesc& desc, SBodyVel* vels, art::Articula
 }
 
 // 분할 안의 EXT_1D 하나 (joints solveExt1DStep 에 ArtRef 를 넘긴다)
-SV_HDN void solveExt1DDesc(const SDesc& desc, SBodyVel* vels, const SBodyTxI* txI, art::Articulation* arts, ByteArena& arena, float elapsed, bool posIter,
+SV_HDN void solveExt1DDesc(const SDesc& desc, SBodyVel* vels, const SBodyTxI* txI, const SolverBoard& Bd, ByteArena& arena, float elapsed, bool posIter,
                            bool conclude) {
   if (desc.constraint == NONE) return;
   uint8_t* blk = arenaPtr<uint8_t>(arena, desc.constraint);
-  const art::ArtRef ra{desc.linkIndexA == RIGID_BODY ? nullptr : &arts[desc.bodyA]};
-  const art::ArtRef rb{desc.linkIndexB == RIGID_BODY ? nullptr : &arts[desc.bodyB]};
+  const art::ArtRef ra{desc.linkIndexA == RIGID_BODY ? nullptr : &artAt(Bd, desc.bodyA)};
+  const art::ArtRef rb{desc.linkIndexB == RIGID_BODY ? nullptr : &artAt(Bd, desc.bodyB)};
   const bool same = ra.a && ra.a == rb.a;
   jnt::TgsBodyVel b0 = bitCopy<jnt::TgsBodyVel>(vels[desc.linkIndexA == RIGID_BODY ? desc.bodyA : 0u]);
   jnt::TgsBodyVel b1 = bitCopy<jnt::TgsBodyVel>(vels[desc.linkIndexB == RIGID_BODY ? desc.bodyB : 0u]);

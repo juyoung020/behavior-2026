@@ -130,8 +130,8 @@ int main(int argc, char** argv) {
         m.px->copyInternalStateToCache(*m.cache, PxArticulationCacheFlag::ePOSITION | PxArticulationCacheFlag::eVELOCITY);
         x.insert(x.end(), m.cache->jointPosition, m.cache->jointPosition + e.dofs);
         x.insert(x.end(), m.cache->jointVelocity, m.cache->jointVelocity + e.dofs);
-        y.insert(y.end(), e.jointPosition, e.jointPosition + e.dofs);
-        y.insert(y.end(), e.jointVelocity, e.jointVelocity + e.dofs);
+        y.insert(y.end(), static_cast<const float*>(e.jointPosition), static_cast<const float*>(e.jointPosition) + e.dofs);
+        y.insert(y.end(), static_cast<const float*>(e.jointVelocity), static_cast<const float*>(e.jointVelocity) + e.dofs);
       }
       x.push_back(m.px->getWakeCounter());
       y.push_back(e.wakeCounter);

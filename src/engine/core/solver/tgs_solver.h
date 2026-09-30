@@ -572,8 +572,8 @@ SV_HDN void prepare1DHeader(SolverBoard& B, const SolverParams& prm, SDesc* list
     angBreak[i] = c.angBreakForce;
     minResp[i] = c.minResponseThreshold;
     // constraint->body0->getPose(): 관절체 링크면 링크 몸체 자세(PxsBodyCore::body2World)
-    frame0[i] = c.body0 == NONE ? ident : (c.artLink0 ? B.arts[c.body0].bodies[c.artLink0 - 1].body2World : B.bodies[c.body0].body2World);
-    frame1[i] = c.body1 == NONE ? ident : (c.artLink1 ? B.arts[c.body1].bodies[c.artLink1 - 1].body2World : B.bodies[c.body1].body2World);
+    frame0[i] = c.body0 == NONE ? ident : (c.artLink0 ? artAt(B, c.body0).bodies[c.artLink0 - 1].body2World : B.bodies[c.body0].body2World);
+    frame1[i] = c.body1 == NONE ? ident : (c.artLink1 ? artAt(B, c.body1).bodies[c.artLink1 - 1].body2World : B.bodies[c.body1].body2World);
     // 관절체 쪽 desc.tgsBodyA 는 관절체 포인터(풀이 몸체 아님) — 강체 칸만 읽으므로 세계 몸체(0)를 넣는다
     bv0[i] = bitCopy<jnt::TgsBodyVel>(B.vels[desc.linkIndexA == RIGID_BODY ? desc.bodyA : 0u]);
     bv1[i] = bitCopy<jnt::TgsBodyVel>(B.vels[desc.linkIndexB == RIGID_BODY ? desc.bodyB : 0u]);
@@ -628,8 +628,8 @@ SV_HDN void prepare1DHeader(SolverBoard& B, const SolverParams& prm, SDesc* list
                              jnt::RIGID_BODY, jnt::RIGID_BODY, B.rowScratch, arenaPtr<uint8_t>(B.constraints, off), stepDt, totalDt, invStepDt,
                              invTotalDt, prm.lengthScale, biasCoefficient, na, na, &len);
     } else {  // 관절체 링크가 낀 조인트: SolverExtBodyStep (응답은 articulation 모듈)
-      const art::ArtRef ra{desc.linkIndexA == RIGID_BODY ? nullptr : &B.arts[desc.bodyA]};
-      const art::ArtRef rb{desc.linkIndexB == RIGID_BODY ? nullptr : &B.arts[desc.bodyB]};
+      const art::ArtRef ra{desc.linkIndexA == RIGID_BODY ? nullptr : &artAt(B, desc.bodyA)};
+      const art::ArtRef rb{desc.linkIndexB == RIGID_BODY ? nullptr : &artAt(B, desc.bodyB)};
       n = jnt::prepareD6Step(*data[i], flags[i], linBreak[i], angBreak[i], minResp[i], frame0[i], frame1[i], bv0[i], bv1[i], t0[i], t1[i], d0[i], d1[i],
                              desc.linkIndexA, desc.linkIndexB, B.rowScratch, arenaPtr<uint8_t>(B.constraints, off), stepDt, totalDt, invStepDt,
                              invTotalDt, prm.lengthScale, biasCoefficient, ra, rb, &len);
@@ -677,11 +677,11 @@ SV_HDN void solveContactHeader(SolverBoard& B, const BatchHeader& h, float minPe
       solveContact4_Block(ordered + h.startIndex, vels, arena, minPen, elapsed);
       break;
     case SC_TYPE_EXT_CONTACT:  // solveExtContactBlock / solveConcludeContactExtBlock (concludeContactStep 은 빈 함수)
-      for (uint32_t i = h.startIndex, e = h.startIndex + h.stride; i < e; ++i) solveExtContactDesc(ordered[i], vels, B.arts, arena, minPen, elapsed);
+      for (uint32_t i = h.startIndex, e = h.startIndex + h.stride; i < e; ++i) solveExtContactDesc(ordered[i], vels, B, arena, minPen, elapsed);
       break;
     case SC_TYPE_EXT_1D:  // solveExt1DBlock / solveConclude1DBlockExt
       for (uint32_t i = h.startIndex, e = h.startIndex + h.stride; i < e; ++i)
-        solveExt1DDesc(ordered[i], vels, txI, B.arts, arena, elapsed, posIter, conclude);
+        solveExt1DDesc(ordered[i], vels, txI, B, arena, elapsed, posIter, conclude);
       break;
     default:
       err |= SV_ERR_UNSUPPORTED;
@@ -694,8 +694,8 @@ SV_HDN void prepareContactExtDesc(SolverBoard& B, const SolverParams& prm, SDesc
                                   float totalDt, float invStepDt, float invTotalDt, float biasCoefficient) {
   SolverCM& cm = B.cms[desc.source];
   const CMOutput out{B.patches + cm.patchStart, B.contacts + cm.contactStart, cm.nbPatches, cm.nbContacts};
-  art::Articulation* a0 = desc.linkIndexA == RIGID_BODY ? nullptr : &B.arts[desc.bodyA];
-  art::Articulation* a1 = desc.linkIndexB == RIGID_BODY ? nullptr : &B.arts[desc.bodyB];
+  art::Articulation* a0 = desc.linkIndexA == RIGID_BODY ? nullptr : &artAt(B, desc.bodyA);
+  art::Articulation* a1 = desc.linkIndexB == RIGID_BODY ? nullptr : &artAt(B, desc.bodyB);
   const uint32_t v0 = a0 ? 0u : desc.bodyA, v1 = a1 ? 0u : desc.bodyB;
   TGSContactDesc bd;
   bd.b0 = desc.bodyADataIndex;
@@ -838,7 +838,7 @@ SV_HDN void solveBatchPrep(SolverBoard& B, const SolverParams& prm, const BatchR
   const float invLengthScale = 1.f / prm.lengthScale;
   for (uint32_t k = 0; k < R.nbArts; ++k) {
     const uint32_t ai = B.islandArts[R.artStart + k];
-    art::Articulation& a = B.arts[ai];
+    art::Articulation& a = artAt(B, ai);
     a.awake = 1;              // 활성 섬에 있다 = 깨어 있음 (Sc 층 깨움은 호출자가 깸 카운터로 넣는다)
     B.artBatchIndex[ai] = k;  // mArticulationIndex
     const uint16_t iterWord = a.solverIterationCounts;
@@ -854,7 +854,7 @@ SV_HDN void solveBatchPrep(SolverBoard& B, const SolverParams& prm, const BatchR
   const float invStepDt = 1.f / stepDt;
   const float biasCoefficient = 2.f * psqrt(1.f / float(posIters));
   // SetupArticulationInternalConstraintsTask (:1707): setupSolverInternalConstraintsTGS(desc, mStepDt, mInvStepDt, dt)
-  for (uint32_t k = 0; k < R.nbArts; ++k) art::setupSolverConstraintsTGS(B.arts[B.islandArts[R.artStart + k]], stepDt, invStepDt, mDt);
+  for (uint32_t k = 0; k < R.nbArts; ++k) art::setupSolverConstraintsTGS(artAt(B, B.islandArts[R.artStart + k]), stepDt, invStepDt, mDt);
   // PartitionTask
   PartitionView pv{vels, bodyOffset + 1, R.nbBodies};
   uint32_t countsSize = 0, numOverflows = 0, numStatic = 0, numOrdered = 0;
@@ -1154,7 +1154,7 @@ SV_HD void artSolveInternalAll(SolverBoard& B, const BatchPlan& pl, const art::P
   const float recipStepDt = 1.0f / pl.stepDt;
   for (uint32_t k = tid; k < pl.nbArts; k += nt) {
     const uint32_t ai = B.islandArts[pl.artStart + k];
-    art::solveInternalConstraints(B.arts[ai], pl.dt, pl.stepDt, recipStepDt, velIter, true, cfg, elapsed, pl.biasCoefficient, false,
+    art::solveInternalConstraints(artAt(B, ai), pl.dt, pl.stepDt, recipStepDt, velIter, true, cfg, elapsed, pl.biasCoefficient, false,
                                   ArtStaticSolve{&B, ai});
     if (conclude) artConcludeInternal(B, ai);
   }
@@ -1164,7 +1164,7 @@ SV_HD void artSolveInternalAll(SolverBoard& B, const BatchPlan& pl, const art::P
 SV_HD void artRecordAll(SolverBoard& B, const BatchPlan& pl, uint32_t tid, uint32_t nt) {
   for (uint32_t k = tid; k < pl.nbArts; k += nt) {
     art::SV scratch[art::kMaxLinks];
-    art::recordDeltaMotion(B.arts[B.islandArts[pl.artStart + k]], pl.stepDt, scratch);
+    art::recordDeltaMotion(artAt(B, B.islandArts[pl.artStart + k]), pl.stepDt, scratch);
   }
   SV_SYNC();
 }
@@ -1181,7 +1181,7 @@ SV_HDN void solveBatchIterateArt(SolverBoard& B, const SolverParams& prm, uint32
     const float recipStepDt = 1.0f / pl.stepDt;
     for (uint32_t k = tid; k < pl.nbArts; k += nt) {
       const uint32_t ai = B.islandArts[pl.artStart + k];
-      art::Articulation& a = B.arts[ai];
+      art::Articulation& a = artAt(B, ai);
       const ArtStaticSolve st{&B, ai};
       art::SV scratch[art::kMaxLinks];
       float elapsedTime = 0.0f;
@@ -1227,7 +1227,7 @@ SV_HDN void solveBatchIterateArt(SolverBoard& B, const SolverParams& prm, uint32
     integrateBodies(B, pl, pl.stepDt, tid, nt);
     artRecordAll(B, pl, tid, nt);
   }
-  for (uint32_t k = tid; k < pl.nbArts; k += nt) art::saveVelocityTGS(B.arts[B.islandArts[pl.artStart + k]], pl.invDt);
+  for (uint32_t k = tid; k < pl.nbArts; k += nt) art::saveVelocityTGS(artAt(B, B.islandArts[pl.artStart + k]), pl.invDt);
   SV_SYNC();
   for (uint32_t a = 0; a < pl.velIters; ++a) {
     if (last) {
@@ -1311,7 +1311,7 @@ SV_HDN void solveBatchFinish(SolverBoard& B, const SolverParams& prm, const Batc
   // UpdateArticTask -> updateArticulations -> updateBodiesTGS (DyTGSDynamics.cpp:1593)
   for (uint32_t a = 0; a < pl.nbArts; ++a) {
     art::SV scratch[art::kMaxLinks];
-    art::updateBodiesTGS(B.arts[B.islandArts[pl.artStart + a]], mDt, scratch);
+    art::updateBodiesTGS(artAt(B, B.islandArts[pl.artStart + a]), mDt, scratch);
   }
 }
 
@@ -1404,10 +1404,10 @@ SV_HDN void afterIntegrationArts(SolverBoard& B, float dt, const uint32_t* deact
       const uint32_t ai = B.islandArts[I.artStart + k];
       bool sleeping = false;
       for (uint32_t d = 0; d < n; ++d) sleeping = sleeping || deact[d] == ai;
-      if (!sleeping) art::sleepCheck(B.arts[ai], dt);
+      if (!sleeping) art::sleepCheck(artAt(B, ai), dt);
     }
   }
-  for (uint32_t d = 0; d < n; ++d) art::putToSleep(B.arts[deact[d]]);
+  for (uint32_t d = 0; d < n; ++d) art::putToSleep(artAt(B, deact[d]));
 }
 
 // Sc::Scene::afterIntegration (ScPipeline.cpp:2640-2690): 이번 스텝 섬 관리자가 재운 몸체는 풀이에서 적분됐더라도

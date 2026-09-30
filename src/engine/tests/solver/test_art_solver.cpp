@@ -29,6 +29,7 @@
 #include "core/solver/solver_io.h"
 #include "core/articulation/art_static.h"
 #include "tests/articulation/random_art.h"
+#include "art_stream.h"
 
 using namespace physx;
 namespace sv = eng::sv;
@@ -395,6 +396,8 @@ int main(int argc, char** argv) {
   o.posIt = 8;
   o.velIt = 1;
   int steps = 300, nBoxes = 12, joints = 1, selfcol = 0, stab = 0, last = 0, neg = 0, verbose = 1;
+  const char* dumpPath = nullptr;
+  int tiers = 0;
   for (int i = 1; i < argc; ++i) {
     auto arg = [&](const char* k) { return !strcmp(argv[i], k) && i + 1 < argc; };
     if (arg("--arts")) o.nArts = atoi(argv[++i]);
@@ -412,6 +415,8 @@ int main(int argc, char** argv) {
     else if (arg("--last")) last = atoi(argv[++i]);
     else if (arg("--neg")) neg = atoi(argv[++i]);
     else if (arg("--verbose")) verbose = atoi(argv[++i]);
+    else if (arg("--dump")) dumpPath = argv[++i];
+    else if (arg("--tiers")) tiers = atoi(argv[++i]);
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
@@ -613,6 +618,28 @@ int main(int argc, char** argv) {
   B.writebacks = wbs.data();
   B.rowScratch = rowScratch.data();
   B.arts = arts.data();
+  // --tiers 1: 엔진 관절체를 딱 맞는 용량 등급(articulation.h artRepack)으로 다시 담아 포인터 표로 푼다 — 결과가 같아야 한다
+  std::vector<unsigned char> tierPool;
+  std::vector<A::Articulation*> ap(static_cast<size_t>(na));
+  for (int k = 0; k < na; ++k) ap[size_t(k)] = &arts[size_t(k)];
+  if (tiers) {
+    size_t total = 0;
+    std::vector<size_t> offs;
+    for (int k = 0; k < na; ++k) {
+      offs.push_back(total);
+      total += A::artBytes(A::artTightCaps(arts[size_t(k)]));
+    }
+    tierPool.assign(total + 16, 0);
+    unsigned char* base = reinterpret_cast<unsigned char*>((reinterpret_cast<uintptr_t>(tierPool.data()) + 15) & ~uintptr_t(15));
+    for (int k = 0; k < na; ++k) {
+      ap[size_t(k)] = reinterpret_cast<A::Articulation*>(base + offs[size_t(k)]);
+      A::artRepack(*ap[size_t(k)], arts[size_t(k)], A::artTightCaps(arts[size_t(k)]));
+      gEngArts[size_t(k)] = ap[size_t(k)];
+    }
+    printf("용량 등급: 관절체 %d 개 %.1f KB (최대 용량이면 %.1f KB)\n", na, double(total) / 1024.0, double(na) * double(sizeof(A::Articulation)) / 1024.0);
+    B.artPtrs = ap.data();
+    dumpPath = nullptr;
+  }
   B.nbArts = uint32_t(na);
   B.artLists = artLists.data();
   B.artStatic1D = artS1.data();
@@ -637,9 +664,18 @@ int main(int argc, char** argv) {
   int shown = 0;
   std::unordered_map<const void*, uint32_t> pxPostCount;
   std::vector<float> buf;
+  // ---- 입력 흐름 (--dump, 층 2 시험용)
+  const uint32_t ML = A::kMaxLinks;
+  const uint32_t artResFloats = 14 * ML + 2 * A::kMaxDofs + 2;
+  std::vector<uint8_t> dumpBody;
+  const std::vector<eng::Body> bodies0 = eb;
+  const std::vector<A::Articulation> arts0(arts);
+  uint32_t maxC1D = 0;
   for (int s = 1; s <= steps; ++s) {
+    std::vector<sv::SolverCM> cmIn;
+    std::vector<ast::Wake> wakes;
     for (int k = 0; k < na; ++k) mirrors[size_t(k)].applyInputsPx(s, dt, buf);
-    for (int k = 0; k < na; ++k) artest::stepInputsEng(arts[size_t(k)], mirrors[size_t(k)].in, s, 0, dt);
+    for (int k = 0; k < na; ++k) artest::stepInputsEng(*ap[size_t(k)], mirrors[size_t(k)].in, s, 0, dt);
     gSnap.valid = false;
     gLate.valid = false;
     pscene->simulate(dt);
@@ -691,6 +727,7 @@ int main(int argc, char** argv) {
           c.angBreakForce = x.angBreak;
           c.minResponseThreshold = x.minResp;
           if (x.index >= C1D_CAP) snapErr++;
+          maxC1D = std::max(maxC1D, x.index + 1);
           ic1d.push_back(uint32_t(c1dIn.size()));
           c1dIn.push_back(c);
           jd.push_back(x.data);
@@ -754,6 +791,7 @@ int main(int argc, char** argv) {
           contacts.insert(contacts.end(), c.contacts.begin(), c.contacts.end());
           if (resetNow) resetList.push_back(idx);
           icm.push_back(idx);
+          cmIn.push_back(m);
           totContacts += c.contacts.size();
         }
         islands.push_back(I);
@@ -769,6 +807,7 @@ int main(int argc, char** argv) {
         if (S.wakeCounter[size_t(i)] != eb[size_t(i)].wakeCounter) {
           if (S.wakeCounter[size_t(i)] > eb[size_t(i)].wakeCounter) {
             eb[size_t(i)].wakeCounter = S.wakeCounter[size_t(i)];
+            wakes.push_back(ast::Wake{uint32_t(i), S.wakeCounter[size_t(i)]});
             wakeEvents++;
           } else
             wakeBad++;
@@ -807,7 +846,7 @@ int main(int argc, char** argv) {
         }
     }
     if (neg == 1 && s == 40) {  // 마지막 관절체(R1Pro 가 있으면 R1Pro)의 가장 빠른 관절 속도 1 ulp
-      A::Articulation& a = arts.back();
+      A::Articulation& a = *ap.back();
       uint32_t best = 0;
       for (uint32_t d = 1; d < a.dofs; ++d)
         if (std::fabs(a.jointVelocity[d]) > std::fabs(a.jointVelocity[best])) best = d;
@@ -872,7 +911,7 @@ int main(int argc, char** argv) {
     // Sc 층 깨움(관절체 링크 깸 카운터를 올리기만, ScArticulationSim.cpp:501 internalWakeUp)과 링크 상호작용 수 — 잠 판정 직전 값
     if (gLate.valid) {
       for (int k = 0; k < na; ++k) {
-        A::Articulation& a = arts[size_t(k)];
+        A::Articulation& a = *ap[size_t(k)];
         if (getenv("TRACE_ART") && atoi(getenv("TRACE_ART")) == k)
           for (uint32_t l = 0; l < a.nLinks && l < gLate.linkWake[size_t(k)].size(); ++l)
             printf("[추적] step %d art %d link %u 잠 판정 전 깸: PhysX %.9g 엔진 %.9g 상호작용 %u (코어 PhysX %.9g 엔진 %.9g)\n", s, k, l,
@@ -949,7 +988,7 @@ int main(int argc, char** argv) {
     // 관절체 비교 (링크 자세·속도, 관절 위치·속도, 깸 카운터, 잠)
     for (int k = 0; k < na; ++k) {
       artest::Mirror& m = mirrors[size_t(k)];
-      A::Articulation& e = arts[size_t(k)];
+      A::Articulation& e = *ap[size_t(k)];
       std::vector<float> x, y;
       for (uint32_t l = 0; l < m.pl.size(); ++l) {
         const PxTransform tp = m.pl[l]->getGlobalPose();
@@ -967,8 +1006,8 @@ int main(int argc, char** argv) {
         m.px->copyInternalStateToCache(*m.cache, PxArticulationCacheFlag::ePOSITION | PxArticulationCacheFlag::eVELOCITY);
         x.insert(x.end(), m.cache->jointPosition, m.cache->jointPosition + e.dofs);
         x.insert(x.end(), m.cache->jointVelocity, m.cache->jointVelocity + e.dofs);
-        y.insert(y.end(), e.jointPosition, e.jointPosition + e.dofs);
-        y.insert(y.end(), e.jointVelocity, e.jointVelocity + e.dofs);
+        y.insert(y.end(), static_cast<const float*>(e.jointPosition), static_cast<const float*>(e.jointPosition) + e.dofs);
+        y.insert(y.end(), static_cast<const float*>(e.jointVelocity), static_cast<const float*>(e.jointVelocity) + e.dofs);
       }
       x.push_back(m.px->getWakeCounter());
       y.push_back(e.wakeCounter);
@@ -997,6 +1036,131 @@ int main(int argc, char** argv) {
         }
       }
     }
+    if (dumpPath && neg == 0) {  // 스텝 블록
+      ast::Header hh{};
+      hh.nb = uint32_t(nb);
+      hh.na = uint32_t(na);
+      hh.maxLinks = ML;
+      hh.artResFloats = artResFloats;
+      ast::Counts c{};
+      c.nIslands = uint32_t(islands.size());
+      c.nIB = uint32_t(ib.size());
+      c.nICM = uint32_t(icm.size());
+      c.nIA = uint32_t(ia.size());
+      c.nAct = uint32_t(act.size());
+      c.nReset = uint32_t(resetList.size());
+      c.nC1D = uint32_t(c1dIn.size());
+      c.nPatches = uint32_t(patches.size());
+      c.nContacts = uint32_t(contacts.size());
+      c.nDeact = uint32_t(deact.size());
+      c.nDeactArts = uint32_t(deactArts.size());
+      c.nWake = uint32_t(wakes.size());
+      c.lateValid = gLate.valid ? 1u : 0u;
+      const ast::Layout L = ast::layout(c, hh);
+      std::vector<uint8_t> blk(L.total, 0);
+      auto put = [&](size_t off, const void* src, size_t n) {
+        if (n) memcpy(blk.data() + off, src, n);
+      };
+      put(0, &c, sizeof(c));
+      put(L.islands, islands.data(), islands.size() * sizeof(sv::IslandIn));
+      put(L.ib, ib.data(), ib.size() * 4);
+      put(L.icm, icm.data(), icm.size() * 4);
+      put(L.cmIn, cmIn.data(), cmIn.size() * sizeof(sv::SolverCM));
+      put(L.ia, ia.data(), ia.size() * 4);
+      put(L.act, act.data(), act.size() * 4);
+      put(L.reset, resetList.data(), resetList.size() * 4);
+      put(L.c1d, c1dIn.data(), c1dIn.size() * sizeof(sv::Constraint1DIn));
+      put(L.ic1d, ic1d.data(), ic1d.size() * 4);
+      put(L.jd, jd.data(), jd.size() * sizeof(eng::jnt::D6Data));
+      put(L.patches, patches.data(), patches.size() * sizeof(sv::ContactPatchIn));
+      put(L.contacts, contacts.data(), contacts.size() * sizeof(sv::ContactIn));
+      put(L.deact, deact.data(), deact.size() * 4);
+      put(L.deactArts, deactArts.data(), deactArts.size() * 4);
+      put(L.wake, wakes.data(), wakes.size() * sizeof(ast::Wake));
+      if (S.valid) put(L.numCounted, S.numCounted.data(), size_t(nb) * 4);
+      if (gLate.valid)
+        for (int k = 0; k < na; ++k) {
+          for (size_t l = 0; l < gLate.linkWake[size_t(k)].size(); ++l) {
+            put(L.lateLinkWake + (size_t(k) * ML + l) * 4, &gLate.linkWake[size_t(k)][l], 4);
+            put(L.lateLinkCounted + (size_t(k) * ML + l) * 4, &gLate.linkCounted[size_t(k)][l], 4);
+          }
+          put(L.lateArtWake + size_t(k) * 4, &gLate.artWake[size_t(k)], 4);
+        }
+      for (int i = 0; i < nb; ++i) {
+        const PxTransform tp = px[size_t(i)]->getGlobalPose();
+        const PxVec3 lp = px[size_t(i)]->getLinearVelocity(), ap = px[size_t(i)]->getAngularVelocity();
+        const float r[ast::RES_FLOATS] = {tp.q.x, tp.q.y, tp.q.z, tp.q.w, tp.p.x, tp.p.y, tp.p.z, lp.x, lp.y, lp.z, ap.x, ap.y, ap.z, px[size_t(i)]->getWakeCounter()};
+        put(L.pxRes + size_t(i) * sizeof(r), r, sizeof(r));
+      }
+      for (int k = 0; k < na; ++k) {
+        artest::Mirror& m = mirrors[size_t(k)];
+        std::vector<float> x(artResFloats, 0.0f);
+        for (uint32_t l = 0; l < m.pl.size(); ++l) {
+          const PxTransform tp = m.pl[l]->getGlobalPose();
+          const PxVec3 lv = m.pl[l]->getLinearVelocity(), av = m.pl[l]->getAngularVelocity();
+          const float p14[14] = {tp.q.x, tp.q.y, tp.q.z, tp.q.w, tp.p.x, tp.p.y, tp.p.z, lv.x, lv.y, lv.z, av.x, av.y, av.z,
+                                 static_cast<NpArticulationLink*>(m.pl[l])->getCore().getCore().wakeCounter};
+          memcpy(&x[l * 14], p14, sizeof(p14));
+        }
+        const uint32_t dofs = ap[size_t(k)]->dofs;
+        if (dofs) {
+          m.px->copyInternalStateToCache(*m.cache, PxArticulationCacheFlag::ePOSITION | PxArticulationCacheFlag::eVELOCITY);
+          memcpy(&x[14 * ML], m.cache->jointPosition, dofs * 4);
+          memcpy(&x[14 * ML + A::kMaxDofs], m.cache->jointVelocity, dofs * 4);
+        }
+        x[14 * ML + 2 * A::kMaxDofs] = m.px->getWakeCounter();
+        x[14 * ML + 2 * A::kMaxDofs + 1] = m.px->isSleeping() ? 1.0f : 0.0f;
+        put(L.pxArt + size_t(k) * artResFloats * 4, x.data(), artResFloats * 4);
+      }
+      if (S.valid) {
+        Dy::Context* ctx = static_cast<Dy::Context*>(gNpScene->getScScene().getDynamicsContext());
+        const auto& pool = ctx->getConstraintWriteBackPool();
+        for (size_t k = 0; k < c1dIn.size(); ++k) put(L.pxWb + k * sizeof(eng::jnt::Writeback), &pool[c1dIn[k].index], sizeof(eng::jnt::Writeback));
+      }
+      dumpBody.insert(dumpBody.end(), blk.begin(), blk.end());
+    }
+  }
+  if (dumpPath && neg == 0) {
+    ast::Header h{};
+    memcpy(h.magic, "ARTSV1", 7);
+    h.nb = uint32_t(nb);
+    h.na = uint32_t(na);
+    h.steps = uint32_t(steps);
+    h.stab = uint32_t(stab);
+    h.last = uint32_t(last);
+    h.gravity[0] = 0.0f;
+    h.gravity[1] = 0.0f;
+    h.gravity[2] = -9.81f;
+    h.dt = dt;
+    h.bounce = gSnap.bounce;
+    h.frictionOffset = gSnap.frictionOffset;
+    h.correlation = gSnap.correlation;
+    h.lengthScale = tol.length;
+    h.batchSize = gSnap.batchSize;
+    h.articBatchSize = gSnap.articBatchSize;
+    h.maxCMs = uint32_t(cms.size());
+    h.maxArena = B.statMaxArena;
+    h.maxFriction = B.statMaxFriction;
+    h.maxDescs = B.statMaxDescs;
+    h.maxC1D = maxC1D;
+    h.staticCap = STATIC_CAP;
+    h.sizeBody = sizeof(eng::Body);
+    h.sizeArt = sizeof(A::Articulation);
+    h.sizeCM = sizeof(sv::SolverCM);
+    h.sizeIsland = sizeof(sv::IslandIn);
+    h.sizeC1D = sizeof(sv::Constraint1DIn);
+    h.sizeD6 = sizeof(eng::jnt::D6Data);
+    h.sizeInputs = sizeof(artest::ArtInputs);
+    h.maxLinks = ML;
+    h.artResFloats = artResFloats;
+    FILE* f = fopen(dumpPath, "wb");
+    fwrite(&h, sizeof(h), 1, f);
+    fwrite(bodies0.data(), sizeof(eng::Body), bodies0.size(), f);
+    fwrite(arts0.data(), sizeof(A::Articulation), arts0.size(), f);
+    for (int k = 0; k < na; ++k) fwrite(&mirrors[size_t(k)].in, sizeof(artest::ArtInputs), 1, f);
+    fwrite(dumpBody.data(), 1, dumpBody.size(), f);
+    fclose(f);
+    printf("입력 흐름 저장: %s (%.1f MB)\n", dumpPath, double(dumpBody.size() + arts0.size() * sizeof(A::Articulation)) / 1e6);
   }
   printf("\n장면: 관절체 %d (무작위 %d, R1Pro %d) 강체 %d 조인트 %d x %d 스텝 (위치 %d 속도 %d, 안정화 %s, 접촉 마지막 %s, 자기 충돌 %s)\n", na, nRandom,
          na - nRandom, nb, nJoints, steps, o.posIt, o.velIt, stab ? "켬" : "끔", last ? "켬" : "끔", selfcol ? "켬" : "끔");

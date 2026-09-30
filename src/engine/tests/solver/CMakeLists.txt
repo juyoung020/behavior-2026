@@ -85,3 +85,6 @@ target_compile_definitions(test_art_solver PRIVATE PX_PHYSX_STATIC_LIB PX_PUBLIC
 target_compile_options(test_art_solver PRIVATE -Wno-everything)
 list(SUBLIST CS_WRAPS 0 3 ART_WRAPS)  # 새 관리자 표시 가로채기만 (준비 진단 가로채기는 안 씀)
 target_link_options(test_art_solver PRIVATE ${ART_WRAPS})
+
+# 층 2: test_art_solver --dump 흐름으로 판 N 개를 GPU 에서 (PhysX 링크 없음)
+engine_test(test_art_solver_gpu test_art_solver_gpu.cu)

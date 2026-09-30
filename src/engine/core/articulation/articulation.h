@@ -10,6 +10,7 @@
 //               DyFeatherstoneArticulation.cpp:270-419 (dof 배치·경로), :3209 (teleportLinks), :3320 (computeLinkVelocities), :3378 (jcalc)
 // 용량은 고정(동적 할당 없음). 넘치면 err 에 표시.
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 #include "../common/glibc_sincosf.h"
@@ -130,6 +131,48 @@ struct LinAng {
   V3 linear, angular;
 };
 
+// ---------------------------------------------------------------- 용량 등급 (09-30, 리드 요청: 판당 메모리)
+// 배열은 관절체 자신 안에 두되 "자기 위치에서의 상대 거리"로 가리킨다(RelArr) → 통째로 memcpy·GPU 복사해도 그대로 유효.
+// `Articulation` 객체는 최대 용량(kMaxLinks …) 저장칸을 끝에 품는다(예전과 같이 값으로 쓸 수 있다).
+// 작은 등급은 artBytes(caps) 바이트 버퍼에 createArticulationCap 으로 만든다 — 머리 + 그 등급 배열만 차지한다(끝 저장칸은 잘려 없음).
+// 이런 객체는 값 복사(=)를 하지 말고 artCopy 로 옮긴다. 배열 순서·연산은 바뀌지 않는다(결과 비트 불변).
+template <class T>
+struct RelArr {
+  int32_t rel;  // 이 칸 주소 -> 배열 첫 칸 (바이트)
+  EHD operator T*() const { return reinterpret_cast<T*>(const_cast<char*>(reinterpret_cast<const char*>(this)) + rel); }
+};
+struct ArtCaps {
+  uint32_t links, dofs, path, mimic;
+};
+constexpr ArtCaps kArtCapsMax{kMaxLinks, kMaxDofs, kMaxPath, kMaxMimic};
+
+// (형, 이름, 칸 수 식: c = ArtCaps)
+#define ENG_ART_ARRAYS(X)                                                                                                                     \
+  X(uint32_t, ll, c.links) X(uint32_t, creation, c.links) X(uint32_t, cparent, c.links) X(Link, links, c.links)                            \
+  X(LinkBody, bodies, c.links) X(JointCore, joints, c.links) X(JointData, jointData, c.links) X(MimicCore, mimic, c.mimic)               \
+  X(uint32_t, pathToRoot, c.path) X(float, jointAcceleration, c.dofs) X(float, jointInternalAcceleration, c.dofs)                        \
+  X(float, jointVelocity, c.dofs) X(float, jointNewVelocity, c.dofs + 3) X(float, jointPosition, c.dofs) X(float, jointForce, c.dofs)    \
+  X(float, jointTargetPositions, c.dofs) X(float, jointTargetVelocities, c.dofs) X(float, posIterJointVelocities, c.dofs)                \
+  X(SV, posIterMotionVelocities, c.links) X(SV, motionVelocities, c.links) X(SV, solverLinkSpatialDeltaVels, c.links)                    \
+  X(SV, solverLinkSpatialImpulses, c.links) X(SV, motionAccelerations, c.links) X(SV, motionAccelerationsInternal, c.links)              \
+  X(SV, coriolis, c.links) X(SV, zaInternal, c.links) X(SV, zaForces, c.links) X(SV, transmittedForce, c.links)                          \
+  X(InternalConstraint, ic, c.dofs) X(InternalLimit, limits, c.dofs) X(MimicInternal, mimicInternal, c.mimic)                            \
+  X(float, deferredQstZ, c.dofs) X(SV, deltaMotion, c.links) X(Tf, preTransform, c.links) X(TIR, responseW, c.links)                     \
+  X(SMat, worldSpatialArticulatedInertia, c.links) X(M33, worldIsolatedInertia, c.links) X(float, masses, c.links)                       \
+  X(InvStIs, invStIs, c.links) X(SV, isW, c.dofs) X(float, qstZIc, c.dofs) X(float, qstZIntIc, c.dofs) X(SV, jointAxis, c.dofs)          \
+  X(SV, motionMatrix, c.dofs) X(SV, worldMotionMatrix, c.dofs) X(SV, isInvStIS, c.dofs) X(V3, rw, c.links) X(Q, relativeQuat, c.links)   \
+  X(Tf, accumulatedPoses, c.links) X(Q, deltaQ, c.links) X(float, linkMaxPenBias, c.links) X(LinAng, externalAcceleration, c.links)
+
+// 저장칸 바이트 (배열마다 16 바이트 정렬)
+EHD constexpr size_t artAlign16(size_t x) { return (x + 15) & ~size_t(15); }
+EHD constexpr size_t artStorageBytes(const ArtCaps& c) {
+  return 0
+#define ENG_ART_SZ(T, n, cnt) +artAlign16(sizeof(T) * size_t(cnt))
+      ENG_ART_ARRAYS(ENG_ART_SZ)
+#undef ENG_ART_SZ
+      ;
+}
+
 struct Articulation {
   // ---- 구성 (Sc::ArticulationCore + Dy)
   uint32_t nLinks, dofs, nMimic;
@@ -138,52 +181,72 @@ struct Articulation {
   uint8_t flags;
   uint8_t inScene, awake, readyForSleep, jcalcDirty, jointDirty, dataDirty;
   float sleepThreshold, freezeThreshold, wakeCounter;
-  // 생성 순서 <-> LL 순서 (장면에 넣은 뒤부터 LL 순서로 저장)
-  uint32_t ll[kMaxLinks], creation[kMaxLinks], cparent[kMaxLinks];
-
-  Link links[kMaxLinks];
-  LinkBody bodies[kMaxLinks];
-  JointCore joints[kMaxLinks];  // joints[i] = 링크 i 의 들어오는 관절 (0 은 안 씀)
-  JointData jointData[kMaxLinks];
-  MimicCore mimic[kMaxMimic];
-  uint32_t pathToRoot[kMaxPath];
+  ArtCaps cap;         // 이 객체의 용량 (createArticulation* 가 정함)
+  uint32_t bytes;      // 머리 + 저장칸(이 용량) = artBytes(cap)
   uint32_t nPath;
-
-  // ---- ArticulationData (DyFeatherstoneArticulation.h:381-464)
+  // ---- ArticulationData 의 스칼라 (DyFeatherstoneArticulation.h:381-464)
   SV rootPreMotionVelocity, rootDeferredZ;
-  float jointAcceleration[kMaxDofs], jointInternalAcceleration[kMaxDofs], jointVelocity[kMaxDofs], jointNewVelocity[kMaxDofs + 3];
-  float jointPosition[kMaxDofs], jointForce[kMaxDofs], jointTargetPositions[kMaxDofs], jointTargetVelocities[kMaxDofs];
-  float posIterJointVelocities[kMaxDofs];
-  SV posIterMotionVelocities[kMaxLinks], motionVelocities[kMaxLinks], solverLinkSpatialDeltaVels[kMaxLinks],
-      solverLinkSpatialImpulses[kMaxLinks], motionAccelerations[kMaxLinks], motionAccelerationsInternal[kMaxLinks],
-      coriolis[kMaxLinks], zaInternal[kMaxLinks], zaForces[kMaxLinks], transmittedForce[kMaxLinks];
-  InternalConstraint ic[kMaxDofs];
-  InternalLimit limits[kMaxDofs];
   uint32_t nIc, nLimits;
-  MimicInternal mimicInternal[kMaxMimic];
-  float deferredQstZ[kMaxDofs];
-  SV deltaMotion[kMaxLinks];
-  Tf preTransform[kMaxLinks];
-  TIR responseW[kMaxLinks];
-  SMat worldSpatialArticulatedInertia[kMaxLinks];
-  M33 worldIsolatedInertia[kMaxLinks];
-  float masses[kMaxLinks];
-  InvStIs invStIs[kMaxLinks];
-  SV isW[kMaxDofs];
-  float qstZIc[kMaxDofs], qstZIntIc[kMaxDofs];
-  SV jointAxis[kMaxDofs], motionMatrix[kMaxDofs], worldMotionMatrix[kMaxDofs];
-  SV isInvStIS[kMaxDofs];
-  V3 rw[kMaxLinks];
-  Q relativeQuat[kMaxLinks];
-  Tf accumulatedPoses[kMaxLinks];
-  Q deltaQ[kMaxLinks];
   SMat baseInvSpatialArticulatedInertiaW;
   float invSumMass;
   V3 com;
   float dt;
-  float linkMaxPenBias[kMaxLinks];  // ArticulationLinkData::maxPenBias
-  LinAng externalAcceleration[kMaxLinks];
+  // ---- 배열 (링크·dof·경로·흉내 관절 용량). 생성 순서 <-> LL 순서: ll/creation/cparent (장면에 넣은 뒤부터 LL 순서로 저장)
+#define ENG_ART_MEMBER(T, n, cnt) RelArr<T> n;
+  ENG_ART_ARRAYS(ENG_ART_MEMBER)
+#undef ENG_ART_MEMBER
+  alignas(16) unsigned char storage[artStorageBytes(kArtCapsMax)];  // 최대 용량 저장칸 (작은 등급 객체에서는 잘려 없다)
 };
+
+// 이 용량 관절체 하나의 바이트 (작은 등급 버퍼 크기, 16 배수)
+EHD constexpr size_t artHeaderBytes() { return offsetof(Articulation, storage); }
+EHD constexpr size_t artBytes(const ArtCaps& c) { return artAlign16(artHeaderBytes() + artStorageBytes(c)); }
+
+// 배열 자리 잡기 (저장칸 안에 차례로). createArticulation* 이 부른다.
+EHD void artLayout(Articulation& a, const ArtCaps& c) {
+  a.cap = c;
+  a.bytes = uint32_t(artBytes(c));
+  size_t off = 0;
+  unsigned char* base = a.storage;
+#define ENG_ART_LAY(T, n, cnt)                                                                      \
+  a.n.rel = int32_t((base + off) - reinterpret_cast<unsigned char*>(&a.n));                         \
+  off += artAlign16(sizeof(T) * size_t(cnt));
+  ENG_ART_ARRAYS(ENG_ART_LAY)
+#undef ENG_ART_LAY
+}
+
+// 다른 용량으로 다시 담기 (예: 최대 용량으로 만든 뒤 딱 맞는 등급으로). dst 는 artBytes(caps) 바이트 이상. 칸 값은 그대로(앞 칸들만).
+EHD void artRepack(Articulation& dst, const Articulation& src, const ArtCaps& caps) {
+  const unsigned char* s = reinterpret_cast<const unsigned char*>(&src);
+  unsigned char* d = reinterpret_cast<unsigned char*>(&dst);
+  for (size_t i = 0; i < offsetof(Articulation, ll); ++i) d[i] = s[i];  // 스칼라 머리
+  artLayout(dst, caps);
+  const ArtCaps& cs = src.cap;
+#define ENG_ART_CP(T, n, cnt)                                                          \
+  {                                                                                    \
+    ArtCaps c = cs;                                                                    \
+    const size_t ns = size_t(cnt);                                                     \
+    c = caps;                                                                          \
+    const size_t nd = size_t(cnt);                                                     \
+    const T* sp = src.n;                                                               \
+    T* dp = dst.n;                                                                     \
+    const size_t m = ns < nd ? ns : nd;                                                \
+    const unsigned char* sb = reinterpret_cast<const unsigned char*>(sp);             \
+    unsigned char* db = reinterpret_cast<unsigned char*>(dp);                          \
+    for (size_t b = 0; b < m * sizeof(T); ++b) db[b] = sb[b];                          \
+  }
+  ENG_ART_ARRAYS(ENG_ART_CP)
+#undef ENG_ART_CP
+}
+// 이 관절체에 딱 맞는 용량 (장면에 넣은 뒤)
+EHD ArtCaps artTightCaps(const Articulation& a) { return ArtCaps{a.nLinks, a.dofs, a.nPath, a.nMimic}; }
+
+// 관절체 옮기기 (작은 등급 포함): src 의 bytes 만큼 복사 — 상대 거리라 dst 에서 그대로 유효. dst 는 src.bytes 이상.
+EHD void artCopy(Articulation& dst, const Articulation& src) {
+  const unsigned char* s = reinterpret_cast<const unsigned char*>(&src);
+  unsigned char* d = reinterpret_cast<unsigned char*>(&dst);
+  for (uint32_t i = 0; i < src.bytes; ++i) d[i] = s[i];
+}
 
 // ---------------------------------------------------------------- 쿼터니언 보조 (glibc sinf/cosf)
 struct GlibcSinCos {
@@ -238,11 +301,19 @@ EHD void initJointCore(JointCore& j, const Tf& parentFrame, const Tf& childFrame
 }
 
 // PxPhysics::createArticulationReducedCoordinate + Sc::ArticulationCore() (ScArticulationCore.cpp:38)
-EHD void createArticulation(Articulation& a, const SceneScale& sc) {
+// caps: 용량 등급(각 칸 <= kMax*). a 는 artBytes(caps) 바이트 이상인 자리(작은 등급) 또는 Articulation 객체.
+EHD void createArticulationCap(Articulation& a, const SceneScale& sc, const ArtCaps& capsIn) {
+  ArtCaps caps = capsIn;
+  a.err = 0;
+  if (caps.links > kMaxLinks || caps.dofs > kMaxDofs || caps.path > kMaxPath || caps.mimic > kMaxMimic) {  // 지역 작업 배열이 kMax* 크기
+    a.err = ERR_STATE;
+    caps = ArtCaps{caps.links < kMaxLinks ? caps.links : kMaxLinks, caps.dofs < kMaxDofs ? caps.dofs : kMaxDofs,
+                   caps.path < kMaxPath ? caps.path : kMaxPath, caps.mimic < kMaxMimic ? caps.mimic : kMaxMimic};
+  }
+  artLayout(a, caps);
   a.nLinks = 0;
   a.dofs = 0;
   a.nMimic = 0;
-  a.err = 0;
   a.solverIterationCounts = (1 << 8) | 4;
   a.flags = 0;
   a.inScene = 0;
@@ -257,10 +328,12 @@ EHD void createArticulation(Articulation& a, const SceneScale& sc) {
   a.nPath = 0;
   a.dt = 0.0f;
 }
+// 최대 용량 (예전과 같은 Articulation 객체)
+EHD void createArticulation(Articulation& a, const SceneScale& sc) { createArticulationCap(a, sc, ArtCaps{kMaxLinks, kMaxDofs, kMaxPath, kMaxMimic}); }
 
 // createLink (NpArticulationReducedCoordinate.cpp:962, NpFactory.cpp:250, ScBodyCore.cpp:45) -> 생성 번호
 EHD uint32_t createLink(Articulation& a, uint32_t parent, const Tf& poseIn, const SceneScale& sc) {
-  if (a.nLinks >= kMaxLinks || a.inScene) {
+  if (a.nLinks >= a.cap.links || a.inScene) {
     a.err |= ERR_LINKS;
     return kNone;
   }
@@ -516,7 +589,7 @@ EHD void artSetStabilizationThreshold(Articulation& a, float v) { a.freezeThresh
 // createMimicJoint(jointA, axisA, jointB, axisB, gearRatio, offset, naturalFrequency, dampingRatio) — 장면에 넣기 전만
 EHD void createMimicJoint(Articulation& a, uint32_t linkA, uint8_t axisA, uint32_t linkB, uint8_t axisB, float gearRatio, float offset,
                           float naturalFrequency = 0.0f, float dampingRatio = 0.0f) {
-  if (a.nMimic >= kMaxMimic || a.inScene) {
+  if (a.nMimic >= a.cap.mimic || a.inScene) {
     a.err |= ERR_MIMIC;
     return;
   }
@@ -750,18 +823,18 @@ EHD bool addToScene(Articulation& a) {
     for (int i = 0; i < 6; ++i)
       if (j.motion[i] != M_LOCKED) totalDofs++;
   }
-  if (totalDofs > kMaxDofs) {
+  if (totalDofs > a.cap.dofs) {
     a.err |= ERR_DOFS;
     return false;
   }
   a.dofs = totalDofs;
   // resizeJointData (:182) 는 가속도·속도·위치·힘·목표만 0 으로. 나머지도 0 으로 둔다(값을 쓰기 전에 읽지 않음).
-  for (uint32_t i = 0; i < kMaxDofs; ++i) {
+  for (uint32_t i = 0; i < a.cap.dofs; ++i) {
     a.jointAcceleration[i] = a.jointInternalAcceleration[i] = a.jointVelocity[i] = 0.0f;
     a.jointPosition[i] = a.jointForce[i] = a.jointTargetPositions[i] = a.jointTargetVelocities[i] = 0.0f;
     a.posIterJointVelocities[i] = a.deferredQstZ[i] = a.qstZIc[i] = a.qstZIntIc[i] = 0.0f;
   }
-  for (uint32_t i = 0; i < kMaxDofs + 3; ++i) a.jointNewVelocity[i] = 0.0f;
+  for (uint32_t i = 0; i < a.cap.dofs + 3; ++i) a.jointNewVelocity[i] = 0.0f;
   // configureDofs (:286)
   uint32_t totalDof = 0;
   for (uint32_t linkID = 1; linkID < n; ++linkID) {
@@ -827,7 +900,7 @@ EHD bool addToScene(Articulation& a) {
       a.links[linkID].pathCount = uint16_t(c);
       total += c;
     }
-    if (total > kMaxPath) {
+    if (total > a.cap.path) {
       a.err |= ERR_PATH;
       return false;
     }

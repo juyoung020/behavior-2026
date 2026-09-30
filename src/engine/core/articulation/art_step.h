@@ -792,7 +792,7 @@ EHD void computeUnconstrainedVelocitiesTGS(Articulation& a, float dt, const V3& 
   computeLinkStates(a, a.dt, invLengthScale, gravity, externalForcesEveryTgsIterationEnabled);
   if (a.nLinks > 1)
     for (uint32_t linkID = 0; linkID < a.nLinks; ++linkID) a.transmittedForce[linkID] = a.zaForces[linkID] + a.zaInternal[linkID];
-  computeArticulatedSpatialInertiaAndZ(a, externalForcesEveryTgsIterationEnabled ? nullptr : a.jointForce);
+  computeArticulatedSpatialInertiaAndZ(a, externalForcesEveryTgsIterationEnabled ? static_cast<const float*>(nullptr) : static_cast<const float*>(a.jointForce));
   computeArticulatedResponseMatrix(a);
   computeLinkAcceleration(a, a.dt);
   computeLinkInternalAcceleration(a, a.dt);
@@ -1007,7 +1007,7 @@ EHD float mimicSelfResponse(const Articulation& a, uint32_t linkIndex, uint32_t 
 }
 EHD float mimicCrossResponse(Articulation& a, uint32_t linkA, uint32_t dofA, uint32_t linkB, uint32_t dofB) {
   float* QMinusSTZ = a.deferredQstZ;
-  const uint32_t QMinusStZLength = kMaxDofs;  // mDeferredQstZ.size() (= dofs+1 칸) — 0 으로 지우기만 하므로 길이는 결과와 무관
+  const uint32_t QMinusStZLength = a.cap.dofs;  // mDeferredQstZ.size() (= dofs+1 칸) — 0 으로 지우기만 하므로 길이는 결과와 무관
   const float testJointImpulses[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
   const float* testJointImpulse = testJointImpulses[dofA];
   const SV testLinkImpulse = svzero();
