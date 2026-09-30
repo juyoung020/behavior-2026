@@ -63,6 +63,15 @@ static uint32_t simId(const IG::IslandSim* s) {
 static uint64_t ni(const PxNodeIndex& n) { return n.getInd(); }
 
 using SIM = IG::SimpleIslandManager;
+// 쌍 관리층 그림자(g1_pairs.cpp)가 PhysX 의 섬 호출도 받는다 (같은 기호를 두 번 --wrap 할 수 없어서 여기서 넘김)
+void g1p_addCM(void* cm, uint64_t n0, uint64_t n1, void* it, uint32_t t, uint32_t edge);
+void g1p_prealloc(uint32_t n, const uint32_t* h);
+void g1p_addPrealloc(uint32_t e, void* cm, uint64_t n0, uint64_t n1, void* it);
+void g1p_delayed(uint32_t n, const uint32_t* e);
+void g1p_edge(int op, uint32_t e);  // 5 끊음 6 떼어냄(removeConnection, 조인트 간선 뺌) 8 강체 관리자 지움 9 비활성
+void g1p_connect(uint32_t e, uint32_t t);
+void g1p_setRigidCM(uint32_t e, void* cm);
+bool g1p_isConstraintEdge(void* sim, uint32_t e);
 #define W(name) __wrap_##name
 #define R(name) __real_##name
 extern "C" {
@@ -89,6 +98,7 @@ PxU32 W(_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactMan
   const PxU32 r = R(_ZN5physx2IG19SimpleIslandManager17addContactManagerEPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE)(
       s, cm, n1, n2, it, t);
   if (d.top) rec(Rec{OP_ADD_CM, 0, uint32_t(t), 0, 0, 0, 0, ni(n1), ni(n2), {uint32_t(uintptr_t(cm) & 0xffffffffu), uint32_t(uintptr_t(cm) >> 32)}, r});
+  g1p_addCM(cm, n1.getInd(), n2.getInd(), it, uint32_t(t), r);
   return r;
 }
 void R(_ZN5physx2IG19SimpleIslandManager26preallocateContactManagersEjPj)(SIM*, PxU32, PxU32*);
@@ -96,6 +106,7 @@ void W(_ZN5physx2IG19SimpleIslandManager26preallocateContactManagersEjPj)(SIM* s
   Depth d;
   R(_ZN5physx2IG19SimpleIslandManager26preallocateContactManagersEjPj)(s, nb, handles);
   if (d.top) rec(Rec{OP_PREALLOC_CMS, 0, nb, 0, 0, 0, 0, 0, 0, std::vector<uint32_t>(handles, handles + nb), 0});
+  g1p_prealloc(nb, handles);
 }
 bool R(_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE)(
     SIM*, PxU32, PxsContactManager*, PxNodeIndex, PxNodeIndex, Sc::Interaction*, IG::Edge::EdgeType);
@@ -105,6 +116,7 @@ bool W(_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17P
   const bool r = R(_ZN5physx2IG19SimpleIslandManager29addPreallocatedContactManagerEjPNS_17PxsContactManagerENS_11PxNodeIndexES4_PNS_2Sc11InteractionENS0_4Edge8EdgeTypeE)(
       s, h, cm, n1, n2, it, t);
   if (d.top) rec(Rec{OP_ADD_PREALLOC_CM, 0, h, uint32_t(t), 0, 0, 0, ni(n1), ni(n2), {uint32_t(uintptr_t(cm) & 0xffffffffu), uint32_t(uintptr_t(cm) >> 32)}, r});
+  g1p_addPrealloc(h, cm, n1.getInd(), n2.getInd(), it);
   return r;
 }
 PxU32 R(_ZN5physx2IG19SimpleIslandManager13addConstraintEPNS_2Dy10ConstraintENS_11PxNodeIndexES5_PNS_2Sc11InteractionE)(SIM*, Dy::Constraint*, PxNodeIndex,
@@ -129,17 +141,18 @@ WRAP_NODE(OP_DEACTIVATE, _ZN5physx2IG19SimpleIslandManager14deactivateNodeENS_11
 WRAP_NODE(OP_SLEEP, _ZN5physx2IG19SimpleIslandManager14putNodeToSleepENS_11PxNodeIndexE)
 WRAP_NODE(OP_SET_KINEMATIC, _ZN5physx2IG19SimpleIslandManager12setKinematicENS_11PxNodeIndexE)
 WRAP_NODE(OP_SET_DYNAMIC, _ZN5physx2IG19SimpleIslandManager10setDynamicENS_11PxNodeIndexE)
-#define WRAP_EDGE(OPC, MANGLED)                                    \
+#define WRAP_EDGE(OPC, PAIROP, MANGLED)                            \
   void R(MANGLED)(SIM*, PxU32);                                    \
   void W(MANGLED)(SIM * s, PxU32 e) {                              \
     Depth d;                                                       \
     if (d.top) rec(Rec{OPC, 0, e, 0, 0, 0, 0, 0, 0, {}, 0});       \
+    if (PAIROP != 6 || !g1p_isConstraintEdge(s, e)) g1p_edge(PAIROP, e); \
     R(MANGLED)(s, e);                                              \
   }
-WRAP_EDGE(OP_REMOVE_CONN, _ZN5physx2IG19SimpleIslandManager16removeConnectionEj)
-WRAP_EDGE(OP_SET_DISCONNECTED, _ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj)
-WRAP_EDGE(OP_DEACT_EDGE, _ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj)
-WRAP_EDGE(OP_CLEAR_RIGID_CM, _ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCMEj)
+WRAP_EDGE(OP_REMOVE_CONN, 6, _ZN5physx2IG19SimpleIslandManager16removeConnectionEj)
+WRAP_EDGE(OP_SET_DISCONNECTED, 5, _ZN5physx2IG19SimpleIslandManager19setEdgeDisconnectedEj)
+WRAP_EDGE(OP_DEACT_EDGE, 9, _ZN5physx2IG19SimpleIslandManager14deactivateEdgeEj)
+WRAP_EDGE(OP_CLEAR_RIGID_CM, 8, _ZN5physx2IG19SimpleIslandManager16clearEdgeRigidCMEj)
 #define WRAP_VOID(OPC, MANGLED)                                   \
   void R(MANGLED)(SIM*);                                          \
   void W(MANGLED)(SIM * s) {                                      \
@@ -162,12 +175,14 @@ void R(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)
 void W(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)(SIM* s, PxU32 e, IG::Edge::EdgeType t) {
   Depth d;
   if (d.top) rec(Rec{OP_SET_CONNECTED, 0, e, uint32_t(t), 0, 0, 0, 0, 0, {}, 0});
+  g1p_connect(e, uint32_t(t));
   R(_ZN5physx2IG19SimpleIslandManager16setEdgeConnectedEjNS0_4Edge8EdgeTypeE)(s, e, t);
 }
 void R(_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE)(SIM*, PxU32, PxsContactManager*);
 void W(_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE)(SIM* s, PxU32 e, PxsContactManager* cm) {
   Depth d;
   if (d.top) rec(Rec{OP_SET_RIGID_CM, 0, e, 0, 0, 0, 0, uint64_t(cm), 0, {}, 0});
+  g1p_setRigidCM(e, cm);
   R(_ZN5physx2IG19SimpleIslandManager14setEdgeRigidCMEjPNS_17PxsContactManagerE)(s, e, cm);
 }
 // IslandSim (바깥에서 직접 부르는 것)
@@ -175,6 +190,7 @@ void R(_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj)(IG::IslandSim*, PxU32,
 void W(_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj)(IG::IslandSim* s, PxU32 nb, const PxU32* h) {
   Depth d;
   if (d.top) rec(Rec{OP_DELAYED_DIRTY, simId(s), nb, 0, 0, 0, 0, 0, 0, std::vector<uint32_t>(h, h + nb), 0});
+  g1p_delayed(nb, h);
   R(_ZN5physx2IG9IslandSim20addDelayedDirtyEdgesEjPKj)(s, nb, h);
 }
 void R(_ZN5physx2IG9IslandSim20removeDestroyedEdgesEv)(IG::IslandSim*);

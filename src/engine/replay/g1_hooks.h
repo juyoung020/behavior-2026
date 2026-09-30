@@ -46,4 +46,8 @@ void g1_bp_task(const char* name);
 void g1_bp_report();
 namespace eng { namespace scene { struct BpLog; } }
 const eng::scene::BpLog* g1_bp_log();
+// 쌍 관리층 그림자 (g1_pairs.cpp, G1_PAIRS)
+void g1_pairs_before(physx::PxScene* scene, uint64_t sim);
+void g1_pairs_after(physx::PxScene* scene, uint64_t sim);
+void g1_pairs_report();
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)

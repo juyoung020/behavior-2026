@@ -128,8 +128,10 @@ void g1_art_after(PxScene* scene, uint64_t sim) {
       t.px->copyInternalStateToCache(*c, PxArticulationCacheFlag::ePOSITION | PxArticulationCacheFlag::eVELOCITY);
       x.insert(x.end(), c->jointPosition, c->jointPosition + e.dofs);
       x.insert(x.end(), c->jointVelocity, c->jointVelocity + e.dofs);
-      y.insert(y.end(), e.jointPosition, e.jointPosition + e.dofs);
-      y.insert(y.end(), e.jointVelocity, e.jointVelocity + e.dofs);
+      const float* jp = e.jointPosition;  // 고정 배열·RelArr 둘 다 (용량 등급 작업과 함께 빌드되게)
+      const float* jv = e.jointVelocity;
+      y.insert(y.end(), jp, jp + e.dofs);
+      y.insert(y.end(), jv, jv + e.dofs);
     }
     x.push_back(t.px->getWakeCounter());
     y.push_back(e.wakeCounter);
@@ -200,8 +202,10 @@ bool g1_art_diff(const void* fa, const eng::art::Articulation& e, size_t* firstJ
     t.px->copyInternalStateToCache(*c, PxArticulationCacheFlag::ePOSITION | PxArticulationCacheFlag::eVELOCITY);
     x.insert(x.end(), c->jointPosition, c->jointPosition + e.dofs);
     x.insert(x.end(), c->jointVelocity, c->jointVelocity + e.dofs);
-    y.insert(y.end(), e.jointPosition, e.jointPosition + e.dofs);
-    y.insert(y.end(), e.jointVelocity, e.jointVelocity + e.dofs);
+    const float* jp = e.jointPosition;
+    const float* jv = e.jointVelocity;
+    y.insert(y.end(), jp, jp + e.dofs);
+    y.insert(y.end(), jv, jv + e.dofs);
   }
   x.push_back(t.px->getWakeCounter());
   y.push_back(e.wakeCounter);
