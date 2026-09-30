@@ -88,6 +88,9 @@ enum : uint8_t { eHAS_NO_TOUCH = 1 << 0, eHAS_TOUCH = 1 << 1, eREQUEST_CONSTRAIN
                  eTOUCH_KNOWN = eHAS_NO_TOUCH | eHAS_TOUCH };
 }
 static const uint32_t INVALID = 0xffffffffu;
+namespace PairRelease {  // ScNPhaseCore.h:75 PairReleaseFlag
+enum : uint32_t { eRUN_LOST_TOUCH_LOGIC = 1u << 0, eWAKE_ON_LOST_TOUCH = 1u << 1 };
+}
 static const uint64_t INVALID_NODE = 0xffffffffull;  // PxNodeIndex() 원값 (mID = PX_INVALID_NODE, mLinkID = 0)
 static const uint32_t NEW_CM_MASK = 0x80000000u;  // PxsNphaseCommon.h:40
 static const uint32_t CM_BUCKET_BITS = 7;         // PxsNphaseCommon.h:41 (CPU 판 bucket 0)
@@ -584,6 +587,25 @@ class ScPairs {
   bool deactivateInteraction(int32_t it) { return onDeactivate(it); }
 
   // ---- 조인트 끊김 등으로 캐시 지움 (ShapeInteraction::resetManagerCachedState, ScShapeInteraction.cpp:194). updateState 가 부른다.
+
+  // ---- 모양 빼기 (API: 행위자·모양 제거) = NPhaseCore::onVolumeRemoved (ScNPhaseCore.cpp:109), ShapeSimBase::removeFromBroadPhase (ScShapeSimBase.cpp:173).
+  // 행위자의 상호작용 목록을 뒤에서부터 보며 이 모양이 든 요소 상호작용을 푼다 (ElementInteractionReverseIterator, ScElementSim.cpp:62).
+  // 행위자 제거는 모양 순서대로 (Scene::removeShapes, ScScene.cpp:2285). 넓은 단계에서 빼는 것은 AABB 관리자 몫.
+  void onVolumeRemoved(int32_t elem, bool wakeOnLostTouch) {
+    const uint32_t flags = PairRelease::eRUN_LOST_TOUCH_LOGIC | (wakeOnLostTouch ? PairRelease::eWAKE_ON_LOST_TOUCH : 0u);
+    const int32_t actor = shapes[size_t(elem)].actor;
+    size_t last = actors[size_t(actor)].interactions.size();
+    while (last > 0) {
+      --last;
+      const std::vector<int32_t>& L = actors[size_t(actor)].interactions;
+      if (last >= L.size()) continue;
+      const int32_t it = L[last];
+      const Interaction& I = inters[size_t(it)];
+      if (I.type > eMARKER) continue;  // 요소 상호작용만 (eRB_ELEMENT)
+      if (I.elem0 == elem || I.elem1 == elem) releaseElementPair(it, flags, elem);
+    }
+    shapes[size_t(elem)].valid = false;
+  }
 
   // ---- joints·articulation 의 상호작용 자리표 (Interaction::registerInActors: 행위자 0 다음 1). 돌려준 번호로 지운다.
   int32_t addExternalInteraction(int32_t actor0, int32_t actor1, uint8_t type) {
@@ -1302,7 +1324,7 @@ class ScPairs {
   void onOverlapRemoved(int32_t e0, int32_t e1, int32_t knownInter) {
     const int32_t it = knownInter >= 0 ? knownInter : findInteraction(e1, e0);
     if (it < 0) return;
-    releaseElementPair(it, /*flags*/ 1u /*eWAKE_ON_LOST_TOUCH*/, -1);
+    releaseElementPair(it, PairRelease::eWAKE_ON_LOST_TOUCH, -1);
   }
   void releaseElementPair(int32_t it, uint32_t flags, int32_t removedElement) {
     Interaction& I = inters[size_t(it)];
@@ -1322,7 +1344,7 @@ class ScPairs {
                      removedElement >= 0, filterCallbackData);
     }
     if (I.type == eOVERLAP) {
-      if (flags & 2u /*eRUN_LOST_TOUCH_LOGIC*/) lostTouchReportsOne(it, (flags & 1u) != 0, removedElement);
+      if (flags & PairRelease::eRUN_LOST_TOUCH_LOGIC) lostTouchReportsOne(it, (flags & PairRelease::eWAKE_ON_LOST_TOUCH) != 0, removedElement);
       // ~ShapeInteraction (ScShapeInteraction.cpp:120)
       Actor& b0 = actors[size_t(I.actor0)];
       Actor& b1 = actors[size_t(I.actor1)];

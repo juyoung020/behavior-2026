@@ -359,13 +359,15 @@ struct Hooks : public ss::IslandHooks {
 // ---------------------------------------------------------------------------------------------------------------------
 int main(int argc, char** argv) {
   int nb = 150, steps = 300, seed = 1, threads = 2;
-  bool sleep = false;  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
+  bool sleep = false;
+  int removeEvery = 0;  // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--bodies") && i + 1 < argc) nb = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--steps") && i + 1 < argc) steps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--sleep")) sleep = true;
+    else if (!strcmp(argv[i], "--remove") && i + 1 < argc) removeEvery = atoi(argv[++i]);
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
@@ -607,7 +609,7 @@ int main(int argc, char** argv) {
     ++bad;
   };
   const float dt = 1.0f / 60.0f;
-  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0;
+  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0, nRemovedActors = 0;
   for (int step = 0; step < steps; ++step) {
     for (size_t k = 0; k < kinematics.size(); ++k) {  // 운동학 몸체 옮기기 (잠 켬이면 절반은 150 스텝 뒤 멈춤)
       if (sleep && (k & 1) && step > 150) continue;
@@ -624,6 +626,48 @@ int main(int argc, char** argv) {
     }
     syncScene();
     G.clearStep();
+    // 가끔 행위자 빼기(API) — 그때 PhysX 가 하는 섬 호출도 이 스텝 기록에 넣고, 우리 층도 스텝 재생 앞에서 같은 모양 순서로 뺀다
+    std::vector<int32_t> removedElems;
+    if (removeEvery > 0 && step % removeEvery == removeEvery / 2) {
+      for (int tries = 0; tries < 20; ++tries) {
+        const size_t di = size_t(P(rng) * float(dyns.size())) % dyns.size();
+        PxRigidDynamic* d = dyns[di];
+        if (d->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC) continue;
+        bool joined = false;
+        for (auto& jp : jointed) joined |= jp.first == d || jp.second == d;
+        if (joined) continue;
+        std::vector<PxShape*> sh(d->getNbShapes());
+        d->getShapes(sh.data(), PxU32(sh.size()));
+        for (PxShape* s : sh) removedElems.push_back(int32_t(static_cast<NpShape*>(s)->getCore().getExclusiveSim()->getElementID()));
+        G.on = true;
+        scene->removeActor(*d);
+        G.on = false;
+        actorsPx.erase(std::find(actorsPx.begin(), actorsPx.end(), static_cast<PxRigidActor*>(d)));
+        dyns.erase(dyns.begin() + long(di));
+        nRemovedActors++;
+        break;
+      }
+    }
+    if (removeEvery > 0 && step % removeEvery == removeEvery / 2 + 1) {  // 다음 스텝에 새 몸체 하나 넣기 (번호 재사용이 뺀 스텝과 겹치지 않게)
+      PxRigidDynamic* n = phys->createRigidDynamic(PxTransform(PxVec3(3.0f * U(rng), 3.0f * U(rng), 2.0f + P(rng))));
+      PxGeometryHolder h; randGeom(h);
+      addShape(n, h.any(), PxTransform(PxIdentity), false);
+      PxRigidBodyExt::updateMassAndInertia(*n, 300.0f);
+      if (!sleep) n->setSleepThreshold(0.0f);
+      scene->addActor(*n);
+      actorsPx.push_back(n);
+      dyns.push_back(n);
+      syncScene();
+    }
+    // 새 겹침 때 쓸 노드 활성 상태 = simulate 직전 추측 섬 (API 깨움·새 행위자 반영 뒤)
+    {
+      const IG::IslandSim& is = gSc->getSimpleIslandManager()->getSpeculativeIslandSim();
+      hooks.nodeActive.clear();
+      for (auto& kv : actorIndex) {
+        const PxNodeIndex n = kv.first->getNodeIndex();
+        if (n.isValid()) hooks.nodeActive[n.getInd()] = is.getNode(n).isActive();
+      }
+    }
     G.on = true;
     scene->simulate(dt);
     scene->fetchResults(true);
@@ -642,6 +686,7 @@ int main(int argc, char** argv) {
     for (auto& c : G.createdShapeChunks) created.insert(created.end(), c.pairs.begin(), c.pairs.end());
     nCreated += created.size() / 2;
     nTrig += G.createdTrigger.size() / 2;
+    for (int32_t e : removedElems) M.onVolumeRemoved(e, true);
     M.updateDirtyInteractions();
     M.finishBroadPhase(G.createdTrigger.data(), uint32_t(G.createdTrigger.size() / 2), created.data(), uint32_t(created.size() / 2));
     // 좁은 단계 결과: 합친 목록 칸별로 (PhysX 의 칸 순서와 우리 순서가 같아야 한다)
@@ -733,15 +778,6 @@ int main(int argc, char** argv) {
     M.processLostContacts3();
     replayActs(true);
 
-    // 다음 스텝 새 겹침 때 쓸 노드 활성 상태 (이번 스텝 끝)
-    {
-      const IG::IslandSim& is = gSc->getSimpleIslandManager()->getSpeculativeIslandSim();
-      hooks.nodeActive.clear();
-      for (auto& kv : actorIndex) {
-        const PxNodeIndex n = kv.first->getNodeIndex();
-        if (n.isValid()) hooks.nodeActive[n.getInd()] = is.getNode(n).isActive();
-      }
-    }
     // ---- 섬 호출 비교 (종류별 순서)
     for (int op = 0; op < OP_COUNT; ++op) {
       if (op == OP_DELAYED) continue;  // isDirty 는 섬 상태 (solver) — 우리 갈고리는 늘 거짓
@@ -802,8 +838,8 @@ int main(int argc, char** argv) {
     }
     if (bad && step > firstBad + 2) break;
   }
-  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 "\n", steps, nCreated,
-         nTrig, nRemoved, nTouch, nAct, nDeact);
+  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 ", 뺀 행위자 %" PRIu64 "\n", steps, nCreated,
+         nTrig, nRemoved, nTouch, nAct, nDeact, nRemovedActors);
   printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents, cmpCalls, cmpActor,
          bad);
   if (bad) printf(" (첫 다름 스텝 %d)", firstBad);
