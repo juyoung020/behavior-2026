@@ -17,12 +17,35 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 
+def merge_lora(p):
+    """openpi lora.py: einsum(x, W) + einsum(einsum(x, A), B) * alpha / rank (= 1 for gemma_2b_lora and gemma_300m_lora).
+    Folded in f32; the attention output einsum sums B over heads (\"BTL,NLD->BTD\")."""
+    n = 0
+    for k in [k for k in list(p) if k.endswith("lora_a")]:
+        a = p.pop(k)
+        b = p.pop(k[:-1] + "b")
+        if k.endswith("/lora_a"):  # Einsum modules: '.../q_einsum/lora_a' -> '.../q_einsum/w'
+            wk = k[: -len("lora_a")] + "w"
+        else:  # FeedForward: 'gating_einsum_lora_a' -> 'gating_einsum', 'linear_lora_a' -> 'linear'
+            wk = k[: -len("_lora_a")]
+        w = p[wk]
+        if "attn_vec_einsum" in wk:  # w [L,N,H,D], a [L,N,H,r], b [L,N,r,D]
+            p[wk] = w + np.einsum("lnhr,lrd->lnhd", a, b.sum(axis=1))
+        else:  # matmul over the last two axes
+            p[wk] = w + a @ b
+        n += 1
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", required=True)
     ap.add_argument("--base", required=True, help="checkpoint dir with params/ (the training's starting point)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--ema", action="store_true", help="write the EMA parameters (what openpi saves) instead of raw")
+    ap.add_argument("--merge-lora", action="store_true",
+                    help="fold the LoRA factors into the base weights (W + A.B, scaling alpha/rank = 1) so the plain "
+                         "pi05 model config and the native engine can load it")
     args = ap.parse_args()
     import orbax.checkpoint as ocp
     from flax import traverse_util
@@ -43,6 +66,9 @@ def main():
         else:
             n_new += 1  # LoRA factors
         base[name] = np.asarray(v, np.float32)
+    if args.merge_lora:
+        n_merged = merge_lora(base)
+        print(f"merged {n_merged} LoRA pairs into the base weights")
     tree = traverse_util.unflatten_dict({tuple(k.split("/")): v for k, v in base.items()})
     out = pathlib.Path(args.out).expanduser() / "params"
     with ocp.PyTreeCheckpointer() as ck:

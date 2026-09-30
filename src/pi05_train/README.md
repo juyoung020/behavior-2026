@@ -65,3 +65,48 @@ pi05_train --state state.pi05d --model pi05.pi05w --table <fasttrain table dir> 
            --steps 30000 --offload 2 --save-every 1000 --out <dir>
 python tools/state_to_orbax.py --state <dir>/state_stepN.pi05d --base <openpi checkpoint> --out <new ckpt> --ema
 ```
+
+## Training on an RTX 4090 (24 GB)
+
+Everything is in `tools/setup/train_4090.sh` (repo root). It has **not been run on a 4090 yet**; the numbers below
+are estimated from the RTX 5070 Ti measurements.
+
+- **Requirements:** Ubuntu 22.04/24.04, NVIDIA driver ≥ 570, CUDA toolkit 12.8, g++, cmake, Rust, uv, ffmpeg, and
+  about 60 GB of disk. The script builds for sm_89 (`PI05_ARCH`, `FT_CUDA_ARCH=89`).
+- **Data:**
+  - Demos: task 0 of `behavior-1k/2026-challenge-demos`, 4.9 GB (`meta/*`, `data/chunk-000`, RGB video `chunk-000`).
+  - Start checkpoint with its norm stats: the official radio release (17 GB), or openpi `pi05_base` plus
+    `compute_norm_stats`.
+  - Either `SRC=user@oldpc` rsyncs both from the old PC, or they are downloaded.
+  - The colour LUT must be rebuilt on the new machine (`fasttrain/lut.py build`). The table, packet index and weight
+    file are rebuilt by the script.
+
+```bash
+bash tools/setup/train_4090.sh deps && bash tools/setup/train_4090.sh repos && bash tools/setup/train_4090.sh fetch
+bash tools/setup/train_4090.sh build && bash tools/setup/train_4090.sh prepare && bash tools/setup/train_4090.sh verify
+MODE=expert STEPS=30000 bash tools/setup/train_4090.sh train          # or MODE=lora
+STATE=~/pi05_runs/expert/state_step30000.pi05d bash tools/setup/train_4090.sh export
+```
+
+- **Settings:** openpi `pi05_b1k`, carried in the state file: batch 32, AdamW (0.9, 0.95, 1e-8, 1e-10), clip 1.0,
+  warmup 1000 → cosine 2.5e-5 → 2.5e-6 at 30k, EMA 0.99, seed 42.
+- **Full fine-tuning does not fit in 24 GB** (it needs about 66 GB), so pick the expert or the LoRA mode.
+- **On 24 GB keep the optimizer state on the GPU** (`OFFLOAD=0`). Estimated usage and speed:
+
+  | mode | GPU memory | per step (batch 32) |
+  |---|---:|---:|
+  | expert | ~15–16 GB | ~1.7 s |
+  | lora | ~18–19 GB | ~5 s |
+
+- **Checkpoints and resume:** `state_stepN.pi05d` is written every `--save-every` steps and holds params, EMA, Adam
+  moments and the step. Pass it as `STATE=` to continue.
+- **After training:** `export` writes an openpi params checkpoint (EMA params; LoRA folded into the base weights with
+  `--merge-lora`) and a `.pi05w` for the native engine / `pi05_server`, so it can be evaluated like the official
+  radio checkpoint.
+- **Decide before training:**
+  - Prompt text: the demos train on the task *name*, while serving sends the long sentence.
+  - Task range.
+  - Mode.
+  - Start checkpoint.
+
+  See `docs/π05_네이티브엔진.md`, section 15.
