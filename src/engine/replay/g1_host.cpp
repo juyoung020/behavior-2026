@@ -27,6 +27,7 @@ bool g1_islands_rec(size_t i, sc2::IslOp& o);
 void g1_islands_compare_store(const sc2::IslandStore& O, uint64_t* n, uint64_t* bad, std::string* first);
 ss::ScPairs* g1_pairs_M();
 void g1_pairs_actor_active(std::vector<int8_t>& out);
+void g1_pairs_wake(sc2::HostWake& out);
 
 namespace {
 
@@ -50,9 +51,11 @@ struct Host {
   std::unique_ptr<ss::ScPairs> P;
   sc2::LiveIslands live;
   std::vector<uint8_t> active;
+  sc2::HostWake wake;  // 우리 깸 카운터 표 (창 앞마다 PhysX 값으로 = API 는 아직 바깥)
   size_t cursor = 0, boundary = 0;
-  Stat ops, ext, isl, acts, act, pairs, win;
-  int neg = 0;  // G1_HOST_NEG: 1 = 활성화 몰이 빼기, 2 = 재우기 몰이 빼기 (비교가 살아 있나)
+  Stat ops, ext, isl, acts, act, pairs, win, wk;
+  int neg = 0;  // G1_HOST_NEG: 1 = 활성화 몰이 빼기, 2 = 재우기 몰이 빼기, 3 = 풀이 뒤 깸/잠 요청 빼기 (비교가 살아 있나)
+  uint64_t nWakeOps = 0, winActMatched = 0, extInSim = 0;
   uint64_t wakeReq = 0, woken = 0, slept = 0, nActs = 0, winChanged = 0;
 } H;
 
@@ -132,9 +135,11 @@ void g1_host_before(physx::PxScene* scene, uint64_t sim) {
     H.live.M = &H.store.M;
     H.live.P = H.P.get();
     H.live.active = &H.active;
+    H.live.wake = &H.wake;
     H.P->islands = &H.live;
     H.active.assign(H.P->actors.size(), 0);
     refreshActive(false);
+    g1_pairs_wake(H.wake);
     H.running = true;
     H.skipPre = true;  // 이 simulate 의 창은 이미 두 쪽 다 들어감 (g1_pairs 가 pairsPre 를 한 뒤 복사)
     H.cursor = H.boundary = g1_islands_rec_count();
@@ -144,6 +149,7 @@ void g1_host_before(physx::PxScene* scene, uint64_t sim) {
   }
   H.boundary = g1_islands_rec_count();
   refreshActive(true);
+  g1_pairs_wake(H.wake);  // 창의 API 깨우기·재우기가 바꾼 값 (바깥)
 }
 
 void g1_host_after(physx::PxScene*, uint64_t sim) {
@@ -167,7 +173,9 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   std::vector<sc2::PairsAct> acts;
   size_t gi = 0;  // 다음에 맞출 우리 호출
   // 우리 마디 (simulate 안): PhysX 기록의 섬 마디가 허락한 것까지만 앞당겨 돈다
-  enum { PH_BP, PH_NP, PH_LOST, PH_LOST3, PH_SCPOST, PH_DONE };
+  enum { PH_BP, PH_NP, PH_LOST, PH_LOST3, PH_SCPOST, PH_AFTER, PH_DONE };
+  sc2::HostWake post;  // 스텝 끝 PhysX 깸 카운터 (풀이·관절체 모듈 몫의 수치)
+  g1_pairs_wake(post);
   struct Ctx {
     int next = PH_BP;
     bool spec = false, second2 = false, third = false, post = false;
@@ -175,7 +183,9 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
     const sc2::PairsStep* S;
     eng::ig::IslandManager* M;
     std::vector<sc2::PairsAct>* acts;
-  } C{PH_BP, false, false, false, false, &P, &S, &M, &acts};
+    sc2::LiveIslands* L;
+    const sc2::HostWake* postW;
+  } C{PH_BP, false, false, false, false, &P, &S, &M, &acts, &L, &post};
   auto allowed = [](Ctx& c) {
     switch (c.next) {
       case PH_BP: return true;
@@ -183,12 +193,13 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
       case PH_LOST: return c.second2;
       case PH_LOST3: return c.third;
       case PH_SCPOST: return c.post;
+      case PH_AFTER: return c.post;
       default: return false;
     }
   };
   auto run = [](Ctx& c) {
     switch (c.next) {
-      case PH_BP: sc2::hostPairsBP(*c.P, *c.S); break;
+      case PH_BP: sc2::hostPairsBP(*c.P, *c.S, c.L); break;
       case PH_NP: sc2::hostPairsNP(*c.P, *c.S); break;
       case PH_LOST: sc2::hostPairsLost(*c.P, *c.S); break;
       case PH_LOST3: sc2::hostPairsLost3(*c.P); break;
@@ -197,6 +208,12 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
         if (H.neg != 2) sc2::hostSetActiveFromIslands(*c.M, *c.P, H.active, false, &ch);  // 음성 대조 2: 재우기 몰이를 뺀다
         H.slept += ch.size();
         sc2::hostDeactivateEdges(*c.M, *c.P, c.acts);
+        break;
+      }
+      case PH_AFTER: {
+        const size_t n0 = c.L->out.size();
+        if (H.neg != 3) sc2::hostAfterIntegration(*c.M, *c.P, *c.L, H.wake, *c.postW);  // 음성 대조 3: 풀이 뒤 깸/잠 요청 빼기
+        H.nWakeOps += c.L->out.size() - n0;
         break;
       }
     }
@@ -232,8 +249,14 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   H.skipPre = false;
   if (H.active.size() < P.actors.size()) H.active.resize(P.actors.size(), 0);
   for (const sc2::IslOp& r : win) {
-    if (sc2::islExternalOp(r)) H.ext.chk(sc2::islApplyExternal(M, r), at(("바깥 호출 결과 " + opStr(r)).c_str()));
-    else if (sc2::islPairsOp(r)) matchOne(r, false);
+    if (r.op == sc2::ISL_ACTIVATE && gi < L.out.size() && L.out[gi].op == sc2::ISL_ACTIVATE && L.out[gi].a == r.a) {
+      ++H.winActMatched;
+      matchOne(r, false);
+    } else if (sc2::islExternalOp(r)) {
+      H.ext.chk(sc2::islApplyExternal(M, r), at(("바깥 호출 결과 " + opStr(r)).c_str()));
+    } else if (sc2::islPairsOp(r)) {
+      matchOne(r, false);
+    }
     else H.win.chk(false, at(("창에 섬 마디 " + opStr(r)).c_str()));
   }
   for (; gi < L.out.size(); ++gi) {  // 창에서 우리만 부른 것
@@ -244,12 +267,13 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   L.deferBad = 0;
   // ---- simulate: PhysX 기록의 마디에 맞춰 우리 마디를 돈다
   for (const sc2::IslOp& r : simr) {
-    if (sc2::islPairsOp(r)) {
+    if (sc2::islPairsOp(r) || r.op == sc2::ISL_ACTIVATE || r.op == sc2::ISL_DEACTIVATE) {
       matchOne(r, true);
       continue;
     }
     if (sc2::islExternalOp(r)) {
-      if (C.post) force(PH_SCPOST);  // afterIntegration 의 재우기 등은 Sc postThird 뒤
+      ++H.extInSim;
+      if (C.post) force(PH_AFTER);  // afterIntegration 까지 끝난 뒤의 바깥 호출
       H.ext.chk(sc2::islApplyExternal(M, r), at(("바깥 호출 결과 " + opStr(r)).c_str()));
       continue;
     }
@@ -268,6 +292,7 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
           eng::ig::secondPassIslandGenPart1(M);
         }
         eng::ig::secondPassIslandGenPart2(M);
+        sc2::hostSnapshotSolveWake(H.wake);  // 풀이가 읽는 깸 카운터
         std::vector<uint32_t> ch;
         sc2::hostSetActiveFromIslands(M, P, H.active, true, &ch);
         H.woken += ch.size();
@@ -287,12 +312,19 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
     }
   }
   C.spec = C.second2 = C.third = C.post = true;
-  force(PH_SCPOST);
+  force(PH_AFTER);
   for (; gi < L.out.size(); ++gi) {
     H.ops.chk(false, at(("우리만 부름: " + opStr(L.out[gi])).c_str()));
     L.apply(gi);
   }
   H.wakeReq += L.wakeReq.size();
+  if (const char* d = getenv("G1_HOST_DUMP")) {  // 진단: 이 simulate 의 PhysX 기록과 우리 호출
+    if ((long long)H.curSim == atoll(d)) {
+      for (const sc2::IslOp& r : win) printf("  [px 창] %s p=%llx\n", opStr(r).c_str(), (unsigned long long)r.p);
+      for (const sc2::IslOp& r : simr) printf("  [px] %s p=%llx\n", opStr(r).c_str(), (unsigned long long)r.p);
+      for (const sc2::IslOp& r : L.out) printf("  [우리] %s p=%llx\n", opStr(r).c_str(), (unsigned long long)r.p);
+    }
+  }
   // ---- 비교
   {
     uint64_t n = 0, bad = 0;
@@ -321,6 +353,19 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
       if (px[k] >= 0) H.act.chk(H.active[k] == uint8_t(px[k]), at(("행위자 활성 #" + std::to_string(k)).c_str()));
   }
   if (const ss::ScPairs* ref = g1_pairs_M()) comparePairs(P, *ref);
+  {
+    bool same = H.wake.bodies.size() == post.bodies.size();
+    for (size_t i = 0; same && i < post.bodies.size(); ++i) {
+      same = H.wake.bodies[i].node == post.bodies[i].node && H.wake.bodies[i].wc == post.bodies[i].wc;
+      if (!same && H.show && H.wk.bad == 0)
+        printf("    깸 카운터 다름 @sim %llu 노드 %llx: 우리 %.9g / PhysX %.9g (풀이 %.9g)\n", (unsigned long long)H.curSim,
+               (unsigned long long)post.bodies[i].node, H.wake.bodies[i].wc, post.bodies[i].wc, post.bodies[i].solverWc);
+    }
+    H.wk.chk(same, at("몸체 깸 카운터 표"));
+    bool sa = H.wake.arts.size() == post.arts.size();
+    for (size_t i = 0; sa && i < post.arts.size(); ++i) sa = H.wake.arts[i].node == post.arts[i].node && H.wake.arts[i].wc == post.arts[i].wc;
+    H.wk.chk(sa, at("관절체 깸 카운터"));
+  }
   (void)sim;
 }
 
@@ -328,13 +373,16 @@ void g1_host_report() {
   if (!H.on || !H.running) return;
   printf("G1 순서기 그림자 (넘겨받은 뒤 %" PRIu64 " simulate) — 쌍 관리층↔섬 관리 직접 연결 + Sc 활성 몰이\n", H.steps);
   auto line = [](const char* name, const Stat& s) { printf("  %-34s: 비교 %" PRIu64 ", 다름 %" PRIu64 " %s\n", name, s.n, s.bad, s.first.c_str()); };
-  line("쌍 관리층 섬 호출 (차례·번호)", H.ops);
+  line("우리가 낸 섬 호출 (쌍·깸/잠, 차례·번호)", H.ops);
   line("바깥 호출 결과 번호", H.ext);
   line("섬 시뮬·번호 관리 (스텝 끝)", H.isl);
   line("상호작용 활성/비활성 (호출·결과)", H.acts);
   line("행위자 활성 표시 (스텝 끝)", H.act);
   line("쌍 관리층 상태 (g1_pairs 와)", H.pairs);
   line("순서 점검 (창·마디)", H.win);
+  line("깸 카운터 표 (스텝 끝)", H.wk);
+  printf("  깨움/잠 요청: afterIntegration %" PRIu64 ", 창에서 우리 것과 맞춘 activateNode %" PRIu64 ", simulate 안 바깥 호출 %" PRIu64 "\n", H.nWakeOps,
+         H.winActMatched, H.extInSim);
   printf("  몰이 횟수: 활성화 호출 %" PRIu64 ", 깨움 노드 %" PRIu64 ", 재운 노드 %" PRIu64 ", internalWakeUp %" PRIu64 ", 창에서 바뀐 활성 표시 %" PRIu64 "\n", H.nActs,
          H.woken, H.slept, H.wakeReq, H.winChanged);
 }

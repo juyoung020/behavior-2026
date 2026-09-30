@@ -92,17 +92,51 @@ inline bool islApplyExternal(ig::IslandManager& M, const IslOp& r) {
   }
 }
 
+// ---- 깸 카운터 (Sc 층이 보는 BodyCore/ArticulationCore 값). 노드 원값(PxNodeIndex::getInd)으로 찾는다.
+constexpr float kWakeReset = 20.0f * 0.02f;  // ScActorSim.h:67 ScInternalWakeCounterResetValue
+struct HostBodyWake {
+  uint64_t node = 0;
+  float wc = 0.0f;        // BodyCore::getWakeCounter
+  float solverWc = 0.0f;  // PxsBodyCore::solverWakeCounter (풀이가 낸 값, afterIntegration 에서 옮겨 적음)
+  float solveWc = 0.0f;   // 풀이가 읽은 값 (순서기가 풀이 앞에 떠 둠: 사라진 닿음의 깨우기가 풀이 뒤에 wc 를 올려도 풀이는 앞 값을 봤다)
+  uint8_t kinematic = 0, link = 0, pad[2] = {0, 0};
+};
+struct HostArtWake {
+  uint32_t node = 0;              // 관절체 섬 노드 번호
+  float wc = 0.0f;                // ArticulationCore 깸 카운터 (sleepCheck 뒤 = 링크 최댓값)
+  std::vector<uint64_t> links;    // 링크 노드 원값 (링크 번호 순)
+};
+struct HostWake {
+  std::vector<HostBodyWake> bodies;  // 원값 순으로 정렬
+  std::vector<HostArtWake> arts;
+  HostBodyWake* body(uint64_t node) {
+    size_t lo = 0, hi = bodies.size();
+    while (lo < hi) {
+      const size_t m = (lo + hi) / 2;
+      if (bodies[m].node < node) lo = m + 1;
+      else hi = m;
+    }
+    return lo < bodies.size() && bodies[lo].node == node ? &bodies[lo] : nullptr;
+  }
+  HostArtWake* art(uint32_t node) {
+    for (HostArtWake& a : arts)
+      if (a.node == node) return &a;
+    return nullptr;
+  }
+};
+
 // ---- 섬 갈고리: 우리 섬 관리에 바로
 struct LiveIslands : public ss::IslandHooks {
   ig::IslandManager* M = nullptr;
   ss::ScPairs* P = nullptr;
   std::vector<uint8_t>* active = nullptr;  // 행위자별 ActorSim::isActive
+  HostWake* wake = nullptr;                // 깸 카운터 (없으면 internalWakeUp 은 활성 표시만)
   bool defer = false;                      // 창(simulate 밖): 호출을 모아 두고 부르는 쪽이 차례에 맞춰 넣는다
   std::vector<IslOp> out;                  // 이 스텝에 낸 호출 (차례)
   std::vector<uint8_t> applied;            // out 과 같은 길이: 섬 관리에 넣었나 (defer 때는 부르는 쪽이 차례에 맞춰 넣는다)
   uint32_t deferBad = 0;                   // defer 중 돌려받을 값이 있는 호출 (창에서는 없어야)
   std::vector<int32_t> wakeReq;            // internalWakeUp 받은 행위자 (섬 activateNode 는 아직 바깥 기록)
-  std::vector<std::pair<int32_t, int32_t>> lostTouch;
+  std::vector<std::pair<int32_t, int32_t>> lostTouch;  // Scene::mLostTouchPairs (다음 스텝 넓은 단계 뒤에 처리)
 
   void applyOp(IslOp& r) {
     switch (r.op) {
@@ -115,6 +149,8 @@ struct LiveIslands : public ss::IslandHooks {
       case ISL_REMOVE_CONN: ig::removeConnection(*M, r.a); break;
       case ISL_SET_RIGID_CM: M->constraintOrCm[r.a] = r.b; break;
       case ISL_CLEAR_RIGID_CM: M->constraintOrCm[r.a] = ig::INVALID_EDGE; break;
+      case ISL_ACTIVATE: ig::activateNode(*M, r.a); break;
+      case ISL_DEACTIVATE: ig::deactivateNode(*M, r.a); break;
       default: break;  // deactivateEdge: GPU 자료만
     }
   }
@@ -135,8 +171,7 @@ struct LiveIslands : public ss::IslandHooks {
   void clearStep() {
     out.clear();
     applied.clear();
-    wakeReq.clear();
-    lostTouch.clear();
+    wakeReq.clear();  // lostTouch 는 다음 simulate 의 processLostTouchPairs 가 비운다
   }
 
   static uint32_t cmId(int32_t cm) { return cm < 0 ? ig::INVALID_EDGE : uint32_t(cm); }
@@ -174,17 +209,44 @@ struct LiveIslands : public ss::IslandHooks {
   bool isSpeculativeNodeActive(uint64_t n) override { return specFlag(n, ig::N_ACTIVE); }
   bool isSpeculativeNodeActiveOrActivating(uint64_t n) override { return specFlag(n, ig::N_ACTIVE | ig::N_ACTIVATING); }
   bool isActorActive(int32_t a) override { return a >= 0 && size_t(a) < active->size() && (*active)[size_t(a)] != 0; }
-  // BodySim::internalWakeUp: 운동학이 아니고 깨우기 수치가 모자라면 setActive(true) (+ activateNode). 관절체는 링크 전부.
-  // 잠든 몸체의 수치는 0 이라 "모자람" = 잠들어 있음. 이미 깨어 있으면 활성 표시는 그대로라 여기서는 표시만 켠다.
+  void markNodeActive(uint64_t node) {
+    for (uint32_t k = 0; k < P->actors.size() && k < active->size(); ++k)
+      if (P->actors[k].nodeIndex == node) (*active)[k] = 1;
+  }
+  void emitActivate(uint64_t node) {
+    IslOp r;
+    r.op = ISL_ACTIVATE; r.a = uint32_t(node & 0xffffffffu); r.p = node;
+    emit(r, false);
+  }
+  // BodySim::internalWakeUpBase (ScBodySim.cpp:541): 운동학이 아니고 깸 카운터가 모자라면 올리고 setActive(true) + activateNode
+  void wakeBody(uint64_t node, bool kinematic) {
+    HostBodyWake* b = wake->body(node);
+    if (!b || kinematic || !(b->wc < kWakeReset)) return;
+    b->wc = kWakeReset;
+    markNodeActive(node);
+    emitActivate(node);
+  }
+  // BodySim::internalWakeUp (ScBodySim.cpp:527) / ArticulationSim::internalWakeUp (ScArticulationSim.cpp:501)
   void internalWakeUp(int32_t a) override {
     wakeReq.push_back(a);
     const ss::Actor& A = P->actors[size_t(a)];
-    if (A.isKinematic()) return;
+    if (!wake) {  // 깸 표 없이: 활성 표시만
+      if (A.isKinematic()) return;
+      if (A.articulation >= 0) {
+        for (uint32_t k = 0; k < P->actors.size(); ++k)
+          if (P->actors[k].articulation == A.articulation && k < active->size()) (*active)[k] = 1;
+      } else if (size_t(a) < active->size()) {
+        (*active)[size_t(a)] = 1;
+      }
+      return;
+    }
     if (A.articulation >= 0) {
-      for (uint32_t k = 0; k < P->actors.size(); ++k)
-        if (P->actors[k].articulation == A.articulation && k < active->size()) (*active)[k] = 1;
-    } else if (size_t(a) < active->size()) {
-      (*active)[size_t(a)] = 1;
+      HostArtWake* w = wake->art(uint32_t(A.nodeIndex & 0xffffffffu));
+      if (!w || !(w->wc < kWakeReset)) return;
+      w->wc = kWakeReset;
+      for (uint64_t l : w->links) wakeBody(l, false);  // internalWakeUpArticulationLink -> Base (운동학 검사는 링크 몸체 것: 링크는 운동학 아님)
+    } else {
+      wakeBody(A.nodeIndex, A.isKinematic());
     }
   }
   void addToLostTouchList(int32_t a0, int32_t a1) override { lostTouch.push_back({a0, a1}); }
@@ -256,8 +318,133 @@ inline void hostDeactivateEdges(ig::IslandManager& M, ss::ScPairs& P, std::vecto
   }
 }
 
+// ---- ScPipeline.cpp:853 processLostTouchPairs (postBroadPhaseStage2, 다음 simulate 의 넓은 단계 뒤): 지난 스텝 잃은 닿음 쌍 중
+//      한쪽만 자고 있으면 둘 다 깨운다(둘 다 자면 그대로). 지워진 행위자가 끼면 남은 쪽을 깨운다 — 지워짐 = 모양이 하나도 안 남음 (추정: PhysX 는 행위자 번호 표)
+inline uint32_t hostProcessLostTouchPairs(ss::ScPairs& P, LiveIslands& L) {
+  uint32_t deleted = 0;
+  const std::vector<std::pair<int32_t, int32_t>> pairs = L.lostTouch;
+  L.lostTouch.clear();
+  auto alive = [&](int32_t a) {
+    for (uint32_t e = 0; e < P.shapes.size(); ++e)
+      if (P.shapes[e].valid && P.shapes[e].actor == a) return true;
+    return false;
+  };
+  for (const auto& pr : pairs) {
+    const bool d1 = !alive(pr.first), d2 = !alive(pr.second);
+    if (d1 || d2) {
+      ++deleted;
+      if (!d1) L.internalWakeUp(pr.first);
+      if (!d2) L.internalWakeUp(pr.second);
+      continue;
+    }
+    const bool a1 = L.isActorActive(pr.first), a2 = L.isActorActive(pr.second);
+    if (!a1 && !a2) continue;
+    if (!a1 || !a2) {
+      L.internalWakeUp(pr.first);
+      L.internalWakeUp(pr.second);
+    }
+  }
+  return deleted;
+}
+
+// ---- afterIntegration 의 깸/잠 요청 (풀이가 낸 깸 카운터 -> 섬 관리자)
+// 강체: SimulationController::updateScBodyAndShapeSim (ScScene.cpp:300, 옛 작업 나누기 gUseNewTaskAllocationScheme=false):
+//   정확 섬 활성 강체 노드를 모양 수 누적 256 이 넘기 전까지 한 작업으로 묶고, 작업마다 몸체를 돌며 깸 카운터를 옮겨 적은 뒤
+//   활성화(이번 프레임 깸 = 풀이 앞 0 -> 풀이 뒤 > 0, DySleep.cpp:161/210) 전부 activateNode, 이어서 비활성화(풀이 뒤 0, DySleep.cpp:232) 전부 deactivateNode.
+// 관절체: updateArticulationAfterIntegration (ScSimulationController.cpp:100) -> ArticulationSim::sleepCheck (ScArticulationSim.cpp:432):
+//   첫 링크가 깨어 있을 때만. 링크마다 BodySim::updateWakeCounter — 앞 값 0 에서 에너지로 깨면 activateNode(링크 노드) (ScBodySim.cpp:625),
+//   최댓값 0 이면 deactivateNode(관절체 노드). 깸 카운터 수치 자체는 풀이·관절체 모듈 몫이라 여기서는 앞·뒤 값을 받는다:
+//   링크 뒤 값 1e-6 은 "하나도 안 자게" 고친 값(에너지로 깬 값은 0.2 이상)이라 활성화가 아니다.
+inline uint32_t hostShapeCount(const ss::ScPairs& P, uint64_t node) {
+  uint32_t n = 0;
+  for (uint32_t e = 0; e < P.shapes.size(); ++e) {
+    const ss::Shape& S = P.shapes[e];
+    if (S.valid && S.actor >= 0 && P.actors[size_t(S.actor)].nodeIndex == node) ++n;
+  }
+  return n;
+}
+inline void hostSnapshotSolveWake(HostWake& W) {
+  for (HostBodyWake& b : W.bodies) b.solveWc = b.wc;
+}
+inline void hostAfterIntegration(ig::IslandManager& M, ss::ScPairs& P, LiveIslands& L, HostWake& W, const HostWake& post) {
+  const ig::IslandSim& S = M.accurate;
+  // 강체
+  {
+    const ig::Arr<uint32_t>& A = S.activeNodes[ig::eRIGID_BODY_TYPE];
+    std::vector<uint64_t> nodes;
+    for (uint32_t i = 0; i < A.size; ++i) nodes.push_back(uint64_t(A.d[i]));  // 강체 노드 원값 = 번호 (링크 번호 0)
+    auto chunk = [&](size_t from, size_t to) {
+      std::vector<uint64_t> act, deact;
+      for (size_t i = from; i < to; ++i) {
+        HostBodyWake* b = W.body(nodes[i]);
+        const HostBodyWake* q = const_cast<HostWake&>(post).body(nodes[i]);
+        if (!b || !q || b->kinematic) continue;
+        const float before = b->solveWc, after = q->solverWc;
+        b->wc = after;
+        if (before == 0.0f && after > 0.0f) act.push_back(nodes[i]);
+        else if (after == 0.0f) deact.push_back(nodes[i]);
+      }
+      for (uint64_t n : act) L.emitActivate(n);
+      for (uint64_t n : deact) {
+        IslOp r;
+        r.op = ISL_DEACTIVATE; r.a = uint32_t(n); r.p = n;
+        L.emit(r, false);
+      }
+    };
+    size_t start = 0;
+    uint32_t nbShapes = 0;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+      if (nbShapes >= 256) {
+        chunk(start, i);
+        start = i;
+        nbShapes = 0;
+      }
+      const uint32_t c = hostShapeCount(P, nodes[i]);
+      nbShapes += c > 1 ? c : 1;
+    }
+    if (nbShapes) chunk(start, nodes.size());
+    // 이번에 재운 강체: 깸 카운터 0 (ScPipeline.cpp:2676)
+    const ig::Arr<uint32_t>& D = S.nodesToPutToSleep[ig::eRIGID_BODY_TYPE];
+    for (uint32_t i = 0; i < D.size; ++i)
+      if (HostBodyWake* b = W.body(uint64_t(D.d[i]))) b->wc = 0.0f;
+  }
+  // 관절체
+  {
+    const ig::Arr<uint32_t>& A = S.activeNodes[ig::eARTICULATION_TYPE];
+    for (uint32_t i = 0; i < A.size; ++i) {
+      HostArtWake* w = W.art(A.d[i]);
+      const HostArtWake* q = const_cast<HostWake&>(post).art(A.d[i]);
+      if (!w || !q || w->links.empty()) continue;
+      bool link0Active = (S.nodes.d[A.d[i]].flags & ig::N_ACTIVE) != 0;  // 첫 링크가 모양 없는 링크면 섬 노드 활성으로
+      for (uint32_t k = 0; k < P.actors.size() && k < L.active->size(); ++k)
+        if (P.actors[k].nodeIndex == w->links[0]) link0Active = (*L.active)[k] != 0;
+      if (!link0Active) continue;
+      for (uint64_t l : w->links) {
+        HostBodyWake* b = W.body(l);
+        const HostBodyWake* qb = const_cast<HostWake&>(post).body(l);
+        if (!b || !qb) continue;
+        if (b->wc == 0.0f && qb->wc > 1e-6f) L.emitActivate(l);
+        b->wc = qb->wc;
+      }
+      w->wc = q->wc;
+      if (q->wc == 0.0f) {
+        IslOp r;
+        r.op = ISL_DEACTIVATE; r.a = w->node; r.p = w->node;
+        L.emit(r, false);
+      }
+    }
+    // 이번에 재운 관절체: ArticulationSim::putToSleep (ScArticulationSim.cpp:406) 링크 깸 카운터 0
+    const ig::Arr<uint32_t>& D = S.nodesToPutToSleep[ig::eARTICULATION_TYPE];
+    for (uint32_t i = 0; i < D.size; ++i)
+      if (HostArtWake* w = W.art(D.d[i]))
+        for (uint64_t l : w->links)
+          if (HostBodyWake* b = W.body(l)) b->wc = 0.0f;
+  }
+}
+
 // ---- 쌍 관리층 마디 (pairs_log.h pairsPost 를 섬 마디 사이로 나눈 것). 입력(새·사라진 겹침, 좁은 단계 결과)은 PairsStep 꼴.
-inline void hostPairsBP(ss::ScPairs& P, const PairsStep& S) {
+inline void hostPairsBP(ss::ScPairs& P, const PairsStep& S, LiveIslands* L = nullptr) {
+  if (L) hostProcessLostTouchPairs(P, *L);  // 추정 자리: PhysX 는 새 상호작용 만들기와 섬 넣기 사이 (섬 호출 차례 비교로 확인)
   P.updateDirtyInteractions();
   P.finishBroadPhase(S.createdTrigger.data(), uint32_t(S.createdTrigger.size() / 2), S.created.data(), uint32_t(S.created.size() / 2));
 }

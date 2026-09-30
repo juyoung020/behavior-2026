@@ -49,6 +49,7 @@
 
 #include "core/contact/sc_pairs.h"
 #include "core/scene/pairs_log.h"
+#include "core/scene/step_host.h"
 #include "core/scene/scene_file.h"
 #include "omni_filter.h"
 #include "g1_hooks.h"
@@ -802,6 +803,46 @@ void g1_pairs_actor_active(std::vector<int8_t>& out) {
       const auto it = PS.actorIndex.find(&sim->getActor());
       if (it != PS.actorIndex.end() && size_t(it->second) < out.size()) out[size_t(it->second)] = sim->getActor().isActive() ? 1 : 0;
     }
+  }
+}
+// 순서기 그림자: 몸체·관절체 깸 카운터 (Sc 층 값). 노드 원값 순으로
+void g1_pairs_wake(eng::scene::HostWake& out) {
+  out.bodies.clear();
+  out.arts.clear();
+  if (!PS.scene) return;
+  for (PxRigidActor* a : sceneActors(PS.scene)) {
+    Sc::BodyCore* bc = nullptr;
+    if (a->getConcreteType() == PxConcreteType::eRIGID_DYNAMIC) bc = &static_cast<NpRigidDynamic*>(a)->getCore();
+    else if (a->getConcreteType() == PxConcreteType::eARTICULATION_LINK) bc = &static_cast<NpArticulationLink*>(a)->getCore();
+    Sc::BodySim* bs = bc ? bc->getSim() : nullptr;
+    if (!bs || !bs->getNodeIndex().isValid()) continue;
+    eng::scene::HostBodyWake w;
+    w.node = bs->getNodeIndex().getInd();
+    w.wc = bc->getWakeCounter();
+    w.solverWc = bc->getCore().solverWakeCounter;
+    w.kinematic = bs->isKinematic() ? 1 : 0;
+    w.link = bs->isArticulationLink() ? 1 : 0;
+    out.bodies.push_back(w);
+  }
+  std::sort(out.bodies.begin(), out.bodies.end(), [](const eng::scene::HostBodyWake& x, const eng::scene::HostBodyWake& y) { return x.node < y.node; });
+  const PxU32 nArt = PS.scene->getNbArticulations();
+  std::vector<PxArticulationReducedCoordinate*> arts(nArt);
+  PS.scene->getArticulations(arts.data(), nArt);
+  for (PxArticulationReducedCoordinate* art : arts) {
+    Sc::ArticulationCore& core = static_cast<NpArticulationReducedCoordinate*>(art)->getCore();
+    Sc::ArticulationSim* sim = core.getSim();
+    if (!sim || !sim->mIslandNodeIndex.isValid()) continue;
+    eng::scene::HostArtWake w;
+    w.node = sim->mIslandNodeIndex.index();
+    w.wc = core.getWakeCounter();
+    std::vector<PxArticulationLink*> links(art->getNbLinks());
+    art->getLinks(links.data(), PxU32(links.size()));
+    for (PxArticulationLink* l : links) {
+      Sc::BodySim* bs = static_cast<NpArticulationLink*>(l)->getCore().getSim();
+      if (bs) w.links.push_back(bs->getNodeIndex().getInd());
+    }
+    std::sort(w.links.begin(), w.links.end(), [](uint64_t x, uint64_t y) { return (x >> 32) < (y >> 32); });
+    out.arts.push_back(std::move(w));
   }
 }
 const physx::PxActor* g1_pairs_actor(int32_t a) { return a >= 0 && size_t(a) < PS.actorPx.size() ? PS.actorPx[size_t(a)] : nullptr; }

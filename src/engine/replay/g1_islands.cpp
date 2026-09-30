@@ -348,6 +348,10 @@ static void compareSim(const IG::IslandSim& P, const ig::IslandSim& S, Cmp& c) {
     c.chk(a.mFirstEdgeIndex == b.firstEdgeIndex && a.mFlags == b.flags && a.mType == b.type && a.mStaticTouchCount == b.staticTouchCount &&
               a.mNextNode.index() == b.nextNode && a.mPrevNode.index() == b.prevNode && a.mActiveRefCount == b.activeRefCount,
           "노드", i);
+    if (c.bad == 1 && c.first == "노드 #" + std::to_string(i) && getenv("G1_ISL_SHOW"))
+      fprintf(stderr, "[섬 다름] 노드 %u PhysX 첫간선 %u 플래그 %x 정적 %u 다음 %u 앞 %u 활성참조 %u / 우리 %u %x %u %u %u %u\n", i, a.mFirstEdgeIndex, a.mFlags,
+              a.mStaticTouchCount, a.mNextNode.index(), a.mPrevNode.index(), a.mActiveRefCount, b.firstEdgeIndex, b.flags, b.staticTouchCount, b.nextNode, b.prevNode,
+              b.activeRefCount);
     c.chk(P.mActiveNodeIndex[i] == S.activeNodeIndex[i], "activeNodeIndex", i);
     c.chk(P.mHopCounts[i] == S.hopCounts[i], "hopCounts", i);
     c.chk(P.mFastRoute[i].index() == S.fastRoute[i], "fastRoute", i);
