@@ -89,6 +89,11 @@ struct BpRuntime {
     dist.reset(new px::PxFloatArrayPinnedSafe(alloc));
     m.reset(new px::Bp::AABBManager(*bp, *bounds, *dist, maxAgg, maxShapes, alloc, ctx, px::PxPairFilteringMode::Enum(kk), px::PxPairFilteringMode::Enum(sk)));
   }
+  // 사용자 자료: 기록 값 그대로(그림자 시험) 또는 요소 번호로 (엔진: (번호+1)<<2 — 아래 2 비트는 AABB 관리자가 부피 종류로 씀, scene_step.h userOfElem)
+  bool elemUserData = false;
+  void* userData(const BpOp& o) const {
+    return elemUserData ? reinterpret_cast<void*>((uintptr_t(o.index) + 1) << 2) : reinterpret_cast<void*>(uintptr_t(o.userData));
+  }
   // 구조 변경 하나
   void apply(const BpOp& o) {
     switch (o.type) {
@@ -99,7 +104,7 @@ struct BpRuntime {
           auto it = aggMap.find(o.agg);
           ea = it == aggMap.end() ? EPX_INVALID_U32 : it->second;
         }
-        const bool r = m->addBounds(o.index, o.contactDistance, px::Bp::FilterGroup::Enum(o.group), reinterpret_cast<void*>(uintptr_t(o.userData)), ea,
+        const bool r = m->addBounds(o.index, o.contactDistance, px::Bp::FilterGroup::Enum(o.group), userData(o), ea,
                                     px::Bp::ElementType::Enum(o.volumeType), o.env);
         if (uint32_t(r) != o.result) ++handleBad;
         break;
@@ -109,7 +114,7 @@ struct BpRuntime {
         break;
       case BP_CREATE_AGG: {
         bounds->initEntry(o.index);
-        const px::Bp::AggregateHandle h = m->createAggregate(o.index, px::Bp::FilterGroup::Enum(o.group), reinterpret_cast<void*>(uintptr_t(o.userData)), o.maxNum,
+        const px::Bp::AggregateHandle h = m->createAggregate(o.index, px::Bp::FilterGroup::Enum(o.group), userData(o), o.maxNum,
                                                             px::PxAggregateFilterHint(o.hint), o.env);
         aggMap[o.result] = h;
         if (h != o.result) ++handleBad;
@@ -166,7 +171,8 @@ struct BpRuntime {
     pool.clear();
   }
   // 기록을 처음부터 다시 넣어 경계 상태로
-  bool replay(const BpLog& L) {
+  bool replay(const BpLog& L, bool elemUD = false) {
+    elemUserData = elemUD;
     create(L.abpMaxOverlaps, L.abpMaxStatic, L.abpMaxDynamic, L.ctx, L.abpMT != 0, L.maxAggregates, L.maxShapes, L.kineKine, L.staticKine);
     size_t op = 0;
     for (uint32_t f = 0; f <= L.frames.size(); ++f) {

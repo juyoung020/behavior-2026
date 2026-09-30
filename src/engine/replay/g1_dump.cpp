@@ -21,6 +21,8 @@
 #include "core/scene/batch.h"
 #include "g1_hooks.h"
 #include "g1_px.h"
+#include "omni_filter.h"
+#include "ScShapeSim.h"
 
 using namespace physx;
 namespace sc = eng::scene;
@@ -198,6 +200,8 @@ struct ShapeAdder {
       if (s->getNbMaterials()) s->getMaterials(&m0, 1);
       o.material = m0 ? static_cast<NpMaterial*>(m0)->mMaterial.mMaterialIndex : 0xffff;
       shapeOfCore[&static_cast<NpShape*>(s)->getCore().getCore()] = uint32_t(F.shapes.size());
+      Sc::ShapeSim* ssim = static_cast<NpShape*>(s)->getCore().getExclusiveSim();
+      F.shapeElems.push_back(ssim ? ssim->getElementID() : sc::kNone);
       F.shapes.push_back(o);
     }
     sa.shapeCount = uint32_t(F.shapes.size()) - sa.shapeStart;
@@ -392,7 +396,17 @@ void dumpScene(PxScene* scene, uint64_t sim) {
     g1_islands_capture(scene, F.islands, nodeId, edgeId, &maps);
   }
   if (const sc::BpLog* bl = g1_bp_log()) F.bp = *bl;
-  if (const sc::PairsLog* pl = g1_pairs_log()) F.pairs = *pl;  // 쌍 관리층 입력 기록 (G1_PAIRS)  // 넓은 단계 입력 기록 (G1_BP 로 모은 것, 이 simulate 앞까지)
+  if (const sc::PairsLog* pl = g1_pairs_log()) F.pairs = *pl;
+  {  // omni 거르개 표 (재생기가 PhysX 에 준 것)
+    const engine::FilterSpec* fs = *static_cast<const engine::FilterSpec* const*>(scene->getFilterShaderData());
+    F.omniFilter.groupPairs.assign(fs->group_pairs.begin(), fs->group_pairs.end());
+    F.omniFilter.filteredPairs.assign(fs->filtered_pairs.begin(), fs->filtered_pairs.end());
+    F.omniFilter.invertedGroupFilter = fs->inverted_group_filter;
+    F.omniFilter.anyContactReport = fs->any_contact_report;
+    PxSimulationFilterCallback* cb = scs.getFilterCallbackFast();
+    F.omniFilter.reportAll = cb && static_cast<engine::OmniFilterCallback*>(cb)->report_all;
+    F.omniFilter.sort();
+  }  // 쌍 관리층 입력 기록 (G1_PAIRS)  // 넓은 단계 입력 기록 (G1_BP 로 모은 것, 이 simulate 앞까지)
   if (!sc::writeScene(D.out.c_str(), F)) {
     fprintf(stderr, "[장면 뜨기] 쓰기 실패: %s\n", D.out.c_str());
     return;

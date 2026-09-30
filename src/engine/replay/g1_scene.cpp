@@ -42,6 +42,9 @@
 #include "core/contact/scene_step.h"
 #include "core/scene/bp_log.h"
 #include "core/scene/pairs_log.h"
+#include "core/scene/omni_filter.h"
+#include "core/scene/env_runtime.h"
+#include "omni_filter.h"
 #include "g1_hooks.h"
 
 using namespace physx;
@@ -80,6 +83,14 @@ struct SceneShadow {
   // 장면
   std::unique_ptr<ec::ContactScene> S;
   es::PairsHooks H;
+  es::PairsHooks* Hp = &H;  // 파일 넘겨받기 뒤에는 env 의 것
+  std::unique_ptr<es::EnvContact> env;  // G1_SCENE_FROM 넘겨받기 (거르개·갈고리가 여기 산다)
+  std::unique_ptr<es::SceneShared> envShared;
+  bool fromDone = false;
+  uint32_t fromElems = 0;
+  es::OmniFilterSpec spec;
+  es::OmniFilterCtx fctx;
+  bool coreFilter = false;
   // 통계
   uint64_t steps = 0, bad = 0, cmpOverlap = 0, cmpList = 0, cmpSlot = 0, cmpVal = 0, cmpEvents = 0, badOverlap = 0, badList = 0, badSlot = 0, badEvents = 0,
            badEnd = 0, actBad = 0, handleBad = 0, npRan = 0, goneCm = 0;
@@ -153,7 +164,23 @@ void startScene(PxScene* scene) {
     SC.on = false;
     return;
   }
-  g1_pairs_filters(S.pairs);
+  if (getenv("G1_SCENE_FILTER") && !strcmp(getenv("G1_SCENE_FILTER"), "core")) {
+    // PhysX 형 없는 omni 거르개 (core/scene/omni_filter.h): 표는 재생기가 PhysX 에 준 것에서 옮김
+    Sc::Scene& sc0 = static_cast<NpScene*>(scene)->getScScene();
+    const engine::FilterSpec* fs = *static_cast<const engine::FilterSpec* const*>(scene->getFilterShaderData());
+    SC.spec.groupPairs.assign(fs->group_pairs.begin(), fs->group_pairs.end());
+    SC.spec.filteredPairs.assign(fs->filtered_pairs.begin(), fs->filtered_pairs.end());
+    SC.spec.invertedGroupFilter = fs->inverted_group_filter;
+    SC.spec.anyContactReport = fs->any_contact_report;
+    PxSimulationFilterCallback* cb = sc0.getFilterCallbackFast();
+    SC.spec.reportAll = cb && static_cast<engine::OmniFilterCallback*>(cb)->report_all;
+    SC.spec.sort();
+    SC.fctx.spec = &SC.spec;
+    es::setOmniFilter(S.pairs, SC.fctx);
+    SC.coreFilter = true;
+  } else {
+    g1_pairs_filters(S.pairs);
+  }
   SC.H.m = &S.pairs;
   S.pairs.islands = &SC.H;
   es::pairsStart(S.pairs, *L);
@@ -175,14 +202,14 @@ void replayActs(const es::PairsStep& st, bool afterFill) {
     if (it < 0) { ++SC.actBad; continue; }
     bool r;
     if (a.activate) {
-      SC.H.forced = a.result ? 1 : 0;
+      SC.Hp->forced = a.result ? 1 : 0;
       r = M.activateInteraction(it);
     } else {
-      SC.H.forcedDeact = a.result ? 1 : 0;
+      SC.Hp->forcedDeact = a.result ? 1 : 0;
       r = M.deactivateInteraction(it);
     }
-    SC.H.forced = -1;
-    SC.H.forcedDeact = -1;
+    SC.Hp->forced = -1;
+    SC.Hp->forcedDeact = -1;
     if (r != (a.result != 0)) ++SC.actBad;
   }
 }
@@ -195,7 +222,7 @@ void runStep(PxScene* scene) {
   const es::PairsStep& st = *stp;
   ++SC.steps;
   // 1. 앞 입력 (행위자·모양·조인트·장면 변경 연산)
-  es::pairsPre(M, SC.H, st);
+  es::pairsPre(M, *SC.Hp, st);
   // 넓은 단계 구조 변경 (이번 창)
   for (const es::BpOp& o : SC.pendingOps) SC.rt->apply(o);
   SC.pendingOps.clear();
@@ -239,9 +266,9 @@ void runStep(PxScene* scene) {
     if (a != b) fail("넓은 단계 사라진 겹침", SC.badOverlap);
   }
   // 3. 쌍 관리 (섬이 돌려줄 값 = PhysX 기록)
-  SC.H.prealloc = &st.preallocHandles;
-  SC.H.addCm = &st.addCmEdges;
-  SC.H.preallocPos = SC.H.addCmPos = 0;
+  SC.Hp->prealloc = &st.preallocHandles;
+  SC.Hp->addCm = &st.addCmEdges;
+  SC.Hp->preallocPos = SC.Hp->addCmPos = 0;
   ec::contactPairs(S);
   replayActs(st, false);
   // 4. 좁은 단계 (모양 자료·변환 캐시·접촉 거리)
@@ -259,10 +286,11 @@ void runStep(PxScene* scene) {
   {  // 재질 표 (g1_shadow 가 첫 simulate 앞에서 채움 -> 스텝마다 옮겨 담음, 판 도중 새 재질 대비)
     size_t nm = 0;
     const ec::MaterialData* mats = g1_contact_mats(&nm);
-    S.materials.assign(mats, mats + nm);
+    if (!SC.env) S.materials.assign(mats, mats + nm);
   }
   if (S.npShapes.size() < ncache) S.npShapes.resize(ncache);
   for (size_t e = 0; e < M.shapes.size() && e < ncache; ++e) {
+    if (e < SC.fromElems) continue;  // 파일 넘겨받기: 파일 기하 그대로 (뒤에 새로 생긴 모양만 PhysX 에서)
     Sc::ShapeSim* ss2 = g1_elem_sim(int32_t(e));
     if (!ss2) continue;
     const PxsShapeCore& pc = ss2->getCore().getCore();
@@ -420,6 +448,55 @@ void g1_scene_before(PxScene* scene, uint64_t sim) {
   SC.haveInput = false;
   SC.havePxOverlaps = false;
   if (!SC.started) startScene(scene);
+  // 파일 넘겨받기 (G1_SCENE_FROM=<엔진 장면 파일>): 경계 simulate 에서 판 런타임(env_runtime.h)으로 모든 contact 층 상태를 다시 세워 이어 간다
+  if (SC.on && SC.started && !SC.fromDone) {
+    static es::SceneFile ff;
+    static int state = 0;
+    if (state == 0) {
+      state = 2;
+      if (const char* p = getenv("G1_SCENE_FROM")) {
+        std::string err;
+        state = es::readScene(p, ff, &err) ? 1 : 2;
+        if (state == 2) fprintf(stderr, "[g1 scene] 파일 읽기 실패: %s\n", err.c_str());
+      }
+    }
+    if (state == 1 && sim == ff.h.sim) {
+      SC.fromDone = true;
+      SC.envShared = es::makeShared(ff);
+      SC.env.reset(new es::EnvContact);
+      std::string err;
+      if (!SC.env->load(ff, *SC.envShared, &err)) {
+        fprintf(stderr, "[g1 scene] 판 런타임 세우기 실패: %s\n", err.c_str());
+        SC.on = false;
+        return;
+      }
+      if (const char* neg = getenv("G1_SCENE_FROM_NEG")) {  // 음성 대조: 1 = 지속 다양체 비움, 2 = 거르개 표 비움 (이러면 달라져야 한다)
+        ec::ContactScene& C = *SC.env->S;
+        if (atoi(neg) == 1) {
+          for (int nl = 0; nl < 2; ++nl) {
+            const ss::NpList& L = nl ? C.pairs.npNew : C.pairs.npMain;
+            for (uint32_t slot = 0; slot < L.size(); ++slot) {
+              const ss::ContactManager& cm = C.pairs.cmsData[size_t(L.cms[slot])];
+              const int g0 = cm.geomType0, g1 = cm.geomType1;
+              ec::initManifold(C.caches.L[nl][slot].man, g0 < g1 ? g0 : g1, g0 < g1 ? g1 : g0);
+            }
+          }
+        } else {
+          SC.env->spec.groupPairs.clear();
+          SC.env->spec.filteredPairs.clear();
+        }
+      }
+      SC.S = std::move(SC.env->S);
+      SC.rt = std::move(SC.env->bp);
+      SC.Hp = &SC.env->H;
+      SC.fromElems = uint32_t(SC.S->npShapes.size());
+      SC.pendingOps.clear();  // 이 창의 구조 변경은 파일 기록에 이미 있다
+      SC.steps = SC.bad = SC.cmpOverlap = SC.cmpList = SC.cmpSlot = SC.cmpVal = SC.badOverlap = SC.badSlot = SC.badEnd = SC.actBad = SC.goneCm = 0;
+      SC.firstBad = -1;
+      printf("G1 contact 장면 넘겨받기: simulate %llu 에서 파일로 판 런타임을 세움 (쌍 기록 스텝 %zu, 넓은 단계 구조 변경 %zu, 다양체 %u 넣음 / 못 찾음 %u, 활성화 재생 어긋남 %u) — 이 뒤로만 비교\n",
+             (unsigned long long)sim, ff.pairs.steps.size(), ff.bp.ops.size(), SC.env->manifoldsIn, SC.env->manifoldsMiss, SC.env->actBad);
+    }
+  }
 }
 void g1_scene_after(PxScene* scene, uint64_t sim) {
   if (!SC.on || !SC.started || scene != SC.scene) return;
@@ -428,7 +505,7 @@ void g1_scene_after(PxScene* scene, uint64_t sim) {
 }
 void g1_scene_report() {
   if (!SC.on) return;
-  printf("G1 contact 장면 단위 그림자 (scene_step.h 한 줄: 우리 넓은 단계 -> 쌍 관리 -> 좁은 단계 -> 풀이 뒤 정리): 스텝 %" PRIu64 "\n", SC.steps);
+  printf("G1 contact 장면 단위 그림자 (scene_step.h 한 줄: 우리 넓은 단계 -> 쌍 관리 -> 좁은 단계 -> 풀이 뒤 정리, 거르개 %s): 스텝 %" PRIu64 "\n", SC.coreFilter ? "core/scene/omni_filter.h" : "재생기 PhysX 콜백", SC.steps);
   printf("  넓은 단계 겹침 %" PRIu64 " (다름 %" PRIu64 "), 좁은 단계 칸 %" PRIu64 " (값 비교 %" PRIu64 ", 다름 %" PRIu64 "), 스텝 끝 목록 %" PRIu64 " (다름 %" PRIu64
          "), 활성화 재생 어긋남 %" PRIu64 ", PhysX 에 없는 칸 %" PRIu64 " — 다름 합 %" PRIu64 "%s\n",
          SC.cmpOverlap, SC.badOverlap, SC.cmpSlot, SC.cmpVal, SC.badSlot, SC.cmpList, SC.badEnd, SC.actBad, SC.goneCm, SC.bad,

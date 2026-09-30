@@ -19,6 +19,7 @@
 #include "core/scene/island_state.h"
 #include "core/scene/bp_log.h"
 #include "core/scene/pairs_log.h"
+#include "core/scene/omni_filter.h"
 
 namespace eng {
 namespace scene {
@@ -91,7 +92,7 @@ struct SceneHeader {
   uint32_t artMaxLinks, artMaxDofs;
   uint32_t nActors, nShapes, nJoints, nBodies, nArts, nMaterials, nHulls;
   uint32_t nCMs, nManifolds, nFriction, sizeCM, sizeManifold, sizeFriction;
-  uint32_t hasIslands, sizeIgNode, sizeIgIsland, hasBp, hasPairs, padP;
+  uint32_t hasIslands, sizeIgNode, sizeIgIsland, hasBp, hasPairs, hasOmniFilter;
   uint64_t hullBytes, nameBytes;
   float gravity[3], dt, lengthScale, speedScale;
   uint32_t sceneFlags, solverType, posIters, velIters;
@@ -121,6 +122,9 @@ struct SceneFile {
   IslandMgrState islands;  // 섬 관리자 (v1-b)
   BpLog bp;                // 넓은 단계 입력 기록 (v1-b, 적재 때 다시 넣음)
   PairsLog pairs;          // 쌍 관리층 입력 기록 (v1-b, 적재 때 다시 넣음)
+  // v8: 모양별 요소 번호(ElementSim 번호 = 넓은 단계 칸 = 변환 캐시 칸, 쌍 관리층·좁은 단계가 이 번호로 부름)와 omni 거르개 표
+  std::vector<uint32_t> shapeElems;  // shapes 와 같은 순서
+  OmniFilterSpec omniFilter;
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -141,7 +145,7 @@ inline bool rd(FILE* f, std::vector<T>& v, size_t n) { v.resize(n); return n == 
 
 inline void fillSizes(SceneHeader& h) {
   memcpy(h.magic, "ENGSCN1", 8);
-  h.version = 7;
+  h.version = 8;
   h.sizeIgNode = sizeof(ig::Node);
   h.sizeIgIsland = sizeof(ig::Island);
   h.sizeCM = sizeof(SceneCM);
@@ -173,6 +177,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
   s.h.hasIslands = s.islands.valid ? 1u : 0u;
   s.h.hasBp = s.bp.valid ? 1u : 0u;
   s.h.hasPairs = s.pairs.valid ? 1u : 0u;
+  s.h.hasOmniFilter = 1u;
   s.h.hullBytes = s.hulls.size();
   s.h.nameBytes = s.names.size();
   FILE* f = fopen(path, "wb");
@@ -182,6 +187,12 @@ inline bool writeScene(const char* path, SceneFile& s) {
             wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.jointWritebacks) && wr(f, s.artName) && wr(f, s.shapeFilters) && wr(f, s.cms) &&
             (s.manifolds.empty() || fwrite(static_cast<const void*>(s.manifolds.data()), sizeof(contact::ManifoldSlot), s.manifolds.size(), f) == s.manifolds.size()) &&
             wr(f, s.friction) && (!s.islands.valid || writeIslands(f, s.islands)) && (!s.bp.valid || writeBpLog(f, s.bp)) && (!s.pairs.valid || writePairsLog(f, s.pairs));
+  if (ok) {  // v8
+    const uint64_t ne = s.shapeElems.size(), ng = s.omniFilter.groupPairs.size(), nf = s.omniFilter.filteredPairs.size();
+    const uint8_t fl[4] = {s.omniFilter.invertedGroupFilter, s.omniFilter.anyContactReport, s.omniFilter.reportAll, 0};
+    ok = fwrite(&ne, 8, 1, f) == 1 && wr(f, s.shapeElems) && fwrite(&ng, 8, 1, f) == 1 && wr(f, s.omniFilter.groupPairs) && fwrite(&nf, 8, 1, f) == 1 &&
+         wr(f, s.omniFilter.filteredPairs) && fwrite(fl, 1, 4, f) == 4;
+  }
   ok = fclose(f) == 0 && ok;
   return ok;
 }
@@ -215,6 +226,16 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
   if (ok && s.h.hasIslands) ok = readIslands(f, s.islands);
   if (ok && s.h.hasBp) ok = readBpLog(f, s.bp);
   if (ok && s.h.hasPairs) ok = readPairsLog(f, s.pairs);
+  if (ok && s.h.hasOmniFilter) {  // v8
+    uint64_t ne = 0, ng = 0, nf = 0;
+    uint8_t fl[4] = {};
+    ok = fread(&ne, 8, 1, f) == 1 && ne < (1ull << 32) && rd(f, s.shapeElems, size_t(ne)) && fread(&ng, 8, 1, f) == 1 && ng < (1ull << 32) &&
+         rd(f, s.omniFilter.groupPairs, size_t(ng)) && fread(&nf, 8, 1, f) == 1 && nf < (1ull << 32) && rd(f, s.omniFilter.filteredPairs, size_t(nf)) &&
+         fread(fl, 1, 4, f) == 4;
+    s.omniFilter.invertedGroupFilter = fl[0];
+    s.omniFilter.anyContactReport = fl[1];
+    s.omniFilter.reportAll = fl[2];
+  }
   fclose(f);
   return ok ? true : fail("짧음");
 }
