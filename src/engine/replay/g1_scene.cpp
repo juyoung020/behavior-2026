@@ -101,7 +101,7 @@ struct SceneShadow {
   ec::SolverInputOut solverIn;
   uint64_t cmpSolver = 0, badSolver = 0;
   // 닫힌 고리 2단: Sc 입력 조각을 우리 Sc 장면(g1_sc)에서
-  uint64_t lsSteps = 0, lsCells = 0, lsResync = 0, lsBoundsDiff = 0, lsWordDiff = 0, lsCacheDiff = 0, lsDistDiff = 0, lsNonShape = 0;
+  uint64_t lsSteps = 0, lsCells = 0, lsResync = 0, lsBoundsDiff = 0, lsWordDiff = 0, lsCacheDiff = 0, lsDistDiff = 0, lsNonShape = 0, lsAggOurs = 0, lsAggDiff = 0;
   long long lsFirst = -1;
   std::string lsFirstWhat;
   es::OmniFilterCtx fctx;
@@ -539,8 +539,14 @@ void g1_scene_task(const char* name) {
     for (size_t e = 0; e < nb; ++e) {
       const bool pxBit = e / 32 < SC.words.size() && (SC.words[e / 32] >> (e & 31)) & 1u;
       const bool isShape = e < E->shapes.size() && E->shapes[e].alive;
-      if (!isShape) {  // 집합체 칸 등 (Sc 모양이 아님): PhysX 값 그대로
+      if (!isShape) {  // 집합체 칸 (Sc 모양이 아님): AABB 관리자가 스스로 셈 -> 우리 넓은 단계가 지난 스텝에 든 값 (G1_LOOP_AGG_PX=1 이면 PhysX 값)
         ++SC.lsNonShape;
+        if (!getenv("G1_LOOP_AGG_PX") && SC.rt && e < SC.rt->bounds->size()) {
+          const float* ob = reinterpret_cast<const float*>(&SC.rt->bounds->begin()[e]);
+          if (memcmp(ob, &SC.bounds[6 * e], 24)) ++SC.lsAggDiff;
+          memcpy(&SC.bounds[6 * e], ob, 24);
+          ++SC.lsAggOurs;
+        }
         if (pxBit) w[e / 32] |= 1u << (e & 31);
         continue;
       }
@@ -641,6 +647,7 @@ void g1_scene_report() {
            ", 바뀜 비트 %" PRIu64 ", 접촉 거리 %" PRIu64 ", 변환 캐시 %" PRIu64 "%s\n",
            SC.lsSteps, SC.lsCells, SC.lsResync, SC.lsNonShape, SC.lsBoundsDiff, SC.lsWordDiff, SC.lsDistDiff, SC.lsCacheDiff,
            SC.lsFirst >= 0 ? ("  첫 simulate " + std::to_string(SC.lsFirst) + " " + SC.lsFirstWhat).c_str() : "");
+  if (SC.lsSteps) printf("  집합체 칸: 우리 넓은 단계 값으로 %" PRIu64 " (PhysX 입력과 달랐던 것 %" PRIu64 ")\n", SC.lsAggOurs, SC.lsAggDiff);
   printf("G1 contact 장면 단위 그림자 (scene_step.h 한 줄: 우리 넓은 단계 -> 쌍 관리 -> 좁은 단계 -> 풀이 뒤 정리, 거르개 %s): 스텝 %" PRIu64 "\n", SC.coreFilter ? "core/scene/omni_filter.h" : "재생기 PhysX 콜백", SC.steps);
   printf("  넓은 단계 겹침 %" PRIu64 " (다름 %" PRIu64 "), 좁은 단계 칸 %" PRIu64 " (값 비교 %" PRIu64 ", 다름 %" PRIu64 "), 스텝 끝 목록 %" PRIu64 " (다름 %" PRIu64
          "), solver 입력 관리자 %" PRIu64 " (다름 %" PRIu64 "), 활성화 재생 어긋남 %" PRIu64 ", PhysX 에 없는 칸 %" PRIu64 " — 다름 합 %" PRIu64 "%s\n",

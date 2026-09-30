@@ -72,6 +72,8 @@ void g1_scene_report();
 // 닫힌 고리 2단 Sc 입력 조각 (g1_sc.cpp 의 우리 Sc 장면)
 namespace eng { struct Tf; namespace scene { struct ScScene; } }
 bool g1_sc_loop_on();
+namespace eng { namespace ig { struct IslandManager; } }
+const eng::ig::IslandManager* g1_islands_ours();  // g1_islands.cpp: 우리 섬 관리 (넘겨받은 뒤)
 void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf& b2a, bool frozen);
 eng::scene::ScScene* g1_sc_scene();
 const physx::PxActor* g1_sc_actor_px(int32_t h);

@@ -614,3 +614,5 @@ void g1_islands_report() {
   printf("  번호 관리               : 비교 %" PRIu64 ", 다름 %" PRIu64 ", 호출 결과(번호) 다름 %" PRIu64 ", 우리 오류 0x%x/0x%x/0x%x\n", gMgrPost.n, gMgrPost.bad,
          gResultBad, gOur ? gOur->M.err : 0u, gOur ? gOur->M.accurate.err : 0u, gOur ? gOur->M.speculative.err : 0u);
 }
+
+const eng::ig::IslandManager* g1_islands_ours() { return gOur ? &gOur->M : nullptr; }

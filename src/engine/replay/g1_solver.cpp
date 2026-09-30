@@ -22,6 +22,7 @@
 #include "DyFeatherstoneArticulation.h"
 #include "core/articulation/art_static.h"
 #include "g1_hooks.h"
+#include "core/solver/islands.h"
 #include "g1_px.h"
 #include "core/scene/scene_file.h"
 #include <map>
@@ -166,6 +167,7 @@ struct SolverShadow {
   std::map<std::pair<const void*, const void*>, std::vector<sv::FrictionPatch>> pFric;  // (모양 핵 0, 1) -> 지난 마찰 패치
   std::unordered_set<uint32_t> pWbSeen;
   uint64_t lcUsed = 0, lcDiff = 0, lcMissing = 0;  // 2단 접촉 입력
+  uint64_t lIslSteps = 0;                          // 3단: 섬 목록을 우리 섬 관리에서 읽은 스텝
   uint64_t pBodyUsed = 0, pBodyResync = 0, pBodyNew = 0, pBodyDiff = 0, pFricUsed = 0, pFricDiff = 0, pFricReset = 0, pFricNew = 0, pWbUsed = 0, pWbDiff = 0;
   long long pFirstBody = -1, pFirstFric = -1, pFirstWb = -1;
 
@@ -188,6 +190,41 @@ struct SolverShadow {
     show = getenv("G1_SOLVER_SHOW") ? atoi(getenv("G1_SOLVER_SHOW")) : 0;
   }
 } GS;
+
+
+// ---------------- 섬 보기 (닫힌 고리 3단): 풀이 입력의 섬 목록·사슬·간선을 PhysX 정확 섬 시뮬 또는 우리 섬 관리(core/solver/islands.h)에서 읽는다.
+// 노드·간선 -> 몸체·관리자·제약 대응(식별 표)은 번호가 같으므로 PhysX 표를 쓴다 (상태가 아니라 이름표).
+struct IsView {
+  const IG::IslandSim& p;
+  IG::SimpleIslandManager& im;
+  const eng::ig::IslandSim* o;  // 우리 (없으면 PhysX)
+  PxU32 nbActive() const { return o ? o->activeIslands.size : p.getNbActiveIslands(); }
+  uint32_t activeId(PxU32 k) const { return o ? o->activeIslands.d[k] : p.getActiveIslands()[k]; }
+  uint32_t nodeCount(uint32_t id, int t) const { return o ? o->islands.d[id].nodeCount[t] : p.getIsland(id).mNodeCount[t]; }
+  static PxNodeIndex pn(uint32_t id, uint32_t linkRaw) {  // 우리 NodeIndex.linkId = PhysX mLinkID 원값 ((링크 << 1) | 관절체)
+    return id == eng::ig::INVALID_NODE ? PxNodeIndex() : PxNodeIndex(PxU64(id) | (PxU64(linkRaw) << 32));
+  }
+  PxNodeIndex root(uint32_t id) const { return o ? pn(o->islands.d[id].rootNode, 0) : p.getIsland(id).mRootNode; }
+  uint32_t firstEdge(uint32_t id, int t) const { return o ? o->islands.d[id].firstEdge[t] : p.getIsland(id).mFirstEdge[t]; }
+  uint32_t staticTouch(uint32_t id) const { return o ? o->islandStaticTouchCount[id] : p.mIslandStaticTouchCount[id]; }
+  int type(PxNodeIndex n) const { return o ? int(o->nodes.d[n.index()].type) : int(p.getNode(n).getNodeType()); }
+  bool kin(PxNodeIndex n) const { return o ? (o->nodes.d[n.index()].flags & eng::ig::N_KINEMATIC) != 0 : p.getNode(n).isKinematic(); }
+  void* obj(PxNodeIndex n) const { return p.getNode(n).mObject; }  // 식별 표
+  PxNodeIndex next(PxNodeIndex n) const { return o ? pn(o->nodes.d[n.index()].nextNode, 0) : p.getNode(n).mNextNode; }
+  uint32_t nextEdge(uint32_t e) const { return o ? o->edges.d[e].nextIslandEdge : p.getEdge(e).mNextIslandEdge; }
+  PxNodeIndex n1(uint32_t e) const { return o ? pn(o->cpu->edgeNodeIndices[2 * e].id, o->cpu->edgeNodeIndices[2 * e].linkId) : p.mCpuData.getNodeIndex1(e); }
+  PxNodeIndex n2(uint32_t e) const { return o ? pn(o->cpu->edgeNodeIndices[2 * e + 1].id, o->cpu->edgeNodeIndices[2 * e + 1].linkId) : p.mCpuData.getNodeIndex2(e); }
+  PxU32 nbAct() const { return o ? o->activatedEdges[0].size : p.getNbActivatedEdges(IG::Edge::eCONTACT_MANAGER); }
+  uint32_t act(PxU32 k) const { return o ? o->activatedEdges[0].d[k] : p.getActivatedEdges(IG::Edge::eCONTACT_MANAGER)[k]; }
+  PxU32 nbDeact(int t) const { return o ? o->nodesToPutToSleep[t].size : p.getNbNodesToDeactivate(IG::Node::NodeType(t)); }
+  PxNodeIndex deact(int t, PxU32 k) const { return o ? pn(o->nodesToPutToSleep[t].d[k], 0) : p.getNodesToDeactivate(IG::Node::NodeType(t))[k]; }
+};
+const eng::ig::IslandSim* loopIslands() {
+  static const bool on = getenv("G1_LOOP_ISLANDS") != nullptr;
+  if (!on || !GS.persist) return nullptr;
+  const eng::ig::IslandManager* M = g1_islands_ours();
+  return M ? &M->accurate : nullptr;
+}
 
 // ---------------- 늦은 스냅샷 (ScScene.afterIntegration 직전): 관절체 잠 판정에 들어가는 링크 깸·상호작용 수, 관절체 깸
 void takeLateSnapshot() {
@@ -238,8 +275,9 @@ void takeSnapshot() {
   gInfo.gravity[0] = prm.gravity.x;
   gInfo.gravity[1] = prm.gravity.y;
   gInfo.gravity[2] = prm.gravity.z;
-  const PxU32 nIsl = is.getNbActiveIslands();
-  const IG::IslandId* ids = is.getActiveIslands();
+  const IsView V{is, im, loopIslands()};
+  if (V.o) ++GS.lIslSteps;
+  const PxU32 nIsl = V.nbActive();
   S.islandsAll = nIsl;
   PxU32 cur = 0;
   while (cur < nIsl) {
@@ -248,46 +286,45 @@ void takeSnapshot() {
     const uint32_t gStart = uint32_t(S.islands.size());
     const size_t aStart = gInfo.artAlone.size();
     while (nbBodies < prm.solverBatchSize && cur < nIsl && nbArt < prm.solverArticBatchSize) {
-      const IG::Island& island = is.getIsland(ids[cur]);
-      nbBodies += island.mNodeCount[IG::Node::eRIGID_BODY_TYPE];
-      nbArt += island.mNodeCount[IG::Node::eARTICULATION_TYPE];
+      const uint32_t iid = V.activeId(cur);
+      nbBodies += V.nodeCount(iid, IG::Node::eRIGID_BODY_TYPE);
+      nbArt += V.nodeCount(iid, IG::Node::eARTICULATION_TYPE);
       // 묶음 반복 수: 강체(preIntegrateBodies)·관절체(setupArticulations) 최댓값
-      for (PxNodeIndex n = island.mRootNode; n.isValid();) {
-        const IG::Node& node = is.getNode(n);
+      for (PxNodeIndex n = V.root(iid); n.isValid();) {
         PxU16 w = 0;
-        if (node.getNodeType() == IG::Node::eRIGID_BODY_TYPE) w = reinterpret_cast<const PxsRigidBody*>(node.mObject)->getCore().solverIterationCounts;
-        else if (node.getNodeType() == IG::Node::eARTICULATION_TYPE) w = reinterpret_cast<const Dy::FeatherstoneArticulation*>(node.mObject)->getIterationCounts();
+        if (V.type(n) == IG::Node::eRIGID_BODY_TYPE) w = reinterpret_cast<const PxsRigidBody*>(V.obj(n))->getCore().solverIterationCounts;
+        else if (V.type(n) == IG::Node::eARTICULATION_TYPE) w = reinterpret_cast<const Dy::FeatherstoneArticulation*>(V.obj(n))->getIterationCounts();
         maxPos = PxMax<PxU32>(maxPos, w & 0xff);
         maxVel = PxMax<PxU32>(maxVel, w >> 8);
-        n = node.mNextNode;
+        n = V.next(n);
       }
       // 관절체 단독 그림자 대상: 노드가 관절체 하나뿐, 접촉·조인트 간선 없음
-      if (island.mNodeCount[IG::Node::eARTICULATION_TYPE] == 1 && island.mNodeCount[IG::Node::eRIGID_BODY_TYPE] == 0 &&
-          island.mFirstEdge[IG::Edge::eCONTACT_MANAGER] == IG_INVALID_EDGE && island.mFirstEdge[IG::Edge::eCONSTRAINT] == IG_INVALID_EDGE)
-        gInfo.artAlone.push_back(G1ArtAlone{is.getNode(island.mRootNode).mObject, 0});
+      if (V.nodeCount(iid, IG::Node::eARTICULATION_TYPE) == 1 && V.nodeCount(iid, IG::Node::eRIGID_BODY_TYPE) == 0 &&
+          V.firstEdge(iid, IG::Edge::eCONTACT_MANAGER) == IG_INVALID_EDGE && V.firstEdge(iid, IG::Edge::eCONSTRAINT) == IG_INVALID_EDGE)
+        gInfo.artAlone.push_back(G1ArtAlone{V.obj(V.root(iid)), 0});
       // 섬 하나를 판 입력으로 (안 되면 되돌림)
       const size_t mB = S.bodies.size(), mIB = S.ib.size(), mICM = S.icm.size(), mCM = S.cms.size(), mP = S.patches.size(),
                    mC = S.contacts.size(), mF = S.friction.size(), mC1 = S.c1d.size(), mIC1 = S.ic1d.size(), mJD = S.jd.size(), mWB = S.wbSeed.size();
       int why = 0;  // 0 = 씀, 1 관절체, 2 운동학, 3 수정 가능 접촉, 4 기타
       auto fail = [&](int w) { if (!why) why = w; };
-      if (!GS.full && island.mNodeCount[IG::Node::eARTICULATION_TYPE]) fail(1);
+      if (!GS.full && V.nodeCount(iid, IG::Node::eARTICULATION_TYPE)) fail(1);
       sv::IslandIn I{};
       I.artStart = uint32_t(S.ia.size());
       I.bodyStart = uint32_t(S.ib.size());
       I.cmStart = uint32_t(S.icm.size());
       I.c1dStart = uint32_t(S.ic1d.size());
-      I.staticTouchCount = is.mIslandStaticTouchCount[ids[cur]];
-      for (PxNodeIndex n = island.mRootNode; !why && n.isValid();) {
-        const IG::Node& node = is.getNode(n);
-        if (node.getNodeType() == IG::Node::eARTICULATION_TYPE && GS.full) {
-          if (!S.artIndex.count(node.mObject)) {
-            S.artIndex[node.mObject] = uint32_t(S.artFa.size());
-            S.artFa.push_back(node.mObject);
+      I.staticTouchCount = V.staticTouch(iid);
+      for (PxNodeIndex n = V.root(iid); !why && n.isValid();) {
+        void* nobj = V.obj(n);
+        if (V.type(n) == IG::Node::eARTICULATION_TYPE && GS.full) {
+          if (!S.artIndex.count(nobj)) {
+            S.artIndex[nobj] = uint32_t(S.artFa.size());
+            S.artFa.push_back(nobj);
           }
-          S.ia.push_back(S.artIndex[node.mObject]);
-        } else if (node.getNodeType() != IG::Node::eRIGID_BODY_TYPE) fail(1);
+          S.ia.push_back(S.artIndex[nobj]);
+        } else if (V.type(n) != IG::Node::eRIGID_BODY_TYPE) fail(1);
         else {
-          const PxsRigidBody* rb = reinterpret_cast<const PxsRigidBody*>(node.mObject);
+          const PxsRigidBody* rb = reinterpret_cast<const PxsRigidBody*>(nobj);
           const uint32_t bi = uint32_t(S.bodies.size());
           S.rbIndex[rb] = bi;
           S.rbs.push_back(rb);
@@ -308,32 +345,31 @@ void takeSnapshot() {
           }
           S.ib.push_back(bi);
         }
-        n = node.mNextNode;
+        n = V.next(n);
       }
       I.bodyCount = uint32_t(S.ib.size()) - I.bodyStart;
       I.artCount = uint32_t(S.ia.size()) - I.artStart;
-      for (IG::EdgeIndex e = island.mFirstEdge[IG::Edge::eCONTACT_MANAGER]; !why && e != IG_INVALID_EDGE;) {
-        const IG::Edge& edge = is.getEdge(e);
+      for (IG::EdgeIndex e = V.firstEdge(iid, IG::Edge::eCONTACT_MANAGER); !why && e != IG_INVALID_EDGE;) {
         PxsContactManager* cm = im.getContactManager(e);
         if (cm) {
-          const PxNodeIndex n1 = is.mCpuData.getNodeIndex1(e), n2 = is.mCpuData.getNodeIndex2(e);
+          const PxNodeIndex n1 = V.n1(e), n2 = V.n2(e);
           sv::SolverCM m{};
           const PxcNpWorkUnit& u = cm->getWorkUnit();
-          auto isArt = [&](PxNodeIndex n) { return !n.isStaticBody() && is.getNode(n).getNodeType() == IG::Node::eARTICULATION_TYPE; };
-          if (n1.isStaticBody() || is.getNode(n1).isKinematic() || (!n2.isStaticBody() && is.getNode(n2).isKinematic())) fail(2);
-          else if (!GS.full && (is.getNode(n1).getNodeType() != IG::Node::eRIGID_BODY_TYPE ||
-                                (!n2.isStaticBody() && is.getNode(n2).getNodeType() != IG::Node::eRIGID_BODY_TYPE)))
+          auto isArt = [&](PxNodeIndex n) { return !n.isStaticBody() && V.type(n) == IG::Node::eARTICULATION_TYPE; };
+          if (n1.isStaticBody() || V.kin(n1) || (!n2.isStaticBody() && V.kin(n2))) fail(2);
+          else if (!GS.full && (V.type(n1) != IG::Node::eRIGID_BODY_TYPE ||
+                                (!n2.isStaticBody() && V.type(n2) != IG::Node::eRIGID_BODY_TYPE)))
             fail(1);
           else if (GS.full && (isArt(n1) || isArt(n2))) {  // 관절체가 낀 관리자: body = 관절체 번호, artLink = LL 링크 + 1
             auto ref = [&](PxNodeIndex n, uint32_t& body, uint32_t& artLink) {
               if (n.isStaticBody()) { body = sv::NONE; artLink = 0; return; }
               if (isArt(n)) {
-                auto it = S.artIndex.find(is.getNode(n).mObject);
+                auto it = S.artIndex.find(V.obj(n));
                 if (it == S.artIndex.end()) { fail(4); return; }
                 body = it->second;
                 artLink = n.articulationLinkId() + 1;
               } else {
-                auto it = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(is.getNode(n).mObject));
+                auto it = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(V.obj(n)));
                 if (it == S.rbIndex.end()) { fail(4); return; }
                 body = it->second;
                 artLink = 0;
@@ -343,7 +379,7 @@ void takeSnapshot() {
             ref(n2, m.body1, m.artLink1);
             if (n2.isStaticBody()) m.staticPose1 = toE(u.mRigidCore1->body2World);
           } else {
-            const PxsRigidBody* rb0 = reinterpret_cast<const PxsRigidBody*>(is.getNode(n1).mObject);
+            const PxsRigidBody* rb0 = reinterpret_cast<const PxsRigidBody*>(V.obj(n1));
             auto i0 = S.rbIndex.find(rb0);
             if (i0 == S.rbIndex.end() || static_cast<const void*>(u.mRigidCore0) != static_cast<const void*>(&rb0->getCore())) fail(4);
             else m.body0 = i0->second;
@@ -351,7 +387,7 @@ void takeSnapshot() {
               m.body1 = sv::NONE;
               m.staticPose1 = toE(u.mRigidCore1->body2World);
             } else {
-              auto i1 = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(is.getNode(n2).mObject));
+              auto i1 = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(V.obj(n2)));
               if (i1 == S.rbIndex.end()) fail(4);
               else m.body1 = i1->second;
             }
@@ -422,11 +458,10 @@ void takeSnapshot() {
           S.cms.push_back(m);
           S.icm.push_back(ci);
         }
-        e = edge.mNextIslandEdge;
+        e = V.nextEdge(e);
       }
       I.cmCount = uint32_t(S.icm.size()) - I.cmStart;
-      for (IG::EdgeIndex e = island.mFirstEdge[IG::Edge::eCONSTRAINT]; !why && e != IG_INVALID_EDGE;) {
-        const IG::Edge& edge = is.getEdge(e);
+      for (IG::EdgeIndex e = V.firstEdge(iid, IG::Edge::eCONSTRAINT); !why && e != IG_INVALID_EDGE;) {
         const Dy::Constraint* c = im.getConstraint(e);
         if (!c) fail(4);
         else {
@@ -450,8 +485,8 @@ void takeSnapshot() {
           sv::Constraint1DIn x{};
           x.body0 = bodyOf(c->body0, x.artLink0);
           x.body1 = bodyOf(c->body1, x.artLink1);
-          if (is.mCpuData.getNodeIndex1(e).isStaticBody() != (c->body0 == nullptr)) fail(4);
-          if (is.mCpuData.getNodeIndex2(e).isStaticBody() != (c->body1 == nullptr)) fail(4);
+          if (V.n1(e).isStaticBody() != (c->body0 == nullptr)) fail(4);
+          if (V.n2(e).isStaticBody() != (c->body1 == nullptr)) fail(4);
           x.index = c->index;
           x.data = uint32_t(S.jd.size());
           x.writeback = c->index;
@@ -469,13 +504,13 @@ void takeSnapshot() {
           S.ic1d.push_back(uint32_t(S.c1d.size()));
           S.c1d.push_back(x);
         }
-        e = edge.mNextIslandEdge;
+        e = V.nextEdge(e);
       }
       I.c1dCount = uint32_t(S.ic1d.size()) - I.c1dStart;
       if (why && GS.full) { S.fullOk = false; S.failWhy = why; }  // 전체 모드: 섬을 빼면 묶음이 달라지므로 이 스텝은 비교하지 않음
       if (why) {  // 섬 되돌림
         S.ia.resize(I.artStart);
-        S.bodiesSkipped += island.mNodeCount[IG::Node::eRIGID_BODY_TYPE];
+        S.bodiesSkipped += V.nodeCount(iid, IG::Node::eRIGID_BODY_TYPE);
         for (size_t k = mB; k < S.rbs.size(); ++k) S.rbIndex.erase(S.rbs[k]);
         for (size_t k = mCM; k < S.cmKeys.size(); ++k) S.cmIndex.erase(S.cmKeys[k]);
         S.bodies.resize(mB); S.rbs.resize(mB); S.ib.resize(mIB); S.icm.resize(mICM); S.cms.resize(mCM); S.cmKeys.resize(mCM);
@@ -495,10 +530,9 @@ void takeSnapshot() {
     }
   }
   // 이번 스텝 활성화된 접촉 간선 (쓴 섬의 것만)
-  const PxU32 nbAct = is.getNbActivatedEdges(IG::Edge::eCONTACT_MANAGER);
-  const IG::EdgeIndex* act = is.getActivatedEdges(IG::Edge::eCONTACT_MANAGER);
+  const PxU32 nbAct = V.nbAct();
   for (PxU32 a = 0; a < nbAct; ++a) {
-    auto it = S.cmIndex.find(im.getContactManager(act[a]));
+    auto it = S.cmIndex.find(im.getContactManager(V.act(a)));
     if (it != S.cmIndex.end()) S.act.push_back(it->second);
   }
   for (const void* f : S.artFa) {
@@ -749,10 +783,11 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
   std::vector<uint8_t> deactFlag(nb, 0);
   {
     const IG::IslandSim& is = static_cast<NpScene*>(scene)->getScScene().getSimpleIslandManager()->getAccurateIslandSim();
-    const PxU32 nd = is.getNbNodesToDeactivate(IG::Node::eRIGID_BODY_TYPE);
-    const PxNodeIndex* di = is.getNodesToDeactivate(IG::Node::eRIGID_BODY_TYPE);
+    IG::SimpleIslandManager& im2 = *static_cast<NpScene*>(scene)->getScScene().getSimpleIslandManager();
+    const IsView V{is, im2, loopIslands()};
+    const PxU32 nd = V.nbDeact(IG::Node::eRIGID_BODY_TYPE);
     for (PxU32 k = 0; k < nd; ++k) {
-      auto it = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(is.getNode(di[k]).mObject));
+      auto it = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(V.obj(V.deact(IG::Node::eRIGID_BODY_TYPE, k))));
       if (it != S.rbIndex.end()) deactFlag[it->second] = 1;
     }
   }
@@ -798,10 +833,11 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
       if (deactFlag[b]) deact.push_back(b);
     {
       const IG::IslandSim& is = static_cast<NpScene*>(scene)->getScScene().getSimpleIslandManager()->getAccurateIslandSim();
-      const PxU32 nda = is.getNbNodesToDeactivate(IG::Node::eARTICULATION_TYPE);
-      const PxNodeIndex* dia = is.getNodesToDeactivate(IG::Node::eARTICULATION_TYPE);
+      IG::SimpleIslandManager& im3 = *static_cast<NpScene*>(scene)->getScScene().getSimpleIslandManager();
+      const IsView V{is, im3, loopIslands()};
+      const PxU32 nda = V.nbDeact(IG::Node::eARTICULATION_TYPE);
       for (PxU32 k = 0; k < nda; ++k) {
-        auto it = S.artIndex.find(is.getNode(dia[k]).mObject);
+        auto it = S.artIndex.find(V.obj(V.deact(IG::Node::eARTICULATION_TYPE, k)));
         if (it != S.artIndex.end()) deactArts.push_back(it->second);
       }
     }
@@ -1100,6 +1136,8 @@ void g1_solver_report() {
            GS.pBodyUsed, GS.pBodyNew, GS.pBodyResync, GS.pBodyDiff, GS.pFirstBody >= 0 ? (" 첫 " + std::to_string(GS.pFirstBody)).c_str() : "", GS.pFricUsed,
            GS.pFricNew, GS.pFricReset, GS.pFricDiff, GS.pFirstFric >= 0 ? (" 첫 " + std::to_string(GS.pFirstFric)).c_str() : "", GS.pWbUsed, GS.pWbDiff,
            GS.pFirstWb >= 0 ? (" 첫 " + std::to_string(GS.pFirstWb)).c_str() : "");
+  if (GS.persist && getenv("G1_LOOP_ISLANDS"))
+    printf("  닫힌 고리 3단 섬 입력(우리 섬 관리 — 활성 섬·사슬·간선·활성화 간선·잠들 노드): 스텝 %" PRIu64 "%c", GS.lIslSteps, 10);
   if (GS.persist && getenv("G1_LOOP_CONTACT"))
     printf("  닫힌 고리 2단 접촉 입력(우리 contact 장면 단위): 관리자 %" PRIu64 " (PhysX 와 다름 %" PRIu64 ", 우리 쪽에 없음 %" PRIu64 ")\n", GS.lcUsed, GS.lcDiff, GS.lcMissing);
   for (const Tally* t : {&GS.tPose, &GS.tLin, &GS.tAng, &GS.tWake, &GS.tSleep, &GS.tFric, &GS.tWb, &GS.tArt})
