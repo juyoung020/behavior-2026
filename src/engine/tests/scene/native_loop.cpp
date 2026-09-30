@@ -3,6 +3,8 @@
 //   native_loop <장면 파일> <창 입력 흐름> <렌더 폴더 | -> [--envs N] [--threads T] [--render-every K] [--steps S] [--ctrl <기록 폴더>]
 // --ctrl: 로봇 드라이브 목표를 흐름 대신 우리 제어기(native_ctrl.h, 기록 행동 s1_actions.bin)로 — 흐름 값과 비교, 요약값도 같아야 함.
 // 렌더 폴더가 - 이면 렌더 없이 (물리·제어만).
+// --policy <가중치.pi05w> [--prompt "..."] [--replan 16] (NL_PI05 빌드, --ctrl --free 와 렌더 폴더 필요): 행동을 기록 대신 pi05_act_batch 로 —
+//   스텝 t 행동 = 정책(영상 = 스텝 t-2 끝 상태로 그린 것(렌더 한 스텝 늦음, 14.6 약속), proprio = 스텝 t-1 끝 상태). 판 N 개 한 번에.
 // --free (--ctrl 과 함께): 경계 뒤 창에서 흐름 입력(섬 호출·깸 카운터/활성 차이·쌍 관리층 표)을 하나도 안 쓰고, 로봇 입력만 엔진 API 로 —
 //   드라이브 목표(우리 제어기) = setDriveTarget/Velocity(autowake: 깸 카운터 < 0.4 면 NpArticulation autoWakeInternal = EnvArtApi::wakeUpInternal),
 //   흐름에 로봇 wakeUp/putToSleep 호출이 있던 자리 = EnvArtApi::wakeUp/putToSleep (언제 부르는지는 아직 흐름에서).
@@ -30,6 +32,9 @@
 #include "tests/scene/native_ctrl.h"
 #include "tests/scene/native_obs.h"
 #include "tests/scene/native_render.h"
+#ifdef NL_PI05
+#include "pi05_batch.h"
+#endif
 
 using namespace envrun;
 namespace rnd = eng::rnd;
@@ -102,6 +107,8 @@ int main(int argc, char** argv) {
   long long maxSteps = -1;
   std::string ctrlDir;
   bool freeRun = false;
+  std::string policyW, prompt = "Turn on the radio receiver that's on the table in the living room.";
+  int replan = 16;
   for (int i = 4; i < argc; ++i)
     if (!strcmp(argv[i], "--free")) freeRun = true;
   for (int i = 4; i + 1 < argc; ++i) {
@@ -110,6 +117,9 @@ int main(int argc, char** argv) {
     if (!strcmp(argv[i], "--render-every")) renderEvery = atoi(argv[i + 1]);
     if (!strcmp(argv[i], "--steps")) maxSteps = atoll(argv[i + 1]);
     if (!strcmp(argv[i], "--ctrl")) ctrlDir = argv[i + 1];
+    if (!strcmp(argv[i], "--policy")) policyW = argv[i + 1];
+    if (!strcmp(argv[i], "--prompt")) prompt = argv[i + 1];
+    if (!strcmp(argv[i], "--replan")) replan = atoi(argv[i + 1]);
   }
   envs = std::max(envs, 1);
   threads = std::max(threads, 1);
@@ -221,6 +231,35 @@ int main(int argc, char** argv) {
     if (fo) fclose(fo);
     printf("  관측: proprio 61 기준 %u 스텝 (MKL %s)\n", obsT, getenv("ENGINE_MKL_LIB") ? "있음" : "없음 — cos/sin 이 다를 수 있음");
   }
+  // ---- 정책 (--policy)
+  const bool usePolicy = !policyW.empty();
+  std::vector<std::vector<float>> actE;  // 판마다 [T][23] (정책이 채움)
+  std::vector<rnd::Aff> anchHist[2];      // 스텝 끝 기준 prim 행렬: [0] = 하나 전 스텝 끝, [1] = 둘 전
+  uint64_t polCalls = 0, polChunks = 0;
+  double msPolicy = 0, msObsRender = 0;
+#ifdef NL_PI05
+  Pi05Engine* pol = nullptr;
+#endif
+  if (usePolicy) {
+#ifndef NL_PI05
+    fprintf(stderr, "--policy 는 NL_PI05 빌드에서만 (libpi05.a)\n");
+    return 2;
+#else
+    if (!CS.bound || !freeRun || !doRender || !OS.bound) {
+      fprintf(stderr, "--policy 는 --ctrl <기록>(obs_setup 포함) --free 와 렌더 폴더가 있어야 함\n");
+      return 2;
+    }
+    char perr[512] = {0};
+    pol = pi05_create_batch(policyW.c_str(), 0, envs, perr, int32_t(sizeof perr));
+    if (!pol) {
+      fprintf(stderr, "pi05_create_batch 실패: %s\n", perr);
+      return 1;
+    }
+    actE.assign(size_t(envs), std::vector<float>(size_t(actT ? actT : 501) * 23, 0.0f));
+    if (!actT) actT = 501;
+    printf("  정책: %s, 판 %d, 다시 계획 %d, 문장 \"%s\"\n", policyW.c_str(), envs, replan, prompt.c_str());
+#endif
+  }
   if (freeRun && !CS.bound) {
     fprintf(stderr, "--free 는 --ctrl 과 함께\n");
     return 1;
@@ -301,11 +340,65 @@ int main(int argc, char** argv) {
     return std::chrono::duration<double, std::milli>(b - a).count();
   };
   const auto tAll = now();
+  if (usePolicy) {  // 처음 상태의 기준 prim 행렬 (둘 전·하나 전 스텝 끝이 없을 때)
+    pool.parallelFor(envs, [&](int e) { map.anchors(*V[size_t(e)].S, anch.data() + size_t(e) * A); });
+    anchHist[0] = anch;
+    anchHist[1] = anch;
+  }
   for (size_t w = 0; w < wins.size(); ++w) {
     const sc2::EnvWindow& W = wins[w];
+#ifdef NL_PI05
+    if (usePolicy && W.sim > CS.episode_start && (W.sim - CS.episode_start - 1) % CS.substeps == 0) {  // 스텝 t 첫 서브스텝 앞: 행동 t
+      const uint64_t t = (W.sim - CS.episode_start - 1) / CS.substeps;
+      if (t < actT) {
+        auto tp = now();
+        nrender::setAnchors(nr, anchHist[1].data(), anchHist[1].size());  // 영상 = 둘 전 스텝 끝 (렌더 늦음)
+        nrender::render(nr, int(t));
+        auto tr = now();
+        msObsRender += ms(tp, tr);
+        std::vector<float> prop(size_t(envs) * 61);
+        pool.parallelFor(envs, [&](int e) { OS.proprio(CS, *V[size_t(e)].S, prop.data() + size_t(e) * 61); });
+        std::vector<Pi05View> views(size_t(envs) * 3);
+        std::vector<int32_t> slots(static_cast<size_t>(envs));
+        for (int e = 0; e < envs; ++e) {
+          slots[size_t(e)] = e;
+          for (int c = 0; c < 3; ++c) {
+            const int cw = nrender::camW(nr, c), ch = nrender::camH(nr, c);
+            views[size_t(e) * 3 + size_t(c)] = Pi05View{nrender::rgbDevice(nr, c) + size_t(e) * size_t(cw) * size_t(ch) * 3, ch, cw, int64_t(cw) * 3, 3, 1};
+          }
+        }
+        Pi05ActBatchIn in{};
+        in.n = envs;
+        in.slots = slots.data();
+        in.views = views.data();
+        in.proprio = prop.data();
+        in.n_proprio = 61;
+        in.prompt = prompt.c_str();
+        in.replan_every = replan;
+        std::vector<float> a(size_t(envs) * 23);
+        std::vector<uint8_t> nc(size_t(envs), 0);
+        Pi05BatchTiming tm{};
+        if (pi05_act_batch(pol, &in, a.data(), nc.data(), &tm) != 0) {
+          fprintf(stderr, "pi05_act_batch 실패: %s\n", pi05_last_error(pol));
+          return 1;
+        }
+        for (int e = 0; e < envs; ++e) memcpy(actE[size_t(e)].data() + size_t(t) * 23, a.data() + size_t(e) * 23, 23 * 4);
+        ++polCalls;
+        polChunks += nc[0];
+        msPolicy += ms(tr, now());
+        if (t < 3 || t % 100 == 0) {
+          printf("    [정책 스텝 %llu] 판 0 행동:", (unsigned long long)t);
+          for (int k = 0; k < 23; ++k) printf(" %.3f", a[size_t(k)]);
+          if (!acts.empty()) printf("  | 기록 행동 0: %.3f %.3f %.3f", acts[size_t(t) * 23], acts[size_t(t) * 23 + 1], acts[size_t(t) * 23 + 2]);
+          printf("\n");
+        }
+      }
+    }
+#endif
     auto t0 = now();
     pool.parallelFor(envs, [&](int e) {
-      const bool c = CS.bound && ctl[size_t(e)].apply(CS, *V[size_t(e)].S, W, acts.data(), actT, wctl[size_t(e)]);
+      const float* A_ = usePolicy ? actE[size_t(e)].data() : acts.data();
+      const bool c = CS.bound && ctl[size_t(e)].apply(CS, *V[size_t(e)].S, W, A_, actT, wctl[size_t(e)]);
       if (freeRun && !W.first)
         applyFree(e, W, c ? wctl[size_t(e)] : W);
       else
@@ -351,6 +444,13 @@ int main(int argc, char** argv) {
     pool.parallelFor(envs, [&](int e) { map.anchors(*V[size_t(e)].S, anch.data() + size_t(e) * A); });
     auto t4 = now();
     msAnch += ms(t3, t4);
+    if (usePolicy) {  // 스텝 끝이면 기준 prim 행렬 역사에 (정책 영상은 둘 전 스텝 끝)
+      if (W.sim > CS.episode_start && (W.sim - CS.episode_start) % CS.substeps == 0) {
+        anchHist[1] = anchHist[0];
+        anchHist[0] = anch;
+      }
+      continue;  // 정책 모드에서는 스텝마다 따로 그리지 않음 (관측 때만)
+    }
     if (!doRender) continue;
     checkAnchors(W.sim);
     if (renderEvery > 0 && (w % size_t(renderEvery)) == 0) {
@@ -372,6 +472,9 @@ int main(int argc, char** argv) {
   if (obsSteps)
     printf("  관측 proprio 61 (판 0): 스텝 %" PRIu64 " 중 다른 스텝 %" PRIu64 " (칸 %" PRIu64 ")%s\n", obsSteps, obsBadSteps, obsBadFields,
            obsFirstBad >= 0 ? (" 첫 다름 스텝 " + std::to_string(obsFirstBad)).c_str() : "");
+  if (usePolicy)
+    printf("  정책: 부름 %" PRIu64 " (새 조각 %" PRIu64 ", 판 0), 관측 렌더 %.1f ms/번, 정책 %.1f ms/번\n", polCalls, polChunks,
+           polCalls ? msObsRender / double(polCalls) : 0.0, polCalls ? msPolicy / double(polCalls) : 0.0);
   if (freeRun) printf("  --free: 흐름 입력 없이 (판 0 로봇 아닌 관절체 호출 빠뜨림 %" PRIu64 ", EnvArtApi 깨움 요청 %" PRIu64 ")\n", freeOther[0], artApi[0]->reqActivate);
   if (doRender) printf("  기준 prim 대조 (판 0, 몸체·링크 %u 개, 렌더 캡처 프레임별 가장 가까운 simulate):\n", map.n[1] + map.n[2]);
   for (size_t fi = 0; fi < frames.size() && doRender; ++fi)
