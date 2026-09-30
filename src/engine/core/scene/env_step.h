@@ -39,6 +39,8 @@ struct EnvModules : public ScModules {
   void islandRemoveNode(uint64_t node) override;
   void pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) override;
   void bodyReleased(uint32_t actorID) override;
+  void pairsActorAdded(int32_t h, const ScActorIn& in) override;
+  void pairsShapeAdded(int32_t h, uint32_t elem) override;
 };
 
 struct EnvStep {
@@ -49,6 +51,7 @@ struct EnvStep {
   LiveIslands live;
   HostWake wake;               // 깸 카운터 표 (풀이 모듈과 주고받음)
   std::vector<uint8_t> active; // 쌍 관리층 행위자별 ActorSim::isActive
+  std::vector<int32_t> pairsOfSc;  // ScScene 손잡이 -> 쌍 관리층 행위자 번호 (적재 때 행위자 번호로 맞춤, 새 행위자는 끝에 붙임)
   EnvModules mods;
   bool contactDistChanged = false;  // Sc mHasContactDistanceChanged (편집 API 가 켬)
   uint64_t steps = 0;
@@ -80,8 +83,52 @@ inline bool EnvModules::bpRemove(uint32_t index) { return E->C->bp->m->removeBou
 inline uint64_t EnvModules::islandAddNode(bool awake, bool kine) { return ig::addNode(E->isl->M, awake, kine, ig::eRIGID_BODY_TYPE, 0); }
 inline void EnvModules::islandDeactivateNode(uint64_t node) { ig::deactivateNode(E->isl->M, uint32_t(node & 0xffffffffu)); }
 inline void EnvModules::islandRemoveNode(uint64_t node) { ig::removeNode(E->isl->M, uint32_t(node & 0xffffffffu)); }
-inline void EnvModules::pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) { E->C->S->pairs.onVolumeRemoved(int32_t(elem), wakeOnLostTouch); }
+inline void EnvModules::pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) {
+  ss::ScPairs& P = E->C->S->pairs;
+  P.onVolumeRemoved(int32_t(elem), wakeOnLostTouch);
+  if (elem < P.shapes.size()) P.shapes[elem].valid = false;
+}
 inline void EnvModules::bodyReleased(uint32_t actorID) { E->live.releasedIds.push_back(actorID); }
+// 쌍 관리층 모양 칸 (Sc::ShapeCore -> ss::Shape, g1_pairs.cpp captureScene 과 같은 칸)
+inline void envPairsShapeRow(EnvStep& E, int32_t h, uint32_t e) {
+  ss::ScPairs& P = E.C->S->pairs;
+  const ScShapeRec& r = E.sc->shapes[e];
+  if (P.shapes.size() <= e) P.shapes.resize(e + 1);
+  ss::Shape& S = P.shapes[e];
+  S.valid = true;
+  S.actor = size_t(h) < E.pairsOfSc.size() ? E.pairsOfSc[size_t(h)] : -1;
+  S.geomType = int32_t(r.in.geom.type);
+  S.trigger = (r.in.shapeFlags & kShapeTrigger) != 0;
+  S.fd = ss::FilterData{r.in.filter[0], r.in.filter[1], r.in.filter[2], r.in.filter[3]};
+  S.restOffset = r.in.restOffset;
+  S.torsionalPatchRadius = r.in.torsionalPatchRadius;
+  S.minTorsionalPatchRadius = r.in.minTorsionalPatchRadius;
+  S.transformCacheId = e;
+}
+// 쌍 관리층 행위자 칸 (Sc::ActorSim: 종류·거르기 속성(ScActorSim.h:52 PxFilterObjectType + eKINEMATIC + Ex)·행위자 번호·섬 노드·지배·알림 플래그)
+inline void EnvModules::pairsActorAdded(int32_t h, const ScActorIn& in) {
+  ss::ScPairs& P = E->C->S->pairs;
+  const ScActorRec& r = E->sc->actors[size_t(h)];
+  ss::Actor A;
+  const bool dyn = r.kind != 0;
+  A.type = dyn ? ss::eRIGID_DYNAMIC : ss::eRIGID_STATIC;
+  A.filterAttr = dyn ? (uint32_t(ss::FilterObj::eTYPE_RIGID_DYNAMIC) | ss::FilterObj::eEX_RIGID_DYNAMIC | (r.kinematic ? uint32_t(ss::FilterObj::eKINEMATIC) : 0u))
+                     : (uint32_t(ss::FilterObj::eTYPE_RIGID_STATIC) | ss::FilterObj::eEX_RIGID_STATIC);
+  A.actorID = r.actorID;
+  A.nodeIndex = dyn ? r.node : ss::INVALID_NODE;
+  A.dominanceGroup = in.dominance;
+  A.offsetSlop = in.offsetSlop;
+  A.forceStaticKineNotif = in.forceStaticKineNotif != 0;
+  A.forceKineKineNotif = in.forceKineKineNotif != 0;
+  const int32_t pa = int32_t(P.actors.size());
+  P.actors.push_back(A);
+  if (E->pairsOfSc.size() <= size_t(h)) E->pairsOfSc.resize(size_t(h) + 1, -1);
+  E->pairsOfSc[size_t(h)] = pa;
+  E->active.resize(P.actors.size(), 0);
+  E->active[size_t(pa)] = (dyn && in.awake) ? 1 : 0;  // BodySim 생성: setActive(isAwake) (ScBodySim.cpp:108)
+  for (uint32_t e : r.elements) envPairsShapeRow(*E, h, e);
+}
+inline void EnvModules::pairsShapeAdded(int32_t h, uint32_t elem) { envPairsShapeRow(*E, h, elem); }
 
 // 넓은 단계 결과를 요소 번호 쌍으로 (scene_step.h contactBroadPhase 의 grab 과 같음)
 inline void envGrabOverlaps(contact::ContactScene& S) {

@@ -38,6 +38,9 @@ struct ScShapeIn {
   float contactOffset;
   uint32_t shapeFlags;  // PxShapeFlags
   uint8_t idtShape, pad[3];
+  // 쌍 관리층 입력 (Sc::ShapeCore): 시뮬레이션 거르기 자료·쉼 거리·비틀림 반경
+  uint32_t filter[4];
+  float restOffset, torsionalPatchRadius, minTorsionalPatchRadius;
 };
 struct ScActorIn {
   uint32_t kind;          // kStatic / kDynamic (scene_file.h ActorKind)
@@ -45,6 +48,9 @@ struct ScActorIn {
   px::PxTransform body2Actor;
   uint8_t idtBody2Actor, kinematic, forcedKineNotif, awake;  // awake = wakeCounter>0 또는 속도≠0 (ScBodySim.cpp:80)
   std::vector<ScShapeIn> shapes;
+  // 쌍 관리층 입력: 지배 그룹, PxRigidBodyFlag::eFORCE_STATIC_KINE / eFORCE_KINE_KINE_NOTIFICATIONS 따로, PxsBodyCore::offsetSlop
+  uint8_t dominance = 0, forceStaticKineNotif = 0, forceKineKineNotif = 0, pad2 = 0;
+  float offsetSlop = 0.0f;
 };
 
 // 모듈 호출. 돌려주는 값은 모듈이 정한다 (층 1·2 = 우리 BpRuntime·섬 관리자, 검증 = PhysX 기록)
@@ -61,6 +67,9 @@ struct ScModules {
   virtual void pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) { (void)elem; (void)wakeOnLostTouch; }
   // 몸체 지움: Scene::markReleasedBodyIDForLostTouch (ScScene.cpp:1687) — 잃은 닿음 쌍의 "지워짐" 판정 (step_host.h LiveIslands::releasedIds)
   virtual void bodyReleased(uint32_t actorID) { (void)actorID; }
+  // 쌍 관리층 입력 표 (행위자·모양 칸): 새 행위자(모양 칸까지) / 새 모양 칸 (붙이기·다시 넣기)
+  virtual void pairsActorAdded(int32_t h, const ScActorIn& in) { (void)h; (void)in; }
+  virtual void pairsShapeAdded(int32_t h, uint32_t elem) { (void)h; (void)elem; }
 };
 
 struct ScShapeRec {
@@ -210,6 +219,7 @@ struct ScScene {
       actors[size_t(h)].elements.push_back(e);
       initShape(e, m);
     }
+    m.pairsActorAdded(h, in);
     return h;
   }
 
@@ -223,6 +233,7 @@ struct ScScene {
     s.alive = 1;
     actors[size_t(h)].elements.push_back(e);  // ElementSim 생성이 행위자 모양 표 끝에 넣음 (ScElementSim.cpp:106)
     initShape(e, m);
+    m.pairsShapeAdded(h, e);
     return e;
   }
   // 모양 떼기 (RigidCore::removeShapeFromScene -> Scene::removeShape_, ScScene.cpp:2422): 넓은 단계 빼기 -> ShapeSim 소멸(번호 풀기, 표에서 끝 것과 바꿔 빼기)
@@ -281,7 +292,10 @@ struct ScScene {
   void reinsertShape(uint32_t e, ScModules& m) {
     ScShapeRec s = shapes[e];
     bool pending = false;
-    if (s.inBp) pending = m.bpRemove(e);
+    if (s.inBp) {
+      pending = m.bpRemove(e);
+      m.pairsVolumeRemoved(e, true);  // internalRemoveFromBroadPhase(wakeOnLostTouch = true)
+    }
     shapes[e].inBp = 0;
     uint32_t ne = e;
     if (!pending) {
@@ -300,6 +314,7 @@ struct ScScene {
     shapes[ne] = s;
     shapes[ne].inBp = 0;
     initShape(ne, m);
+    m.pairsShapeAdded(s.actor, ne);
   }
   void reinsertActor(int32_t h, ScModules& m) {
     const std::vector<uint32_t> el = actors[size_t(h)].elements;

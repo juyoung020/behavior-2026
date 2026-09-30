@@ -13,6 +13,7 @@
 
 #include "core/scene/env_load.h"
 #include "core/scene/env_solve.h"
+#include "core/scene/env_body_api.h"
 namespace physx { class PxActor; }
 #include "g1_hooks.h"
 
@@ -23,6 +24,9 @@ void g1_islands_compare_store(const sc2::IslandStore& O, uint64_t* n, uint64_t* 
 ss::ScPairs* g1_pairs_M();
 void g1_pairs_actor_active(std::vector<int8_t>& out);
 void g1_pairs_wake(sc2::HostWake& out);
+// particles 편집 창 자리 (약한 기호 — particles 쪽 번역 단위가 채운다): 이 simulate 앞 창을 엔진 편집 창으로 대신하면 1(창 처리함 — 기록 창 입력·건드림 다시 맞춤 안 함),
+// 편집 창 안에서 물리 스텝을 이미 돌렸으면 2 를 더한다(이번 simulate 의 envStep 을 건너뜀). 0 = 평소대로 기록 창.
+int g1_env_edit_hook(uint64_t sim, eng::scene::EnvStep& E, eng::scene::EnvSolveImpl& S, eng::scene::EnvBodyApi& api) __attribute__((weak));
 size_t g1_islands_rec_count();
 bool g1_islands_rec(size_t i, sc2::IslOp& o);
 
@@ -36,6 +40,8 @@ struct EnvCheck {
   // ---- 닫힌 고리 (G1_ENV_RUN): 경계 뒤로 env 가 스스로 스텝을 돈다. 창 입력만 재생기에서 (옮긴 API = 관절체 드라이브·깨움, 그 밖은 건드림 = PhysX 로 다시 맞춤)
   bool run = false, running = false, first = true;
   sc2::EnvSolveImpl solver;
+  std::unique_ptr<sc2::EnvBodyApi> api;
+  uint64_t editWindows = 0, editSkips = 0;
   std::vector<const void*> pxArts;  // 파일 관절체 번호 차례
   size_t cursor = 0, boundary = 0;
   std::vector<G1BodyState> pre;     // 창 뒤 PhysX 몸체 상태 (건드린 것 다시 맞춤용)
@@ -175,7 +181,37 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
     for (size_t k = 0; k < px.size() && k < o.E.active.size(); ++k)
       if (px[k] >= 0) tAct.chk(o.E.active[k] == uint8_t(px[k]), "행위자 #" + std::to_string(k));
   }
+  // 쌍 관리층 입력 칸을 우리 공식(EnvModules: Sc 칸 -> 쌍 관리층 행위자·모양 칸)으로 다시 만들어 적재된 칸(= PhysX)과 비교 — 판 도중 새 행위자에 쓰는 공식의 검증
+  Tally tRow{"쌍 관리층 입력 칸 (우리 공식)"};
+  {
+    ss::ScPairs& P = o.C.S->pairs;
+    for (size_t h = 0; h < o.sc.actors.size(); ++h) {
+      const sc2::ScActorRec& r = o.sc.actors[h];
+      const int32_t pa = h < o.E.pairsOfSc.size() ? o.E.pairsOfSc[h] : -1;
+      if (!r.alive || pa < 0 || r.kind == 2) continue;  // 링크는 판 도중 안 넣음
+      const ss::Actor& A = P.actors[size_t(pa)];
+      const bool dyn = r.kind != 0;
+      const uint32_t fa = dyn ? (uint32_t(ss::FilterObj::eTYPE_RIGID_DYNAMIC) | ss::FilterObj::eEX_RIGID_DYNAMIC | (r.kinematic ? uint32_t(ss::FilterObj::eKINEMATIC) : 0u))
+                              : (uint32_t(ss::FilterObj::eTYPE_RIGID_STATIC) | ss::FilterObj::eEX_RIGID_STATIC);
+      tRow.chk(A.type == (dyn ? ss::eRIGID_DYNAMIC : ss::eRIGID_STATIC) && A.filterAttr == fa && A.actorID == r.actorID &&
+                   A.nodeIndex == (dyn ? r.node : ss::INVALID_NODE),
+               "행위자 칸 #" + std::to_string(h) + " 속성 " + std::to_string(A.filterAttr) + "/" + std::to_string(fa));
+      for (uint32_t e : r.elements) {
+        if (e >= P.shapes.size()) continue;
+        const ss::Shape saved = P.shapes[e];
+        sc2::envPairsShapeRow(o.E, int32_t(h), e);
+        const ss::Shape& n = P.shapes[e];
+        tRow.chk(n.valid == saved.valid && n.actor == saved.actor && n.geomType == saved.geomType && n.trigger == saved.trigger && n.fd.word0 == saved.fd.word0 &&
+                     n.fd.word1 == saved.fd.word1 && n.fd.word2 == saved.fd.word2 && n.fd.word3 == saved.fd.word3 && n.restOffset == saved.restOffset &&
+                     n.torsionalPatchRadius == saved.torsionalPatchRadius && n.minTorsionalPatchRadius == saved.minTorsionalPatchRadius &&
+                     n.transformCacheId == saved.transformCacheId,
+                 "모양 칸 #" + std::to_string(e));
+        P.shapes[e] = saved;
+      }
+    }
+  }
   printf("G1 env 적재 대조 (simulate %llu, 파일 %s): PhysX 없이 세운 env 상태 = 살아 있는 PhysX\n", (unsigned long long)sim, EC.from.c_str());
+  tRow.print();
   tIsl.print();
   tPairs.print();
   tSc.print();
@@ -187,6 +223,7 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
     EC.solver.load(EC.f);
     EC.solver.seedPairs(o.C.S->pairs);
     o.E.solver = &EC.solver;
+    EC.api.reset(new sc2::EnvBodyApi(o.E, EC.solver));
     EC.pxArts = g1_env_px_arts(scene);
     EC.running = true;
     EC.first = true;
@@ -244,7 +281,11 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
   const sc2::PairsStep* Sp = g1_pairs_step();
   if (!Sp) return;
   ++EC.steps;
+  // 0. particles 편집 창 (있으면)
+  const int editFlags = g1_env_edit_hook ? g1_env_edit_hook(sim, E, EC.solver, *EC.api) : 0;
+  if (editFlags) ++EC.editWindows;
   // 1. 창: 쌍 관리층 앞 연산 (섬 호출은 모아 둠), 섬 바깥 호출은 기록 차례대로, 우리 쌍 호출은 기록의 쌍 호출 자리에
+  if (!(editFlags & 1)) {  // 기록 창 (편집 창이 대신하지 않은 simulate)
   L.clearStep();
   L.defer = true;
   sc2::pairsPreOps(P, *Sp);
@@ -322,11 +363,14 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
       EC.artOpsN += EC.artOps[k].size();
     }
   }
+  }  // 기록 창 끝
+  EC.cursor = g1_islands_rec_count();
   // 5. 한 스텝
+  if (editFlags & 2) ++EC.editSkips;
   if (getenv("G1_ENV_TRACE"))
     fprintf(stderr, "[g1 env] sim %llu 앞: 활성 섬 %u, 몸체 %zu, 관리자 목록 %u, 상호작용 %u\n", (unsigned long long)sim, M.accurate.activeIslands.size,
             EC.solver.bodies.size(), P.npMain.size(), P.inters.size());
-  sc2::envStep(E);
+  if (!(editFlags & 2)) sc2::envStep(E);
   if (getenv("G1_ENV_TRACE"))
     fprintf(stderr, "[g1 env] sim %llu 뒤: 판 섬 %zu 몸체 %zu 관리자 %zu 1D %zu 관절체 %zu\n", (unsigned long long)sim, EC.solver.islands.size(), EC.solver.ib.size(),
             EC.solver.icm.size(), EC.solver.c1d.size(), EC.solver.ia.size());
@@ -393,4 +437,9 @@ void g1_env_report() {
          "; 풀이: 섬 안 운동학 %" PRIu64 ", 모르는 간선 %" PRIu64 ", 모르는 노드 %" PRIu64 ", 판 오류 %" PRIu64 "\n",
          EC.winExt, EC.winOurs, EC.winMismatch, EC.artOpsN, EC.resyncBodies, EC.resyncArts, EC.solver.kinInIsland, EC.solver.unknownEdge, EC.solver.unknownNode,
          EC.solver.engineErr);
+  if (g1_env_edit_hook)
+    printf("  편집 창(particles): %" PRIu64 " 번, 그 안에서 스텝을 돌려 건너뛴 simulate %" PRIu64 ", 몸체 API 요청 깨움 %" PRIu64 " 잠 준비 %" PRIu64 " 바로 재움 %" PRIu64
+           " 모르는 손잡이 %" PRIu64 "\n",
+           EC.editWindows, EC.editSkips, EC.api ? EC.api->reqActivate : 0, EC.api ? EC.api->reqDeactivate : 0, EC.api ? EC.api->reqSleep : 0,
+           EC.api ? EC.api->unknown : 0);
 }

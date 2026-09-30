@@ -442,8 +442,16 @@ void compareCalls(const ReplayModules& m, const char* what) {
 es::ScShapeIn shapeIn(const Sc::ShapeCore& core, bool* okOut) {
   es::ScShapeIn si;
   const PxsShapeCore& pc = core.getCore();
-  memset(static_cast<void*>(&si.geom), 0, sizeof(si.geom));
+  memset(static_cast<void*>(&si), 0, sizeof(si));
   *okOut = geomOf(pc.mGeometry.getGeometry(), si.geom);
+  const PxFilterData fd = core.getSimulationFilterData();
+  si.filter[0] = fd.word0;
+  si.filter[1] = fd.word1;
+  si.filter[2] = fd.word2;
+  si.filter[3] = fd.word3;
+  si.restOffset = core.getRestOffset();
+  si.torsionalPatchRadius = core.getTorsionalPatchRadius();
+  si.minTorsionalPatchRadius = core.getMinTorsionalPatchRadius();
   const PxTransform t = pc.getTransform();
   si.localPose = ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w));
   si.contactOffset = pc.mContactOffset;
@@ -617,6 +625,10 @@ void W(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3
     in.kinematic = (body.getFlags() & PxRigidBodyFlag::eKINEMATIC) ? 1 : 0;
     in.forcedKineNotif = (body.getFlags() & (PxRigidBodyFlag::eFORCE_KINE_KINE_NOTIFICATIONS | PxRigidBodyFlag::eFORCE_STATIC_KINE_NOTIFICATIONS)) ? 1 : 0;
     in.awake = (body.getWakeCounter() > 0.f || !body.getLinearVelocity().isZero() || !body.getAngularVelocity().isZero()) ? 1 : 0;
+    in.dominance = body.getDominanceGroup();
+    in.forceStaticKineNotif = (body.getFlags() & PxRigidBodyFlag::eFORCE_STATIC_KINE_NOTIFICATIONS) ? 1 : 0;
+    in.forceKineKineNotif = (body.getFlags() & PxRigidBodyFlag::eFORCE_KINE_KINE_NOTIFICATIONS) ? 1 : 0;
+    in.offsetSlop = bc.offsetSlop;
     for (PxU32 i = 0; i < n; ++i) {
       bool gok = true;
       in.shapes.push_back(shapeIn(*reinterpret_cast<Sc::ShapeCore*>(size_t(shapes[i]) + off), &gok));

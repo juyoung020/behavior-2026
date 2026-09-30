@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "core/scene/batch.h"
 #include "core/scene/env_step.h"
@@ -96,6 +97,16 @@ inline bool envLoad(EnvOwned& o, const SceneFile& f, const SceneShared& sh, std:
   std::sort(E.wake.bodies.begin(), E.wake.bodies.end(), [](const HostBodyWake& x, const HostBodyWake& y) { return x.node < y.node; });
   // 행위자 활성 표 (쌍 관리층 행위자 번호)
   const ss::ScPairs& P = o.C.S->pairs;
+  {  // ScScene 손잡이 -> 쌍 관리층 행위자 (행위자 번호로)
+    std::unordered_map<uint32_t, int32_t> byId;
+    for (uint32_t a = 0; a < P.actors.size(); ++a) byId[P.actors[a].actorID] = int32_t(a);
+    E.pairsOfSc.assign(o.sc.actors.size(), -1);
+    for (size_t h = 0; h < o.sc.actors.size(); ++h) {
+      if (!o.sc.actors[h].alive) continue;
+      auto it = byId.find(o.sc.actors[h].actorID);
+      if (it != byId.end()) E.pairsOfSc[h] = it->second;
+    }
+  }
   E.active.assign(P.actors.size(), 0);
   for (uint32_t a = 0; a < P.actors.size(); ++a) {
     if (P.actors[a].isStatic()) continue;

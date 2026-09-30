@@ -34,6 +34,8 @@ struct ScStateShape {
   uint8_t idtShape, pad[3];
   float localPose[7], cache[7], bounds[6], contactDist;
   uint32_t cacheFlags;
+  uint32_t filter[4];
+  float restOffset, torsionalPatchRadius, minTorsionalPatchRadius;
 };
 struct ScState {
   bool valid = false;
@@ -99,6 +101,10 @@ inline ScState scSave(const ScScene& S, const std::vector<uint32_t>& elemToScene
     memcpy(r.bounds, &S.bounds[e], 24);
     r.contactDist = S.contactDist[e];
     r.cacheFlags = S.cacheFlags[e];
+    memcpy(r.filter, s.in.filter, 16);
+    r.restOffset = s.in.restOffset;
+    r.torsionalPatchRadius = s.in.torsionalPatchRadius;
+    r.minTorsionalPatchRadius = s.in.minTorsionalPatchRadius;
     o.shapes.push_back(r);
   }
   o.changed = S.changed;
@@ -144,6 +150,10 @@ inline uint32_t scLoad(ScScene& S, const ScState& o, GeomOf geomOfSceneShape) {
     memcpy(&S.bounds[e], r.bounds, 24);
     S.contactDist[e] = r.contactDist;
     S.cacheFlags[e] = r.cacheFlags;
+    memcpy(s.in.filter, r.filter, 16);
+    s.in.restOffset = r.restOffset;
+    s.in.torsionalPatchRadius = r.torsionalPatchRadius;
+    s.in.minTorsionalPatchRadius = r.minTorsionalPatchRadius;
   }
   S.changed = o.changed;
   return missing;
@@ -166,7 +176,7 @@ inline bool rv(FILE* f, std::vector<T>& v) {
 inline bool wt(FILE* f, const ScStateTracker& t) { return fwrite(&t.cur, 4, 1, f) == 1 && wv(f, t.freeIds) && wv(f, t.pending); }
 inline bool rt(FILE* f, ScStateTracker& t) { return fread(&t.cur, 4, 1, f) == 1 && rv(f, t.freeIds) && rv(f, t.pending); }
 }  // namespace detail_sc
-constexpr char kScStateMagic[8] = {'S', 'C', 'S', 'T', 'A', 'T', 'E', '1'};
+constexpr char kScStateMagic[8] = {'S', 'C', 'S', 'T', 'A', 'T', 'E', '2'};  // 2: 모양 쌍 관리층 입력(거르기 자료·쉼 거리·비틀림) 더함
 inline bool writeScState(FILE* f, const ScState& s) {
   using namespace detail_sc;
   const uint32_t sizes[2] = {uint32_t(sizeof(ScStateActor)), uint32_t(sizeof(ScStateShape))};
