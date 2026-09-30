@@ -137,7 +137,7 @@ PxU32 W(_ZN5physx2IG19SimpleIslandManager13addConstraintEPNS_2Dy10ConstraintENS_
                                                                                                                      Sc::Interaction* it) {
   Depth d;
   const PxU32 r = R(_ZN5physx2IG19SimpleIslandManager13addConstraintEPNS_2Dy10ConstraintENS_11PxNodeIndexES5_PNS_2Sc11InteractionE)(s, c, n1, n2, it);
-  if (d.top) rec(Rec{OP_ADD_CONSTRAINT, 0, 0, 0, 0, 0, 0, ni(n1), ni(n2), {}, r});
+  if (d.top) rec(Rec{OP_ADD_CONSTRAINT, 0, 0, 0, 0, 0, 0, ni(n1), ni(n2), {uint32_t(uintptr_t(c) & 0xffffffffu), uint32_t(uintptr_t(c) >> 32)}, r});  // list = 제약 주소 (닫힌 고리가 조인트 칸을 뜸)
   return r;
 }
 #define WRAP_NODE(OPC, MANGLED)                                        \

@@ -4,6 +4,7 @@
 // (옮겨 담기 규칙과 파일·배치 왕복을 한꺼번에 확인).
 //   G1_DUMP_AT=<simulate 번호> G1_DUMP_OUT=<파일> [G1_DUMP_ENVS=3] ovd_replay_g1 ...
 #include <cinttypes>
+#include <array>
 #include <unordered_map>
 
 #include "../tests/solver/px_internal.h"
@@ -552,6 +553,50 @@ void dumpScene(PxScene* scene, uint64_t sim) {
 // 장면 파일 모양 순서 = 정적·동적 행위자(PxScene::getActors) 순서, 그다음 관절체(getArticulations)의 링크(getLinks) 순서, 행위자 안은 getShapes 순서
 // 새 행위자 틀 파일 (문서 20.4, particles 수확): 판 도중 넣은 강체들만 장면 파일 형식으로 (머리·재질 + 행위자·모양·볼록·몸체·거르개).
 // 상태 쪽(접촉 관리자·섬·넓은 단계·쌍 기록)은 비움. g1_sc.cpp 가 편집 창 끝에 부른다.
+// 닫힌 고리 (g1_env): 제약(Dy::Constraint*) -> 조인트 칸. 몸체 쪽은 장면 행위자 번호 대신 (종류, 몸체/관절체 번호, 링크 생성 번호) 를
+// kind/body/link 에 — 뜨기(dumpScene)와 같은 차례로 센다(동적 = 장면 getActors 차례의 동적 번호, 링크 = getArticulations 차례·getLinks 차례).
+// 세계(정적) 쪽은 kind = 0xffffffff. 상수 블록 크기가 D6 가 아니면 false.
+bool g1_env_px_joint(PxScene* scene, const void* dyc, uint32_t kind[2], uint32_t body[2], uint32_t link[2], sc::SceneJoint& j) {
+  const Dy::Constraint& dc = *static_cast<const Dy::Constraint*>(dyc);
+  std::unordered_map<const PxsRigidBody*, std::array<uint32_t, 3>> who;
+  {
+    const PxU32 na = scene->getNbActors(PxActorTypeFlag::eRIGID_DYNAMIC);
+    std::vector<PxActor*> acts(na);
+    scene->getActors(PxActorTypeFlag::eRIGID_DYNAMIC, acts.data(), na);
+    for (PxU32 k = 0; k < na; ++k) who[&static_cast<NpRigidDynamic*>(acts[k])->getCore().getSim()->getLowLevelBody()] = {uint32_t(sc::kDynamic), k, 0};
+    const PxU32 nArt = scene->getNbArticulations();
+    std::vector<PxArticulationReducedCoordinate*> arts(nArt);
+    scene->getArticulations(arts.data(), nArt);
+    for (PxU32 a = 0; a < nArt; ++a) {
+      std::vector<PxArticulationLink*> links(arts[a]->getNbLinks());
+      arts[a]->getLinks(links.data(), arts[a]->getNbLinks());
+      for (uint32_t l = 0; l < links.size(); ++l)
+        who[&static_cast<NpArticulationLink*>(links[l])->getCore().getSim()->getLowLevelBody()] = {uint32_t(sc::kLink), a, l};
+    }
+  }
+  const PxsRigidBody* bs[2] = {dc.body0, dc.body1};
+  for (int s = 0; s < 2; ++s) {
+    kind[s] = 0xffffffffu;
+    body[s] = link[s] = 0;
+    if (!bs[s]) continue;
+    auto it = who.find(bs[s]);
+    if (it == who.end()) return false;
+    kind[s] = it->second[0];
+    body[s] = it->second[1];
+    link[s] = it->second[2];
+  }
+  j = sc::SceneJoint{};
+  j.actor0 = j.actor1 = sc::kNone;
+  j.index = dc.index;
+  j.flags = dc.flags;
+  j.linBreakForce = dc.linBreakForce;
+  j.angBreakForce = dc.angBreakForce;
+  j.minResponseThreshold = dc.minResponseThreshold;
+  if (dc.constantBlockSize != sizeof(eng::jnt::D6Data)) return false;
+  memcpy(&j.data, dc.constantBlock, sizeof(eng::jnt::D6Data));
+  return true;
+}
+
 bool g1_dump_actors(PxScene* scene, const std::vector<PxActor*>& actors, uint64_t sim, const char* path) {
   sc::SceneFile F;
   fillHeader(F, scene, sim);

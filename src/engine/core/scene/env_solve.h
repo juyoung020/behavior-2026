@@ -43,6 +43,7 @@ struct EnvSolveImpl : public EnvSolve {
   std::vector<int32_t> bodyOfNode, artOfNode;  // 섬 노드 번호 -> 몸체 / 관절체 (-1)
   // 조인트가 붙은 수 (BodySim::onConstraintAttach -> registerCountedInteraction, ScBodySim.h:159): 몸체별, 관절체 링크별(관절체*kMaxLinks+LL)
   std::vector<uint32_t> jointsOnBody, jointsOnLink;
+  std::vector<uint8_t> jointDead;  // 판 도중 지운 조인트 (번호는 그대로 둔다)
   sv::SolverParams prm{};
   // ---- 작업 공간
   std::vector<sv::SBodyVel> vels;
@@ -106,14 +107,8 @@ struct EnvSolveImpl : public EnvSolve {
     }
     jointsOnBody.assign(bodies.size(), 0);
     jointsOnLink.assign(arts.size() * art::kMaxLinks, 0);
-    for (const SceneJoint& j : joints)
-      for (uint32_t side = 0; side < 2; ++side) {
-        uint32_t b = 0, l = 0;
-        sceneRef(side ? j.actor1 : j.actor0, b, l);
-        if (b == sv::NONE) continue;
-        if (l == 0) ++jointsOnBody[b];
-        else ++jointsOnLink[size_t(b) * art::kMaxLinks + (l - 1)];
-      }
+    jointDead.assign(joints.size(), 0);
+    for (const SceneJoint& j : joints) countJoint(j, 1);
     const IslandSimState& acc = f.islands.accurate;
     bodyOfNode.assign(acc.nodes.size(), -1);
     artOfNode.assign(acc.nodes.size(), -1);
@@ -160,6 +155,33 @@ struct EnvSolveImpl : public EnvSolve {
     return true;
   }
 
+  // 몸체별 붙은 조인트 수 (onConstraintAttach / onConstraintDetach, ScBodySim.cpp:722)
+  void countJoint(const SceneJoint& j, int d) {
+    for (uint32_t side = 0; side < 2; ++side) {
+      uint32_t b = 0, l = 0;
+      sceneRef(side ? j.actor1 : j.actor0, b, l);
+      if (b == sv::NONE) continue;
+      uint32_t& c = l == 0 ? jointsOnBody[b] : jointsOnLink[size_t(b) * art::kMaxLinks + (l - 1)];
+      c = uint32_t(int(c) + d);
+    }
+  }
+  // 판 도중 새 조인트 (보조 잡기 등 — joint_lifecycle.h 생성의 풀이 쪽): joints 뒤에 붙이고 번호를 돌려준다. 섬 간선 객체 = 0x80000000 | 번호.
+  // 되쓰기 칸은 ConstraintWriteback::initialize (ScConstraintSim.cpp:57) = 0.
+  uint32_t addJoint(const SceneJoint& j) {
+    const uint32_t k = uint32_t(joints.size());
+    joints.push_back(j);
+    jointDead.resize(joints.size(), 0);
+    if (wbs.size() <= j.index) wbs.resize(size_t(j.index) + 1, jnt::Writeback{});
+    wbs[j.index] = jnt::Writeback{};
+    countJoint(j, 1);
+    return k;
+  }
+  // 조인트 해제 (섬 간선 removeConnection 과 같이)
+  void removeJoint(uint32_t k) {
+    if (k >= joints.size() || jointDead[k]) return;
+    jointDead[k] = 1;
+    countJoint(joints[k], -1);
+  }
   int32_t bodyOf(uint32_t node) const { return node < bodyOfNode.size() ? bodyOfNode[node] : -1; }
   int32_t artOf(uint32_t node) const { return node < artOfNode.size() ? artOfNode[node] : -1; }
 

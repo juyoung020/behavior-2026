@@ -33,6 +33,7 @@ void g1_env_fric_scene(physx::PxScene* s);
 const std::map<uint64_t, std::vector<eng::sv::FrictionPatch>>& g1_env_px_fric();
 bool g1_env_same_fric(const eng::sv::FrictionPatch& a, const eng::sv::FrictionPatch& b);
 bool g1_islands_rec(size_t i, sc2::IslOp& o);
+bool g1_env_px_joint(physx::PxScene* scene, const void* dyc, uint32_t kind[2], uint32_t body[2], uint32_t link[2], sc2::SceneJoint& j);  // g1_dump.cpp
 
 namespace {
 struct EnvCheck {
@@ -55,6 +56,9 @@ struct EnvCheck {
   sc2::HostWake preWake;
   std::vector<int8_t> preActive;
   uint64_t steps = 0, resyncBodies = 0, resyncArts = 0, artOpsN = 0, winExt = 0, winOurs = 0, winMismatch = 0, bpNot = 0;
+  // 판 도중 조인트 (보조 잡기): 우리 조인트 번호 -> PhysX 제약 주소 (상수 블록을 창 입력으로 다시 뜸 — 옮기지 않은 API)
+  std::map<uint32_t, const void*> rtJoints;
+  uint64_t jointsAdded = 0, jointsRemoved = 0, jointsBad = 0;
   // 대조
   uint64_t cmpBody = 0, badBody = 0, cmpArt = 0, badArt = 0, cmpWake = 0, badWake = 0;
   long long firstBad = -1;
@@ -303,7 +307,50 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
     for (size_t i = EC.cursor; i < EC.boundary; ++i) {
       sc2::IslOp r;
       g1_islands_rec(i, r);
-      if (sc2::islExternalOp(r)) {
+      if (r.op == sc2::ISL_ADD_CONSTRAINT && r.list.size() == 2) {  // 판 도중 새 조인트: PhysX 제약에서 조인트 칸을 떠 우리 조인트 표에 붙임
+        const void* dyc = reinterpret_cast<const void*>(uintptr_t(r.list[0]) | (uintptr_t(r.list[1]) << 32));
+        uint32_t kind[2], body[2], link[2];
+        sc2::SceneJoint j{};
+        uint32_t obj = 0;
+        if (g1_env_px_joint(EC.scene, dyc, kind, body, link, j)) {
+          uint32_t* act[2] = {&j.actor0, &j.actor1};
+          bool ok = true;
+          for (int s = 0; s < 2; ++s) {
+            if (kind[s] == 0xffffffffu) continue;
+            bool found = false;
+            for (size_t a = 0; a < EC.solver.sceneActors.size() && !found; ++a) {
+              const sc2::SceneActor& A = EC.solver.sceneActors[a];
+              if (A.kind == kind[s] && A.body == body[s] && (kind[s] != sc2::kLink || A.link == link[s])) {
+                *act[s] = uint32_t(a);
+                found = true;
+              }
+            }
+            ok = ok && found;
+          }
+          if (ok) {
+            const uint32_t k = EC.solver.addJoint(j);
+            EC.rtJoints[k] = dyc;
+            obj = 0x80000000u | k;
+            ++EC.jointsAdded;
+            if (getenv("G1_ENV_TRACE"))
+              fprintf(stderr, "[g1 env] sim %llu 새 조인트 %u (제약 번호 %u, 행위자 %u/%u)\n", (unsigned long long)sim, k, j.index, j.actor0, j.actor1);
+          } else {
+            ++EC.jointsBad;
+          }
+        } else {
+          ++EC.jointsBad;
+        }
+        if (eng::ig::addConstraint(M, obj, sc2::islNode(r.p), sc2::islNode(r.q)) != r.result) ++EC.winMismatch;
+        ++EC.winExt;
+      } else if (sc2::islExternalOp(r)) {
+        if (r.op == sc2::ISL_REMOVE_CONN && 2 * r.a + 1 < M.cpu.cap) {  // 조인트 간선 끊기 = 조인트 해제
+          const uint32_t o = M.constraintOrCm[r.a];
+          if (o != eng::ig::INVALID_EDGE && (o & 0x80000000u)) {
+            EC.solver.removeJoint(o & 0x7fffffffu);
+            EC.rtJoints.erase(o & 0x7fffffffu);
+            ++EC.jointsRemoved;
+          }
+        }
         sc2::islApplyExternal(M, r);
         ++EC.winExt;
       } else if (sc2::islPairsOp(r)) {
@@ -372,6 +419,18 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
       g1_env_art_apply_ops(EC.solver.arts[k], EC.artOps[k]);
       EC.artOpsN += EC.artOps[k].size();
     }
+  }
+  // 판 도중 조인트의 상수 블록 = 이번 simulate 에 PhysX 가 쓴 값 (조인트 자세 등 창 API 는 아직 옮기지 않음)
+  for (const auto& kv : EC.rtJoints) {
+    uint32_t kind[2], body[2], link[2];
+    sc2::SceneJoint j{};
+    if (!g1_env_px_joint(EC.scene, kv.second, kind, body, link, j)) continue;
+    sc2::SceneJoint& J = EC.solver.joints[kv.first];
+    J.flags = j.flags;
+    J.linBreakForce = j.linBreakForce;
+    J.angBreakForce = j.angBreakForce;
+    J.minResponseThreshold = j.minResponseThreshold;
+    J.data = j.data;
   }
   }  // 기록 창 끝
   EC.cursor = g1_islands_rec_count();
@@ -528,6 +587,8 @@ void g1_env_report() {
          "; 풀이: 섬 안 운동학 %" PRIu64 ", 모르는 간선 %" PRIu64 ", 모르는 노드 %" PRIu64 ", 판 오류 %" PRIu64 "\n",
          EC.winExt, EC.winOurs, EC.winMismatch, EC.artOpsN, EC.resyncBodies, EC.resyncArts, EC.solver.kinInIsland, EC.solver.unknownEdge, EC.solver.unknownNode,
          EC.solver.engineErr);
+  if (EC.jointsAdded || EC.jointsRemoved || EC.jointsBad)
+    printf("  판 도중 조인트: 새로 %" PRIu64 ", 해제 %" PRIu64 ", 못 뜬 것 %" PRIu64 "\n", EC.jointsAdded, EC.jointsRemoved, EC.jointsBad);
   if (g1_env_edit_hook)
     printf("  편집 창(particles): %" PRIu64 " 번, 그 안에서 스텝을 돌려 건너뛴 simulate %" PRIu64 ", 몸체 API 요청 깨움 %" PRIu64 " 잠 준비 %" PRIu64 " 바로 재움 %" PRIu64
            " 모르는 손잡이 %" PRIu64 "\n",
