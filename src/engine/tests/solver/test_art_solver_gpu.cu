@@ -1,6 +1,8 @@
 // 층 2 시험: 관절체가 붙은 TGS 풀이(docs 17.6) CUDA 판 N 개 = 층 1 C++ = PhysX, 비트 사슬 + 처리량.
 // 입력: test_art_solver --dump 가 쓴 흐름(art_stream.h). PhysX 링크 없음.
-//   test_art_solver_gpu <file.asv> [--envs E] [--threads T]
+//   test_art_solver_gpu <file.asv> [--envs E] [--threads T] [--api N1,N2,...]
+//   --api: 판 커널 대신 공용 진입 sv::gpuSolveBatch (core/solver/solver_gpu.cu) 로 호스트 판 N 개를 스텝마다 올려 풀고 되받는다.
+//          판마다 스텝마다 층 1 과 비교, 판 수별 처리량·메모리 표.
 // 판 하나 = CUDA 블록 하나. 판 안 스레드 T 개: 준비·되쓰기는 스레드 0, 분할 안 제약·강체 적분·관절체 내부 풀이는 나눠 푼다(solverStepPar).
 // 모든 판은 같은 장면·같은 입력을 받는다(관절체 드라이브 입력도 판 0 과 같은 위상) -> 판 전부가 층 1 과 같아야 한다.
 // 비교: (1) 층 1 CPU 재생 = PhysX (강체·관절체·1D 되쓰기, 스텝마다), (2) GPU 판 0 = 층 1 (스텝마다), (3) GPU 판 전부 마지막 상태 = 층 1.
@@ -16,6 +18,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/solver/solver_gpu.h"
 #include "core/solver/tgs_solver.h"
 #define ARTEST_NO_PHYSX
 #include "tests/articulation/random_art.h"
@@ -145,10 +148,11 @@ __host__ __device__ inline void applyPre(sv::SolverBoard& B, const ast::Header& 
   B.jointData = at<eng::jnt::D6Data>(base, L.jd);
 }
 // 풀이 뒤: 강체 afterIntegration, 관절체 Sc 입력(잠 판정 직전 값) + 잠, 섬 관리가 재운 강체 되돌리기
-__host__ __device__ inline void applyPost(sv::SolverBoard& B, const ast::Header& h, const uint8_t* base) {
+// withAI = false: afterIntegration 은 이미 부름 (gpuSolveBatch 가 풀이와 함께)
+__host__ __device__ inline void applyPost(sv::SolverBoard& B, const ast::Header& h, const uint8_t* base, bool withAI = true) {
   const ast::Counts c = *at<ast::Counts>(base, 0);
   const ast::Layout L = ast::layout(c, h);
-  sv::afterIntegration(B);
+  if (withAI) sv::afterIntegration(B);
   if (c.lateValid) {
     const float* lw = at<float>(base, L.lateLinkWake);
     const uint32_t* lc = at<uint32_t>(base, L.lateLinkCounted);
@@ -242,7 +246,16 @@ int main(int argc, char** argv) {
     return 2;
   }
   int envs = 64, threads = 32;
+  std::vector<int> apiNs;
   for (int i = 2; i < argc; ++i) {
+    if (!strcmp(argv[i], "--api") && i + 1 < argc) {
+      for (const char* q = argv[++i]; *q;) {
+        apiNs.push_back(atoi(q));
+        while (*q && *q != ',') ++q;
+        if (*q == ',') ++q;
+      }
+      continue;
+    }
     if (!strcmp(argv[i], "--envs") && i + 1 < argc) envs = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
   }
@@ -362,6 +375,130 @@ int main(int argc, char** argv) {
          " 다름 %" PRIu64 " (첫 %" PRId64 ") | 엔진 오류 0x%x\n",
          pxCmp, pxBad, pxFirst, artCmp, artBad, artFirst, wbCmp, wbBad, wbFirst, HB.error);
   printf("  CPU 단일 스레드: %u 스텝 %.3f s (%.0f 스텝/초)\n", steps, cpuSec, steps / cpuSec);
+
+  if (!apiNs.empty()) {  // ---- 공용 진입 gpuSolveBatch
+    bool allOk = !pxBad && !artBad && !wbBad && !HB.error;
+    printf("gpuSolveBatch (판 안 스레드 %d)\n  판 수 | 다른 판·스텝 강체/관절체, 다른 판 1D | 재시도 | ms/스텝 = 담기+올림+커널+되받기+풀기 | 판·스텝/초 | 장치 MB | 올림/되받기 KB/스텝\n",
+           threads);
+    for (int NE : apiNs) {
+      struct HostEnv {
+        std::vector<eng::Body> b;
+        std::vector<A::Articulation> a;
+        std::vector<sv::SolverCM> cms;
+        std::vector<sv::SBodyVel> v;
+        std::vector<sv::SBodyTxI> t;
+        std::vector<sv::SBodyData> d;
+        std::vector<sv::SDesc> ds, orr, tm;
+        std::vector<sv::BatchHeader> hh;
+        std::vector<uint32_t> part, bsi;
+        std::vector<uint8_t> arena;
+        std::vector<sv::FrictionPatch> f0, f1;
+        std::unique_ptr<sv::CorrelationBuffer> corr;
+        std::vector<sv::ContactPoint> cbuf;
+        std::vector<eng::jnt::Writeback> wb;
+        std::vector<eng::jnt::Row> rows;
+        std::vector<A::StaticLists> lists;
+        std::vector<sv::SDesc> s1, sc;
+        std::vector<uint32_t> n1, nc, batch;
+        std::vector<sv::ArtProgress> prog;
+        sv::SolverBoard B;
+      };
+      std::vector<std::unique_ptr<HostEnv>> H(static_cast<size_t>(NE));
+      std::vector<sv::SolverBoard*> bp(static_cast<size_t>(NE));
+      std::vector<const sv::SolverParams*> pp(static_cast<size_t>(NE), &prm);
+      for (int e = 0; e < NE; ++e) {
+        H[size_t(e)].reset(new HostEnv());
+        HostEnv& X = *H[size_t(e)];
+        X.b.resize(nb);
+        memcpy(static_cast<void*>(X.b.data()), S.bodies0.data(), S.bodies0.size());
+        X.a.resize(na);
+        if (na) memcpy(static_cast<void*>(X.a.data()), S.arts0.data(), S.arts0.size());
+        X.cms.resize(C.maxCMs);
+        for (auto& m : X.cms) {
+          m = sv::SolverCM{};
+          m.frictionPtr = sv::NONE;
+        }
+        X.v.resize(C.pool);
+        X.t.resize(C.pool);
+        X.d.resize(C.pool);
+        X.ds.resize(C.desc);
+        X.orr.resize(C.desc);
+        X.tm.resize(C.desc);
+        X.hh.resize(C.desc);
+        X.part.resize(C.part);
+        X.bsi.resize(nb + 1);
+        X.arena.resize(C.arena);
+        X.f0.resize(C.fric);
+        X.f1.resize(C.fric);
+        X.corr.reset(new sv::CorrelationBuffer());
+        X.cbuf.resize(sv::MAX_CONTACTS);
+        X.wb.resize(C.c1d);
+        memset(static_cast<void*>(X.wb.data()), 0, X.wb.size() * sizeof(eng::jnt::Writeback));
+        X.rows.resize(eng::jnt::MAX_CONSTRAINT_ROWS * 4);
+        X.lists.resize(na ? na : 1);
+        X.s1.resize(size_t(na) * C.stat + 1);
+        X.sc.resize(size_t(na) * C.stat + 1);
+        X.n1.resize(na + 1);
+        X.nc.resize(na + 1);
+        X.batch.resize(na + 1);
+        X.prog.resize(na + 1);
+        Mem XM{X.b.data(), X.a.data(), X.cms.data(), X.v.data(), X.t.data(), X.d.data(), X.ds.data(), X.orr.data(), X.tm.data(), X.hh.data(), X.part.data(),
+               X.bsi.data(), X.arena.data(), X.f0.data(), X.f1.data(), X.corr.get(), X.cbuf.data(), X.wb.data(), X.rows.data(), X.lists.data(), X.s1.data(),
+               X.sc.data(), X.n1.data(), X.nc.data(), X.batch.data(), X.prog.data()};
+        X.B = makeBoard(XM, C, 0);
+        bp[size_t(e)] = &X.B;
+      }
+      sv::GpuSolveCtx ctx;
+      ctx.threads = threads;
+      sv::GpuSolveTimes sum;
+      uint64_t badB = 0, badA = 0, badW = 0;
+      uint32_t anyErr = 0;
+      size_t maxDev = 0;
+      bool cudaOk = true;
+      std::vector<float> r(ast::RES_FLOATS), ra(AR);
+      for (uint32_t s = 0; s < steps && cudaOk; ++s) {
+        const uint8_t* base = S.data.data() + S.stepOffset[s];
+        for (int e = 0; e < NE; ++e) applyPre(H[size_t(e)]->B, h, base, int(s + 1), inputs);
+        cudaOk = sv::gpuSolveBatch(ctx, bp.data(), pp.data(), NE);
+        const sv::GpuSolveTimes& T = ctx.last;
+        sum.packMs += T.packMs;
+        sum.upMs += T.upMs;
+        sum.kernelMs += T.kernelMs;
+        sum.downMs += T.downMs;
+        sum.unpackMs += T.unpackMs;
+        sum.totalMs += T.totalMs;
+        sum.upBytes += T.upBytes;
+        sum.downBytes += T.downBytes;
+        sum.retries += T.retries;
+        maxDev = T.devBytes > maxDev ? T.devBytes : maxDev;
+        FtzScope f;
+        for (int e = 0; e < NE; ++e) {
+          HostEnv& X = *H[size_t(e)];
+          applyPost(X.B, h, base, false);
+          anyErr |= X.B.error;
+          for (uint32_t i = 0; i < nb; ++i) {
+            bodyResult(X.B.bodies[i], r.data());
+            if (!sameF(r.data(), cpuRes.data() + (size_t(s) * nb + i) * ast::RES_FLOATS, ast::RES_FLOATS)) ++badB;
+          }
+          for (uint32_t k = 0; k < na; ++k) {
+            artResult(X.B.arts[k], h.maxLinks, ra.data(), AR);
+            if (!sameF(ra.data(), cpuArt.data() + (size_t(s) * na + k) * AR, AR)) ++badA;
+          }
+        }
+      }
+      for (int e = 0; e < NE; ++e)
+        if (memcmp(H[size_t(e)]->wb.data(), cwb.data(), C.c1d * sizeof(eng::jnt::Writeback))) ++badW;
+      const double st = double(steps);
+      printf("  %4d | %" PRIu64 "/%" PRIu64 ", %" PRIu64 " | %u | %.3f = %.3f+%.3f+%.3f+%.3f+%.3f | %.0f | %.1f | %.0f/%.0f%s\n", NE, badB, badA, badW, sum.retries,
+             sum.totalMs / st, sum.packMs / st, sum.upMs / st, sum.kernelMs / st, sum.downMs / st, sum.unpackMs / st, NE * st / (sum.totalMs / 1000.0),
+             maxDev / 1048576.0, sum.upBytes / st / 1024.0, sum.downBytes / st / 1024.0, cudaOk ? "" : "  (CUDA 오류)");
+      fflush(stdout);
+      allOk = allOk && cudaOk && !badB && !badA && !badW && !anyErr;
+      sv::gpuSolveFree(ctx);
+    }
+    printf("%s\n", allOk ? "결과: PhysX = 층 1 = gpuSolveBatch 판 전부 비트 동일" : "결과: 불일치 있음");
+    return allOk ? 0 : 3;
+  }
 
   // ---- 층 2 GPU 판 envs 개
   CK(cudaDeviceSetLimit(cudaLimitStackSize, 32 * 1024));

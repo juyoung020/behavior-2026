@@ -87,7 +87,7 @@ list(SUBLIST CS_WRAPS 0 3 ART_WRAPS)  # 새 관리자 표시 가로채기만 (�
 target_link_options(test_art_solver PRIVATE ${ART_WRAPS})
 
 # 층 2: test_art_solver --dump 흐름으로 판 N 개를 GPU 에서 (PhysX 링크 없음)
-engine_test(test_art_solver_gpu test_art_solver_gpu.cu)
+engine_test(test_art_solver_gpu test_art_solver_gpu.cu ${CMAKE_SOURCE_DIR}/../core/solver/solver_gpu.cu)  # --api: 공용 진입 gpuSolveBatch
 target_compile_options(test_art_solver_gpu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--diag-error=20011,20014 -lineinfo>)  # 장치에서 호스트 함수 부름 = 오류 (19.6 교훈)
 
 # contact 장면 한 서브스텝(core/contact/scene_step.h) 빌드 확인
