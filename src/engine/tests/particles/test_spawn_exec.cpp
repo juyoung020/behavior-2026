@@ -88,7 +88,35 @@ int main(int argc, char** argv) {
       printf("  첫 자세 다름 (%s 행위자 %u, %s): 우리 q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g / PhysX q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g\n", path, a, kind,
              b.body2World.q.x, b.body2World.q.y, b.body2World.q.z, b.body2World.q.w, b.body2World.p.x, b.body2World.p.y, b.body2World.p.z, want.body2World.q.x,
              want.body2World.q.y, want.body2World.q.z, want.body2World.q.w, want.body2World.p.x, want.body2World.p.y, want.body2World.p.z);
+    if (!okp && getenv("SHOW_ALL"))
+      printf("    입력 자세 p %.9g %.9g %.9g q %.9g %.9g %.9g %.9g 척도 %.9g %.9g %.9g  body2Actor q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g\n", pose.p[0], pose.p[1],
+             pose.p[2], pose.q[0], pose.q[1], pose.q[2], pose.q[3], usc[0], usc[1], usc[2], b.body2Actor.q.x, b.body2Actor.q.y, b.body2Actor.q.z, b.body2Actor.q.w,
+             b.body2Actor.p.x, b.body2Actor.p.y, b.body2Actor.p.z);
     bad_pose += !okp;
+    if (getenv("DUMP_ROWS")) {  // pxr 파이썬 가설 시험용: 입력 자세·척도·body2Actor·PhysX 자세
+      static FILE* dr = fopen(getenv("DUMP_ROWS"), "w");
+      fprintf(dr, "%s %u %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", kind, a, pose.p[0], pose.p[1],
+              pose.p[2], pose.q[0], pose.q[1], pose.q[2], pose.q[3], usc[0], usc[1], usc[2], b.body2Actor.q.x, b.body2Actor.q.y, b.body2Actor.q.z,
+              b.body2Actor.q.w, want.body2World.q.x, want.body2World.q.y, want.body2World.q.z, want.body2World.q.w, okp ? 1.f : 0.f, 0.f, 0.f);
+      fflush(dr);
+    }
+    if (getenv("RAWQ_PROBE")) {  // 가설: USD 왕복 없이 입력 q 그대로 / 정규화만
+      const Tf r0 = Tf{Q{pose.q[0], pose.q[1], pose.q[2], pose.q[3]}, b.body2World.p};
+      const Tf r1 = Tf{normalized(r0.q), b.body2World.p};
+      const Tf g0 = Tf{r0.q, normalized(pose7_tf(pose)).p} * b.body2Actor, g1 = Tf{r1.q, normalized(pose7_tf(pose)).p} * b.body2Actor;
+      namespace gf = eng::omni::gf;
+      bool hs[2];
+      for (int v = 0; v < 2; ++v) {  // 척도 없는 행렬: v=0 ExtractRotationQuat 만, v=1 RemoveScaleShear 거침
+        const float pq[4] = {pose.q[0], pose.q[1], pose.q[2], pose.q[3]}, pp[3] = {pose.p[0], pose.p[1], pose.p[2]};
+        gf::M4 M = gf::from_physx_pose(pp, pq);
+        double q[4];
+        gf::extract_rotation_quat(v ? gf::remove_scale_shear(M) : M, q);
+        const Tf g = Tf{normalized(Q{(float)q[0], (float)q[1], (float)q[2], (float)q[3]}), normalized(pose7_tf(pose)).p} * b.body2Actor;
+        hs[v] = memcmp(&g.q, &want.body2World.q, 16) == 0;
+      }
+      printf("    %s %u: 왕복 %s  raw q %s  정규화 q %s  척도없음 ERQ %s  척도없음 RSS %s\n", kind, a, okp ? "O" : "X", memcmp(&g0.q, &want.body2World.q, 16) ? "X" : "O",
+             memcmp(&g1.q, &want.body2World.q, 16) ? "X" : "O", hs[0] ? "O" : "X", hs[1] ? "O" : "X");
+    }
     if (getenv("GF_VARIANTS") && !okp) {  // 틀린 것만: USD 왕복 방식 후보  // 반쪽: USD 왕복 방식 후보
       namespace gf = eng::omni::gf;
       const Tf ap0 = normalized(pose7_tf(pose));
