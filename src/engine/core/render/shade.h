@@ -54,7 +54,9 @@ EHD float fexp2(float x) {
   return p * u2f(uint32_t(int(fl) + 127) << 23);
 }
 EHD float fpow(float x, float y) { return x > 0.0f ? fexp2(y * flog2(x)) : 0.0f; }
-EHD float srgb_to_lin(float c) { return c <= 0.04045f ? c / 12.92f : fpow((c + 0.055f) / 1.055f, 2.4f); }
+// 상수로 나누기는 쓰지 않는다: nvcc 가 역수 곱으로 바꾼 결과가 CPU 나눗셈과 1 ulp 달랐다(test_render_math, srgb_to_lin 66M 중 1.7M).
+// 역수 상수를 곱하면 두 층 모두 IEEE 곱 하나라 같다.
+EHD float srgb_to_lin(float c) { return c <= 0.04045f ? c * (1.0f / 12.92f) : fpow((c + 0.055f) * (1.0f / 1.055f), 2.4f); }
 EHD float lin_to_srgb(float c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * fpow(c, 1.0f / 2.4f) - 0.055f; }
 
 // ---- 결정적 난수 (PCG 해시) ----
@@ -311,7 +313,7 @@ EHD V3 light_direct(const SceneView& S, const EnvView& E, int32_t li, const V3& 
     const float cl = dot(ln, dq) / psqrt(d2);
     if (!(cl > 0.0f)) return V3{0.0f, 0.0f, 0.0f};
     const float A = L.type == kLightRect ? L.width * L.height : 3.14159265f * L.radius * L.radius;
-    area_cos = A * cl / 3.14159265f;
+    area_cos = A * cl * (1.0f / 3.14159265f);
   } else if (L.type == kLightDistant) {
     const V3 ld = normalize3(xvec(W, V3{0.0f, 0.0f, 1.0f}));  // 빛이 오는 쪽 (조명 +Z)
     const float cs = dot(n, ld);
@@ -319,7 +321,7 @@ EHD V3 light_direct(const SceneView& S, const EnvView& E, int32_t li, const V3& 
     if (occluded(S, E, p, ld, 1e30f)) return V3{0.0f, 0.0f, 0.0f};
     const float half = L.angle * 0.5f * 0.017453292f;
     const float solid = 3.14159265f * half * half;  // 작은 각 근사
-    const float k = cs * solid / 3.14159265f;
+    const float k = cs * solid * (1.0f / 3.14159265f);
     return V3{L.radiance[0] * k, L.radiance[1] * k, L.radiance[2] * k};
   } else {
     return V3{0.0f, 0.0f, 0.0f};
