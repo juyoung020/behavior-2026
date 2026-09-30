@@ -13,7 +13,15 @@
 // 리드가 확인할 것(요청 중): 무덤 순간이동·step_physics 창과 상태 재적재가 기록(chop_slice0)의 어느 simulate 인지.
 #pragma once
 #include <cstdint>
+#include <cstring>
+#include <string>
 #include <vector>
+
+#include "core/common/body.h"
+#include "core/omni/gfmat.h"
+#include "core/scene/batch.h"
+#include "core/scene/sc_scene.h"
+#include "core/scene/scene_file.h"
 
 #include "core/particles/contain.h"
 #include "core/particles/slicing.h"
@@ -81,6 +89,80 @@ inline Pose7 particle_frame_from_center(const float c[3], const float q[4], cons
   for (int i = 0; i < 3; ++i) r.p[i] = c[i] - ((R[3 * i] * off[0] + R[3 * i + 1] * off[1]) + R[3 * i + 2] * off[2]);
   for (int k = 0; k < 4; ++k) r.q[k] = q[k];
   return r;
+}
+
+// ---- 실행: 새 행위자 틀(리드 g1_sc, scene_file.h) → sc_scene.h 입력 ----
+// 틀 파일 하나 = 한 편집 창에서 넣은 강체들(행위자 순서 = PhysX 넣은 순서). 행위자 a 를 자세 actorPose(기준 링크 = PhysX 행위자 자세)로 넣는다:
+//   몸체 = 틀 몸체(질량·관성·감쇠·깸 등) + body2World = normalized(actorPose) * body2Actor  (NpRigidDynamic::setGlobalPose)
+//   모양 = 틀 모양(기하·국소 자세·접촉 거리·플래그), 볼록 덩어리 주소는 틀 파일 안으로 옮김 (batch.h:65 와 같음)
+struct SpawnTemplate {
+  scene::SceneFile f;                            // 상태 (몸체 등)
+  std::unique_ptr<scene::SceneShared> shared;    // 틀 (볼록 덩어리 안쪽 포인터까지 옮긴 것, 리드 batch.h makeShared)
+  bool load(const char* path, std::string* err = nullptr) {
+    if (!scene::readScene(path, f, err)) return false;
+    shared = scene::makeShared(f);
+    return shared != nullptr;
+  }
+};
+inline Tf pose7_tf(const Pose7& p) { return Tf{Q{p.q[0], p.q[1], p.q[2], p.q[3]}, V3{p.p[0], p.p[1], p.p[2]}}; }
+inline px::PxTransform tf_px(const Tf& t) {
+  px::PxTransform r;
+  static_assert(sizeof(px::PxTransform) == sizeof(Tf), "PxTransform 과 Tf 배치가 같아야 한다");
+  memcpy(&r, &t, sizeof(Tf));
+  return r;
+}
+// 틀 행위자 a → (ScActorIn, 몸체). 반환 false = 동적 강체가 아님(지원 밖)
+// 새 prim 의 자세가 USD(Fabric) 세계 행렬을 거쳐 PhysX 로 들어가는 왕복 (omni.physx 가 행렬에서 방향을 다시 뽑음):
+//   M = diag(scale)·R(q)·T(p) (double) → pxr RemoveScaleShear → ExtractRotationQuat → float → PxQuat::getNormalized
+//   다진 입자(척도 1): 공식 기록 25/25 비트 동일. 반쪽(부모 척도 경로)은 대조 중.
+inline Q usd_roundtrip_quat(const Tf& pose, const float scale[3]) {
+  namespace gf = eng::omni::gf;
+  const float pq[4] = {pose.q.x, pose.q.y, pose.q.z, pose.q.w}, pp[3] = {pose.p.x, pose.p.y, pose.p.z};
+  gf::M4 M = gf::from_physx_pose(pp, pq);
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c) M.m[r][c] *= (double)scale[r];
+  double q[4];
+  gf::extract_rotation_quat(gf::remove_scale_shear(M), q);
+  return normalized(Q{(float)q[0], (float)q[1], (float)q[2], (float)q[3]});
+}
+// usd_scale: USD 왕복을 거치면 그 척도(다진 입자 = 1,1,1), nullptr 이면 자세 그대로(정규화만)
+inline bool actor_from_template(const SpawnTemplate& T, uint32_t a, const Pose7& actorPose, scene::ScActorIn& in, Body& body,
+                                const float* usd_scale = nullptr) {
+  const scene::SceneActor& A = T.shared->actors[a];
+  if (A.kind != scene::kDynamic) return false;
+  body = T.f.bodies[A.body];
+  Tf ap = normalized(pose7_tf(actorPose));
+  if (usd_scale) ap.q = usd_roundtrip_quat(ap, usd_scale);
+  body.body2World = ap * body.body2Actor;
+  in.shapes.clear();
+  in.kind = scene::kDynamic;
+  in.pose = tf_px(body.body2World);
+  in.body2Actor = tf_px(body.body2Actor);
+  const Tf& b2a = body.body2Actor;
+  in.idtBody2Actor = (b2a.p.x == 0 && b2a.p.y == 0 && b2a.p.z == 0 && isIdentity(b2a.q)) ? 1 : 0;
+  in.kinematic = (A.rigidFlags & 1u) ? 1 : 0;  // PxRigidBodyFlag::eKINEMATIC
+  in.forcedKineNotif = (A.rigidFlags & ((1u << 8) | (1u << 9))) ? 1 : 0;  // eFORCE_KINE_KINE (1<<8) | eFORCE_STATIC_KINE (1<<9)
+  in.awake = body.wakeCounter > 0.0f ? 1 : 0;
+  for (uint32_t s = A.shapeStart; s < A.shapeStart + A.shapeCount; ++s) {
+    const scene::SceneShape& S = T.shared->shapes[s];
+    scene::ScShapeIn si;
+    memset(static_cast<void*>(&si), 0, sizeof(si));
+    si.geom = S.geom;
+    si.localPose = tf_px(S.localPose);
+    si.contactOffset = S.contactOffset;
+    si.shapeFlags = S.shapeFlags;
+    const Tf& lp = S.localPose;
+    si.idtShape = (lp.p.x == 0 && lp.p.y == 0 && lp.p.z == 0 && isIdentity(lp.q)) ? 1 : 0;  // PxShapeCoreFlag::eIDT_TRANSFORM
+    in.shapes.push_back(si);
+  }
+  return true;
+}
+// 넣기 (ScScene 번호·모듈 호출은 리드 API 가 PhysX 순서대로). 반환 = 손잡이
+inline int32_t spawn_add(scene::ScScene& sc, scene::ScModules& m, const SpawnTemplate& T, uint32_t a, const Pose7& actorPose, Body& bodyOut,
+                         const float* usd_scale = nullptr) {
+  scene::ScActorIn in;
+  if (!actor_from_template(T, a, actorPose, in, bodyOut, usd_scale)) return -1;
+  return sc.addActor(in, m);
 }
 
 }  // namespace particles

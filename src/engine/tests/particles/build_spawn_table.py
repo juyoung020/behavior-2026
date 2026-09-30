@@ -34,6 +34,7 @@ def find_actor(name):
 
 
 out = dict(slices=[], dices=[], unmatched=[])
+dice_used = {}
 for ev in hm:
     if ev["rule"] == "SlicingRule":
         parts = []
@@ -44,15 +45,18 @@ for ev in hm:
             parts.append(dict(n, template=t, actor=i, simulate=sim))
         out["slices"].append(dict(src=ev["src"], src_category=ev["src_category"], src_scale=ev["src_scale"], parts=parts))
     elif ev["rule"] == "DicingRule":
-        # 다진 입자: 원본이 빠진 줄(같은 창)에 넣은 입자 행위자들
-        cand = [L for L in lines if any(f"/{ev['src']}/" in r or r.endswith("/" + ev["src"]) for r in L["removed"])]
+        # 다진 입자: 이 계의 입자를 넣은 줄을 전이 순서대로 하나씩 쓴다. 계를 처음 만들 때는 계 틀 prim 도 강체로 한 번 들어가므로
+        # 그 줄의 끝 n_new 개가 이번 입자다 (입자 prim 은 만든 순서대로 넣음)
+        used = dice_used.setdefault(ev["system"], 0)
+        cand = [L for L in lines if any(ev["system"] in x for x in L["added"])]
         ent = dict(src=ev["src"], system=ev["system"], n_new=ev["n_new"], template=None, actors=[])
-        for L in cand + lines:
-            idx = [i for i, a in enumerate(L["added"]) if ev["system"] in a]
-            if idx:
-                ent["template"], ent["actors"], ent["simulate"] = L["template"], idx, L["sim"]
-                break
-        if ent["template"] is None:
+        if used < len(cand):
+            L = cand[used]
+            idx = [i for i, x in enumerate(L["added"]) if ev["system"] in x]
+            ent["template"], ent["actors"], ent["simulate"] = L["template"], idx[len(idx) - ev["n_new"]:], L["sim"]
+            ent["extra_in_line"] = len(L["added"]) - ev["n_new"]
+            dice_used[ev["system"]] = used + 1
+        else:
             out["unmatched"].append(ev["src"])
         out["dices"].append(ent)
 json.dump(out, open(os.path.join(rec, "spawn_table.json"), "w"), indent=1)

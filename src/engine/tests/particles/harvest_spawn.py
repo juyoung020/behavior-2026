@@ -26,20 +26,74 @@ def _install(cap):
     orig_slice = TR.SlicingRule.transition
 
     def slice_wrap(self, object_candidates):
-        srcs = [(o.name, o.category, o.scale.tolist(), [dict(p) for p in o.metadata["object_parts"].values()]) for o in object_candidates["sliceable"]]
+        srcs = []
+        for o in object_candidates["sliceable"]:
+            pp, qq = o.get_position_orientation()
+            parts = [{k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in dict(p).items()} for p in o.metadata["object_parts"].values()]
+            srcs.append((o.name, o.category, o.scale.tolist(), parts, pp.tolist(), qq.tolist()))
         res = orig_slice(self, object_candidates)
         k = 0
-        for name, cat, scale, parts in srcs:
+        for name, cat, scale, parts, spos, sorn in srcs:
             news = []
             for i, p in enumerate(parts):
                 o = res.add[k].obj
                 k += 1
                 news.append(dict(part=i, name=o.name, category=o.category, model=o.model))  # prim 경로는 장면에 넣은 뒤 /World/scene_0/<이름>
-            STATE["map"].append(dict(step=STATE.get("step", -1), rule="SlicingRule", src=name, src_category=cat, src_scale=scale, new=news))
+            STATE["map"].append(dict(step=STATE.get("step", -1), rule="SlicingRule", src=name, src_category=cat, src_scale=scale, new=news,
+                                     src_pos=spos, src_orn=sorn, parts=json.loads(json.dumps(parts, default=str))))
         dump()
         return res
 
     TR.SlicingRule.transition = slice_wrap
+
+    # 반쪽 에셋 값 (ig:nativeBB·ig:offsetBaseLink) — set_bbox_center 에서
+    from omnigibson.objects.dataset_object import DatasetObject
+
+    orig_set = DatasetObject.set_bbox_center_position_orientation
+    STATE.setdefault("assets", {})
+
+    def set_wrap(self, position=None, orientation=None):
+        STATE["assets"][self.name] = dict(native_bbox=self.native_bbox.tolist(), offset=self.base_link_offset.tolist(), scale=self.scale.tolist())
+        with open(os.path.join(cap.dump_dir, "harvest_assets.json"), "w") as f:
+            json.dump(STATE["assets"], f)
+        return orig_set(self, position=position, orientation=orientation)
+
+    DatasetObject.set_bbox_center_position_orientation = set_wrap
+
+    # USD 경로 자세 쓰기 중간값 (XFormPrim.set_position_orientation, 막 넣은 물체): 부모 세계 행렬(float32·double), 입력, USD 에 쓴 값
+    from omnigibson.prims.xform_prim import XFormPrim
+    import omnigibson.lazy as lazy
+    from omnigibson.utils.usd_utils import get_world_pose_with_scale
+
+    orig_x = XFormPrim.set_position_orientation
+    STATE.setdefault("xform", [])
+
+    def xwrap(self, position=None, orientation=None, frame="world"):
+        rec = None
+        try:
+            if self.name.split(":")[0].startswith(("half_", "diced__")) or "half_" in self.prim_path:
+                par = str(lazy.isaacsim.core.utils.prims.get_prim_parent(self._prim).GetPath())
+                import omnigibson as og
+
+                M = og.sim.fabric_hierarchy.get_world_xform(lazy.usdrt.Sdf.Path(par))
+                rec = dict(path=self.prim_path, parent=par, frame=frame, pos=None if position is None else th.as_tensor(position).tolist(),
+                           orn=None if orientation is None else th.as_tensor(orientation).tolist(),
+                           parent_f32=get_world_pose_with_scale(par).tolist(), parent_d=[[M[i][j] for j in range(4)] for i in range(4)])
+        except Exception as e:
+            rec = dict(err=repr(e))
+        r = orig_x(self, position=position, orientation=orientation, frame=frame)
+        if rec is not None and "err" not in rec:
+            t = self._prim.GetAttribute("xformOp:translate").Get()
+            o = self._prim.GetAttribute("xformOp:orient").Get()
+            rec.update(usd_translate=list(t), usd_orient=[o.GetImaginary()[0], o.GetImaginary()[1], o.GetImaginary()[2], o.GetReal()],
+                       orient_type=self._prim.GetAttribute("xformOp:orient").GetTypeName().type.typeName)
+        if rec is not None:
+            STATE["xform"].append(rec)
+            with open(os.path.join(cap.dump_dir, "harvest_xform.json"), "w") as f:
+                json.dump(STATE["xform"], f)
+        return r
+
+    XFormPrim.set_position_orientation = xwrap
 
     # 다지기 검증 자료 (test_dice_capture): 격자 입력(링크 aabb·충돌 메시 점·틀), 난수 상태, 생성 중심, 원점 자세
     import omnigibson.systems.macro_particle_system as MPS
