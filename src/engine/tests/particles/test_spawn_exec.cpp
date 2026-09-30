@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
       fprintf(dr, "%s %u %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", kind, a, pose.p[0], pose.p[1],
               pose.p[2], pose.q[0], pose.q[1], pose.q[2], pose.q[3], usc[0], usc[1], usc[2], b.body2Actor.q.x, b.body2Actor.q.y, b.body2Actor.q.z,
               b.body2Actor.q.w, want.body2World.q.x, want.body2World.q.y, want.body2World.q.z, want.body2World.q.w, okp ? 1.f : 0.f, 0.f, 0.f);
+      fprintf(dr, "  # %s 우리 q %.9g %.9g %.9g %.9g\n", path, b.body2World.q.x, b.body2World.q.y, b.body2World.q.z, b.body2World.q.w);
       fflush(dr);
     }
     if (getenv("RAWQ_PROBE")) {  // 가설: USD 왕복 없이 입력 q 그대로 / 정규화만
