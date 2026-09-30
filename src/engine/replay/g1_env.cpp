@@ -27,6 +27,8 @@ void g1_pairs_actor_active(std::vector<int8_t>& out);
 void g1_pairs_wake(sc2::HostWake& out);
 // particles 편집 창 자리 (약한 기호 — particles 쪽 번역 단위가 채운다): 이 simulate 앞 창을 엔진 편집 창으로 대신하면 1(창 처리함 — 기록 창 입력·건드림 다시 맞춤 안 함),
 // 편집 창 안에서 물리 스텝을 이미 돌렸으면 2 를 더한다(이번 simulate 의 envStep 을 건너뜀). 0 = 평소대로 기록 창.
+// 4 (1 과 함께) = 이 창의 편집 몫(지우기·load·넣기가 남긴 섬 호출·쌍 관리층 앞 연산·자세/속도·psi)은 편집 창이 이미 했고, 기록 창 입력 중 로봇 제어만 넣는다:
+//   옮긴 관절체 호출(드라이브 목표·목표 속도·깨움·재움)과, 그 호출이 있는 관절체에 한해 섬 깨움/재움 호출·창 뒤 깸 카운터(관절체 깨움 API 는 아직 기록 몫).
 int g1_env_edit_hook(uint64_t sim, eng::scene::EnvStep& E, eng::scene::EnvSolveImpl& S, eng::scene::EnvBodyApi& api) __attribute__((weak));
 size_t g1_islands_rec_count();
 void g1_env_fric_scene(physx::PxScene* s);
@@ -59,6 +61,7 @@ struct EnvCheck {
   // 판 도중 조인트 (보조 잡기): 우리 조인트 번호 -> PhysX 제약 주소 (상수 블록을 창 입력으로 다시 뜸 — 옮기지 않은 API)
   std::map<uint32_t, const void*> rtJoints;
   uint64_t jointsAdded = 0, jointsRemoved = 0, jointsBad = 0;
+  uint64_t ctlWindows = 0, ctlSkipped = 0;  // 편집 뒤 창(훅 4): 제어만 넣은 창, 뺀 기록 섬 호출
   // 대조
   uint64_t cmpBody = 0, badBody = 0, cmpArt = 0, badArt = 0, cmpWake = 0, badWake = 0;
   long long firstBad = -1;
@@ -294,7 +297,8 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
   if (!Sp) return;
   ++EC.steps;
   // 0. particles 편집 창 (있으면)
-  const int editFlags = g1_env_edit_hook ? g1_env_edit_hook(sim, E, EC.solver, *EC.api) : 0;
+  // 진단 G1_ENV_CTL_ONLY: 훅이 없을 때 모든 창을 "편집 뒤 창(1|4)" 으로 — 제어만 넣는 길 시험
+  const int editFlags = g1_env_edit_hook ? g1_env_edit_hook(sim, E, EC.solver, *EC.api) : (getenv("G1_ENV_CTL_ONLY") && !EC.first ? 5 : 0);
   if (editFlags) ++EC.editWindows;
   // 1. 창: 쌍 관리층 앞 연산 (섬 호출은 모아 둠), 섬 바깥 호출은 기록 차례대로, 우리 쌍 호출은 기록의 쌍 호출 자리에
   if (!(editFlags & 1)) {  // 기록 창 (편집 창이 대신하지 않은 simulate)
@@ -433,6 +437,36 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
     J.data = j.data;
   }
   }  // 기록 창 끝
+  else if (editFlags & 4) {  // 편집 뒤 창: 로봇 제어만
+    ++EC.ctlWindows;
+    std::vector<uint8_t> ctl(EC.pxArts.size(), 0);
+    for (size_t k = 0; k < EC.pxArts.size() && k < EC.solver.arts.size(); ++k) {
+      if (EC.artOps[k].empty()) continue;
+      ctl[k] = 1;
+      g1_env_art_apply_ops(EC.solver.arts[k], EC.artOps[k]);
+      EC.artOpsN += EC.artOps[k].size();
+    }
+    for (size_t i = EC.cursor; i < EC.boundary; ++i) {
+      sc2::IslOp r;
+      g1_islands_rec(i, r);
+      const bool wakeOp = r.op == sc2::ISL_ACTIVATE || r.op == sc2::ISL_DEACTIVATE || r.op == sc2::ISL_SLEEP;
+      const int32_t k = wakeOp ? EC.solver.artOf(r.a) : -1;
+      if (k >= 0 && size_t(k) < ctl.size() && ctl[size_t(k)]) {
+        sc2::islApplyExternal(M, r);
+        ++EC.winExt;
+      } else if (sc2::islExternalOp(r) || sc2::islPairsOp(r)) {
+        ++EC.ctlSkipped;
+      }
+    }
+    for (sc2::HostArtWake& w : E.wake.arts) {
+      const int32_t k = EC.solver.artOf(w.node);
+      if (k < 0 || size_t(k) >= ctl.size() || !ctl[size_t(k)]) continue;
+      if (sc2::HostArtWake* p = EC.preWake.art(w.node)) w.wc = p->wc;
+      for (uint64_t l : w.links)
+        if (sc2::HostBodyWake* b = E.wake.body(l))
+          if (const sc2::HostBodyWake* p = EC.preWake.body(l)) *b = *p;
+    }
+  }
   EC.cursor = g1_islands_rec_count();
   // 5. 한 스텝
   if (editFlags & 2) ++EC.editSkips;
@@ -587,6 +621,7 @@ void g1_env_report() {
          "; 풀이: 섬 안 운동학 %" PRIu64 ", 모르는 간선 %" PRIu64 ", 모르는 노드 %" PRIu64 ", 판 오류 %" PRIu64 "\n",
          EC.winExt, EC.winOurs, EC.winMismatch, EC.artOpsN, EC.resyncBodies, EC.resyncArts, EC.solver.kinInIsland, EC.solver.unknownEdge, EC.solver.unknownNode,
          EC.solver.engineErr);
+  if (EC.ctlWindows) printf("  편집 뒤 창(훅 4, 로봇 제어만): %" PRIu64 " 번, 뺀 기록 섬 호출 %" PRIu64 "\n", EC.ctlWindows, EC.ctlSkipped);
   if (EC.jointsAdded || EC.jointsRemoved || EC.jointsBad)
     printf("  판 도중 조인트: 새로 %" PRIu64 ", 해제 %" PRIu64 ", 못 뜬 것 %" PRIu64 "\n", EC.jointsAdded, EC.jointsRemoved, EC.jointsBad);
   if (g1_env_edit_hook)
