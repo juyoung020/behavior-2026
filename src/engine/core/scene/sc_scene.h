@@ -145,6 +145,15 @@ struct ScScene {
     if (changed.size() <= e / 32) changed.resize(e / 32 + 1, 0u);
     changed[e / 32] |= 1u << (e & 31);
   }
+  // 넓은 단계에서 뺄 때 바뀜 칸 지우기 (ElementSim::removeFromAABBMgr, ScElementSim.cpp:168: removeBounds 뒤 changedMap.growAndReset(id))
+  void clearChanged(uint32_t e) {
+    if (changed.size() <= e / 32) changed.resize(e / 32 + 1, 0u);
+    changed[e / 32] &= ~(1u << (e & 31));
+  }
+  // ShapeSim 소멸·다시 넣기의 resetElementID (ScShapeSimBase.cpp:40): dirty 모양 표 boundedReset (범위 안일 때만)
+  void clearDirty(uint32_t e) {
+    if (e / 32 < dirty.size()) dirty[e / 32] &= ~(1u << (e & 31));
+  }
   // 한 모양 칸을 행위자 지금 자세로 (ShapeSimBase::updateCached 의 계산 부분)
   void computeCached(uint32_t e) {
     ScShapeRec& s = shapes[e];
@@ -213,7 +222,11 @@ struct ScScene {
         else
           addToBp(e, m);
       } else {
-        if (s.inBp) m.bpRemove(e);  // internalRemoveFromBroadPhase
+        if (s.inBp) {  // internalRemoveFromBroadPhase (ScShapeSimBase.cpp:166): removeFromAABBMgr(바뀜 칸 지움) -> onVolumeRemoved(깸)
+          m.bpRemove(e);
+          clearChanged(e);
+          m.pairsVolumeRemoved(e, true);
+        }
         s.inBp = 0;
       }
     } else if (((oldFlags ^ newFlags) & kShapeTrigger) != 0) {
@@ -270,9 +283,11 @@ struct ScScene {
     ScShapeRec& s = shapes[e];
     if (s.inBp) {
       m.bpRemove(e);
+      clearChanged(e);
       m.pairsVolumeRemoved(e, wakeOnLostTouch);
     }
     s.inBp = 0;
+    clearDirty(e);  // ~ShapeSim -> resetElementID
     std::vector<uint32_t>& el = actors[size_t(s.actor)].elements;
     for (size_t i = 0; i < el.size(); ++i)
       if (el[i] == e) {
@@ -301,9 +316,11 @@ struct ScScene {
       ScShapeRec& s = shapes[e];
       if (s.inBp) {
         m.bpRemove(e);
+        clearChanged(e);
         m.pairsVolumeRemoved(e, wakeOnLostTouch);
       }
       s.inBp = 0;
+      clearDirty(e);  // ~ShapeSim -> resetElementID
       s.alive = 0;
       s.actor = -1;
       elementIds.release(e);
@@ -323,9 +340,11 @@ struct ScScene {
     bool pending = false;
     if (s.inBp) {
       pending = m.bpRemove(e);
+      clearChanged(e);
       m.pairsVolumeRemoved(e, true);  // internalRemoveFromBroadPhase(wakeOnLostTouch = true)
     }
     shapes[e].inBp = 0;
+    clearDirty(e);  // resetElementID (ScShapeSimBase.cpp:129, 대기 중이어도)
     uint32_t ne = e;
     if (!pending) {
       elementIds.release(e);

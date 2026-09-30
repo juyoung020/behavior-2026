@@ -153,3 +153,5 @@ add_executable(env_run ${CMAKE_CURRENT_SOURCE_DIR}/../tests/scene/env_run.cpp ${
 target_include_directories(env_run BEFORE PRIVATE ${G1_CORE_ROOT})
 target_compile_definitions(env_run PRIVATE NDEBUG)
 target_compile_options(env_run PRIVATE ${COMMON_FLAGS})
+find_package(Threads REQUIRED)
+target_link_libraries(env_run Threads::Threads)
