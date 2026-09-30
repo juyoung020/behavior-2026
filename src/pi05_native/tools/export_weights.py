@@ -293,7 +293,7 @@ def export_pi_behavior(args, ckpt, p, W):
         W.t(f"pb.kv.{n}", p[f"kv_transform/{n}"])  # bf16, as restored
 
 
-def export_backbone(p, W):
+def export_backbone(p, W, img_depth=27, llm_depth=18):
     # ---- SigLIP So400m/14 (PaliGemma/img) ---------------------------------------------------------
     g = lambda k: p["PaliGemma/img/" + k]
     emb = g("embedding/kernel")  # [14,14,3,1152] HWIO; patch vector order (kh, kw, c)
@@ -301,7 +301,7 @@ def export_backbone(p, W):
     W.t("img.patch_b", g("embedding/bias"))
     W.t("img.pos", g("pos_embedding")[0])  # [256, 1152]
     E = "Transformer/encoderblock/"
-    for l in range(27):
+    for l in range(img_depth):
         a = lambda k: g(E + k)[l]
         W.t(f"img.l{l}.ln1_s", a("LayerNorm_0/scale")); W.t(f"img.l{l}.ln1_b", a("LayerNorm_0/bias"))
         qkv = [a(f"MultiHeadDotProductAttention_0/{n}/kernel").reshape(1152, 1152) for n in ("query", "key", "value")]
@@ -323,7 +323,7 @@ def export_backbone(p, W):
     W.t("llm.embed", L("embedder/input_embedding"))  # [257152, 2048], host-side gather
     W.t("llm.final_norm", L("final_norm/scale"))
     W.t("ae.final_mod_w", T(L("final_norm_1/Dense_0/kernel"))); W.t("ae.final_mod_b", L("final_norm_1/Dense_0/bias"))
-    for l in range(18):
+    for l in range(llm_depth):
         a = lambda k: L("layers/" + k)[l]
         for pre, sfx, width, heads in (("llm", "", 2048, 8), ("ae", "_1", 1024, 8)):
             q = a(f"attn/q_einsum{sfx}/w")  # [N, D, H]
