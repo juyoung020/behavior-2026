@@ -855,6 +855,31 @@ def install(cap: Capture):
 
     Ev.load_batch = load_batch
 
+    # --script <파일>: 평가기가 행동을 넣기 직전(스텝마다) 부르는 장면 조작 (예: 자르기 층 0 정답 — 자르개를 물체에 순간이동).
+    # 조작은 OmniGibson API 로만 하므로 PhysX 쓰기는 곁기록·OVD 에 그대로 남는다(재생이 따라감).
+    if getattr(cap, "script", None):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("capture_script", cap.script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        orig_apply = Ev._apply_actions
+        step_box = {"n": 0}
+
+        @functools.wraps(orig_apply)
+        def apply_actions(self, actions, active_env_indices):
+            try:
+                mod.on_before_apply(self, step_box["n"], cap)
+            except Exception as e:
+                if step_box.get("fail", 0) < 3:
+                    print(f"[capture] 스크립트 실패 (스텝 {step_box['n']}): {e!r}", flush=True)
+                step_box["fail"] = step_box.get("fail", 0) + 1
+            step_box["n"] += 1
+            return orig_apply(self, actions, active_env_indices)
+
+        Ev._apply_actions = apply_actions
+        print(f"[capture] 스크립트 설치: {cap.script}", flush=True)
+
     orig_exit = Ev.__exit__
 
     @functools.wraps(orig_exit)
@@ -919,6 +944,7 @@ def main():
     cap.dump_at_post = {int(x) for x in ours[ours.index("--dump-at-post") + 1].split(",")} if "--dump-at-post" in ours else set()
     cap.patch_debug = {int(x) for x in ours[ours.index("--patch-debug") + 1].split(",")} if "--patch-debug" in ours else set()
     cap.record_toggle = "--record-toggle" in ours
+    cap.script = ours[ours.index("--script") + 1] if "--script" in ours else None
     cap.dump_prim = ours[ours.index("--dump-prim") + 1] if "--dump-prim" in ours else "/World/scene_0/controllable__r1pro__robot"
     cap.meta["no_render"] = cap.no_render
     install(cap)

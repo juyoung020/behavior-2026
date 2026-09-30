@@ -2379,6 +2379,39 @@ class Replayer {
     return c;
   }
 
+  // 지금 적용 중인 곁기록 호출(scall_next-1)과 같은 after 묶음 안에, path 물체(또는 그 아래 링크)에 쓰는 텐서 호출이 있나
+  bool written_same_step(const std::string& path) {
+    if (scall_next == 0) return false;
+    const size_t cur = scall_next - 1;
+    const uint64_t after = scalls[cur].after;
+    auto writes = [](const std::string& mm) {
+      return mm == "set_transforms" || mm == "set_velocities" || mm == "set_dof_positions" || mm == "set_dof_velocities" || mm == "set_root_transforms" ||
+             mm == "set_root_velocities";
+    };
+    auto hits = [&](const engine::SideCall& o) {
+      if (!writes(o.method)) return false;
+      const engine::SideView& ov = sviews[o.view];
+      auto match = [&](uint32_t i) {
+        if (i >= ov.prims.size()) return false;
+        const std::string& p = ov.prims[i];
+        return p == path || (p.size() > path.size() && p.compare(0, path.size(), path) == 0 && p[path.size()] == '/');
+      };
+      if (o.idx.empty()) {
+        for (uint32_t i = 0; i < ov.prims.size(); ++i)
+          if (match(i)) return true;
+        return false;
+      }
+      for (uint32_t i : o.idx)
+        if (match(i)) return true;
+      return false;
+    };
+    for (size_t j = cur + 1; j < scalls.size() && scalls[j].after == after; ++j)
+      if (hits(scalls[j])) return true;
+    for (size_t j = cur; j-- > 0 && scalls[j].after == after;)
+      if (hits(scalls[j])) return true;
+    return false;
+  }
+
   void apply_side(const engine::SideCall& c) {
     const engine::SideView& v = sviews[c.view];
     const std::string& m = c.method;
@@ -2414,7 +2447,8 @@ class Replayer {
         const float* s = &c.data[size_t(i) * 7];
         PxTransform t(PxVec3(s[0], s[1], s[2]), PxQuat(s[3], s[4], s[5], s[6]));
         auto* a = arti(i);
-        if (a) { PxArticulationCache* ca = cache_of(a); ca->rootLinkData->transform = t; a->applyCache(*ca, PxArticulationCacheFlag::eROOT_TRANSFORM); applied["side:" + m]++; }
+        if (a && getenv("REPLAY_ROOT_SETPOSE")) { a->setRootGlobalPose(t); applied["side:" + m + " (setRootGlobalPose)"]++; }
+        else if (a) { PxArticulationCache* ca = cache_of(a); ca->rootLinkData->transform = t; a->applyCache(*ca, PxArticulationCacheFlag::eROOT_TRANSFORM); applied["side:" + m]++; }
         // 강체 동체는 setGlobalPose 로 OVD 에 이미 남는다
       } else if (m == "set_root_velocities" || (m == "set_velocities" && v.kind == 1)) {
         const float* s = &c.data[size_t(i) * 6];
@@ -2436,6 +2470,13 @@ class Replayer {
       } else if (m == "wake_up" || m == "put_to_sleep") {
         const std::string& path = v.prims[i];
         auto ia = art_by_name.find(path);
+        // put_to_sleep 뒤에 같은 물체의 텐서 쓰기(자세·속도·관절 값)가 같은 스텝 사이(after 같음)에 있으면 공식에서는 깨어 있다
+        // (추정: 텐서 쓰기는 다음 simulate 직전에 PhysX 에 닿고 그때 깨움 -> psi 재우기가 먼저 되고 쓰기가 덮는다).
+        // chop_slice0 상태 되살리기(post 353): 재우면 simulate 338 부터 그 물체들만 갈림. REPLAY_SLEEP_ALWAYS=1 이면 옛 동작.
+        if (m == "put_to_sleep" && !psi_early && !getenv("REPLAY_SLEEP_ALWAYS") && written_same_step(path)) {
+          applied["side:put_to_sleep 뒤 텐서 쓰기로 깨어 있음"]++;
+          continue;
+        }
         if (ia != art_by_name.end()) { if (m == "wake_up") ia->second->wakeUp(); else ia->second->putToSleep(); applied["side:" + m]++; continue; }
         auto ib = actor_by_name.find(path);
         if (ib != actor_by_name.end()) if (auto* rd = ib->second->is<PxRigidDynamic>()) { if (m == "wake_up") rd->wakeUp(); else rd->putToSleep(); applied["side:" + m]++; }
@@ -2446,8 +2487,33 @@ class Replayer {
     }
   }
 
+  // psi(wake_up/put_to_sleep)는 부른 즉시 PhysX 에 닿지만 텐서 쓰기는 다음 simulate 직전에 모여 닿는다(추정) -> REPLAY_PSI_EARLY=1 이면
+  // psi 를 프레임 입력 맨 앞(이전 simulate 출력 끝)에 먼저 적용한다. 그때 없는 물체(이번 프레임에 생김)는 원래 자리에서.
+  bool psi_early = getenv("REPLAY_PSI_EARLY") != nullptr;
+  int64_t trace_sim = getenv("REPLAY_TRACE_SIM") ? atoll(getenv("REPLAY_TRACE_SIM")) : -1;
+  std::set<size_t> psi_done;
+  void apply_psi_early(uint64_t after) {
+    for (size_t j = scall_next; j < scalls.size() && scalls[j].after <= after; ++j) {
+      const engine::SideCall& c = scalls[j];
+      if (c.method != "wake_up" && c.method != "put_to_sleep") continue;
+      if (side_skip.count(j)) continue;
+      const engine::SideView& v = sviews[c.view];
+      bool found = true;
+      for (uint32_t i = 0; i < v.prims.size(); ++i)
+        if (!art_by_name.count(v.prims[i]) && !actor_by_name.count(v.prims[i])) found = false;
+      if (!found) continue;
+      const size_t keep = scall_next;
+      scall_next = j + 1;  // apply_side 안의 같은-스텝 판단용
+      apply_side(c);
+      scall_next = keep;
+      psi_done.insert(j);
+      applied["side:psi 먼저"]++;
+    }
+  }
+
   void apply_side_until(uint64_t after) {
     while (scall_next < scalls.size() && scalls[scall_next].after <= after) {
+      if (psi_done.count(scall_next)) { scall_next++; continue; }
       if (side_skip.count(scall_next)) { scall_next++; applied["side:건너뜀(--side-skip)"]++; continue; }
       apply_side(scalls[scall_next++]);
     }
@@ -2677,6 +2743,11 @@ class Replayer {
     const uint32_t a_elapsed = attr("PxScene", "elapsedTime");
     for (size_t& i = run_i; i < F.events.size(); ++i) {
       const ovd::Event& e = F.events[i];
+      if (trace_sim >= 0 && int64_t(sims) == trace_sim && !out_block) {  // 진단: 한 프레임의 입력 사건 순서 (REPLAY_TRACE_SIM=simulate 번호-1)
+        const std::string on = objs.count(e.obj) ? objs[e.obj].name : std::string("?");
+        if (e.cmd == ovd::kSet) fprintf(stderr, "[프레임] %zu set %s.%s %s\n", i, cname(objs.count(e.obj) ? objs[e.obj].cls : 0), F.attrs[e.attr].name.c_str(), on.c_str());
+        else fprintf(stderr, "[프레임] %zu cmd %d cls %s %s\n", i, int(e.cmd), cname(e.cls), on.c_str());
+      }
       // 만든 순간 값 묶음(cluster): create 바로 뒤, 같은 객체의 set 이 이어지는 동안. 같은 속성이 두 번 나오면
       // 두 번째부터는 API 호출이다 (생성 기록은 속성마다 한 번씩만 쓴다: OmniPvdPxSampler::stream*).
       if (e.cmd == ovd::kSet) trace_event(e, (e.obj == open && !objs[e.obj].done && !objs[e.obj].pend.count(e.attr)) ? "생성값" : "set");
@@ -2771,6 +2842,7 @@ class Replayer {
           if (out_block && e.ctx == out_ctx) {
             out_block = false;
             end_frame();
+            if (psi_early) apply_psi_early(sims + side_offset);
             if (max_frames >= 0 && int64_t(sims) >= max_frames) return;
           }
           break;
