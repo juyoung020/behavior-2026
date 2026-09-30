@@ -244,17 +244,7 @@ struct Hook {
     Trans& t = T[size_t(cur)];
     const bool tr = getenv("PARTICLES_HOOK_TRACE") != nullptr;
     if (removedIdx != size_t(-1)) B.markRemoved(removedIdx);
-    std::vector<uint32_t> gone;  // 지울 행위자의 요소 (아래 바뀜 표 지우기)
-    for (int32_t h : objs[0].actors)
-      if (h >= 0 && size_t(h) < E.sc->actors.size()) gone.insert(gone.end(), E.sc->actors[size_t(h)].elements.begin(), E.sc->actors[size_t(h)].elements.end());
-    W.edit(E);
-    // 임시 (리드 sc_scene.h removeActor 가 할 일): PhysX ElementSim::removeFromAABBMgr (ScElementSim.cpp:168) 는 removeBounds 뒤
-    // 바뀜 표(ChangedAABBMgActorHandleMap) 칸을 지운다 — 안 지우면 무덤 순간이동이 남긴 칸으로 넓은 단계가 지운 요소를 갱신하다 죽는다.
-    // resetElementID (ScShapeSimBase.cpp:45) 는 dirty 모양 표도 지운다.
-    for (uint32_t e : gone) {
-      if (e / 32 < E.sc->changed.size()) E.sc->changed[e / 32] &= ~(1u << (e & 31));
-      if (e / 32 < E.sc->dirty.size()) E.sc->dirty[e / 32] &= ~(1u << (e & 31));
-    }
+    W.edit(E);  // 지운 요소의 바뀜·dirty 칸은 sc_scene.h removeActor 가 지움 (리드 72c1a98)
     if (tr) fprintf(stderr, "[particles 편집] 지우기 끝\n");
     W.loadState(E);
     if (tr) fprintf(stderr, "[particles 편집] 되돌리기·넣기 끝 (실패 %d)\n", W.failed);
