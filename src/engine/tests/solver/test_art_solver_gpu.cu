@@ -116,7 +116,7 @@ __host__ __device__ inline const T* at(const uint8_t* base, size_t off) {
 __host__ __device__ inline void applyPre(sv::SolverBoard& B, const ast::Header& h, const uint8_t* base, int s, const artest::ArtInputs* inputs) {
   const ast::Counts c = *at<ast::Counts>(base, 0);
   const ast::Layout L = ast::layout(c, h);
-  for (uint32_t k = 0; k < h.na; ++k) artest::stepInputsEng(B.arts[k], inputs[k], s, 0, h.dt);
+  for (uint32_t k = 0; k < h.na; ++k) artest::stepInputsEng(sv::artAt(B, k), inputs[k], s, 0, h.dt);
   const ast::Wake* w = at<ast::Wake>(base, L.wake);
   for (uint32_t k = 0; k < c.nWake; ++k)
     if (B.bodies[w[k].body].wakeCounter < w[k].value) B.bodies[w[k].body].wakeCounter = w[k].value;
@@ -158,7 +158,7 @@ __host__ __device__ inline void applyPost(sv::SolverBoard& B, const ast::Header&
     const uint32_t* lc = at<uint32_t>(base, L.lateLinkCounted);
     const float* aw = at<float>(base, L.lateArtWake);
     for (uint32_t k = 0; k < h.na; ++k) {
-      A::Articulation& a = B.arts[k];
+      A::Articulation& a = sv::artAt(B, k);
       for (uint32_t l = 0; l < a.nLinks; ++l) {
         a.bodies[l].numCountedInteractions = lc[k * h.maxLinks + l];
         if (lw[k * h.maxLinks + l] > a.bodies[l].wakeCounter) a.bodies[l].wakeCounter = lw[k * h.maxLinks + l];
@@ -247,6 +247,7 @@ int main(int argc, char** argv) {
   }
   int envs = 64, threads = 32;
   std::vector<int> apiNs;
+  int maxSteps = 0;  // --steps K: 앞 K 스텝만 (큰 판 수 표)
   for (int i = 2; i < argc; ++i) {
     if (!strcmp(argv[i], "--api") && i + 1 < argc) {
       for (const char* q = argv[++i]; *q;) {
@@ -258,6 +259,7 @@ int main(int argc, char** argv) {
     }
     if (!strcmp(argv[i], "--envs") && i + 1 < argc) envs = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--steps") && i + 1 < argc) maxSteps = atoi(argv[++i]);
   }
   ast::Stream S;
   if (!ast::readStream(argv[1], S)) {
@@ -271,7 +273,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "자료형 크기가 흐름 파일과 다르다 (같은 빌드 선택으로 만들 것)\n");
     return 2;
   }
-  const uint32_t nb = h.nb, na = h.na, steps = h.steps, AR = h.artResFloats;
+  const uint32_t nb = h.nb, na = h.na, steps = maxSteps > 0 && uint32_t(maxSteps) < h.steps ? uint32_t(maxSteps) : h.steps, AR = h.artResFloats;
   sv::SolverParams prm;
   prm.gravity = eng::V3{h.gravity[0], h.gravity[1], h.gravity[2]};
   prm.dt = h.dt;
@@ -381,71 +383,49 @@ int main(int argc, char** argv) {
     printf("gpuSolveBatch (판 안 스레드 %d)\n  판 수 | 다른 판·스텝 강체/관절체, 다른 판 1D | 재시도 | ms/스텝 = 담기+올림+커널+되받기+풀기 | 판·스텝/초 | 장치 MB | 올림/되받기 KB/스텝\n",
            threads);
     for (int NE : apiNs) {
+      // 판마다 호스트 칸은 gpuSolveBatch 가 읽고 쓰는 것만 (작업 공간은 장치 것을 쓴다). 관절체는 딱 맞는 용량으로 따로 잡아 artPtrs 로 (판 수천 개 메모리).
       struct HostEnv {
         std::vector<eng::Body> b;
-        std::vector<A::Articulation> a;
+        std::vector<std::unique_ptr<uint8_t[]>> artBuf;
+        std::vector<A::Articulation*> artP;
         std::vector<sv::SolverCM> cms;
-        std::vector<sv::SBodyVel> v;
-        std::vector<sv::SBodyTxI> t;
-        std::vector<sv::SBodyData> d;
-        std::vector<sv::SDesc> ds, orr, tm;
-        std::vector<sv::BatchHeader> hh;
-        std::vector<uint32_t> part, bsi;
-        std::vector<uint8_t> arena;
+        std::vector<uint32_t> bsi;
         std::vector<sv::FrictionPatch> f0, f1;
-        std::unique_ptr<sv::CorrelationBuffer> corr;
-        std::vector<sv::ContactPoint> cbuf;
         std::vector<eng::jnt::Writeback> wb;
-        std::vector<eng::jnt::Row> rows;
-        std::vector<A::StaticLists> lists;
-        std::vector<sv::SDesc> s1, sc;
-        std::vector<uint32_t> n1, nc, batch;
-        std::vector<sv::ArtProgress> prog;
         sv::SolverBoard B;
       };
       std::vector<std::unique_ptr<HostEnv>> H(static_cast<size_t>(NE));
       std::vector<sv::SolverBoard*> bp(static_cast<size_t>(NE));
       std::vector<const sv::SolverParams*> pp(static_cast<size_t>(NE), &prm);
+      const A::Articulation* src0 = reinterpret_cast<const A::Articulation*>(S.arts0.data());
       for (int e = 0; e < NE; ++e) {
         H[size_t(e)].reset(new HostEnv());
         HostEnv& X = *H[size_t(e)];
         X.b.resize(nb);
         memcpy(static_cast<void*>(X.b.data()), S.bodies0.data(), S.bodies0.size());
-        X.a.resize(na);
-        if (na) memcpy(static_cast<void*>(X.a.data()), S.arts0.data(), S.arts0.size());
+        for (uint32_t k = 0; k < na; ++k) {
+          const A::ArtCaps tc = A::artTightCaps(src0[k]);
+          X.artBuf.emplace_back(new uint8_t[A::artBytes(tc) + 16]);
+          uint8_t* raw = X.artBuf.back().get();
+          A::Articulation* dst = reinterpret_cast<A::Articulation*>(raw + ((16 - (reinterpret_cast<uintptr_t>(raw) & 15)) & 15));
+          A::artRepack(*dst, src0[k], tc);
+          X.artP.push_back(dst);
+        }
         X.cms.resize(C.maxCMs);
         for (auto& m : X.cms) {
           m = sv::SolverCM{};
           m.frictionPtr = sv::NONE;
         }
-        X.v.resize(C.pool);
-        X.t.resize(C.pool);
-        X.d.resize(C.pool);
-        X.ds.resize(C.desc);
-        X.orr.resize(C.desc);
-        X.tm.resize(C.desc);
-        X.hh.resize(C.desc);
-        X.part.resize(C.part);
         X.bsi.resize(nb + 1);
-        X.arena.resize(C.arena);
         X.f0.resize(C.fric);
         X.f1.resize(C.fric);
-        X.corr.reset(new sv::CorrelationBuffer());
-        X.cbuf.resize(sv::MAX_CONTACTS);
         X.wb.resize(C.c1d);
         memset(static_cast<void*>(X.wb.data()), 0, X.wb.size() * sizeof(eng::jnt::Writeback));
-        X.rows.resize(eng::jnt::MAX_CONSTRAINT_ROWS * 4);
-        X.lists.resize(na ? na : 1);
-        X.s1.resize(size_t(na) * C.stat + 1);
-        X.sc.resize(size_t(na) * C.stat + 1);
-        X.n1.resize(na + 1);
-        X.nc.resize(na + 1);
-        X.batch.resize(na + 1);
-        X.prog.resize(na + 1);
-        Mem XM{X.b.data(), X.a.data(), X.cms.data(), X.v.data(), X.t.data(), X.d.data(), X.ds.data(), X.orr.data(), X.tm.data(), X.hh.data(), X.part.data(),
-               X.bsi.data(), X.arena.data(), X.f0.data(), X.f1.data(), X.corr.get(), X.cbuf.data(), X.wb.data(), X.rows.data(), X.lists.data(), X.s1.data(),
-               X.sc.data(), X.n1.data(), X.nc.data(), X.batch.data(), X.prog.data()};
+        Mem XM{X.b.data(), nullptr, X.cms.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+               X.bsi.data(), nullptr, X.f0.data(), X.f1.data(), nullptr, nullptr, X.wb.data(), nullptr, nullptr, nullptr,
+               nullptr, nullptr, nullptr, nullptr, nullptr};
         X.B = makeBoard(XM, C, 0);
+        X.B.artPtrs = na ? X.artP.data() : nullptr;
         bp[size_t(e)] = &X.B;
       }
       sv::GpuSolveCtx ctx;
@@ -482,7 +462,7 @@ int main(int argc, char** argv) {
             if (!sameF(r.data(), cpuRes.data() + (size_t(s) * nb + i) * ast::RES_FLOATS, ast::RES_FLOATS)) ++badB;
           }
           for (uint32_t k = 0; k < na; ++k) {
-            artResult(X.B.arts[k], h.maxLinks, ra.data(), AR);
+            artResult(sv::artAt(X.B, k), h.maxLinks, ra.data(), AR);
             if (!sameF(ra.data(), cpuArt.data() + (size_t(s) * na + k) * AR, AR)) ++badA;
           }
         }
