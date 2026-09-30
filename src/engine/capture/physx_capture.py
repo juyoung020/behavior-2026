@@ -89,6 +89,19 @@ class Capture:
         self._subs.append(iface.subscribe_physics_on_step_events(post, pre_step=False, order=0))
 
     # ------------------------------------------------------------------ OVD 에 안 남는 쓰기
+    def _view_key(self, view, paths):
+        # 뷰마다 처음 볼 때 일련번호를 붙여 둔다 (같은 prim 으로 새로 만든 뷰도 따로 센다: 뷰마다 캐시가 따로다).
+        # 속성을 못 붙이는 객체면 id+경로 해시로 물러선다
+        k = getattr(view, "_eng_vid", None)
+        if k is None:
+            self._vid_n = getattr(self, "_vid_n", 0) + 1
+            k = f"v{self._vid_n}_{zlib.crc32('|'.join(paths).encode()):08x}"
+            try:
+                setattr(view, "_eng_vid", k)
+            except Exception:
+                k = f"{id(view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
+        return k
+
     def install_sidelog(self):
         if not self.sidelog:
             return
@@ -114,7 +127,7 @@ class Capture:
                     paths = list(view.prim_paths)
                 except Exception:
                     paths = []
-                vid = f"{id(view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
+                vid = self._view_key(view, paths)
                 if vid not in self.views:
                     self.views[vid] = (kind, paths)
                     if kind == "art":
@@ -168,7 +181,7 @@ class Capture:
                         paths = list(self_._view.prim_paths)
                     except Exception:
                         paths = []
-                    vid = f"{id(self_._view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
+                    vid = self._view_key(self_._view, paths)
                     if vid not in self.views:
                         self.views[vid] = ("art", paths)
                         self.view_extra[vid] = self.view_meta(self_._view) or {}
