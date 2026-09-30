@@ -49,7 +49,7 @@ EHD V3 oct_dec(uint32_t q) {
 // 1) G 버퍼 + 조도. irr[0..2] = 확산 조도(1차 알베도 안 곱함), irr[3..5] = 알베도에 안 곱하는 빛(1차 방출·반사)
 // 진단(-DRENDER_PROBE 빌드에서만 코드가 생김): dbg 에 중간값(V3)을 차례로 적는다. 층1≠층2 첫 갈림 찾기용.
 #ifdef RENDER_PROBE
-#define RPROBE(v) do { if (dbg && dn + 3 <= 240) { dbg[dn] = (v).x; dbg[dn + 1] = (v).y; dbg[dn + 2] = (v).z; dn += 3; } } while (0)
+#define RPROBE(v) do { if (dbg && dn + 3 <= 200) { dbg[dn] = (v).x; dbg[dn + 1] = (v).y; dbg[dn + 2] = (v).z; dn += 3; } } while (0)
 #else
 #define RPROBE(v) ((void)0)
 #endif
@@ -97,7 +97,7 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
     V3 thr = one;
     V3 ind{0.0f, 0.0f, 0.0f};  // 튕김 1 번 이상에서 온 빛 (반딧불 자르기 대상)
     for (int b = 0; b <= S.sp.bounces; ++b) {
-      const Surf s = b == 0 ? s0 : surface(S, E, r, h, cone);
+      const Surf s = b == 0 ? s0 : surface(S, E, r, h, cone, dbg && k == 0 && b == 1 ? dbg + 200 : nullptr);
       const V3 alb = b == 0 ? one : s.albedo;  // 1차 알베도는 합칠 때 곱한다
       V3 add{0.0f, 0.0f, 0.0f};
       if (b > 0) add = add + mulc(thr, s.emissive);

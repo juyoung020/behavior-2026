@@ -165,7 +165,8 @@ struct Surf {
 };
 
 // cone: 맞은 점에서 광선 원뿔의 폭(월드 m, 광선에 수직) — 텍스처 밉 단계(광선 원뿔, Akenine-Möller 2019 식 단순판)
-EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& h, float cone) {
+EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& h, float cone, float* dbg = nullptr) {
+  (void)dbg;
   Surf s;
   const InstInfo& in = S.insts[h.inst];
   const GeomInfo& g = S.geoms[in.geom];
@@ -216,6 +217,12 @@ EHD Surf surface(const SceneView& S, const EnvView& E, const Ray& r, const Hit& 
       const float lod = (wa > 0.0f ? 0.5f * flog2(fp * fp * ta / wa) : 0.0f) + S.sp.lod_bias;
       float t[4];
       tex_sample(S, M.tex_albedo, u, v, lod, t);
+#ifdef RENDER_PROBE
+      if (dbg) {  // 탐침: 텍스처 단계 입력·결과
+        const float q[12] = {cone, fp, ta, wa, lod, u, v, t[0], t[1], t[2], h.t, dl};
+        for (int k = 0; k < 12; ++k) dbg[k] = q[k];
+      }
+#endif
       a = V3{a.x * srgb_to_lin(t[0]), a.y * srgb_to_lin(t[1]), a.z * srgb_to_lin(t[2])};
       if (M.flags & 1) s.opacity = t[3];
     }

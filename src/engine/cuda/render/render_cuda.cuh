@@ -244,7 +244,7 @@ __global__ void __launch_bounds__(kBuildThreads) kBuild(SceneView S, Batch B) {
 //  kAtrous : à-trous 한 번 (간격 step), 조도 핑퐁
 //  kCompose: 알베도 × 조도 + 반사·방출 -> 톤매핑 -> rgb
 #ifndef RENDER_SHADE_MINB
-#define RENDER_SHADE_MINB 1
+#define RENDER_SHADE_MINB 4  // 레지스터 128 로 묶음: radio 224 판 256 에서 33 -> 52 판·프레임/초 (넘친 레지스터 444 B 는 L1)
 #endif
 __global__ void __launch_bounds__(128, RENDER_SHADE_MINB) kShade(SceneView S, Batch B, const Camera* cams, int ncam, int cam, int frame, float* depth, GPix* G,
                        float* irr) {

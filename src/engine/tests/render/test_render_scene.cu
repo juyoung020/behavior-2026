@@ -537,6 +537,11 @@ int main(int argc, char** argv) {
             printf("    V3 %d: L1 %.9g %.9g %.9g | L2 %.9g %.9g %.9g\n", q / 3, ho[q], ho[q + 1], ho[q + 2], go[q], go[q + 1], go[q + 2]);
           break;
         }
+      printf("    surface(b=1) cone fp ta wa lod u v t0 t1 t2 h.t dl:\n      L1");
+      for (int k = 200; k < 212; ++k) printf(" %.9g", ho[k]);
+      printf("\n      L2");
+      for (int k = 200; k < 212; ++k) printf(" %.9g", go[k]);
+      printf("\n");
     }
 #endif
   }
