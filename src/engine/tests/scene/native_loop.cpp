@@ -28,6 +28,7 @@
 #include "core/scene/env_render.h"
 #include "tests/scene/env_lockstep.h"
 #include "tests/scene/native_ctrl.h"
+#include "tests/scene/native_obs.h"
 #include "tests/scene/native_render.h"
 
 using namespace envrun;
@@ -203,6 +204,23 @@ int main(int argc, char** argv) {
     printf("  제어기: 로봇 관절체 %u, dof %d, 행동 %u 스텝, 에피소드 시작 simulate %llu\n", CS.art, CS.n_dof, actT, (unsigned long long)CS.episode_start);
   }
   std::vector<sc2::EnvWindow> wctl(static_cast<size_t>(envs));
+  // 관측 proprio (기록 폴더에 obs_setup.txt·obs_ref.bin 이 있으면): 스텝 끝마다 판 0 을 공식 trace 와 비교
+  nobs::Setup OS;
+  std::vector<float> obsRef;
+  uint32_t obsT = 0;
+  uint64_t obsSteps = 0, obsBadSteps = 0, obsBadFields = 0;
+  long long obsFirstBad = -1;
+  if (CS.bound && OS.load(ctrlDir, err) && OS.bind(f, CS, err)) {
+    FILE* fo = fopen((ctrlDir + "/obs_ref.bin").c_str(), "rb");
+    int32_t hdr[2] = {0, 0};
+    if (fo && fread(hdr, 4, 2, fo) == 2 && hdr[1] == 61) {
+      obsT = uint32_t(hdr[0]);
+      obsRef.resize(size_t(obsT) * 61);
+      if (fread(obsRef.data(), 4, obsRef.size(), fo) != obsRef.size()) obsT = 0;
+    }
+    if (fo) fclose(fo);
+    printf("  관측: proprio 61 기준 %u 스텝 (MKL %s)\n", obsT, getenv("ENGINE_MKL_LIB") ? "있음" : "없음 — cos/sin 이 다를 수 있음");
+  }
   if (freeRun && !CS.bound) {
     fprintf(stderr, "--free 는 --ctrl 과 함께\n");
     return 1;
@@ -306,6 +324,26 @@ int main(int argc, char** argv) {
       V[size_t(e)].check(W, R[size_t(e)]);
     });
     auto t3 = now();
+    if (OS.bound && obsT && W.sim > CS.episode_start && (W.sim - CS.episode_start) % CS.substeps == 0) {  // 스텝 t 의 마지막 서브스텝 뒤
+      const uint64_t t = (W.sim - CS.episode_start) / CS.substeps - 1;
+      if (t < obsT) {
+        float o[61];
+        OS.proprio(CS, *V[0].S, o);
+        int bad = 0;
+        for (int i = 0; i < 61; ++i) bad += memcmp(&o[i], &obsRef[size_t(t) * 61 + size_t(i)], 4) != 0;
+        ++obsSteps;
+        if (bad) {
+          ++obsBadSteps;
+          obsBadFields += uint64_t(bad);
+          if (obsFirstBad < 0) {
+            obsFirstBad = (long long)t;
+            for (int i = 0; i < 61; ++i)
+              if (memcmp(&o[i], &obsRef[size_t(t) * 61 + size_t(i)], 4))
+                printf("    [관측 스텝 %llu] 칸 %d 우리 %.9g 공식 %.9g\n", (unsigned long long)t, i, o[i], obsRef[size_t(t) * 61 + size_t(i)]);
+          }
+        }
+      }
+    }
     msBegin += ms(t0, t1);
     msCore += ms(t1, t2);
     msEnd += ms(t2, t3);
@@ -331,6 +369,9 @@ int main(int argc, char** argv) {
   if (CS.bound)
     printf("  제어기 (판 0): 행동 스텝 %" PRIu64 ", 드라이브 목표 흐름과 비교 %" PRIu64 " 다름 %" PRIu64 "%s\n", ctl[0].steps, ctl[0].cmpN, ctl[0].cmpBad,
            ctl[0].firstBad >= 0 ? (" 첫 다름 simulate " + std::to_string(ctl[0].firstBad)).c_str() : "");
+  if (obsSteps)
+    printf("  관측 proprio 61 (판 0): 스텝 %" PRIu64 " 중 다른 스텝 %" PRIu64 " (칸 %" PRIu64 ")%s\n", obsSteps, obsBadSteps, obsBadFields,
+           obsFirstBad >= 0 ? (" 첫 다름 스텝 " + std::to_string(obsFirstBad)).c_str() : "");
   if (freeRun) printf("  --free: 흐름 입력 없이 (판 0 로봇 아닌 관절체 호출 빠뜨림 %" PRIu64 ", EnvArtApi 깨움 요청 %" PRIu64 ")\n", freeOther[0], artApi[0]->reqActivate);
   if (doRender) printf("  기준 prim 대조 (판 0, 몸체·링크 %u 개, 렌더 캡처 프레임별 가장 가까운 simulate):\n", map.n[1] + map.n[2]);
   for (size_t fi = 0; fi < frames.size() && doRender; ++fi)
