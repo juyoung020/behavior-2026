@@ -134,19 +134,18 @@ struct EnvSolveImpl : public EnvSolve {
       prm.solverArticBatchSize = 16;
       prm.lengthScale = f.h.lengthScale;
     }
-    // 작업 공간 (g1_solver.cpp 와 같은 용량)
-    const uint32_t POOL = 1u << 14, DESC = 1u << 16;
-    vels.resize(POOL);
-    txis.resize(POOL);
-    datas.resize(POOL);
-    descs.resize(DESC);
-    ordered.resize(DESC);
-    temp.resize(DESC);
-    headers.resize(DESC);
+    // 작업 공간: 작게 시작해 스텝마다 이번 입력에 맞춰 늘림 (fitWorkspace, 판당 메모리 — 예전 고정 용량은 판당 약 140 MB)
+    vels.resize(1024);
+    txis.resize(1024);
+    datas.resize(1024);
+    descs.resize(4096);
+    ordered.resize(4096);
+    temp.resize(4096);
+    headers.resize(4096);
     partCounts.resize(4096);
-    arenaMem.resize(64u << 20);
-    fr0.resize(1u << 18);
-    fr1.resize(1u << 18);
+    arenaMem.resize(1u << 20);
+    fr0.resize(4096);
+    fr1.resize(4096);
     corr.reset(new sv::CorrelationBuffer());
     cbuf.resize(sv::MAX_CONTACTS);
     rowScratch.resize(jnt::MAX_CONSTRAINT_ROWS * 4);
@@ -161,6 +160,31 @@ struct EnvSolveImpl : public EnvSolve {
     return true;
   }
 
+  // 작업 공간 용량을 이번 판 입력에 맞춤 (늘리기만). 식은 sv::gpuSolveBatch 판 계획(solver_gpu.cu planBoard)과 같은 꼴에 여유 wsGrow 배.
+  // 그래도 넘치면(판 오류 용량 비트) wsGrow 를 두 배로 — 그 스텝은 engineErr 로 셈 (요약값 대조가 잡는다).
+  float wsGrow = 4.0f;
+  uint64_t wsGrowEvents = 0;
+  template <class V>
+  static void atLeast(V& v, size_t n) {
+    if (v.size() < n) v.resize(n);
+  }
+  void fitWorkspace() {
+    const size_t sumBodies = ib.size(), sumCMs = icm.size(), sumC1D = ic1d.size();
+    const size_t nContact = sin.contacts.size(), nPatch = sin.patches.size();
+    size_t artLinks = 0;
+    for (uint32_t a : ia) artLinks += a < arts.size() ? arts[a].nLinks : 0;
+    auto g = [&](size_t x) { return size_t(double(x) * wsGrow) + 64; };
+    const size_t pool = g(sumBodies + bodies.size() + artLinks + 2), desc = g(sumCMs + sumC1D + artLinks + 8);
+    atLeast(vels, pool);
+    atLeast(txis, pool);
+    atLeast(datas, pool);
+    atLeast(descs, desc);
+    atLeast(ordered, desc);
+    atLeast(temp, desc);
+    atLeast(headers, desc);
+    atLeast(arenaMem, g(16384 + 768ull * nContact + 256ull * nPatch + 2048ull * sumC1D + 4096ull * artLinks));
+    atLeast(fr1, g(nContact + 64));
+  }
   // 몸체별 붙은 조인트 수 (onConstraintAttach / onConstraintDetach, ScBodySim.cpp:722)
   void countJoint(const SceneJoint& j, int d) {
     for (uint32_t side = 0; side < 2; ++side) {
@@ -296,7 +320,8 @@ struct EnvSolveImpl : public EnvSolve {
         auto it = fric.find(key);
         if (it != fric.end())
           for (const sv::FrictionPatch& fp : it->second) {
-            if (nFr < fr0.size()) fr0[nFr++] = fp;
+            if (nFr >= fr0.size()) fr0.resize(fr0.size() * 2 + 64);
+            fr0[nFr++] = fp;
             ++m.frictionCount;
           }
       }
@@ -399,6 +424,7 @@ struct EnvSolveImpl : public EnvSolve {
       }
     }
     // 4. 판 + 풀이 + 활성 강체 깸 카운터 확정
+    fitWorkspace();
     const uint32_t nb = uint32_t(bodies.size());
     bodySolverIndex.assign(nb, 0);
     B = sv::SolverBoard{};
@@ -454,6 +480,10 @@ struct EnvSolveImpl : public EnvSolve {
     const ss::ScPairs& P = E.C->S->pairs;
     const uint32_t cap = uint32_t(cms.size());
     if (B.error) ++engineErr;
+    if (B.error & (sv::SV_ERR_POOL | sv::SV_ERR_DESC | sv::SV_ERR_PARTITION | sv::SV_ERR_ARENA | sv::SV_ERR_FRICTION)) {
+      wsGrow *= 2.0f;
+      ++wsGrowEvents;
+    }
     // 5. 마찰 패치 들고 가기, 풀이 뒤 깸 카운터
     const sv::FrictionArena& fa = B.friction[B.frictionCurIdx];
     for (uint32_t k = 0; k < icm.size(); ++k) {
