@@ -114,6 +114,25 @@ PEHD int slicing_rule_select(int n_sl, int n_kn, const uint8_t* knife_active, To
   return any_active ? m : 0;
 }
 
+// ---- 입자 익히기 규칙 선택 (CookingPhysicalParticleRule, transition_rules.py:1908 + RecipeRule.transition :1651) ----
+// 후보 = fillable·heatable·고정 아닌 용기(등록 순서), 조건 = Heated. 용기마다 활성 레시피를 등록 순서로 보고
+// (범주 제한 통과 && 입력 계 모두 Contains) 인 첫 레시피 하나만 실행 → out[c] = 레시피 번호 또는 -1.
+// 입력 물체 없음·ignore_nonrecipe_* = True 라 다른 검사는 결과에 영향 없음. 용기가 하나도 안 데워졌으면 전부 -1.
+template <class CatOk, class ContainsFn>
+PEHD void cook_particles_select(int n_cont, const uint8_t* heated, int n_rec, const int32_t* rec_nin, const int32_t* rec_in /*[n_rec][2]*/,
+                                CatOk cat_ok, ContainsFn contains, int32_t* out) {
+  for (int c = 0; c < n_cont; ++c) {
+    out[c] = -1;
+    if (!heated[c]) continue;
+    for (int r = 0; r < n_rec && out[c] < 0; ++r) {
+      if (!cat_ok(c, r)) continue;
+      bool all = true;
+      for (int k = 0; k < rec_nin[r] && all; ++k) all = contains(c, rec_in[2 * r + k]);
+      if (all) out[c] = r;
+    }
+  }
+}
+
 // ---- BDDL 범위 칸 (future/real, tasks/behavior_task.py:737~809) ----
 // 칸 순서 = 범위 dict 순서 (agent 먼저, 그다음 compiled_task.object_scope 순서). val[j] = 묶인 물체/계 번호, -1 = None.
 // matches(j) = 칸 j 의 범주 집합에 새 물체 범주가 드는가 (og_categories_from_bddl_inst), is_sys[j] = 칸이 물질(계) 인가.

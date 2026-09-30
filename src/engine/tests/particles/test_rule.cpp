@@ -91,6 +91,32 @@ int main(int argc, char** argv) {
     for (int j = 0; j < n; ++j) ok &= v[j] == sf.as<int32_t>()[t * MS + j];
     bad_c += !ok;
   }
+  // D. 입자 익히기 선택 (gen_cook_ref.py, 없으면 건너뜀)
+  long nd = 0, bad_d = 0;
+  {
+    Npy cr;
+    if (npy_load(d + "../cook/cook_rows.npy", cr)) {
+      const int MC = 5, MR = 6, MS = 8, wc = (int)cr.shape[1];
+      nd = (long)cr.shape[0];
+      for (long r = 0; r < nd; ++r) {
+        const int32_t* x = cr.as<int32_t>() + r * wc;
+        const int nc = x[0], nr = x[1];
+        const int32_t *heat = x + 2, *cat = x + 2 + MC, *cont = x + 2 + 2 * MC, *rin = cont + MC * MS, *rn2 = rin + 2 * MR, *rfc = rn2 + MR,
+                      *sel = rfc + MR;
+        uint8_t h[MC];
+        int32_t nin[MR], out[MC];
+        for (int i = 0; i < MC; ++i) h[i] = (uint8_t)heat[i];
+        for (int i = 0; i < MR; ++i) nin[i] = rn2[i] ? 2 : 1;
+        cook_particles_select(nc, h, nr, nin, rin, [&](int c, int q) { return rfc[q] < 0 || rfc[q] == cat[c]; },
+                              [&](int c, int s) { return cont[c * MS + s] != 0; }, out);
+        bool ok = true;
+        for (int i = 0; i < nc; ++i) ok &= out[i] == sel[i];
+        bad_d += !ok;
+      }
+    }
+  }
+  printf("  입자 익히기 선택                 사례 %ld  다름 %ld\n", nd, bad_d);
+  bad_c += bad_d;
   printf("전이 규칙 논리 층 1 vs 공식\n");
   printf("  SlicerActive (value·delay 비트)  자르개 %d x 스텝 %d  다름 %ld  (다시 켜짐 %ld 번)\n", O, S, bad_a, reon);
   printf("  SlicingRule 선택                 사례 %ld (발동 %ld)  다름 %ld\n", nb, fired, bad_b);
