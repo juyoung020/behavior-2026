@@ -787,3 +787,4 @@ physx::Sc::ShapeSim* g1_elem_sim(int32_t e) {
   auto it = gElemSim.find(e);
   return it == gElemSim.end() ? nullptr : static_cast<physx::Sc::ShapeSim*>(it->second);
 }
+const physx::PxActor* g1_pairs_actor(int32_t a) { return a >= 0 && size_t(a) < PS.actorPx.size() ? PS.actorPx[size_t(a)] : nullptr; }

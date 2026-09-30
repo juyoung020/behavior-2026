@@ -52,6 +52,7 @@ namespace ep = eng::px;
 namespace ec = eng::contact;
 namespace es = eng::scene;
 namespace ss = eng::contact::sc;
+namespace sv = eng::sv;
 
 namespace {
 
@@ -66,6 +67,10 @@ struct CapOut {
   uint8_t statusFlag = 0, nbPatches = 0;
   uint16_t nbContacts = 0;
   std::vector<uint8_t> patches, contacts;
+  // 작업 단위 (solver 입력 대조용)
+  uint32_t npFlags = 0;
+  float restDistance = 0, torsional = 0, minTorsional = 0, offsetSlop = 0;
+  PxTransform pose1;  // mRigidCore1->body2World (정적 쪽 자세)
 };
 struct SceneShadow {
   bool inited = false, on = false, started = false;
@@ -89,6 +94,11 @@ struct SceneShadow {
   bool fromDone = false;
   uint32_t fromElems = 0;
   es::OmniFilterSpec spec;
+  std::vector<uint32_t> actorBody, actorLinkP1;
+  std::vector<ep::PxTransform> actorStaticPose;
+  std::vector<sv::SolverCM> solverCms;
+  ec::SolverInputOut solverIn;
+  uint64_t cmpSolver = 0, badSolver = 0;
   es::OmniFilterCtx fctx;
   bool coreFilter = false;
   // 통계
@@ -355,6 +365,57 @@ void runStep(PxScene* scene) {
       if (!same) fail("좁은 단계 칸 출력", SC.badSlot);
     }
   }
+  // 4b. solver 입력 조립 (contactSolverInput, 12.3) — PhysX 작업 단위·출력과 대조
+  {
+    const size_t na = M.actors.size();
+    SC.actorBody.assign(na, sv::NONE);
+    SC.actorLinkP1.assign(na, 0);
+    SC.actorStaticPose.assign(na, ep::PxTransform(ep::PxIdentity));
+    for (size_t a = 0; a < na; ++a) {
+      const ss::Actor& A = M.actors[a];
+      if (A.isStatic()) {
+        if (const PxActor* px = g1_pairs_actor(int32_t(a))) {
+          const PxTransform t = static_cast<const PxRigidActor*>(px)->getGlobalPose();
+          SC.actorStaticPose[a] = ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w));
+        }
+        continue;
+      }
+      SC.actorBody[a] = A.articulation >= 0 ? uint32_t(A.articulation) : uint32_t(a);
+      SC.actorLinkP1[a] = A.articulation >= 0 ? A.linkId + 1 : 0;
+    }
+    uint32_t cap = 0;
+    for (uint32_t slot = 0; slot < M.npMain.size(); ++slot) cap = std::max(cap, uint32_t(M.npMain.cms[slot]) + 1);
+    SC.solverCms.assign(cap, sv::SolverCM{});
+    ec::contactSolverInput(S, SC.actorBody.data(), SC.actorLinkP1.data(), SC.actorStaticPose.data(), SC.solverCms.data(), cap, SC.solverIn);
+    for (uint32_t slot = 0; slot < M.npMain.size(); ++slot) {
+      const int32_t ci = M.npMain.cms[slot];
+      auto it = SC.pxOut.find(uint32_t(ci));
+      if (it == SC.pxOut.end()) continue;
+      const CapOut& po = it->second;
+      const sv::SolverCM& m = SC.solverCms[size_t(ci)];
+      ++SC.cmpSolver;
+      const bool touch = (po.statusFlag & PxsContactManagerStatusFlag::eHAS_TOUCH) != 0;
+      bool same = m.npFlags == po.npFlags && fb(m.restDistance) == fb(po.restDistance) && fb(m.torsionalPatchRadius) == fb(po.torsional) &&
+                  fb(m.minTorsionalPatchRadius) == fb(po.minTorsional) && fb(m.offsetSlop) == fb(po.offsetSlop) &&
+                  m.nbPatches == (touch ? po.nbPatches : 0u) && m.nbContacts == (touch ? po.nbContacts : 0u);
+      if (same && m.body1 == sv::NONE) {
+        const float a7[7] = {m.staticPose1.q.x, m.staticPose1.q.y, m.staticPose1.q.z, m.staticPose1.q.w, m.staticPose1.p.x, m.staticPose1.p.y, m.staticPose1.p.z};
+        const float b7[7] = {po.pose1.q.x, po.pose1.q.y, po.pose1.q.z, po.pose1.q.w, po.pose1.p.x, po.pose1.p.y, po.pose1.p.z};
+        same = !memcmp(a7, b7, 28);
+      }
+      if (same) {
+        for (uint32_t k = 0; same && k < m.nbPatches; ++k)
+          same = !memcmp(&SC.solverIn.patches[m.patchStart + k], po.patches.data() + 64 * k, offsetof(sv::ContactPatchIn, materialIndex1) + 2);  // 끝 채움 2 바이트 빼고
+        same = same && (m.nbContacts == 0 || !memcmp(&SC.solverIn.contacts[m.contactStart], po.contacts.data(), sizeof(sv::ContactIn) * m.nbContacts));
+      }
+      if (!same && SC.show > 0) {
+        fprintf(stderr, "  solver 입력 관리자 %d: 플래그 %x/%x 쉼 %g/%g 비틀 %g/%g 최소 %g/%g 느슨 %g/%g 패치 %u/%u 점 %u/%u 몸체1 %u\n", ci, m.npFlags, po.npFlags,
+                m.restDistance, po.restDistance, m.torsionalPatchRadius, po.torsional, m.minTorsionalPatchRadius, po.minTorsional, m.offsetSlop, po.offsetSlop,
+                m.nbPatches, po.nbPatches, m.nbContacts, po.nbContacts, m.body1);
+      }
+      if (!same) fail("solver 입력 (contactSolverInput)", SC.badSolver);
+    }
+  }
   // 5. 풀이 뒤 정리 (섬 3차 자리는 비움: 섬 모듈 몫) + 6. 활성화(채운 뒤)
   ec::contactPostSolve(S, [] {});
   replayActs(st, true);
@@ -427,6 +488,13 @@ void g1_scene_task(const char* name) {
       c.nbContacts = po.nbContacts;
       c.patches.assign(po.contactPatches, po.contactPatches + 64 * size_t(po.nbPatches));
       c.contacts.assign(po.contactPoints, po.contactPoints + 16 * size_t(po.nbContacts));
+      const PxcNpWorkUnit& u = cm->getWorkUnit();
+      c.npFlags = u.mFlags;
+      c.restDistance = u.mRestDistance;
+      c.torsional = u.mTorsionalPatchRadius;
+      c.minTorsional = u.mMinTorsionalPatchRadius;
+      c.offsetSlop = u.mOffsetSlop;
+      c.pose1 = u.mRigidCore1 ? u.mRigidCore1->body2World : PxTransform(PxIdentity);
     }
     return;
   }
@@ -491,6 +559,7 @@ void g1_scene_before(PxScene* scene, uint64_t sim) {
       SC.Hp = &SC.env->H;
       SC.fromElems = uint32_t(SC.S->npShapes.size());
       SC.pendingOps.clear();  // 이 창의 구조 변경은 파일 기록에 이미 있다
+      SC.cmpSolver = SC.badSolver = 0;
       SC.steps = SC.bad = SC.cmpOverlap = SC.cmpList = SC.cmpSlot = SC.cmpVal = SC.badOverlap = SC.badSlot = SC.badEnd = SC.actBad = SC.goneCm = 0;
       SC.firstBad = -1;
       printf("G1 contact 장면 넘겨받기: simulate %llu 에서 파일로 판 런타임을 세움 (쌍 기록 스텝 %zu, 넓은 단계 구조 변경 %zu, 다양체 %u 넣음 / 못 찾음 %u, 활성화 재생 어긋남 %u) — 이 뒤로만 비교\n",
@@ -507,7 +576,7 @@ void g1_scene_report() {
   if (!SC.on) return;
   printf("G1 contact 장면 단위 그림자 (scene_step.h 한 줄: 우리 넓은 단계 -> 쌍 관리 -> 좁은 단계 -> 풀이 뒤 정리, 거르개 %s): 스텝 %" PRIu64 "\n", SC.coreFilter ? "core/scene/omni_filter.h" : "재생기 PhysX 콜백", SC.steps);
   printf("  넓은 단계 겹침 %" PRIu64 " (다름 %" PRIu64 "), 좁은 단계 칸 %" PRIu64 " (값 비교 %" PRIu64 ", 다름 %" PRIu64 "), 스텝 끝 목록 %" PRIu64 " (다름 %" PRIu64
-         "), 활성화 재생 어긋남 %" PRIu64 ", PhysX 에 없는 칸 %" PRIu64 " — 다름 합 %" PRIu64 "%s\n",
-         SC.cmpOverlap, SC.badOverlap, SC.cmpSlot, SC.cmpVal, SC.badSlot, SC.cmpList, SC.badEnd, SC.actBad, SC.goneCm, SC.bad,
+         "), solver 입력 관리자 %" PRIu64 " (다름 %" PRIu64 "), 활성화 재생 어긋남 %" PRIu64 ", PhysX 에 없는 칸 %" PRIu64 " — 다름 합 %" PRIu64 "%s\n",
+         SC.cmpOverlap, SC.badOverlap, SC.cmpSlot, SC.cmpVal, SC.badSlot, SC.cmpList, SC.badEnd, SC.cmpSolver, SC.badSolver, SC.actBad, SC.goneCm, SC.bad,
          SC.firstBad >= 0 ? ("  첫 다름 simulate " + std::to_string(SC.firstBad) + " " + SC.firstWhat).c_str() : "");
 }
