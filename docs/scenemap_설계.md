@@ -149,6 +149,30 @@
   - 그 전에는 물체마다 `room: null` 이다.
 - **저장**: Spark-DSG `DynamicSceneGraph` 로 저장한다(C++, ROS 없음). 층은 OBJECTS(물체 노드: 이름·위치·크기·이력), PLACES 는 나중(방), 2D 지도는 파일 옆에 PGM + YAML 로 둔다. 판 끝·요청 때 저장한다. 뷰어는 `spark-dsg visualize`(오프라인)다.
 
+#### 3.2.1 진행(09-30, 멈춘 지점)
+
+코드: `src/scenemap/include/scenemap/objmap.hpp`, `src/objmap.cpp`(규칙 요약은 헤더 첫머리). 입력은 4.2 약속 `sm_detections` 그대로.
+**C ABI(`capi.cpp`)에는 아직 안 붙였다** — `sm_snap_objects/find/near` 는 0 개를 돌려준다.
+
+- 위에 적은 설계에서 바뀐 것(재 보고 고침)
+  - 같은 물체: 중심 거리만 쓰면 부분만 보이는 큰 가구(소파 3.3 m·계단·조리대)가 시점마다 따로 등록됐다(ep200 중복 23). map 축 상자 사이 틈 < 10 cm 도 같은 것으로 보고, 한 변 > 0.5 m 인 것은 상자를 합집합으로 키운다 → 중복 2.
+  - 헝가리안 대신 틈·거리 순 탐욕 1:1(한 keyframe 에 같은 이름이 몇 개뿐).
+  - 사라짐: 작은 물체(한 변 ≤ 0.5 m)만, 팔 끝 0.5 m 안은 판단 안 함(잡으러 다가갈 때 손 거르기와 겹쳐 캔이 '사라짐'이 됐다), 받침에 붙은 것은 안 봄.
+  - 옮겨짐 잇기: 같은 이름이 '사라짐'인 것만 새 자리로 잇는다(다른 캔과 헷갈림 방지).
+  - 들기: 팔 끝 → 물체 거리를 베이스 축으로 저장(로봇이 돌면 같이 돔). 놓을 때 놓은 점 아래 xy 가 겹치는 물체 중 윗면이 가장 높은 것에 붙인다 — 들고 다니는 쓰레기통에 넣은 캔 셋이 통을 따라 끝 자리로 감.
+- 채점(`eval/export_gtdet.py` → `tools/objmap_eval` → `eval/score_objmap.py`): 정답 상자로 깊이를 라벨링한 '완벽한 검출'(320×240, 9 프레임마다), 자세는 slam2d.
+  짝 = 같은 범주, 정답 상자까지 수평 거리 0.3 m 안(높이 차 0.5 m 까지 봐줌 — 통 안에 떨어뜨린 높이는 깊이로 못 봄).
+
+  | 판 | 본 물체 | 찾음 | 중복 | 헛것 | 합쳐짐 | 옮겨짐 찾음 |
+  |---|---|---|---|---|---|---|
+  | 0 (라디오) | 12 | 12 (100%) | 0 | 0 | 0 | 1/1 |
+  | 200 (쓰레기) | 43 | 40 (93%) | 3 | 0 | 0 | 4/4 |
+  | 201 | 23 | 22 (96%) | 0 | 0 | 0 | 4/4 |
+  | 204 | 43 | 38 (88%) | 2 | 0 | 0 | 4/4 |
+  | 3000 (나무 들이기) | 56 | 30 (54%) — 정답 자세로도 31 | 11 | 0 | 2 | 0/0 |
+
+  - 못 찾는 것: 천장 조명(2.3 m, 얇음), 전자레인지·오븐 일부(합쳐짐·가림). ep3000 은 정답 자세로도 54% 라 slam 이 아니라 objmap 쪽 문제다(아직 안 봄). 나무 토막은 과제 인스턴스 상자에 없어 '옮겨짐 0/0'(정답 쪽 한계, 따로 봐야 함).
+
 ### 3.3 ③ query — 계획기 질의
 
 - 같은 프로세스 Rust API 가 기본이다. 디버그·도구용 TCP JSON 줄은 선택이다(meridian scene_server 형식과 비슷하게).
@@ -228,10 +252,21 @@ typedef struct {
 ## 6. 순서
 
 1. ~~slam2d CPU 기준판: 가상 스캔 + 격자 + 매칭 후보 A·B, 기준선 C 와 10판 비교 → 고름 → 루프 닫기 판단.~~ 09-30 끝: B, 루프 닫기 없음(3.1.1).
-2. objmap CPU: '완벽한 검출'로 DA·갱신·들고 있는 물체 검증(ep0·ep200).
-3. C ABI + Rust 래퍼 + simlink 연결(지금 RosSink 자리) + 계획기 `SceneQuery`.
-4. YOLOE 출력 연결(C++ frontend 에이전트) → 실제 검출로 같은 채점.
-5. 느린 곳만 CUDA(재서 정함), Spark-DSG 저장·뷰어, 방 나누기.
+2. objmap CPU: '완벽한 검출'로 DA·갱신·들고 있는 물체 검증 — **진행 중(09-30 멈춤)**: ep0·200·201·204 는 찾음 88~100%, ep3000 54%(3.2.1).
+3. C ABI — **slam2d 부분 끝(09-30, 4.1)**: sm_api.h 이름·형을 scenemap.h 로 옮김, simlink 가 SCENEMAP_LIB_DIR 로 링크해 cargo test 통과. 남은 것: objmap 을 capi 에 붙이기(sm_push_image 의 dets → ObjectMap, 스냅숏 물체 표·find·near, set_labels 이름 표, mark_handled), 설정 JSON 읽기.
+4. YOLOE 출력 연결(C++ frontend 에이전트, ovdet.h 가 4.2 에 맞춤) → 실제 검출로 같은 채점.
+5. 느린 곳만 CUDA(slam2d 는 필요 없음, 3.1.1), Spark-DSG 저장·뷰어, 방 나누기.
+
+### 6.1 다음에 이어서 할 것(09-30 마무리 시점)
+
+1. objmap 을 C ABI 에 붙이기: `capi.cpp` 의 `sm_push_image` 에서 dets(NULL 이면 나중에 YOLOE) → `ObjectMap::update`(T_mc = slam2d 자세 ∘ 순기구학 머리 카메라, 팔 끝 = proprio 17:20·42:45 를 map 으로, 그리퍼 = 24+25·49+50, base_yaw), 매 proprio 에 `updateHands`. 스냅숏에 `sm_object` 표(이름 = set_labels 표, state·handled·first_pos), find(이름 부분 일치·점수 순)·near.
+2. ep3000 objmap 54% 원인 보기(정답 자세로도 같음 → DA·거르기 쪽). 나무 토막 정답(과제 인스턴스 상자 밖) 넣기.
+3. objmap 채점을 `capi_replay` 처럼 C ABI 로 한 번 더(자세·물체가 slam2d_eval·objmap_eval 과 같은지).
+4. YOLOE(ovdet) 실제 검출로 같은 채점 — 이름 틀림·작은 물체.
+5. slam2d 남은 것: 짧은 판 204·205 가 C 보다 1~2 cm 나쁨(3.1.1). 루프 닫기는 안 넣음(끝 5 cm) — objmap 채점에서 긴 판 물체 위치가 틀리면 다시 본다.
+6. Spark-DSG 저장(submodule 을 src/scenemap/third_party 로 새로 둘지 — 저장·뷰어가 필요해질 때 판단), 방 나누기.
+
+재현: WSL `~/scenemap_eval/`(ep_*.bin·ep_*_det.bin 입력은 남겨 둠, `export_episode.py`·`export_gtdet.py` 로 다시 만들 수 있음), 빌드 `cmake src/scenemap` → `slam2d_eval`·`objmap_eval`·`capi_replay`·`test_fk`. 기준선 C 결과 `~/meridian_eval/odom/py_C_*.npz`·`py_long_*.npz`.
 
 ## 7. 아직 모르는 것
 

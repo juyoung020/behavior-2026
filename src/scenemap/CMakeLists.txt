@@ -8,13 +8,15 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp)
+add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp)
 target_include_directories(scenemap PUBLIC include)
 set_target_properties(scenemap PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(scenemap PRIVATE -Wall -Wextra)
 
 add_executable(slam2d_eval tools/slam2d_eval.cpp)
 target_link_libraries(slam2d_eval scenemap)
+add_executable(objmap_eval tools/objmap_eval.cpp)
+target_link_libraries(objmap_eval scenemap)
 add_executable(capi_replay tools/capi_replay.cpp)
 target_link_libraries(capi_replay scenemap)
 
