@@ -29,6 +29,8 @@ for s in $STEPS; do
             bash $T/wsl_py.sh $T/server_client_test.py --port 8765 --steps 64 2>&1 | grep -v -i warn; kill $SP ;;
     batch) $B/pi05_batch_test --weights $W --ref $R --cap ${PI05_BATCH_CAP:-64} ;;
     pbbatch) $B/pi05_batch_test --weights /mnt/c/behavior-2026/data/pi05_native/pb2025_ckpt2.pi05w --ref /mnt/c/behavior-2026/data/pi05_native/ref_pb --cap ${PI05_BATCH_CAP:-64} ;;
+    srvradio) bash $T/server_check.sh radio 2 60 0; bash $T/server_check.sh radio 1 40 8 ;;
+    srvpb) bash $T/server_check.sh pb 2 60 0 ;;
     quick) $B/pi05_verify --weights $W --ref $R --tag gpu --floor cpu --floor-single cpu_planted --samples 0-3 --time | grep -E "^(sample|actions|jax|graph|eager|device|PASS|FAIL)|final max" ;;
     winradio) /mnt/c/behavior-2026/src/pi05_native/${WINB:-build_win_next}/pi05_verify.exe --weights C:/behavior-2026/data/pi05_native/pi05_radio.pi05w --ref C:/behavior-2026/data/pi05_native/ref --tag gpu --floor cpu --floor-single cpu_planted --samples 0-3 --time | grep -E "^(sample|actions|graph|eager|device|PASS|FAIL)|final max" ;;
     winpb) /mnt/c/behavior-2026/src/pi05_native/${WINB:-build_win_next}/pi05_verify_pb.exe --weights C:/behavior-2026/data/pi05_native/pb2025_ckpt2.pi05w --ref C:/behavior-2026/data/pi05_native/ref_pb --tag gpu --samples 0-3 --time | tail -14 ;;

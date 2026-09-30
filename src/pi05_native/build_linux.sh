@@ -20,6 +20,7 @@ cd $HERE/tools
 $NVCC -o $B/pi05_verify verify.cpp $B/libpi05.a
 $NVCC -o $B/pi05_verify_pb verify_pb.cpp $B/libpi05.a
 $NVCC -o $B/pi05_batch_test batch_test.cpp $B/libpi05.a
+$NVCC -o $B/pi05_server_ref server_ref.cpp $B/libpi05.a
 [ -f bench.cpp ] && $NVCC -o $B/pi05_bench bench.cpp $B/libpi05.a
 g++ -O2 -std=c++20 -o $B/tok_test tok_test.cpp ../src/tokenizer.cpp ../src/weights.cpp
 echo "built into $B"

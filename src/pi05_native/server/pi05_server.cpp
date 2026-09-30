@@ -9,7 +9,8 @@
 // Hand-written RFC 6455 websocket, SHA-1/base64 and msgpack (same approach as the Rust relay src/agent/src/ws.rs:
 // TCP_NODELAY, TCP_QUICKACK re-armed after every read, one writev per response). No third-party libraries.
 //
-//   pi05_server --weights W.pi05w [--port 8000] [--prompt "..."] [--replan 16] [--device 0]
+//   pi05_server --weights W.pi05w [--port 8000] [--prompt "..."] [--replan 16] [--device 0] [--max-batch 16]
+//   pi05_server --task-map task_checkpoint_mapping.json --weights-dir DIR [--max-engines 3]   (2025 1st place)
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -27,6 +28,12 @@
 #include <thread>
 #include <vector>
 
+#include <list>
+
+#include "../include/pi05_batch.h"
+#include <list>
+
+#include "../include/pi05_batch.h"
 #include "../include/pi05_native.h"
 
 namespace {
@@ -289,26 +296,44 @@ struct W {  // msgpack writer
 
 // ---------------------------------------------------------------- server
 struct Server {
-  Pi05Engine* eng = nullptr;
+  Pi05Engine* eng = nullptr;  // engine of the current request (under mu)
   Pi05Info info{};
   std::mutex mu;
   std::string prompt;
-  int replan = 16, device = 0;
+  int replan = 16, device = 0, max_batch = 16, max_engines = 3;
   std::atomic<int> next_conn{0};
-  // PiBehavior (2025 1st place): one weight file per checkpoint, chosen by the task id of the request
+  // PiBehavior (2025 1st place): one weight file per checkpoint, chosen by the task id of the request. Up to
+  // max_engines checkpoints stay resident (LRU), so evaluations of different task groups do not reload weights.
   std::map<int, std::string> task_weights;
   std::string cur_weights;
+  std::list<std::pair<std::string, Pi05Engine*>> lru;  // front = most recent
+  bool use(const std::string& w, std::string* err) {  // caller holds mu
+    for (auto it = lru.begin(); it != lru.end(); ++it)
+      if (it->first == w) {
+        lru.splice(lru.begin(), lru, it);
+        eng = it->second;
+        pi05_info(eng, &info);
+        cur_weights = w;
+        return true;
+      }
+    while (!lru.empty() && (int)lru.size() >= max_engines) {
+      fprintf(stderr, "pi05_server: unloading %s\n", lru.back().first.c_str());
+      pi05_destroy(lru.back().second);
+      lru.pop_back();
+    }
+    fprintf(stderr, "pi05_server: loading %s\n", w.c_str());
+    char e[512];
+    Pi05Engine* ne = pi05_create_batch(w.c_str(), device, max_batch, e, sizeof e);
+    if (!ne) { *err = e; return false; }
+    lru.emplace_front(w, ne);
+    eng = ne;
+    pi05_info(eng, &info);
+    cur_weights = w;
+    return true;
+  }
   bool ensure_task(int task, std::string* err) {  // caller holds mu
     auto it = task_weights.find(task);
-    if (it == task_weights.end() || it->second == cur_weights) return true;
-    fprintf(stderr, "pi05_server: task %d -> %s\n", task, it->second.c_str());
-    if (eng) pi05_destroy(eng);
-    char e[512];
-    eng = pi05_create(it->second.c_str(), device, e, sizeof e);
-    if (!eng) { *err = e; cur_weights.clear(); return false; }
-    pi05_info(eng, &info);
-    cur_weights = it->second;
-    return true;
+    return use(it == task_weights.end() ? cur_weights : it->second, err);
   }
 };
 
@@ -460,33 +485,50 @@ void serve(Server* S, int fd) {
     std::string terr;
     {
       std::lock_guard<std::mutex> g(S->mu);
-      if (S->info.model_kind == 1 && !S->ensure_task(task_of(0), &terr)) fail = true;
+      // engine: the checkpoint of the request's task (PiBehavior task map) or the single weights
+      if (!S->ensure_task(task_of(0), &terr)) fail = true;
+      std::vector<Pi05View> views((size_t)B * 3);
+      std::vector<int32_t> slots(B), tasks(B);
       for (int b = 0; b < B && !fail; ++b) {
-        if (S->info.model_kind == 1) {
-          if (task_of(b) < 0) { terr = "PiBehavior weights need task_id in the observation"; fail = true; break; }
-          pi05_set_task(S->eng, conn_id * 64 + b, task_of(b));
+        slots[b] = conn_id * 64 + b;
+        tasks[b] = task_of(b);
+        if (S->info.model_kind == 1 && tasks[b] < 0) {
+          terr = "PiBehavior weights need task_id in the observation";
+          fail = true;
         }
-        Pi05Image im[3];
-        for (int j = 0; j < 3; ++j) {
+        if (S->task_weights.count(tasks[b]) && S->task_weights[tasks[b]] != S->cur_weights) {
+          terr = "one request mixes tasks served by different checkpoints";
+          fail = true;
+        }
+        for (int j = 0; j < 3; ++j) {  // images as the evaluator sends them (RGB or RGBA, any size)
           const auto& s = cams[j].shape;
           const int nd = (int)s.size();
           const int H = (int)s[nd - 3], Wd = (int)s[nd - 2], C = (int)s[nd - 1];
-          im[j] = {cams[j].data + (size_t)b * (batched ? (size_t)H * Wd * C : 0), H, Wd, (int64_t)Wd * C, C, 0};
+          views[(size_t)b * 3 + j] = {cams[j].data + (size_t)b * (batched ? (size_t)H * Wd * C : 0), H, Wd,
+                                      (int64_t)Wd * C, C, 0};
         }
-        const float* pp = reinterpret_cast<const float*>(prop.data) + (size_t)b * P;
-        Pi05Timing t{};
-        // one action per step; with a chunk request, the next K actions of the same receding-horizon chunk
-        for (int k = 0; k < (K ? K : 1); ++k) {
-          float* dst = K ? &chunk[((size_t)b * K + k) * ad] : &acts[(size_t)b * ad];
-          int rc = pi05_act(S->eng, conn_id * 64 + b, im, pp, P, S->prompt.c_str(), S->replan, dst, &t);
-          if (rc < 0) { fail = true; break; }
-          if (k > 0 && rc == 1) {
-            fprintf(stderr, "pi05_server: chunk of %d crosses the replanning boundary (replan %d)\n", K, S->replan);
-          }
-          infer_ms += t.total_ms;
-        }
-        if (K) memcpy(&acts[(size_t)b * ad], &chunk[(size_t)b * K * ad], ad * 4);
       }
+      // every environment of the request in one pi05_act_batch per step (= pi05_act env by env, bit-identical);
+      // with a chunk request, the next K steps of the same open-loop plan
+      Pi05ActBatchIn in{};
+      in.n = B; in.slots = slots.data(); in.views = views.data(); in.proprio = reinterpret_cast<const float*>(prop.data);
+      in.n_proprio = P; in.prompt = S->prompt.c_str(); in.replan_every = S->replan;
+      in.task = S->info.model_kind == 1 ? tasks.data() : nullptr;
+      std::vector<float> step((size_t)B * ad);
+      std::vector<uint8_t> nc(B);
+      for (int k = 0; k < (K ? K : 1) && !fail; ++k) {
+        Pi05BatchTiming t{};
+        if (pi05_act_batch(S->eng, &in, step.data(), nc.data(), &t) != 0) { fail = true; break; }
+        infer_ms += t.total_ms;
+        for (int b = 0; b < B; ++b) {
+          if (k > 0 && nc[b])
+            fprintf(stderr, "pi05_server: chunk of %d crosses the replanning boundary (replan %d)\n", K, S->replan);
+          float* dst = K ? &chunk[((size_t)b * K + k) * ad] : &acts[(size_t)b * ad];
+          memcpy(dst, &step[(size_t)b * ad], ad * 4);
+        }
+      }
+      if (K && !fail)
+        for (int b = 0; b < B; ++b) memcpy(&acts[(size_t)b * ad], &chunk[(size_t)b * K * ad], ad * 4);
     }
     if (fail) {
       std::string e = std::string("pi05_server: ") + (terr.empty() ? std::string(pi05_last_error(S->eng)) : terr);
@@ -533,7 +575,7 @@ void serve(Server* S, int fd) {
 
 int main(int argc, char** argv) {
   std::string weights, task_map, weights_dir = ".", prompt = "Turn on the radio receiver that's on the table in the living room.";
-  int port = 8000, device = 0, replan = 16;
+  int port = 8000, device = 0, replan = 16, max_batch = 16, max_engines = 3;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     auto next = [&]() { return std::string(i + 1 < argc ? argv[++i] : ""); };
@@ -544,9 +586,13 @@ int main(int argc, char** argv) {
     else if (a == "--device") device = std::stoi(next());
     else if (a == "--task-map") task_map = next();
     else if (a == "--weights-dir") weights_dir = next();
+    else if (a == "--max-batch") max_batch = std::stoi(next());
+    else if (a == "--max-engines") max_engines = std::stoi(next());
   }
   Server S;
   S.device = device;
+  S.max_batch = max_batch;
+  S.max_engines = max_engines;
   if (!task_map.empty()) {  // 2025 1st place: one checkpoint per task group (task_checkpoint_mapping.json)
     S.task_weights = read_task_map(task_map, weights_dir);
     if (S.task_weights.empty()) { fprintf(stderr, "pi05_server: empty task map %s\n", task_map.c_str()); return 1; }
@@ -558,12 +604,9 @@ int main(int argc, char** argv) {
             "       pi05_server --task-map task_checkpoint_mapping.json --weights-dir DIR   (2025 1st place)\n");
     return 2;
   }
-  S.cur_weights = weights;
-  char err[512];
   auto t0 = std::chrono::steady_clock::now();
-  S.eng = pi05_create(weights.c_str(), device, err, sizeof err);
-  if (!S.eng) { fprintf(stderr, "pi05_server: %s\n", err); return 1; }
-  pi05_info(S.eng, &S.info);
+  std::string lerr;
+  if (!S.use(weights, &lerr)) { fprintf(stderr, "pi05_server: %s\n", lerr.c_str()); return 1; }
   S.prompt = prompt;
   S.replan = replan;
   int ls = socket(AF_INET, SOCK_STREAM, 0);
