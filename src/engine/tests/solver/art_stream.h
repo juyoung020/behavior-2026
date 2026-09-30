@@ -9,6 +9,12 @@
 
 #include "core/solver/solver_io.h"
 
+#if defined(__CUDACC__)
+#define ASD __host__ __device__
+#else
+#define ASD
+#endif
+
 namespace ast {
 namespace sv = eng::sv;
 namespace jnt = eng::jnt;
@@ -35,13 +41,13 @@ struct Wake {
   float value;
 };
 
-inline size_t al16(size_t x) { return (x + 15) & ~size_t(15); }
+ASD inline size_t al16(size_t x) { return (x + 15) & ~size_t(15); }
 
 struct Layout {
   size_t islands, ib, icm, cmIn, ia, act, reset, c1d, ic1d, jd, patches, contacts, deact, deactArts, wake, numCounted, lateLinkWake, lateLinkCounted,
       lateArtWake, pxRes, pxArt, pxWb, total;
 };
-inline Layout layout(const Counts& c, const Header& h) {
+ASD inline Layout layout(const Counts& c, const Header& h) {
   Layout L;
   size_t p = al16(sizeof(Counts));
   auto put = [&](size_t& f, size_t bytes) {

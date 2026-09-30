@@ -394,9 +394,17 @@ int main(int argc, char** argv) {
   D.nc = dalloc<uint32_t>(E * na);
   D.batch = dalloc<uint32_t>(E * na);
   D.prog = dalloc<sv::ArtProgress>(E * na);
-  for (size_t e = 0; e < E; ++e) {  // 판마다 같은 초기 상태
-    CK(cudaMemcpy(D.bodies + e * nb, S.bodies0.data(), S.bodies0.size(), cudaMemcpyHostToDevice));
-    if (na) CK(cudaMemcpy(D.arts + e * na, S.arts0.data(), S.arts0.size(), cudaMemcpyHostToDevice));
+  {  // 판마다 같은 초기 상태. 호스트에서 판 E 개를 한 버퍼로 모아 한 번에 올린다.
+     // (판마다 따로 cudaMemcpy 하면 WSL2 + 드라이버 591.86 + RTX 5070 Ti 에서 판 1 이상 조각이 커널에 0 으로 보였다:
+     //  cudaMemcpy 되읽기는 옳은 값인데 같은 주소를 커널이 읽으면 0. 한 번에 올리면 사라진다.)
+    std::vector<uint8_t> hb(E * nb * sizeof(eng::Body), 0);
+    for (size_t e = 0; e < E; ++e) memcpy(hb.data() + e * nb * sizeof(eng::Body), S.bodies0.data(), S.bodies0.size());
+    CK(cudaMemcpy(D.bodies, hb.data(), hb.size(), cudaMemcpyHostToDevice));
+    if (na) {
+      std::vector<uint8_t> ha(E * na * sizeof(A::Articulation), 0);
+      for (size_t e = 0; e < E; ++e) memcpy(ha.data() + e * na * sizeof(A::Articulation), S.arts0.data(), S.arts0.size());
+      CK(cudaMemcpy(D.arts, ha.data(), ha.size(), cudaMemcpyHostToDevice));
+    }
   }
   {
     std::vector<sv::SolverCM> rc(E * C.maxCMs);
