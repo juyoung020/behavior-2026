@@ -22,6 +22,7 @@
 #include "core/particles/edit_window.h"
 #include "core/particles/env_base_api.h"
 #include "core/scene/env_body_api.h"
+#include "core/scene/env_art_api.h"
 #include "core/scene/scene_file.h"
 
 using namespace eng;
@@ -47,6 +48,8 @@ struct Trans {
   float srcScale[3] = {1, 1, 1};
   std::vector<Half> halves;
   std::vector<ObjLine> objs;
+  std::map<std::string, std::vector<float>> scale;  // 물체 이름 -> 척도 (C 줄)
+  std::map<int, std::vector<std::pair<std::string, int>>> sweepOrder;  // 벌 -> (행위자 이름, 정적?) 공식 차례 (PARTICLES_SYNC_ORDER)
 };
 
 struct Resolver : SpawnResolver {
@@ -74,8 +77,17 @@ struct Resolver : SpawnResolver {
   bool particle(int32_t, SpawnSource&) override { return false; }
 };
 
+struct Hook;
+// 동기화 벌 차례: PARTICLES_SYNC_ORDER 가 있으면 공식 차례(이름), 없으면 등록부 차례(정적 뿌리 → 운동학 물체의 동적 링크 → 동적 뿌리 → 새 물체)
+struct SyncFromPlan : TransitionEditWindow::SyncOrder {
+  Hook* H = nullptr;
+  void order(int sweep, std::vector<TransitionEditWindow::SyncActor>& out) override;
+};
+
 struct Hook {
   bool inited = false, on = false;
+  SyncFromPlan syncp;
+  uint64_t syncMissing = 0;
   std::vector<Trans> T;
   scene::SceneFile f;
   std::map<std::string, int32_t> handleOf;  // 행위자 이름 -> ScScene 손잡이
@@ -89,6 +101,8 @@ struct Hook {
   std::vector<ParticleSystemRt> systems;
   std::vector<Edit> edits;
   std::unique_ptr<EnvBaseApi> BA;
+  std::unique_ptr<scene::EnvArtApi> AA;
+  scene::EnvSolveImpl* S = nullptr;
   BaseStateWindow B;
   TransitionEditWindow W;
   size_t removedIdx = size_t(-1);
@@ -96,8 +110,9 @@ struct Hook {
 
   ~Hook() {
     if (on)
-      fprintf(stderr, "[particles 편집] 전이 %zu, 편집 창 %llu, 이름 못 찾음 %llu, 편집 실패 %llu, 관절체 입력 없음 %llu\n", T.size(), (unsigned long long)windows,
-              (unsigned long long)missingNames, (unsigned long long)failed, (unsigned long long)(BA ? BA->artMissing : 0));
+      fprintf(stderr, "[particles 편집] 전이 %zu, 편집 창 %llu, 이름 못 찾음 %llu, 편집 실패 %llu, 관절체 입력 없음 %llu, 벌 행위자 못 찾음 %llu, 정적 쓰기 건너뜀 %llu\n", T.size(),
+              (unsigned long long)windows, (unsigned long long)missingNames, (unsigned long long)failed, (unsigned long long)(BA ? BA->artMissing : 0),
+              (unsigned long long)syncMissing, (unsigned long long)W.staticSkipped);
   }
   bool load(const char* plan, const char* scenePath) {
     std::string err;
@@ -105,6 +120,7 @@ struct Hook {
       fprintf(stderr, "[particles 편집] 장면 파일 읽기 실패 %s: %s\n", scenePath, err.c_str());
       return false;
     }
+    size_t identity = 0, notIdentity = 0;
     for (size_t h = 0; h < f.sc.actors.size(); ++h) {  // ScScene 손잡이 -> 첫 요소 -> 장면 모양 -> 장면 행위자 이름
       const scene::ScStateActor& r = f.sc.actors[h];
       if (!r.alive || r.elemCount == 0) continue;
@@ -114,6 +130,35 @@ struct Hook {
       if (ss >= f.shapes.size()) continue;
       handleOf[f.name(f.actors[f.shapes[ss].actor].name)] = int32_t(h);
     }
+    // 모양 없는 행위자(메타 링크 등): Sc 손잡이가 "링크 뺀 장면 행위자 차례" 와 모양 있는 것에서 전부 같으면 같은 규칙으로
+    std::vector<uint32_t> rigid;  // 링크 뺀 장면 행위자 번호
+    for (uint32_t a = 0; a < f.actors.size(); ++a)
+      if (f.actors[a].kind != scene::kLink) rigid.push_back(a);
+    for (size_t h = 0; h < f.sc.actors.size(); ++h) {
+      const scene::ScStateActor& r = f.sc.actors[h];
+      if (!r.alive || r.elemCount == 0) continue;
+      const uint32_t e = f.sc.elems[r.elemStart];
+      if (e >= f.sc.shapes.size() || f.sc.shapes[e].sceneShape >= f.shapes.size()) continue;
+      (h < rigid.size() && rigid[h] == f.shapes[f.sc.shapes[e].sceneShape].actor ? identity : notIdentity)++;
+    }
+    if (notIdentity == 0 && f.sc.actors.size() == rigid.size())
+      for (size_t h = 0; h < f.sc.actors.size(); ++h)
+        if (f.sc.actors[h].alive && f.sc.actors[h].elemCount == 0) handleOf.emplace(f.name(f.actors[rigid[h]].name), int32_t(h));
+    // 동적 행위자는 섬 노드로도 찾는다: Sc 손잡이 -> 섬 노드 -> 노드의 장면 행위자 (env_solve.h 와 같은 규칙) — 모양 없는 메타 링크
+    size_t byNode = 0;
+    const scene::IslandSimState& acc = f.islands.accurate;
+    for (size_t h = 0; h < f.sc.actors.size(); ++h) {
+      const scene::ScStateActor& r = f.sc.actors[h];
+      if (!r.alive || r.node == ~0ull) continue;
+      const uint32_t id = uint32_t(r.node & 0xffffffffu);
+      if (id >= acc.nodes.size()) continue;
+      const ig::Node& n = acc.nodes[id];
+      if ((n.flags & ig::N_DELETED) || n.type != ig::eRIGID_BODY_TYPE || n.object >= f.actors.size()) continue;
+      byNode += handleOf.emplace(f.name(f.actors[n.object].name), int32_t(h)).second;
+    }
+    fprintf(stderr, "[particles 편집] 섬 노드로 더 찾은 행위자 %zu\n", byNode);
+    fprintf(stderr, "[particles 편집] 손잡이=링크 뺀 장면 행위자 차례: %zu 같음 %zu 다름 (Sc 행위자 %zu, 링크 뺀 장면 행위자 %zu)\n", identity, notIdentity, f.sc.actors.size(),
+            rigid.size());
     for (const scene::SceneActor& a : f.actors)
       if (a.kind == scene::kLink) artOfLink[f.name(a.name)] = int32_t(a.body);
     FILE* p = fopen(plan, "r");
@@ -142,6 +187,12 @@ struct Hook {
         for (float& x : h.h.native_bb) x = F(is);
         for (float& x : h.h.base_link_offset) x = F(is);
         T.back().halves.push_back(h);
+      } else if (k == "C") {
+        std::string n;
+        is >> n;
+        std::vector<float> v(3);
+        for (float& x : v) x = F(is);
+        T.back().scale[n] = v;
       } else if (k == "O") {
         ObjLine o;
         unsigned nl;
@@ -155,6 +206,22 @@ struct Hook {
       }
     }
     fclose(p);
+    if (const char* so = getenv("PARTICLES_SYNC_ORDER")) {
+      if (FILE* q = fopen(so, "r")) {
+        char b2[4096];
+        while (fgets(b2, sizeof b2, q)) {
+          std::istringstream is(b2);
+          std::string k, n, kind;
+          uint64_t simRemove;
+          int sw;
+          is >> k >> simRemove >> sw >> n >> kind;
+          if (k != "Y") continue;
+          for (Trans& t : T)
+            if (t.simRemove == simRemove) t.sweepOrder[sw].push_back({n, kind == "static" ? 1 : 0});
+        }
+        fclose(q);
+      }
+    }
     fprintf(stderr, "[particles 편집] 계획 %s: 전이 %zu, 장면 이름 %zu (관절체 링크 %zu)\n", plan, T.size(), handleOf.size(), artOfLink.size());
     return true;
   }
@@ -222,6 +289,8 @@ struct Hook {
     res.t = &t;
     res.cache = &cache;
     if (!BA) BA.reset(new EnvBaseApi(api));
+    if (!AA) AA.reset(new scene::EnvArtApi(E, *S));
+    BA->art = getenv("PARTICLES_NO_ART") ? nullptr : AA.get();
     B.api = BA.get();
     B.objects = &bobjs;
     W.base = &B;
@@ -231,6 +300,9 @@ struct Hook {
     W.systems = &systems;
     W.edits = &edits;
     W.pending.clear();
+    W.sweeps = 0;
+    syncp.H = this;
+    W.sync = getenv("PARTICLES_SYNC_OLD") ? nullptr : &syncp;
     const bool tr = getenv("PARTICLES_HOOK_TRACE") != nullptr;
     if (tr) fprintf(stderr, "[particles 편집] 창 %d 시작: 물체 %zu, 원본 손잡이 %d, 반쪽 %zu\n", ti, bobjs.size(), sh, t.halves.size());
     W.runRuleEdits(E);
@@ -248,7 +320,7 @@ struct Hook {
     if (tr) fprintf(stderr, "[particles 편집] 지우기 끝\n");
     W.loadState(E);
     if (tr) fprintf(stderr, "[particles 편집] 되돌리기·넣기 끝 (실패 %d)\n", W.failed);
-    W.flushSync();
+    if (!W.sync) W.flushSync();
     W.pending.clear();
     handleOf.erase(t.srcRoot);
     for (size_t i = 0; i < t.halves.size(); ++i)  // 다음 창 물체 표가 이름으로 찾도록
@@ -259,6 +331,55 @@ struct Hook {
     cur = -1;
   }
 } G;
+
+void SyncFromPlan::order(int sweep, std::vector<TransitionEditWindow::SyncActor>& out) {
+  Trans& t = H->T[size_t(H->cur)];
+  auto scaleOf = [&](const std::string& obj, float s[3]) {
+    auto it = t.scale.find(obj);
+    for (int k = 0; k < 3; ++k) s[k] = it != t.scale.end() ? it->second[size_t(k)] : 1.0f;
+  };
+  // 새 반쪽 (이미 넣은 것만): 이름 -> 손잡이·척도
+  std::map<std::string, std::pair<int32_t, const Half*>> fresh;
+  for (size_t i = 0; i < t.halves.size(); ++i)
+    if (!H->objs[1 + i].actors.empty()) fresh["/World/scene_0/" + t.halves[i].name + "/base_link"] = {H->objs[1 + i].actors[0], &t.halves[i]};
+  std::map<std::string, std::string> objOfActor;
+  for (const ObjLine& o : t.objs) {
+    objOfActor[o.root] = o.name;
+    for (const std::string& l : o.links) objOfActor[l] = o.name;
+  }
+  auto push = [&](const std::string& actor, int isStatic) {
+    TransitionEditWindow::SyncActor a;
+    a.isStatic = uint8_t(isStatic);
+    auto f = fresh.find(actor);
+    if (f != fresh.end()) {
+      a.h = f->second.first;
+      memcpy(a.scale, f->second.second->usd, 12);
+    } else {
+      auto it = H->handleOf.find(actor);
+      if (it == H->handleOf.end()) {
+        if (H->syncMissing++ < 12 && getenv("PARTICLES_HOOK_TRACE")) fprintf(stderr, "[particles 편집] 벌 행위자 이름 못 찾음: %s\n", actor.c_str());
+        return;
+      }
+      a.h = it->second;
+      scaleOf(objOfActor.count(actor) ? objOfActor[actor] : std::string(), a.scale);
+    }
+    out.push_back(a);
+  };
+  auto so = t.sweepOrder.find(sweep);
+  if (so != t.sweepOrder.end()) {
+    for (auto& e : so->second) push(e.first, e.second);
+    return;
+  }
+  for (const ObjLine& o : t.objs)
+    if (o.kind == 2 && o.name != t.src) push(o.root, 1);
+  for (const ObjLine& o : t.objs)
+    if (o.kind == 2 && o.name != t.src)
+      for (const std::string& l : o.links)
+        if (l != o.root) push(l, 0);
+  for (const ObjLine& o : t.objs)
+    if (o.kind == 0 && o.name != t.src) push(o.root, 0);
+  for (auto& kv : fresh) push(kv.first, 0);
+}
 }  // namespace
 
 int g1_env_edit_hook(uint64_t sim, eng::scene::EnvStep& E, eng::scene::EnvSolveImpl& S, eng::scene::EnvBodyApi& api) {
@@ -283,6 +404,34 @@ int g1_env_edit_hook(uint64_t sim, eng::scene::EnvStep& E, eng::scene::EnvSolveI
     const char* plan = getenv("PARTICLES_PLAN");
     const char* from = getenv("G1_ENV_FROM");
     G.on = plan && from && G.load(plan, from);
+    if (G.on) {
+      G.S = &S;
+      std::map<uint64_t, int32_t> hOfNode;
+      for (size_t h = 0; h < E.sc->actors.size(); ++h)
+        if (E.sc->actors[h].alive && E.sc->actors[h].node != ~0ull) hOfNode[E.sc->actors[h].node & 0xffffffffu] = int32_t(h);
+      std::map<int32_t, uint32_t> nodeOfBody;
+      for (uint32_t id = 0; id < S.bodyOfNode.size(); ++id)
+        if (S.bodyOfNode[id] >= 0) nodeOfBody[S.bodyOfNode[id]] = id;
+      size_t more = 0;
+      for (const scene::SceneActor& a : G.f.actors) {
+        if (a.kind != scene::kDynamic) continue;
+        auto nb = nodeOfBody.find(int32_t(a.body));
+        if (nb == nodeOfBody.end()) continue;
+        auto hh = hOfNode.find(nb->second);
+        if (hh != hOfNode.end()) more += G.handleOf.emplace(G.f.name(a.name), hh->second).second;
+      }
+      fprintf(stderr, "[particles 편집] 몸체 노드로 더 찾은 동적 행위자 %zu\n", more);
+      if (const char* dn = getenv("PARTICLES_NODE_NAMES")) {  // 진단: 섬 노드 번호 -> 이름
+        std::map<int32_t, std::string> nameOfH;
+        for (auto& kv : G.handleOf) nameOfH[kv.second] = kv.first;
+        std::stringstream ss(dn);
+        std::string t;
+        while (std::getline(ss, t, ',')) {
+          auto it = hOfNode.find(uint64_t(atoll(t.c_str())));
+          fprintf(stderr, "[particles 편집] 노드 %s = %s\n", t.c_str(), it != hOfNode.end() && nameOfH.count(it->second) ? nameOfH[it->second].c_str() : "?");
+        }
+      }
+    }
   }
   if (!G.on) return 0;
   for (size_t i = 0; i < G.T.size(); ++i) {

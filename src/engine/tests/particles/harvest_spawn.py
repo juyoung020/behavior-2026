@@ -209,7 +209,7 @@ def _install_base(cap):
         for o in scene.objects:
             links = [l.prim_path for l in o.links.values() if isinstance(l, RigidDynamicPrim)]
             t.append(dict(name=o.name, articulated=bool(o.articulated), n_joints=int(o.n_joints), kinematic_only=bool(o.kinematic_only),
-                          root_link=o.root_link.prim_path, dynamic_links=links))
+                          root_link=o.root_link.prim_path, dynamic_links=links, scale=[float(x) for x in o.scale.tolist()]))
         return t
 
     def log(*a):

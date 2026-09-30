@@ -77,12 +77,43 @@ struct TransitionEditWindow : scene::EditWindow {
   };
   std::vector<Pending> pending;           // 이 창에서 넣어 USD 동기화를 기다리는 몸체 (넣은 차례)
 
-  // USD → PhysX 동기화 한 번: 기다리는 몸체 전부 자세·속도 0 을 다시 쓴다
+  // USD → PhysX 동기화 벌 (공식 OVD 09-30, test_sync_sweep): 물체 넣기(add_object 의 update_handles → psi.flush_changes)마다
+  // **장면의 모든 강체 행위자**(정적·동적, 관절체 링크 제외, 방금 넣은 것 포함)에 자세를 다시 쓰고 동적엔 선·각속도 0 을 쓴다 — autowake 로 모두 깬다.
+  // 동적 자세 = 지금 자세의 pxr USD 행렬 왕복(척도 = 물체 척도), 정적은 값 그대로. 벌 안 차례는 omni.physx 안쪽 용기 차례(등록부와 다름) — 호출자가 준다.
+  struct SyncActor {
+    int32_t h;
+    uint8_t isStatic;
+    float scale[3];
+  };
+  struct SyncOrder {
+    virtual ~SyncOrder() {}
+    virtual void order(int sweep, std::vector<SyncActor>& out) = 0;  // sweep = 이 창에서 몇 번째 벌 (0 부터)
+  };
+  SyncOrder* sync = nullptr;  // 없으면 옛 방식 (이 창에서 넣은 몸체만, 넣은 차례)
+  int sweeps = 0;
+  uint64_t staticSkipped = 0;  // 정적 자세 쓰기 (값 같음 — 몸체 API 에 정적 쓰기가 없어 건너뜀)
   void flushSync() {
     const V3 z{0, 0, 0};
-    for (const Pending& q : pending) {
-      body->setActorPose(q.h, q.pose);
-      body->setVelocity(q.h, z, z);
+    if (!sync) {
+      for (const Pending& q : pending) {
+        body->setActorPose(q.h, q.pose);
+        body->setVelocity(q.h, z, z);
+      }
+      return;
+    }
+    std::vector<SyncActor> acts;
+    sync->order(sweeps++, acts);
+    for (const SyncActor& a : acts) {
+      if (a.isStatic) {
+        ++staticSkipped;
+        continue;
+      }
+      const Tf cur = body->actorPose(a.h);
+      const Pose7 raw{{cur.p.x, cur.p.y, cur.p.z}, {cur.q.x, cur.q.y, cur.q.z, cur.q.w}};
+      Tf t = cur;
+      t.q = usd_roundtrip_quat(raw, cur, a.scale, false);
+      body->setActorPose(a.h, t);
+      body->setVelocity(a.h, z, z);
     }
   }
   // 새 몸체 하나: 생성은 입력 자세, 동기화 대기에 USD 왕복 자세
@@ -174,7 +205,7 @@ struct TransitionEditWindow : scene::EditWindow {
         ++i;
       }
     }
-    flushSync();  // step_physics 의 simulate 직전 동기화 (① 에서 만든 입자)
+    if (!sync) flushSync();  // 옛 방식: step_physics 의 simulate 직전 동기화 (① 에서 만든 입자). 벌 방식의 입자 넣기 벌은 아직 (add_particle 마다 update_handles)
   }
   bool extraPhysicsStep() const override { return hasRemoval(); }
   void edit(scene::EnvStep& E) override {
@@ -207,7 +238,7 @@ struct TransitionEditWindow : scene::EditWindow {
         ++failed;
         continue;
       }
-      flushSync();  // 다음 물체 넣기 직전 동기화 (앞서 넣은 것들)
+      if (!sync) flushSync();  // 옛 방식: 다음 물체 넣기 직전 동기화 (앞서 넣은 것들)
       const int32_t h = spawnOne(E, src, e.poses[0]);
       if (h < 0) {
         ++failed;
@@ -215,6 +246,7 @@ struct TransitionEditWindow : scene::EditWindow {
       }
       if (size_t(e.object) >= objects->size()) objects->resize(size_t(e.object) + 1);
       (*objects)[size_t(e.object)].actors.push_back(h);
+      if (sync) flushSync();  // 벌 방식: 넣은 뒤 update_handles 의 flush_changes (방금 넣은 것 포함)
     }
   }
 };
@@ -227,8 +259,9 @@ inline void runTransitionEdits(scene::EnvStep& E, TransitionEditWindow& w) {
   w.runRuleEdits(E);
   if (w.hasRemoval()) scene::envEditWindow(E, w);
   else w.addObjects(E);
-  w.flushSync();
+  if (!w.sync) w.flushSync();  // 옛 방식만: simulate 직전 동기화 (벌 방식은 넣을 때마다 이미 함)
   w.pending.clear();
+  w.sweeps = 0;
 }
 
 }  // namespace particles

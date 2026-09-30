@@ -38,3 +38,4 @@ target_compile_options(test_p4_gpu PRIVATE
 target_link_libraries(test_p4_gpu dl)
 engine_test(test_base_state test_base_state.cpp)  # base 창 (상태 뜨기·되돌리기) 호출 열 vs 공식
 target_link_libraries(test_base_state dl)
+engine_test(test_sync_sweep test_sync_sweep.cpp)  # 편집 창 동기화 벌 (USD 왕복 자세·속도 0) vs 공식 OVD
