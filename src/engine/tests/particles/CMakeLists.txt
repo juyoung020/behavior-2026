@@ -20,3 +20,8 @@ engine_test(test_applier test_applier.cpp)
 target_link_libraries(test_applier dl)
 engine_test(test_spray_capture test_spray_capture.cpp)
 target_link_libraries(test_spray_capture dl)
+# P2·P3 층 2 (CUDA): 자르기·SlicerActive·규칙·익히기 선택·find_simplex·torch 난수·다지기 격자·Contains/Filled
+add_executable(test_p23_gpu test_p23_gpu.cu)
+target_include_directories(test_p23_gpu PRIVATE ${CMAKE_SOURCE_DIR}/..)
+target_compile_options(test_p23_gpu PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr --extended-lambda -Xcompiler=-ffp-contract=off>)
