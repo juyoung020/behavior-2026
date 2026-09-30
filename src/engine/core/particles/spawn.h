@@ -170,6 +170,10 @@ inline bool actor_from_template(const SpawnTemplate& T, uint32_t a, const Pose7&
   in.kinematic = (A.rigidFlags & 1u) ? 1 : 0;  // PxRigidBodyFlag::eKINEMATIC
   in.forcedKineNotif = (A.rigidFlags & ((1u << 8) | (1u << 9))) ? 1 : 0;  // eFORCE_KINE_KINE (1<<8) | eFORCE_STATIC_KINE (1<<9)
   in.awake = body.wakeCounter > 0.0f ? 1 : 0;
+  in.dominance = A.dominance;
+  in.forceStaticKineNotif = (A.rigidFlags & (1u << 9)) ? 1 : 0;  // eFORCE_STATIC_KINE_NOTIFICATIONS
+  in.forceKineKineNotif = (A.rigidFlags & (1u << 8)) ? 1 : 0;    // eFORCE_KINE_KINE_NOTIFICATIONS
+  in.offsetSlop = 0.0f;  // PxRigidBody 기본값 (틀 파일에 칸 없음, omni 가 안 바꿈)
   for (uint32_t s = A.shapeStart; s < A.shapeStart + A.shapeCount; ++s) {
     const scene::SceneShape& S = T.shared->shapes[s];
     scene::ScShapeIn si;
@@ -178,6 +182,11 @@ inline bool actor_from_template(const SpawnTemplate& T, uint32_t a, const Pose7&
     si.localPose = tf_px(S.localPose);
     si.contactOffset = S.contactOffset;
     si.shapeFlags = S.shapeFlags;
+    si.restOffset = S.restOffset;
+    si.torsionalPatchRadius = S.torsionalPatchRadius;
+    si.minTorsionalPatchRadius = S.minTorsionalPatchRadius;
+    if (s < T.f.shapeFilters.size())
+      for (int k = 0; k < 4; ++k) si.filter[k] = T.f.shapeFilters[s].w[k];  // 틀 파일의 이 판 거르기 자료
     const Tf& lp = S.localPose;
     si.idtShape = (lp.p.x == 0 && lp.p.y == 0 && lp.p.z == 0 && isIdentity(lp.q)) ? 1 : 0;  // PxShapeCoreFlag::eIDT_TRANSFORM
     in.shapes.push_back(si);
