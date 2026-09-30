@@ -44,3 +44,53 @@ powershell -File glue/run_eval_native.ps1 [-MaxSteps 600] [-Video]
 # submission-style server
 pi05_server --weights W.pi05w --port 8000
 ```
+
+## Batched inference (`include/pi05_batch.h`)
+
+`pi05_create_batch(weights, device, max_batch)` plus:
+
+- `pi05_infer_batch`: one inference per episode for n episodes. Each episode's prefix runs through the
+  single-inference CUDA graph. Then the denoising steps of all episodes run as one batched suffix.
+- `pi05_act_batch`: the B1K wrappers for n environment slots, run natively (openpi receding horizon; the 2025 1st
+  place wrapper with 26→20 cubic resampling, 4 kept actions for soft inpainting, stage voting and correction rules).
+  It returns f32 `[n][23]` actions, the wrappers' action dtype.
+
+Images are taken as the evaluator sends them: RGB or RGBA, any size, strided, host or device. Views that are not
+224x224 go through openpi `resize_with_pad` (PIL bilinear), reproduced exactly; device views are resized on the GPU.
+
+Every episode's actions are bit-identical to the single-episode API at every batch size (`tools/batch_test.cpp`).
+Throughput on an RTX 5070 Ti:
+
+| model | n = 1 | n ≥ 16 |
+|---|---|---|
+| radio | 86 ms | ~71 ms per episode, 14 episodes/s |
+| 2025 1st place | 105 ms | ~75 ms per episode, 13.4 episodes/s |
+
+The prefix (SigLIP + Gemma 2B, about 60 ms per episode) is compute-bound at about 90% of the GEMM ceiling, so
+batching the prefix too does not help.
+
+## Submission server (`server/`)
+
+`pi05_server` speaks the BEHAVIOR / openpi websocket protocol: metadata on connect, msgpack observations
+(`__ndarray__` maps), `{"action", "server_timing"}` replies, `{"reset": true}`, `__action_chunk_size__`, and
+`GET /healthz`.
+
+- All environments of a request go through one `pi05_act_batch` call.
+- With `--task-map task_checkpoint_mapping.json --weights-dir DIR` (2025 1st place), the observation's `task_id`
+  selects the checkpoint. Up to `--max-engines` checkpoints (default 3, about 20 GB) stay resident, evicted least
+  recently used first.
+
+The official client is `WebsocketClientPolicy` from BEHAVIOR-1K. Its actions are bit-identical to running the same
+observations in process (`tools/server_check.sh`: radio and 1st place, 2 envs × 60 steps, plus a chunk-request run).
+
+Image (`server/Dockerfile`, CUDA 12.8 base, no Python inside):
+
+```bash
+# build context: src/pi05_native/ and weights/ (pb2025_ckpt1..4.pi05w + task_checkpoint_mapping.json, or pi05_radio.pi05w)
+docker build -f src/pi05_native/server/Dockerfile -t behavior-policy:pb2025 --build-arg MODEL=pb2025 .
+docker run --gpus all -p 8000:8000 behavior-policy:pb2025
+python -m omnigibson.eval.evaluator ... --policy websocket --host <server> --port 8000   # official evaluator
+```
+
+GPUs: Ampere or newer (sm_80 / 86 / 89 / 90 / 120 in the image). Turing (TitanRTX, sm_75) has no bf16 tensor cores
+and is not supported.
