@@ -7,9 +7,11 @@
 #include "core/solver/solver_gpu.h"
 
 #include <cuda_runtime.h>
+#include <xmmintrin.h>
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "core/solver/tgs_solver.h"
@@ -130,8 +132,14 @@ bool gpuSolveBatch(SolverBoard* const* boards, const SolverParams* const* prms, 
 const GpuSolveTimes& gpuSolveLastTimes() { return defaultCtx().last; }
 
 void gpuSolveFree(GpuSolveCtx& ctx) {
-  if (ctx.dev) cudaFree(ctx.dev);
-  if (ctx.pin) cudaFreeHost(ctx.pin);
+  if (ctx.dev) {
+    if (ctx.hostEmulate) free(ctx.dev);
+    else cudaFree(ctx.dev);
+  }
+  if (ctx.pin) {
+    if (ctx.hostEmulate) free(ctx.pin);
+    else cudaFreeHost(ctx.pin);
+  }
   for (void*& e : ctx.evt)
     if (e) {
       cudaEventDestroy(static_cast<cudaEvent_t>(e));
@@ -151,13 +159,13 @@ bool gpuSolveBatch(GpuSolveCtx& ctx, SolverBoard* const* boards, const SolverPar
     return true;
   }
   cudaStream_t st = static_cast<cudaStream_t>(streamPtr);
-  if (!ctx.evt[0])
+  if (!ctx.evt[0] && !ctx.hostEmulate)
     for (void*& e : ctx.evt) {
       cudaEvent_t x;
       GS_CK(cudaEventCreate(&x));
       e = x;
     }
-  {
+  if (!ctx.hostEmulate) {
     size_t cur = 0;
     GS_CK(cudaDeviceGetLimit(&cur, cudaLimitStackSize));
     if (cur < ctx.stackBytes) GS_CK(cudaDeviceSetLimit(cudaLimitStackSize, ctx.stackBytes));
@@ -171,12 +179,15 @@ bool gpuSolveBatch(GpuSolveCtx& ctx, SolverBoard* const* boards, const SolverPar
     const auto tp = clk::now();
     // ---- 자리 잡기
     size_t a = 0, b = 0, c = 0;
-    for (int i = 0; i < n; ++i) take(a, P[size_t(i)].oBoard, sizeof(SolverBoard));
+    size_t oBoards = 0, oPrms = 0;  // 판 구조체·풀이 인자는 판 번호로 이어 붙인 배열 (커널이 boards[b]·prms[b] 로 읽음)
+    take(a, oBoards, sizeof(SolverBoard) * size_t(n));
+    take(b, oPrms, sizeof(SolverParams) * size_t(n));
     for (int i = 0; i < n; ++i) {
       const SolverBoard& H = *boards[i];
       BoardPlan& p = P[size_t(i)];
       planBoard(H, ctx.grow[size_t(i)], p);
-      p.oBoard = size_t(i) * al256(sizeof(SolverBoard));
+      p.oBoard = oBoards + size_t(i) * sizeof(SolverBoard);
+      p.oPrm = oPrms + size_t(i) * sizeof(SolverParams);
       take(a, p.oBodies, sizeof(Body) * H.nbBodies);
       take(a, p.oCms, sizeof(SolverCM) * H.nbCMs);
       take(a, p.oWb, sizeof(jnt::Writeback) * p.nWb);
@@ -184,7 +195,6 @@ bool gpuSolveBatch(GpuSolveCtx& ctx, SolverBoard* const* boards, const SolverPar
       take(a, p.oBsi, sizeof(uint32_t) * (H.nbBodies + 1));
       p.oArt.resize(p.arts.size());
       for (size_t k = 0; k < p.arts.size(); ++k) take(a, p.oArt[k], art::artBytes(p.artCaps[k]));
-      take(b, p.oPrm, sizeof(SolverParams));
       take(b, p.oIsl, sizeof(IslandIn) * H.nbIslands);
       take(b, p.oIB, sizeof(uint32_t) * p.nIB);
       take(b, p.oICM, sizeof(uint32_t) * p.nICM);
@@ -221,17 +231,31 @@ bool gpuSolveBatch(GpuSolveCtx& ctx, SolverBoard* const* boards, const SolverPar
     }
     const size_t endA = a, endB = a + b, total = a + b + c;
     if (total > ctx.devCap) {
-      if (ctx.dev) GS_CK(cudaFree(ctx.dev));
+      if (ctx.dev) {
+        if (ctx.hostEmulate) free(ctx.dev);
+        else GS_CK(cudaFree(ctx.dev));
+      }
       ctx.dev = nullptr;
       const size_t cap = total + total / 4;
-      GS_CK(cudaMalloc(&ctx.dev, cap));
+      if (ctx.hostEmulate) {
+        ctx.dev = static_cast<uint8_t*>(aligned_alloc(256, al256(cap)));
+      } else {
+        GS_CK(cudaMalloc(&ctx.dev, cap));
+      }
       ctx.devCap = cap;
     }
     if (endB > ctx.pinCap) {
-      if (ctx.pin) GS_CK(cudaFreeHost(ctx.pin));
+      if (ctx.pin) {
+        if (ctx.hostEmulate) free(ctx.pin);
+        else GS_CK(cudaFreeHost(ctx.pin));
+      }
       ctx.pin = nullptr;
       const size_t cap = endB + endB / 4;
-      GS_CK(cudaHostAlloc(reinterpret_cast<void**>(&ctx.pin), cap, cudaHostAllocDefault));
+      if (ctx.hostEmulate) {
+        ctx.pin = static_cast<uint8_t*>(aligned_alloc(256, al256(cap)));
+      } else {
+        GS_CK(cudaHostAlloc(reinterpret_cast<void**>(&ctx.pin), cap, cudaHostAllocDefault));
+      }
       ctx.pinCap = cap;
     }
     uint8_t* const D = ctx.dev;
@@ -281,6 +305,7 @@ bool gpuSolveBatch(GpuSolveCtx& ctx, SolverBoard* const* boards, const SolverPar
       G.resetCMs = reinterpret_cast<const uint32_t*>(dp(bB + p.oReset));
       G.c1d = reinterpret_cast<const Constraint1DIn*>(dp(bB + p.oC1D));
       G.islandC1Ds = reinterpret_cast<const uint32_t*>(dp(bB + p.oIC1D));
+      G.islandArts = reinterpret_cast<const uint32_t*>(dp(bB + p.oIA));
       G.jointData = reinterpret_cast<const jnt::D6Data*>(dp(bB + p.oJd));
       G.writebacks = reinterpret_cast<jnt::Writeback*>(dp(p.oWb));
       G.rowScratch = reinterpret_cast<jnt::Row*>(dp(bC + p.oRows));
@@ -316,25 +341,50 @@ bool gpuSolveBatch(GpuSolveCtx& ctx, SolverBoard* const* boards, const SolverPar
       G.artStaticCap = p.stat;
       G.artBatchIndex = reinterpret_cast<uint32_t*>(dp(bC + p.oBatch));
       G.artProg = reinterpret_cast<ArtProgress*>(dp(bC + p.oProg));
+      if (ctx.hostEmulate) {  // 진단: 판의 포인터가 전부 장치 조각 안인가 (하나라도 호스트 것이면 장치에서 불법 접근)
+        const void* ptrs[] = {G.bodies, G.cms, G.patches, G.contacts, G.islands, G.islandBodies, G.islandCMs, G.activatedCMs, G.resetCMs, G.c1d,
+                              G.islandC1Ds, G.jointData, G.writebacks, G.rowScratch, G.vels, G.txI, G.datas, G.descs, G.ordered, G.temp, G.headers,
+                              G.partitionCounts, G.bodySolverIndex, G.constraints.base, G.friction[0].data, G.friction[1].data, G.corr,
+                              G.contactBuffer, G.islandArts, G.artLists, G.artStatic1D, G.artStaticContact, G.artNbStatic1D, G.artNbStaticContact,
+                              G.artBatchIndex, G.artProg, G.artPtrs};
+        for (size_t k = 0; k < sizeof(ptrs) / sizeof(ptrs[0]); ++k) {
+          const uint8_t* q = static_cast<const uint8_t*>(ptrs[k]);
+          if (q && (q < D || q >= D + total)) fprintf(stderr, "gpuSolveBatch 흉내: 판 %d 포인터 칸 %zu 가 장치 조각 밖\n", i, k);
+        }
+        static_assert(sizeof(SolverBoard) > 0, "");
+      }
       memcpy(S + p.oBoard, &G, sizeof(SolverBoard));
     }
     const auto tu = clk::now();
     T.packMs += std::chrono::duration<double, std::milli>(tu - tp).count();
     cudaEvent_t e0 = static_cast<cudaEvent_t>(ctx.evt[0]), e1 = static_cast<cudaEvent_t>(ctx.evt[1]), e2 = static_cast<cudaEvent_t>(ctx.evt[2]),
                 e3 = static_cast<cudaEvent_t>(ctx.evt[3]);
-    GS_CK(cudaEventRecord(e0, st));
-    GS_CK(cudaMemcpyAsync(D, S, endB, cudaMemcpyHostToDevice, st));
-    GS_CK(cudaEventRecord(e1, st));
-    kSolveBoards<<<n, ctx.threads, 0, st>>>(reinterpret_cast<SolverBoard*>(D), reinterpret_cast<const SolverParams*>(D + endA));
-    GS_CK(cudaGetLastError());
-    GS_CK(cudaEventRecord(e2, st));
-    GS_CK(cudaMemcpyAsync(S, D, endA, cudaMemcpyDeviceToHost, st));
-    GS_CK(cudaEventRecord(e3, st));
-    GS_CK(cudaEventSynchronize(e3));
     float up = 0, kr = 0, dn = 0;
-    GS_CK(cudaEventElapsedTime(&up, e0, e1));
-    GS_CK(cudaEventElapsedTime(&kr, e1, e2));
-    GS_CK(cudaEventElapsedTime(&dn, e2, e3));
+    if (ctx.hostEmulate) {  // 진단: 같은 자리 잡기·담기를 호스트 버퍼에서, 풀이는 호스트 solverStep (장치 없이 담기·되받기 확인)
+      memcpy(D, S, endB);
+      const unsigned csr = _mm_getcsr();
+      _mm_setcsr(_MM_MASK_MASK | _MM_FLUSH_ZERO_ON | (1 << 6));  // PxSIMDGuard (FTZ·DAZ)
+      for (int i = 0; i < n; ++i) {
+        SolverBoard& G = reinterpret_cast<SolverBoard*>(D + oBoards)[i];
+        solverStep(G, reinterpret_cast<const SolverParams*>(D + endA + oPrms)[i]);
+        afterIntegration(G);
+      }
+      _mm_setcsr(csr & ~unsigned(_MM_EXCEPT_MASK));
+      memcpy(S, D, endA);
+    } else {
+      GS_CK(cudaEventRecord(e0, st));
+      GS_CK(cudaMemcpyAsync(D, S, endB, cudaMemcpyHostToDevice, st));
+      GS_CK(cudaEventRecord(e1, st));
+      kSolveBoards<<<n, ctx.threads, 0, st>>>(reinterpret_cast<SolverBoard*>(D + oBoards), reinterpret_cast<const SolverParams*>(D + endA + oPrms));
+      GS_CK(cudaGetLastError());
+      GS_CK(cudaEventRecord(e2, st));
+      GS_CK(cudaMemcpyAsync(S, D, endA, cudaMemcpyDeviceToHost, st));
+      GS_CK(cudaEventRecord(e3, st));
+      GS_CK(cudaEventSynchronize(e3));
+      GS_CK(cudaEventElapsedTime(&up, e0, e1));
+      GS_CK(cudaEventElapsedTime(&kr, e1, e2));
+      GS_CK(cudaEventElapsedTime(&dn, e2, e3));
+    }
     T.upMs += up;
     T.kernelMs += kr;
     T.downMs += dn;

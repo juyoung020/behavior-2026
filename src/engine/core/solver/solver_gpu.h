@@ -33,6 +33,7 @@ struct GpuSolveCtx {
   int threads = 32;                // 판(블록) 안 스레드 수 (1 이상; 결과는 스레드 수와 무관하게 같다)
   size_t stackBytes = 32 * 1024;   // 장치 스레드 스택 (관절체 풀이가 큰 지역 배열을 쓴다)
   uint32_t maxRetries = 6;
+  bool hostEmulate = false;        // 진단: 장치 대신 호스트 버퍼·호스트 solverStep (담기·되받기만 확인). 처음 부르기 전에 정할 것
   GpuSolveTimes last;
   // ---- 내부 (호출 사이 재사용)
   uint8_t* dev = nullptr;

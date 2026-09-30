@@ -450,6 +450,7 @@ int main(int argc, char** argv) {
       }
       sv::GpuSolveCtx ctx;
       ctx.threads = threads;
+      ctx.hostEmulate = getenv("ASV_HOSTEMU") != nullptr;  // 진단: 장치 없이 담기·되받기만
       sv::GpuSolveTimes sum;
       uint64_t badB = 0, badA = 0, badW = 0;
       uint32_t anyErr = 0;
