@@ -5,7 +5,7 @@
 ## 0. 핵심 아이디어
 
 **동적 3D 씬그래프 + AI 에이전트(또는 강화학습) + VLA 의 결합.**
-- 동적 3D 씬그래프(meridian): 로봇이 보는 물체를 실시간으로 3D 지도에 등록·갱신 → 기억.
+- 동적 씬그래프(scenemap, 새로 만듦): 2D SLAM 지도 + YOLOE 로 찾은 물체를 깊이로 3D 위치에 등록·갱신 → 기억. (옛 meridian 은 `deprecated/` 로 폐기, 09-30 사용자 결정)
 - AI 에이전트(Qwen): 그 그래프로 긴 계획·단계 추적·실패 복구. 결정기는 LLM 과 분리돼 있어 강화학습 결정기로 바꿔 끼울 수 있다.
 - VLA(π0.5): 지금 단계 지시 + 카메라로 행동.
 - 구현 원칙: **병목 제로.** C++/CUDA 를 손으로(라이브러리는 뜻밖의 병목), 조율은 Rust, PyTorch 안 씀.
@@ -14,7 +14,7 @@
 
 | 층 | 내용 | 코드 |
 |---|---|---|
-| **입력** | 카메라 3대 RGB + depth → meridian(Frontend → Graphcore)이 물체를 확정 즉시 그래프 노드로 등록·갱신. 계획기는 scene_server(TCP JSON 한 줄)로 조회. 과제 지시·BDDL 목표도 입력 | `meridian_ws/src/`, `src/meridian/` |
+| **입력** | 카메라 3대 RGB + depth → scenemap: 깊이 가상 스캔으로 2D SLAM(지도·위치), YOLOE(과제 BDDL 물체 이름 프롬프트)로 물체 검출 → 깊이로 3D 위치 → 물체 지도 등록·갱신. 계획기는 같은 프로세스 C ABI 로 조회. 과제 지시·BDDL 목표도 입력 | `src/scenemap/`, `src/ovdet/` (설계 `docs/scenemap_설계.md`) |
 | **판단** | Qwen3.5-9B(지금은 KAU API). 단계 경계에서만 호출(판 시작·예산 소진·정기 확인·이동 멈춤·그리퍼 변화). 도구 호출·기억·요약, 시연 대표 단계 순서 참고. `back`/`the other` 는 그래프로 풀어 구체 물체로 | `src/agent/` (Rust) |
 | **제어** | π0.5 가 단계 지시 문장 + 카메라 3장 + 관절 상태로 행동 묶음. 숫자 명령 금지. 추론은 네이티브 C++/CUDA 엔진으로 평가기 프로세스 안에서 | `src/pi05_native/` |
 
@@ -23,7 +23,7 @@
 ```
 평가기 ── 관측(RGB·depth·proprio·cam_rel_poses) ─▶ [중계기(Rust)] 관측 바이트 그대로 + 지시 문장 키 덧붙임
                                                     ├─ 매 스텝: 흘려보냄(LLM 없음), base_qvel 적분·경계 감지
-                                                    └─ 경계: 에이전트 ─ scene_server(meridian 그래프) ─ Qwen
+                                                    └─ 경계: 에이전트 ─ scenemap(2D 지도 + 물체 지도) ─ Qwen
 π0.5 ◀── 관측 + 지시 ──┘   → 행동 묶음 → 평가기
 ```
 
@@ -72,7 +72,7 @@
 - 대회 환경 기준(평가 수치·엔진 정답지·렌더 비교), 재학습, 대량 평가에 필요. 지금은 WSL 에 Linux Isaac Sim 을 설치해 물리 기준만 뜨는 중(렌더는 WSL 불가).
 
 ### 4.4 위치 추정 (평가 때는 GT 금지 → 실시간 추정)
-- 실측(원본 HDF5 GT, 13 에피소드): **base_qvel 적분만으로는 크게 틀어진다** — 이동 10 m 에서 중앙 1.16 m(최대 2.9 m), 에피소드 끝 중앙 1.6 m(최대 9.7 m), yaw 최대 166°. 기록 각속도가 실제 회전보다 크다(비율 0.88~0.97, 에피소드마다 다름). `src/meridian/eval/odom_error.py`.
+- 실측(원본 HDF5 GT, 13 에피소드): **base_qvel 적분만으로는 크게 틀어진다** — 이동 10 m 에서 중앙 1.16 m(최대 2.9 m), 에피소드 끝 중앙 1.6 m(최대 9.7 m), yaw 최대 166°. 기록 각속도가 실제 회전보다 크다(비율 0.88~0.97, 에피소드마다 다름). `deprecated/meridian/eval/odom_error.py` (새 스택으로 옮기는 중).
 - 대응: 깊이 기반 보정(keyframe 깊이 점 → 정적 지도 point-to-plane, 평면 3자유도) CPU 시제품 → 손 CUDA. 카메라 외부 자세(robot2cam)는 정확해 그대로. 통합 쪽 위치 추정기는 교체 가능한 자리로.
 
 ### 4.5 평가량·보험
@@ -85,7 +85,7 @@
 | π0.5 네이티브 엔진 | 평가기 안 radio 600 스텝: 검은 화면 (A) 사라짐, 스텝당 108 ms(JAX 서버 152 ms 대비 1.4 배). 1위 체크포인트 4개 내보내기 끝. 다음: 새 커널 검증 → radio 공식 제한시간 한 판 → 1위 모델 보험 평가(과제 0~49) | `src/pi05_native/`, `docs/π05_네이티브엔진.md` |
 | 시뮬 엔진(포팅 평가기) | 자유 강체·SSE 흉내(572만 비교)·볼록 접촉(56만 점)·BDDL 판정(100과제) PhysX/공식과 비트 동일. 풀이·관절체·조인트·렌더 작성 중. Linux(WSL) 공식 물리 기록 재시도 중 | `src/engine/`, `docs/엔진_자체구현.md` |
 | 원본 평가기·검은 화면 | (A) 확정, (B) 조사 중, 실험 실행기 작성 중 | `tools/exp_run.ps1`, `docs/평가기_가속설계.md` |
-| meridian | 정확도 1차(순도 0.902 → 0.969, 노드 28 → 19, 라디오 제 노드, 과분할 병합). 고침이 아직 CPU 참조에만 있어 실제 GPU frontend 는 병합 끔. C++ 단일 프로세스 frontend 는 별도 에이전트가 병렬 포팅. 다음: 문 조각, 옮겨진 물체 검증 | `meridian_ws/`, `docs/meridian_통합설계.md` |
+| 인지(scenemap) | meridian 폐기(`deprecated/`), 새로 만듦: 2D SLAM(후보 3개 비교 중) + 물체 지도 + 계획기 질의. 검출기는 YOLOE(AGPL, 제출물 공개 허용 — 사용자 결정) | `src/scenemap/`, `src/ovdet/`, `docs/scenemap_설계.md` |
 | 상위 에이전트 | Rust 완성(시험 40개, 가짜 세계 성공, 중계기 바이트 동일, 숫자 명령 금지) | `src/agent/`, `docs/에이전트_설계.md` |
 | 학습 데이터 파이프라인 | **끝.** torch 없는 네이티브 로더, 원래와 비트 동일, 264~289 표본/초(원래 36.1 → 약 7~8 배). **학습 자체는 보류** | `src/fasttrain/`, `docs/학습환경_가속.md` |
 | 지시 형식 실험 | radio·pt50 끝(3절), 문서 완료 | `docs/실험_지시형식_오프라인.md` |
@@ -94,7 +94,7 @@ GPU 1장(16 GB)을 나눠 쓴다 — 시뮬레이터 실행은 한 번에 하나
 
 ## 6. 정한 것
 
-- 연결: π0.5 + meridian 은 단계 지시로. meridian 은 Frontend + Graphcore(+ engine·msgs), 연구실 코드는 임시라 마음대로 고친다.
+- 연결: π0.5 + scenemap 은 단계 지시로. 인지 스택은 새로 만든 scenemap(2D SLAM + YOLOE 물체 지도, 사용자 팀 robot-programming-team 의 plan·model_selection 을 따름). meridian 은 폐기(`deprecated/`).
 - 계획기 LLM: 지금은 KAU API(`qwen3.5-9b`), 키는 `~/.config/behavior-2026/kau.env`(저장소 밖). 제출용은 로컬 Qwen(GPU). 결정론 설정(temperature 0, seed)을 요청마다 명시.
 - 지시: 모호하지 않게, 숫자 명령 금지, π0.5 문장 90 토큰 이내.
 - 언어: C++/CUDA 손으로 + Rust 조율, 파이썬은 공식 파이썬 프로세스 접착부·일회성 도구만, PyTorch 금지. 에이전트 프레임워크 금지(OpenAI 호환 API 원형을 직접).
@@ -102,7 +102,7 @@ GPU 1장(16 GB)을 나눠 쓴다 — 시뮬레이터 실행은 한 번에 하나
 - 시뮬레이터 엔진을 뜯어서 우리 엔진으로(물리 PhysX = C++ = CUDA 비트 사슬, 렌더는 새로 짜 통계 비교). 자체 평가 물리는 GPU 로 판 여러 개.
 - 검은 화면은 근원 해결만(다른 프레임으로 채우는 우회 금지, 검출은 유지).
 - 플래너 강화학습을 새로 만들지 않는다(LLM 유지, 결정기 자리만 열어 둠).
-- 저장소: GitHub 비공개 `juyoung020/behavior-2026` 하나(meridian 포함), 브랜치 없이 main, 경로 지정 커밋. README 는 영어, docs 는 한국어.
+- 저장소: GitHub 비공개 `juyoung020/behavior-2026` 하나, 브랜치 없이 main, 경로 지정 커밋. README 는 영어, docs 는 한국어.
 
 ## 7. 열린 질문
 

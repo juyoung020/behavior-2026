@@ -2,7 +2,7 @@
 
 **Idea: a dynamic 3D scene graph + an AI agent (or RL planner) + a VLA, combined.**
 
-- The scene graph (meridian) registers and updates every object the robot sees in a live 3D map. This is the robot's memory.
+- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every object found by an open-vocabulary YOLOE detector at its 3D position. This is the robot's memory.
 - The agent uses that graph for long-horizon planning, step tracking and failure recovery.
 - The VLA (π0.5) turns the current step instruction plus the three cameras into actions.
 
@@ -18,19 +18,15 @@ Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C
 BEHAVIOR-1K/          challenge framework (StanfordVL, tag v3.9.3-post1) — submodule, never modified
   datasets/           simulator assets, task instances, decryption key (not in git)
 data/                 2026 challenge demos (LeRobot v3): metadata + task 0 only (not in git)
-meridian_ws/src/      meridian dynamic scene graph, ported from the lab code (single source of truth)
-  meridian_frontend/    RGB-D → FastSAM·CLIP (TensorRT) → tracking → object episodes; C++ core
-  meridian_graphcore/   data association + object graph (Spark-DSG submodule)
-  meridian_engine/      data-association library
-  meridian_msgs/        messages
-  meridian_behavior/    scene_server (planner queries, TCP JSON) + launch; obs_player (Rust)
+deprecated/           retired approaches (old meridian scene-graph stack), reference only
 src/
   agent/              high-level planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
   pi05_native/        π0.5 inference engine, hand-written C++/CUDA (in progress)
   engine/             our own GPU simulator engine; layer 0 = PhysX 5.6.1 oracle replay (C++)
   fasteval/           evaluator acceleration: chunked-replay policy server, instrumentation
   fasttrain/          training data pipeline: NVDEC + fused CUDA kernels, Rust indexer
-  meridian/           meridian build/run scripts and tests
+  scenemap/           2D SLAM + object map + planner queries (C++/CUDA, Rust)
+  ovdet/              open-vocabulary detector (YOLOE, TensorRT, C API; AGPL-3.0)
   configs/            evaluator robot configs
 tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …)
   setup/              one-time install/download scripts
@@ -49,11 +45,9 @@ plan.md               plan and decisions
 **WSL (`Ubuntu-22.04`, user `juyoung`)**
 
 ```
-/opt/ros/humble          ROS 2 Humble (meridian)
 ~/openpi                 π0.5 reference server (wensi-ai/openpi, behavior branch)
 ~/openpi-comet           2025 2nd-place code adapted to the 2026 evaluator (our changes: src/comet/patches, applied by tools/setup/setup_comet_wsl.sh)
 ~/checkpoints/           π0.5 radio, GR00T N1.7 radio, 2025 1st-place submission, Comet pt50
-~/meridian_ws/           meridian build tree (sources come from meridian_ws/src here via src/meridian/build_meridian_ws.sh)
 ~/engine-deps/           PhysX 5.6.1 source + build (engine oracle)
 ~/.config/behavior-2026/ secrets (KAU API key), never committed — see .env.example
 ```
