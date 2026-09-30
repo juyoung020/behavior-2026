@@ -41,7 +41,8 @@ __global__ void gather_cams(const uint8_t* c0, const uint8_t* c1, const uint8_t*
   }
 }
 
-bool save_state(const std::string& path, std::vector<TParam>& ps, int step, const pi05::WeightFile& cfg_src) {
+bool save_state(const std::string& path, std::vector<TParam>& ps, int step, const pi05::WeightFile& cfg_src,
+                const std::string& frozen_from) {
   // same container format as the reference / make_state files (Python Writer): text manifest + 256-byte aligned data
   struct T { std::string name; const float* dev; long long n; std::vector<int64_t> shape; bool host; };
   std::vector<T> ts;
@@ -53,11 +54,13 @@ bool save_state(const std::string& path, std::vector<TParam>& ps, int step, cons
   }
   std::string man;
   for (auto& kv : cfg_src.cfg_all()) {
+    if (kv.first == "step" || kv.first == "frozen_from") continue;
     man += "cfg " + kv.first;
     for (auto& v : kv.second) man += " " + v;
     man += "\n";
   }
   man += "cfg step " + std::to_string(step) + "\n";
+  man += "cfg frozen_from " + frozen_from + "\n";  // frozen (f.) weights stay in the original state file
   uint64_t off = 0;
   std::vector<uint64_t> offs;
   for (auto& t : ts) {
@@ -129,7 +132,8 @@ int main(int argc, char** argv) {
   else { te = std::make_unique<Trainer>(); ok = te->init(state, model, &err, offload); }
   if (!ok) { fprintf(stderr, "init: %s\n", err.c_str()); return 2; }
   std::vector<TParam>& ps = lora ? tl->params() : te->params();
-  // TODO(resume): Adam moments / EMA / step are saved; loading them back is not wired yet (start from the state file)
+  // resume: a state saved by this program carries Adam moments, EMA and the step (the optax count)
+  if (lora) tl->set_step_count(start); else te->set_step_count(start);
 
   std::vector<uint8_t> lut((size_t)(1 << 24) * 3);
   {
@@ -217,7 +221,7 @@ int main(int argc, char** argv) {
     }
     if ((step + 1) % save_every == 0 || step + 1 == start + steps) {
       const std::string p = out + "/state_step" + std::to_string(step + 1) + ".pi05d";
-      printf("saving %s: %s\n", p.c_str(), save_state(p, ps, step + 1, sf) ? "ok" : "FAILED");
+      printf("saving %s: %s\n", p.c_str(), save_state(p, ps, step + 1, sf, sf.cfg_str("frozen_from", state)) ? "ok" : "FAILED");
     }
   }
   ft_loader_destroy(loader);

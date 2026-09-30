@@ -40,6 +40,7 @@ class Trainer {
   double grad_norm();
   void opt_step();  // one optimizer step from the current gradients (after finalize)
   int step_count() const { return count_; }
+  void set_step_count(int c) { count_ = c; }
   std::vector<TParam>& params() { return ps_.all(); }
   TParam* param(const std::string& name) { return ps_.get(name); }
   OptCfg opt;

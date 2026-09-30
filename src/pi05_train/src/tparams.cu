@@ -87,6 +87,15 @@ bool ParamSet::load(const pi05::WeightFile& wf, int offload, const OptCfg& opt, 
     PI05_CUDA(cudaMemcpy(P.p, host.data(), P.n * 4, cudaMemcpyHostToDevice));
     if (P.ema) PI05_CUDA(cudaMemcpy(P.ema, host.data(), P.n * 4, cudaMemcpyDefault));
     P.round_grad = round_grad(P.name);
+    // resume: optimizer state saved by pi05_train (adam_m. / adam_v. / ema. <name>)
+    auto restore = [&](const std::string& key, float* dst) -> bool {
+      const pi05::TensorInfo* s = wf.find(key + P.name);
+      if (!s) return true;
+      if (!wf.read(*s, host.data(), err)) return false;
+      PI05_CUDA(cudaMemcpy(dst, host.data(), P.n * 4, cudaMemcpyDefault));
+      return true;
+    };
+    if (!restore("adam_m.", P.m) || !restore("adam_v.", P.v) || (P.ema && !restore("ema.", P.ema))) return false;
     if (needs_bf16(P.name)) {
       P.pb = mem.dev<bf16>(P.n);
       f32_to_bf16(P.p, P.pb, P.n, st);

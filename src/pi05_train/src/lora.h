@@ -38,6 +38,7 @@ class LoraTrainer {
   OptCfg opt;
   cudaStream_t st = nullptr;
   size_t frozen_bytes() const { return fz_.bytes; }
+  void set_step_count(int c) { count_ = c; }
 
  private:
   static constexpr int NI = 3, TI = 768, DI = 1152, HI = 16, DHI = 72, FI = 4304;

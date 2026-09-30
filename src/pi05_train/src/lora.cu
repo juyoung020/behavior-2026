@@ -54,6 +54,10 @@ bool LoraTrainer::init(const std::string& state_path, const std::string& model_p
   auto bf = [&](const std::string& n) { return !f32_use(n); };
   if (!ps_.load(wf_, offload, opt, mem_, bf, bf, st, err)) return false;
   if (!fz_.load(wf_, mem_, err)) return false;
+  if (const std::string ff = wf_.cfg_str("frozen_from", ""); !ff.empty()) {  // checkpoint saved by pi05_train
+    pi05::WeightFile orig;
+    if (!orig.open(ff, err) || !fz_.load(orig, mem_, err)) return false;
+  }
   {  // token embedding table (frozen) from the inference-format model file, pinned host memory for row gathers
     pi05::WeightFile mf;
     if (!mf.open(model_path, err)) return false;
