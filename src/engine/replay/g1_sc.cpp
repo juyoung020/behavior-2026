@@ -19,6 +19,7 @@
 #include "ScShapeSim.h"
 #include "ScStaticSim.h"
 #include "core/contact/narrowphase.h"
+#include "core/scene/id_pool.h"
 #include "g1_hooks.h"
 
 using namespace physx;
@@ -253,6 +254,70 @@ void afterIntegrationRelease() {
   }
 }
 
+// 번호 매김 그림자 (G1_SC_IDS=1): simulate 시작마다 PhysX 요소·행위자·조인트 번호 추적기를 읽어, 우리 IdTracker(core/scene/id_pool.h)가
+// "지난 스텝 끝에 대기 목록을 풀고(postReportsCleanup) 이번 창에서 c 번 새로 받음" 으로 같은 상태가 되는 c 가 있는지 본다.
+// 풀어 줄 순서(대기 목록)는 PhysX 에서 읽은 것을 쓴다(삭제 API 호출 순서 = 우리 엔진 입력).
+struct IdShadow {
+  const char* name;
+  eng::scene::IdTracker ours;
+  bool init = false;
+  uint64_t steps = 0, creates = 0, releases = 0, bad = 0;
+  long long firstBad = -1;
+};
+IdShadow gIds[3] = {{"요소"}, {"행위자"}, {"조인트"}};
+bool samePool(const eng::scene::IdPool& a, const Sc::ObjectIDTracker& t) {
+  if (a.cur != t.mIDPool.mCurrentID || a.freeIds.size() != t.mIDPool.mFreeIDs.size()) return false;
+  for (size_t i = 0; i < a.freeIds.size(); ++i)
+    if (a.freeIds[i] != t.mIDPool.mFreeIDs[PxU32(i)]) return false;
+  return true;
+}
+void idsStep(IdShadow& S, Sc::ObjectIDTracker& t) {
+  ++S.steps;
+  if (!S.init) {
+    S.init = true;
+    S.ours.pool.cur = t.mIDPool.mCurrentID;
+    S.ours.pool.freeIds.assign(t.mIDPool.mFreeIDs.begin(), t.mIDPool.mFreeIDs.end());
+  } else {
+    S.ours.endStep();  // 지난 simulate 끝 (fetchResults 의 postReportsCleanup)
+    // 이번 창의 새로 받기 수 c 찾기 (최대 빈 번호 + 4096)
+    eng::scene::IdPool p = S.ours.pool;
+    bool ok = samePool(p, t);
+    uint32_t c = 0;
+    while (!ok && c < p.freeIds.size() + 4096u) {
+      p.getNew();
+      ++c;
+      ok = samePool(p, t);
+    }
+    if (ok) {
+      S.ours.pool = p;
+      S.creates += c;
+    } else {
+      ++S.bad;
+      if (S.firstBad < 0) {
+        S.firstBad = (long long)SS.sim;
+        fprintf(stderr, "[g1 sc 번호 다름] %s sim %llu 우리 cur %u 빈 %zu / PhysX cur %u 빈 %u\n", S.name, (unsigned long long)SS.sim, S.ours.pool.cur,
+                S.ours.pool.freeIds.size(), t.mIDPool.mCurrentID, t.mIDPool.mFreeIDs.size());
+      }
+      S.ours.pool.cur = t.mIDPool.mCurrentID;  // 다시 맞춤
+      S.ours.pool.freeIds.assign(t.mIDPool.mFreeIDs.begin(), t.mIDPool.mFreeIDs.end());
+    }
+  }
+  // 이번 창에서 지운 번호 (대기 목록, 넣은 순서) -> 이번 스텝 끝에 풀림
+  S.ours.pending.assign(t.mPendingReleasedIDs.begin(), t.mPendingReleasedIDs.end());
+  S.releases += S.ours.pending.size();
+  if (!S.ours.pending.empty() && getenv("G1_SC_IDS_SHOW")) {
+    fprintf(stderr, "[g1 sc 번호] %s sim %llu 지움 %zu:", S.name, (unsigned long long)SS.sim, S.ours.pending.size());
+    for (uint32_t id : S.ours.pending) fprintf(stderr, " %u", id);
+    fprintf(stderr, "\n");
+  }
+}
+void idsCheck() {
+  Sc::Scene& sc = static_cast<NpScene*>(SS.scene)->getScScene();
+  idsStep(gIds[0], sc.getElementIDPool());
+  idsStep(gIds[1], sc.getActorIDTracker());
+  idsStep(gIds[2], sc.getConstraintIDTracker());
+}
+
 }  // namespace
 
 void g1_sc_before(PxScene* scene, uint64_t sim) {
@@ -267,6 +332,7 @@ void g1_sc_before(PxScene* scene, uint64_t sim) {
   SS.scene = scene;
   SS.sim = sim;
   traceElem("(simulate 시작)");
+  if (getenv("G1_SC_IDS")) idsCheck();
 }
 void g1_sc_task(const char* name) {
   if (!SS.on || !SS.scene) return;
@@ -280,6 +346,10 @@ void g1_sc_task(const char* name) {
 }
 void g1_sc_report() {
   if (!SS.on) return;
+  for (const IdShadow& S : gIds)
+    if (S.steps)
+      printf("  번호 매김 %s: 스텝 %" PRIu64 ", 새로 받기 %" PRIu64 ", 지움 %" PRIu64 ", 다름 %" PRIu64 "%s\n", S.name, S.steps, S.creates, S.releases, S.bad,
+             S.firstBad >= 0 ? (" (첫 simulate " + std::to_string(S.firstBad) + ")").c_str() : "");
   printf("G1 Sc 입력 그림자 (넓은 단계 직전, 모든 모양을 그 순간 자세로 다시 계산): 스텝 %" PRIu64 ", 모양·스텝 %" PRIu64 " (못 옮긴 기하 %" PRIu64 ")\n", SS.steps, SS.shapes,
          SS.unsup);
   printf("  변환 캐시 자세 다름 %" PRIu64 "%s, 경계 상자 다름 %" PRIu64 "%s, 접촉 거리(=contactOffset) 다름 %" PRIu64 "\n", SS.badPose,
