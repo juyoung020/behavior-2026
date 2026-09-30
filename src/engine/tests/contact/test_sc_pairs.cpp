@@ -13,10 +13,12 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <cstddef>
 #include <random>
 #include <set>
 #include <vector>
 
+#include "px_bridge.h"  // 볼록 굽기·우리 모양 변환 (cxt::)
 #include "PxPhysicsAPI.h"
 #define private public
 #define protected public
@@ -48,9 +50,11 @@
 #undef protected
 
 #include "core/contact/sc_pairs.h"
+#include "core/contact/np_step.h"
 
 using namespace physx;
 namespace ss = eng::contact::sc;
+namespace ec = eng::contact;
 
 static PxDefaultAllocator gAlloc;
 static PxDefaultErrorCallback gErr;
@@ -81,6 +85,12 @@ struct Capture {
   std::vector<uint8_t> npStatus, npPatches;
   std::vector<uint32_t> npWuFlags, npRest, npNpIndex, npShape0, npShape1, npDom;
   std::vector<std::pair<int32_t, int32_t>> touchFound, touchLost;
+  // --np: 좁은 단계 입력(변환 캐시·접촉 거리)과 PhysX 출력 스트림
+  std::vector<PxTransform> tcPose;
+  std::vector<uint32_t> tcFlags;
+  std::vector<float> contactDist;
+  std::vector<uint16_t> npNbContacts;
+  std::vector<std::vector<uint8_t>> npPatchBytes, npContactBytes;
   // 상호작용 활성·비활성 (섬 관리가 부르는 것: Sc::activateInteraction / deactivateInteraction 경유)
   struct Act { bool activate; int32_t e0, e1; bool result; bool afterFill; };
   std::vector<Act> acts;
@@ -96,6 +106,7 @@ struct Capture {
     removedPairs.clear();
     npCms.clear(); npStatus.clear(); npPatches.clear(); npWuFlags.clear(); npRest.clear(); npNpIndex.clear();
     npShape0.clear(); npShape1.clear(); npDom.clear();
+    tcPose.clear(); tcFlags.clear(); contactDist.clear(); npNbContacts.clear(); npPatchBytes.clear(); npContactBytes.clear();
     touchFound.clear(); touchLost.clear();
   }
 } G;
@@ -255,7 +266,18 @@ void W(_ZN5physx10PxsContext22fillManagerTouchEventsEPNS_27PxvContactManagerTouc
       G.npShape0.push_back(uint32_t(gCoreToElem[u.getShapeCore0()]));
       G.npShape1.push_back(uint32_t(gCoreToElem[u.getShapeCore1()]));
       G.npDom.push_back(uint32_t(u.getDominance0()) | (uint32_t(u.getDominance1()) << 8));
+      const PxsContactManagerOutput& o = L.mOutputContactManagers[i];
+      G.npNbContacts.push_back(o.nbContacts);
+      G.npPatchBytes.emplace_back(o.contactPatches, o.contactPatches + (o.contactPatches ? sizeof(PxContactPatch) * o.nbPatches : 0));
+      G.npContactBytes.emplace_back(o.contactPoints, o.contactPoints + (o.contactPoints ? sizeof(PxContact) * o.nbContacts : 0));
     }
+    PxsTransformCache& tcache = ctx->getTransformCache();
+    for (PxU32 k = 0; k < tcache.getTotalSize(); ++k) {
+      G.tcPose.push_back(tcache.getTransformCache(k).transform);
+      G.tcFlags.push_back(tcache.getTransformCache(k).flags);
+    }
+    const PxReal* cd = ctx->getContactDistances();
+    for (PxU32 k = 0; k < tcache.getTotalSize(); ++k) G.contactDist.push_back(cd[k]);
   }
   R(_ZN5physx10PxsContext22fillManagerTouchEventsEPNS_27PxvContactManagerTouchEventERjS2_S3_S2_S3_)(ctx, nt, nc, lt, lc, ct, cc);
   if (G.on) {
@@ -368,13 +390,35 @@ struct Hooks : public ss::IslandHooks {
   void addToLostTouchList(int32_t, int32_t) override {}
 };
 
+// --np: 좁은 단계 칸 자료 (다양체 + 출력 스트림). 쌍 관리층이 목록을 바꿀 때 같이 옮긴다.
+struct SlotData {
+  ec::ManifoldSlot man;
+  ec::NpSlotOutput<32, 256> out;
+};
+struct Caches : public ss::CacheHooks {
+  std::vector<SlotData> L[2];
+  void create(bool nl, uint32_t slot, int32_t g0, int32_t g1) override {
+    SlotData& d = L[nl][slot];
+    d.out = ec::NpSlotOutput<32, 256>();
+    ec::initManifold(d.man, g0 < g1 ? g0 : g1, g0 < g1 ? g1 : g0);
+  }
+  void move(bool dn, uint32_t dst, bool sn, uint32_t src) override {
+    if (dn == sn && dst == src) return;
+    ec::copyManifoldSlot(L[dn][dst].man, L[sn][src].man);
+    L[dn][dst].out = L[sn][src].out;
+  }
+  void destroy(bool, uint32_t) override {}
+  void resize(bool nl, uint32_t n) override { L[nl].resize(n); }
+};
+
 // ---------------------------------------------------------------------------------------------------------------------
 int main(int argc, char** argv) {
   int nb = 150, steps = 300, seed = 1, threads = 2;
-  bool sleep = false;
-  int removeEvery = 0;
-  int refilterEvery = 0;
-  int jointEvery = 0;  // --joints N: N 스텝마다 조인트 하나 만들고(충돌 끔/켬) 하나 없애기 (행위자 목록 자리표 재생)  // --refilter N: N 스텝마다 모양 거르기 자료 바꾸기 + 몸체 운동학 전환 (재거르기·convert 경로)  // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
+  bool sleep = false;     // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
+  int removeEvery = 0;    // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기
+  int refilterEvery = 0;  // --refilter N: N 스텝마다 모양 거르기 자료 바꾸기 + 몸체 운동학 전환 (재거르기·convert 경로)
+  int jointEvery = 0;     // --joints N: N 스텝마다 조인트 하나 만들거나(충돌 끔/켬) 없애기 (행위자 목록 자리표 재생)
+  bool ourNp = false;     // --np: 좁은 단계도 우리 것(np_step.h)으로 돌려 PhysX 출력(상태·패치·접촉 스트림)과 비교
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--bodies") && i + 1 < argc) nb = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--steps") && i + 1 < argc) steps = atoi(argv[++i]);
@@ -384,6 +428,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--remove") && i + 1 < argc) removeEvery = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--refilter") && i + 1 < argc) refilterEvery = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--joints") && i + 1 < argc) jointEvery = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--np")) ourNp = true;
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
@@ -404,6 +449,11 @@ int main(int argc, char** argv) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> U(-1.0f, 1.0f), P(0.0f, 1.0f);
   PxMaterial* mat = phys->createMaterial(0.5f, 0.4f, 0.1f);
+  std::vector<PxConvexMesh*> hulls;  // 볼록 (BEHAVIOR 물체는 거의 볼록 조각)
+  for (int h = 0; h < 24; ++h) {
+    PxConvexMesh* m = cxt::cookHull(phys, cxt::randomCloud(rng, h % 4, (h % 3 == 0) ? 40 : 12), false, 64);
+    if (m) hulls.push_back(m);
+  }
   // 충돌 그룹 (word2 1~4) 과 죽이는 그룹 쌍, 거른 쌍 번호(word1)
   gFT.groupPairs.insert(pk(1, 2));
   gFT.groupPairs.insert(pk(3, 3));
@@ -413,7 +463,7 @@ int main(int argc, char** argv) {
     d.word0 = P(rng) < 0.5f ? 1u : 0u;  // 보고 쌍 표시
     d.word1 = P(rng) < 0.5f ? 1 + uint32_t(P(rng) * 30) : 0;
     d.word2 = P(rng) < 0.6f ? 1 + uint32_t(P(rng) * 4) : 0;
-    d.word3 = P(rng) < 0.05f ? 4u : (P(rng) < 0.05f ? 2u : 0u);
+    d.word3 = P(rng) < 0.05f ? 4u : (P(rng) < 0.05f && !ourNp ? 2u : 0u);  // 2 = 접촉 수정(omni 표면 속도): --np 에서는 뺌(수정 가능 스트림은 아직)
     return d;
   };
   auto addShape = [&](PxRigidActor* a, const PxGeometry& g, const PxTransform& local, bool trigger) {
@@ -427,8 +477,13 @@ int main(int argc, char** argv) {
   };
   auto randGeom = [&](PxGeometryHolder& h) {
     const float r = P(rng);
-    if (r < 0.3f) h.storeAny(PxSphereGeometry(0.05f + 0.2f * P(rng)));
-    else if (r < 0.6f) h.storeAny(PxBoxGeometry(0.05f + 0.2f * P(rng), 0.05f + 0.2f * P(rng), 0.05f + 0.2f * P(rng)));
+    if (r < 0.35f) {  // 볼록 (크기 늘임 있음/없음)
+      PxConvexMesh* m = hulls[size_t(P(rng) * float(hulls.size())) % hulls.size()];
+      h.storeAny(PxConvexMeshGeometry(m, P(rng) < 0.5f ? PxMeshScale(1.0f) : PxMeshScale(PxVec3(0.5f + P(rng), 0.5f + P(rng), 0.5f + P(rng)))));
+      return;
+    }
+    if (r < 0.55f) h.storeAny(PxSphereGeometry(0.05f + 0.2f * P(rng)));
+    else if (r < 0.8f) h.storeAny(PxBoxGeometry(0.05f + 0.2f * P(rng), 0.05f + 0.2f * P(rng), 0.05f + 0.2f * P(rng)));
     else h.storeAny(PxCapsuleGeometry(0.04f + 0.1f * P(rng), 0.05f + 0.2f * P(rng)));
   };
   std::vector<PxRigidActor*> actorsPx;
@@ -509,9 +564,27 @@ int main(int argc, char** argv) {
 
   // ---- 우리 층 준비 (PhysX 쪽 Sc 자료에서 입력을 읽는다)
   ss::ScPairs M;
+  Caches caches;
+  std::vector<ec::NpShape> npShapes;
+  std::vector<ec::MaterialData> ourMats(64);
+  {
+    ec::MaterialData& md = ourMats[static_cast<NpMaterial*>(mat)->mMaterial.mMaterialIndex];
+    md.dynamicFriction = mat->getDynamicFriction();
+    md.staticFriction = mat->getStaticFriction();
+    md.restitution = mat->getRestitution();
+    md.damping = mat->getDamping();
+    md.flags = uint16_t(PxU16(mat->getFlags()));
+    md.fricCombineMode = uint8_t(mat->getFrictionCombineMode());
+    md.restCombineMode = uint8_t(mat->getRestitutionCombineMode());
+    md.dampingCombineMode = uint8_t(mat->getDampingCombineMode());
+  }
+  ec::NpParams npParams;
+  npParams.meshContactMargin = 0.01f * tol.length;
+  npParams.toleranceLength = tol.length;
   Hooks hooks;
   hooks.m = &M;
   M.islands = &hooks;
+  if (ourNp) M.caches = &caches;
   M.filterShader = ourShader;
   M.filterPairFound = ourPairFound;
   std::map<const Sc::ActorSim*, int32_t> actorIndex;
@@ -573,6 +646,24 @@ int main(int argc, char** argv) {
         S.torsionalPatchRadius = sim->getTorsionalPatchRadius();
         S.minTorsionalPatchRadius = sim->getMinTorsionalPatchRadius();
         S.transformCacheId = sim->getTransformCacheID();
+        if (size_t(e) >= npShapes.size()) npShapes.resize(size_t(e) + 1);
+        {
+          ec::NpShape& ns = npShapes[size_t(e)];
+          ns.geom = ec::ShapeGeom();
+          const PxGeometry& g = s->getGeometry();
+          ns.geom.type = int32_t(g.getType());
+          if (g.getType() == PxGeometryType::eSPHERE) ns.geom.sphere = eng::px::PxSphereGeometry(static_cast<const PxSphereGeometry&>(g).radius);
+          else if (g.getType() == PxGeometryType::eBOX) {
+            const PxVec3 h = static_cast<const PxBoxGeometry&>(g).halfExtents;
+            ns.geom.box = eng::px::PxBoxGeometry(h.x, h.y, h.z);
+          } else if (g.getType() == PxGeometryType::eCONVEXMESH) {
+            ns.geom.convex = cxt::toE(static_cast<const PxConvexMeshGeometry&>(g));
+          } else if (g.getType() == PxGeometryType::eCAPSULE) {
+            const PxCapsuleGeometry& c = static_cast<const PxCapsuleGeometry&>(g);
+            ns.geom.capsule = eng::px::PxCapsuleGeometry(c.radius, c.halfHeight);
+          }
+          ns.material = core.getCore().mMaterialIndex;
+        }
         gCoreToElem[&core.getCore()] = e;
         gElemSim[e] = sim;
       }
@@ -628,7 +719,7 @@ int main(int argc, char** argv) {
     if (ci && extIndex.count(ci)) jointExt[j] = extIndex[ci];
   }
   printf("조인트·관절 상호작용 자리표 %zu 개\n", extIndex.size());
-  uint64_t bad = 0, cmpList = 0, cmpEvents = 0, cmpCalls = 0, cmpActor = 0;
+  uint64_t bad = 0, cmpList = 0, cmpEvents = 0, cmpCalls = 0, cmpActor = 0, cmpNp = 0, npPoints = 0;
   int firstBad = -1;
   auto fail = [&](int s, const char* what) {
     if (!bad) { firstBad = s; printf("  [스텝 %d] 첫 다름: %s\n", s, what); }
@@ -837,6 +928,29 @@ int main(int argc, char** argv) {
     };
     replayActs(false);
     M.beginNarrowPhase();
+    if (ourNp) {  // 좁은 단계: 기존 목록(1차) 다음 새 목록(2차), PhysX 와 같은 입력(변환 캐시·접촉 거리)
+      std::vector<ec::CachedTransform> tc(G.tcPose.size());
+      for (size_t k = 0; k < tc.size(); ++k) {
+        const PxTransform& t = G.tcPose[k];
+        tc[k].transform = eng::px::PxTransform32(eng::px::PxTransform(eng::px::PxVec3(t.p.x, t.p.y, t.p.z), eng::px::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w)));
+        tc[k].flags = G.tcFlags[k];
+      }
+      static eng::px::PxContactBuffer nbuf;
+      const unsigned oldCsr = _mm_getcsr();
+      _mm_setcsr(_MM_MASK_MASK | _MM_FLUSH_ZERO_ON | (1 << 6));  // PX_SIMD_GUARD (FTZ+DAZ)
+      for (int nl = 0; nl < 2; ++nl) {
+        ss::NpList& L = nl ? M.npNew : M.npMain;
+        for (uint32_t slot = 0; slot < L.size(); ++slot) {
+          SlotData& sd = caches.L[nl][slot];
+          sd.out.statusFlag = L.outputs[slot].statusFlag;
+          const ss::ContactManager& cm = M.cmsData[size_t(L.cms[slot])];
+          const ec::NpWorkUnit wu{cm.wuFlags, cm.shape0, cm.shape1};
+          ec::discreteNarrowPhasePCM(wu, npShapes.data(), tc.data(), G.contactDist.data(), ourMats.data(), npParams, sd.man, nbuf, sd.out);
+          M.narrowPhaseResult(nl != 0, slot, sd.out.statusFlag, sd.out.nbPatches);
+        }
+      }
+      _mm_setcsr(oldCsr & ~unsigned(_MM_EXCEPT_MASK));
+    }
     M.mergeNarrowPhase();
     {
       bool same = M.npMain.size() == G.npCms.size();
@@ -888,8 +1002,44 @@ int main(int argc, char** argv) {
         }
         fail(step, "좁은 단계 목록");
       }
-      if (same)
+      if (same && !ourNp)
         for (uint32_t i = 0; i < M.npMain.size(); ++i) M.narrowPhaseResult(false, i, G.npStatus[i], G.npPatches[i]);
+      if (same && ourNp) {  // 우리 좁은 단계 결과 = PhysX 출력?
+        for (uint32_t i = 0; i < M.npMain.size(); ++i) {
+          const SlotData& sd = caches.L[0][i];
+          ++cmpNp;
+          bool ok = (sd.out.statusFlag & ec::NpStatus::eTOUCH_KNOWN) == (G.npStatus[i] & ec::NpStatus::eTOUCH_KNOWN) && sd.out.nbPatches == G.npPatches[i] &&
+                    sd.out.nbContacts == G.npNbContacts[i];
+          if (ok && sd.out.nbContacts) {
+            ok = G.npPatchBytes[i].size() == sizeof(ec::ContactPatch) * sd.out.nbPatches && G.npContactBytes[i].size() == sizeof(ec::Contact) * sd.out.nbContacts &&
+                 !memcmp(G.npContactBytes[i].data(), sd.out.stream.contacts, G.npContactBytes[i].size());
+            for (uint32_t k = 0; ok && k < sd.out.nbPatches; ++k)  // 패치: 채움(pad) 10 바이트 빼고 (PhysX 는 초기화 안 함)
+              ok = !memcmp(G.npPatchBytes[i].data() + k * sizeof(ec::ContactPatch), &sd.out.stream.patches[k], offsetof(ec::ContactPatch, pad));
+            npPoints += sd.out.nbContacts;
+          }
+          if (!ok) {
+            if (!bad) printf("    좁은 단계 칸 %u (%u,%u): 상태 PhysX %x 우리 %x, 패치 %u/%u, 점 %u/%u\n", i, G.npShape0[i], G.npShape1[i], G.npStatus[i], sd.out.statusFlag,
+                             G.npPatches[i], sd.out.nbPatches, G.npNbContacts[i], sd.out.nbContacts);
+            if (!bad && sd.out.nbContacts) {
+              const ec::ContactPatch* pp = reinterpret_cast<const ec::ContactPatch*>(G.npPatchBytes[i].data());
+              const ec::Contact* pc = reinterpret_cast<const ec::Contact*>(G.npContactBytes[i].data());
+              for (uint32_t k = 0; k < sd.out.nbPatches && k < 2; ++k) {
+                const ec::ContactPatch& a = pp[k];
+                const ec::ContactPatch& b = sd.out.stream.patches[k];
+                printf("      패치 %u: n (%.9g %.9g %.9g)/(%.9g %.9g %.9g) 마찰 %.9g/%.9g %.9g/%.9g 반발 %.9g/%.9g 감쇠 %.9g/%.9g 질량 %g %g %g %g/%g %g %g %g 시작 %u/%u 수 %u/%u 재질플래그 %u/%u 내부 %u/%u 재질 %u,%u/%u,%u\n", k,
+                       a.normal.x, a.normal.y, a.normal.z, b.normal.x, b.normal.y, b.normal.z, a.staticFriction, b.staticFriction, a.dynamicFriction, b.dynamicFriction,
+                       a.restitution, b.restitution, a.damping, b.damping, a.linear0, a.angular0, a.linear1, a.angular1, b.linear0, b.angular0, b.linear1, b.angular1,
+                       a.startContactIndex, b.startContactIndex, a.nbContacts, b.nbContacts, a.materialFlags, b.materialFlags, a.internalFlags, b.internalFlags,
+                       a.materialIndex0, a.materialIndex1, b.materialIndex0, b.materialIndex1);
+              }
+              for (uint32_t k = 0; k < sd.out.nbContacts && k < 4; ++k)
+                printf("      점 %u: (%.9g %.9g %.9g) %.9g / (%.9g %.9g %.9g) %.9g\n", k, pc[k].contact.x, pc[k].contact.y, pc[k].contact.z, pc[k].separation,
+                       sd.out.stream.contacts[k].contact.x, sd.out.stream.contacts[k].contact.y, sd.out.stream.contacts[k].contact.z, sd.out.stream.contacts[k].separation);
+            }
+            fail(step, "좁은 단계 출력");
+          }
+        }
+      }
     }
     M.fillTouchEvents();
     {
@@ -994,6 +1144,7 @@ int main(int argc, char** argv) {
   printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents, cmpCalls, cmpActor,
          bad);
   if (bad) printf(" (첫 다름 스텝 %d)", firstBad);
+  if (ourNp) printf("\n우리 좁은 단계(np_step.h): 칸 %" PRIu64 " (상태·패치 수·점 수·패치/점 바이트), 접촉점 %" PRIu64, cmpNp, npPoints);
   printf("\n%s\n", bad ? "결과: 다름 있음" : "결과: 쌍 관리 전부 같음");
   return bad ? 1 : 0;
 }

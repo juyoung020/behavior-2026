@@ -48,10 +48,24 @@ EHD bool pcmCaching(int t0, int t1) {
 }
 
 // ---- 지속 다양체 칸 (쌍마다 하나). kind: 0 없음, 1 구(1점), 2 큰(4점)
+// 다양체는 자기 버퍼를 포인터로 가리키므로(아래 relocateManifold) 칸을 복사·이동하면 포인터를 새 자리로 다시 건다
+// (std::vector 가 늘어날 때 등). GPU 로는 바이트 그대로 올리고 장치에서 initManifold 로 만든다.
 struct alignas(16) ManifoldSlot {
   alignas(16) unsigned char storage[sizeof(G::LargePersistentContactManifold)];
   int32_t kind;
   EHD G::PersistentContactManifold& get() { return *reinterpret_cast<G::PersistentContactManifold*>(storage); }
+  EHD ManifoldSlot() : kind(0) {}
+  EHD ManifoldSlot(const ManifoldSlot& o) { assignFrom(o); }
+  EHD ManifoldSlot& operator=(const ManifoldSlot& o) {
+    if (this != &o) assignFrom(o);
+    return *this;
+  }
+  EHD void assignFrom(const ManifoldSlot& o) {
+    for (unsigned i = 0; i < sizeof(storage); ++i) storage[i] = o.storage[i];
+    kind = o.kind;
+    if (kind == 1) get().mContactPoints = reinterpret_cast<G::SpherePersistentContactManifold*>(storage)->mContactPointsBuff;
+    else if (kind == 2) get().mContactPoints = reinterpret_cast<G::LargePersistentContactManifold*>(storage)->mContactPointsBuff;
+  }
 };
 
 // PxsContext::createCache 와 같게 (다양체를 새로 만들고 비운다)
@@ -68,6 +82,18 @@ EHD void initManifold(ManifoldSlot& m, int t0, int t1) {
   } else {
     m.kind = 0;
   }
+}
+
+// 다양체 칸 옮기기: PersistentContactManifold 는 자기 안의 접촉점 버퍼를 포인터(mContactPoints)로 가리킨다
+// (GuPersistentContactManifold.h:5141 번역본). 칸을 바이트로 옮기면 포인터를 새 자리로 다시 건다.
+// PhysX 는 캐시가 풀의 다양체를 가리키는 포인터라 옮겨도 그대로 — 값은 같다.
+EHD void relocateManifold(ManifoldSlot& m) {
+  if (m.kind == 1) m.get().mContactPoints = reinterpret_cast<G::SpherePersistentContactManifold*>(m.storage)->mContactPointsBuff;
+  else if (m.kind == 2) m.get().mContactPoints = reinterpret_cast<G::LargePersistentContactManifold*>(m.storage)->mContactPointsBuff;
+}
+EHD void copyManifoldSlot(ManifoldSlot& dst, const ManifoldSlot& src) {
+  dst = src;
+  relocateManifold(dst);
 }
 
 // t0 <= t1 인 PCM 접촉 함수 (GuContactMethodImpl.h / PxcContactMethodImpl.cpp g_PCMContactMethodTable)

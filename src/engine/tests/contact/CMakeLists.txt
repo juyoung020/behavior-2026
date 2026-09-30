@@ -66,6 +66,8 @@ target_link_options(test_sc_pairs PRIVATE
   -Wl,--wrap=_ZN5physx2Sc16ShapeInteraction10onActivateEPNS_17PxsContactManagerE
   -Wl,--wrap=_ZN5physx2Sc16ShapeInteraction12onDeactivateEv)
 if(CONTACT_ASAN)  # 메모리 오류 찾기용 따로 빌드: -DCONTACT_ASAN=ON
-  target_compile_options(test_aabb_mgr PRIVATE -fsanitize=address -g -fno-omit-frame-pointer)
-  target_link_options(test_aabb_mgr PRIVATE -fsanitize=address)
+  foreach(t test_aabb_mgr test_sc_pairs)
+    target_compile_options(${t} PRIVATE -fsanitize=address -g -fno-omit-frame-pointer)
+    target_link_options(${t} PRIVATE -fsanitize=address)
+  endforeach()
 endif()
