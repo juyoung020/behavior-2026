@@ -25,6 +25,11 @@ void g1_solver_report();
 void g1_art_before(physx::PxScene* scene);
 void g1_art_after(physx::PxScene* scene, uint64_t sim);
 void g1_art_report();
+namespace eng { namespace art { struct Articulation; } }
+eng::art::Articulation* g1_art_twin(const void* fa);  // simulate 앞에 옮겨 담은 쌍둥이 (없거나 실패면 null)
+bool g1_art_link_of_rb(const void* rb, const void** fa, uint32_t* ll);
+bool g1_art_diff(const void* fa, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev);
+const char* g1_art_name(const void* fa);
 // 엔진 장면 파일의 모양 순서대로 PxsShapeCore* (g1_dump.cpp, 뜨기와 같은 열거)
 std::vector<const void*> g1_shape_cores(physx::PxScene* scene);
 namespace eng { namespace scene { struct IslandMgrState; } }

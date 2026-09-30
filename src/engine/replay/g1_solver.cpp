@@ -18,7 +18,9 @@
 #include <unordered_set>
 
 #include "../tests/solver/px_internal.h"
+#include "../tests/articulation/px_art_internal.h"  // Dy::FeatherstoneArticulation 내부 (관절체 결합 그림자)
 #include "DyFeatherstoneArticulation.h"
+#include "core/articulation/art_static.h"
 #include "g1_hooks.h"
 #include "g1_px.h"
 #include "core/scene/scene_file.h"
@@ -111,6 +113,20 @@ struct Step {
   std::vector<jnt::D6Data> jd;
   std::vector<std::pair<uint32_t, jnt::Writeback>> wbSeed;  // (제약 번호, 풀이 전 PhysX 되쓰기 칸)
   sv::SolverParams prm{};
+  // 관절체 결합 (전체 그림자): 섬의 관절체 노드 -> 판 관절체 번호
+  std::vector<const void*> artFa;                    // 판 관절체 번호 -> Dy::FeatherstoneArticulation*
+  std::unordered_map<const void*, uint32_t> artIndex;
+  std::vector<uint32_t> ia;                          // 섬별 관절체 목록 (IslandIn.artStart/artCount)
+  bool fullOk = true;
+  int failWhy = 0;                                // 전체 모드에서 한 섬이라도 못 넣으면 이 스텝은 비교 안 함
+  // 잠 판정 직전(ScScene.afterIntegration) 관절체 링크 깸·상호작용 수, 관절체 깸 (엔진 결합 작업자 지적: 풀이 직전이 아님)
+  bool lateValid = false;
+  std::vector<std::vector<float>> lateLinkWake;
+  std::vector<std::vector<uint32_t>> lateLinkCounted;
+  std::vector<float> lateArtWake;
+  // 풀이 직전 관절체 깸 (simulate 안에서 깨어난 관절체: 쌍둥이는 잠든 상태로 옮겨졌으므로 깨움을 반영)
+  std::vector<float> preArtWake;
+  std::vector<std::vector<float>> preLinkWake;
   struct Group { uint32_t islandStart, islandEnd; uint16_t iterWord; };  // PhysX 묶음 하나에서 뗀 섬들 + 그 묶음의 반복 수
   std::vector<Group> groups;
   // 통계
@@ -121,7 +137,7 @@ struct Step {
 G1StepInfo gInfo;  // 관절체 단독 그림자(g1_art.cpp)에 넘기는 것
 
 struct SolverShadow {
-  bool on = false, cmpOn = false, checked = false;
+  bool on = false, cmpOn = false, checked = false, full = true;
   PxScene* curScene = nullptr;
   uint64_t stepSim = 0;
   Step st;
@@ -139,7 +155,8 @@ struct SolverShadow {
   std::vector<jnt::Writeback> wbs;
   std::vector<jnt::Row> rowScratch;
   // 결과
-  Tally tPose{"몸체 자세"}, tLin{"선속도"}, tAng{"각속도"}, tWake{"깸 카운터"}, tSleep{"잠 누적·얼림"}, tFric{"마찰 패치(풀이 뒤)"}, tWb{"조인트 되쓰기"};
+  Tally tPose{"몸체 자세"}, tLin{"선속도"}, tAng{"각속도"}, tWake{"깸 카운터"}, tSleep{"잠 누적·얼림"}, tFric{"마찰 패치(풀이 뒤)"}, tWb{"조인트 되쓰기"}, tArt{"관절체(링크·관절·잠)"};
+  uint64_t fullSteps = 0, fullSkipped = 0, noLate = 0, artWoken = 0;
   uint64_t steps = 0, stepsNoSnap = 0, bodiesCmp = 0, cmsSolved = 0, contactsSolved = 0, c1dSolved = 0, engineErr = 0;
   uint64_t islandsAll = 0, islandsUsed = 0, bodiesSkipped = 0, batches = 0, batchesUsed = 0, skipArt = 0, skipKin = 0, skipMod = 0, skipOther = 0;
   int show = 0;
@@ -163,6 +180,26 @@ struct SolverShadow {
     show = getenv("G1_SOLVER_SHOW") ? atoi(getenv("G1_SOLVER_SHOW")) : 0;
   }
 } GS;
+
+// ---------------- 늦은 스냅샷 (ScScene.afterIntegration 직전): 관절체 잠 판정에 들어가는 링크 깸·상호작용 수, 관절체 깸
+void takeLateSnapshot() {
+  Step& S = GS.st;
+  if (!S.valid) return;
+  S.lateLinkWake.assign(S.artFa.size(), {});
+  S.lateLinkCounted.assign(S.artFa.size(), {});
+  S.lateArtWake.assign(S.artFa.size(), 0.0f);
+  for (size_t k = 0; k < S.artFa.size(); ++k) {
+    const Dy::FeatherstoneArticulation* fa = static_cast<const Dy::FeatherstoneArticulation*>(S.artFa[k]);
+    const Dy::ArticulationData& d = fa->mArticulationData;
+    const PxU32 n = d.getLinkCount();
+    for (PxU32 l = 0; l < n; ++l) {
+      S.lateLinkWake[k].push_back(d.mLinks[l].bodyCore->wakeCounter);
+      S.lateLinkCounted[k].push_back(d.mLinks[l].bodyCore->numCountedInteractions);
+    }
+    S.lateArtWake[k] = fa->mSolverDesc.core->wakeCounter;
+  }
+  S.lateValid = true;
+}
 
 // ---------------- 스냅샷 (UpdateContinuationTask 직전, 작업 스레드)
 void takeSnapshot() {
@@ -225,15 +262,22 @@ void takeSnapshot() {
                    mC = S.contacts.size(), mF = S.friction.size(), mC1 = S.c1d.size(), mIC1 = S.ic1d.size(), mJD = S.jd.size(), mWB = S.wbSeed.size();
       int why = 0;  // 0 = 씀, 1 관절체, 2 운동학, 3 수정 가능 접촉, 4 기타
       auto fail = [&](int w) { if (!why) why = w; };
-      if (island.mNodeCount[IG::Node::eARTICULATION_TYPE]) fail(1);
+      if (!GS.full && island.mNodeCount[IG::Node::eARTICULATION_TYPE]) fail(1);
       sv::IslandIn I{};
+      I.artStart = uint32_t(S.ia.size());
       I.bodyStart = uint32_t(S.ib.size());
       I.cmStart = uint32_t(S.icm.size());
       I.c1dStart = uint32_t(S.ic1d.size());
       I.staticTouchCount = is.mIslandStaticTouchCount[ids[cur]];
       for (PxNodeIndex n = island.mRootNode; !why && n.isValid();) {
         const IG::Node& node = is.getNode(n);
-        if (node.getNodeType() != IG::Node::eRIGID_BODY_TYPE) fail(1);
+        if (node.getNodeType() == IG::Node::eARTICULATION_TYPE && GS.full) {
+          if (!S.artIndex.count(node.mObject)) {
+            S.artIndex[node.mObject] = uint32_t(S.artFa.size());
+            S.artFa.push_back(node.mObject);
+          }
+          S.ia.push_back(S.artIndex[node.mObject]);
+        } else if (node.getNodeType() != IG::Node::eRIGID_BODY_TYPE) fail(1);
         else {
           const PxsRigidBody* rb = reinterpret_cast<const PxsRigidBody*>(node.mObject);
           const uint32_t bi = uint32_t(S.bodies.size());
@@ -245,6 +289,7 @@ void takeSnapshot() {
         n = node.mNextNode;
       }
       I.bodyCount = uint32_t(S.ib.size()) - I.bodyStart;
+      I.artCount = uint32_t(S.ia.size()) - I.artStart;
       for (IG::EdgeIndex e = island.mFirstEdge[IG::Edge::eCONTACT_MANAGER]; !why && e != IG_INVALID_EDGE;) {
         const IG::Edge& edge = is.getEdge(e);
         PxsContactManager* cm = im.getContactManager(e);
@@ -252,10 +297,30 @@ void takeSnapshot() {
           const PxNodeIndex n1 = is.mCpuData.getNodeIndex1(e), n2 = is.mCpuData.getNodeIndex2(e);
           sv::SolverCM m{};
           const PxcNpWorkUnit& u = cm->getWorkUnit();
+          auto isArt = [&](PxNodeIndex n) { return !n.isStaticBody() && is.getNode(n).getNodeType() == IG::Node::eARTICULATION_TYPE; };
           if (n1.isStaticBody() || is.getNode(n1).isKinematic() || (!n2.isStaticBody() && is.getNode(n2).isKinematic())) fail(2);
-          else if (is.getNode(n1).getNodeType() != IG::Node::eRIGID_BODY_TYPE || (!n2.isStaticBody() && is.getNode(n2).getNodeType() != IG::Node::eRIGID_BODY_TYPE))
+          else if (!GS.full && (is.getNode(n1).getNodeType() != IG::Node::eRIGID_BODY_TYPE ||
+                                (!n2.isStaticBody() && is.getNode(n2).getNodeType() != IG::Node::eRIGID_BODY_TYPE)))
             fail(1);
-          else {
+          else if (GS.full && (isArt(n1) || isArt(n2))) {  // 관절체가 낀 관리자: body = 관절체 번호, artLink = LL 링크 + 1
+            auto ref = [&](PxNodeIndex n, uint32_t& body, uint32_t& artLink) {
+              if (n.isStaticBody()) { body = sv::NONE; artLink = 0; return; }
+              if (isArt(n)) {
+                auto it = S.artIndex.find(is.getNode(n).mObject);
+                if (it == S.artIndex.end()) { fail(4); return; }
+                body = it->second;
+                artLink = n.articulationLinkId() + 1;
+              } else {
+                auto it = S.rbIndex.find(reinterpret_cast<const PxsRigidBody*>(is.getNode(n).mObject));
+                if (it == S.rbIndex.end()) { fail(4); return; }
+                body = it->second;
+                artLink = 0;
+              }
+            };
+            ref(n1, m.body0, m.artLink0);
+            ref(n2, m.body1, m.artLink1);
+            if (n2.isStaticBody()) m.staticPose1 = toE(u.mRigidCore1->body2World);
+          } else {
             const PxsRigidBody* rb0 = reinterpret_cast<const PxsRigidBody*>(is.getNode(n1).mObject);
             auto i0 = S.rbIndex.find(rb0);
             if (i0 == S.rbIndex.end() || static_cast<const void*>(u.mRigidCore0) != static_cast<const void*>(&rb0->getCore())) fail(4);
@@ -324,15 +389,26 @@ void takeSnapshot() {
         const Dy::Constraint* c = im.getConstraint(e);
         if (!c) fail(4);
         else {
-          auto bodyOf = [&](const PxsRigidBody* rb) -> uint32_t {
+          auto bodyOf = [&](const PxsRigidBody* rb, uint32_t& artLink) -> uint32_t {
+            artLink = 0;
             if (!rb) return sv::NONE;
             auto it = S.rbIndex.find(rb);
-            if (it == S.rbIndex.end()) { fail(4); return sv::NONE; }
-            return it->second;
+            if (it != S.rbIndex.end()) return it->second;
+            const void* fa = nullptr;
+            uint32_t ll = 0;
+            if (GS.full && g1_art_link_of_rb(rb, &fa, &ll)) {  // 링크 쪽 (보조 잡기 고정 등)
+              auto ai = S.artIndex.find(fa);
+              if (ai != S.artIndex.end()) {
+                artLink = ll + 1;
+                return ai->second;
+              }
+            }
+            fail(4);
+            return sv::NONE;
           };
           sv::Constraint1DIn x{};
-          x.body0 = bodyOf(c->body0);
-          x.body1 = bodyOf(c->body1);
+          x.body0 = bodyOf(c->body0, x.artLink0);
+          x.body1 = bodyOf(c->body1, x.artLink1);
           if (is.mCpuData.getNodeIndex1(e).isStaticBody() != (c->body0 == nullptr)) fail(4);
           if (is.mCpuData.getNodeIndex2(e).isStaticBody() != (c->body1 == nullptr)) fail(4);
           x.index = c->index;
@@ -355,7 +431,9 @@ void takeSnapshot() {
         e = edge.mNextIslandEdge;
       }
       I.c1dCount = uint32_t(S.ic1d.size()) - I.c1dStart;
+      if (why && GS.full) { S.fullOk = false; S.failWhy = why; }  // 전체 모드: 섬을 빼면 묶음이 달라지므로 이 스텝은 비교하지 않음
       if (why) {  // 섬 되돌림
+        S.ia.resize(I.artStart);
         S.bodiesSkipped += island.mNodeCount[IG::Node::eRIGID_BODY_TYPE];
         for (size_t k = mB; k < S.rbs.size(); ++k) S.rbIndex.erase(S.rbs[k]);
         for (size_t k = mCM; k < S.cmKeys.size(); ++k) S.cmIndex.erase(S.cmKeys[k]);
@@ -381,6 +459,13 @@ void takeSnapshot() {
   for (PxU32 a = 0; a < nbAct; ++a) {
     auto it = S.cmIndex.find(im.getContactManager(act[a]));
     if (it != S.cmIndex.end()) S.act.push_back(it->second);
+  }
+  for (const void* f : S.artFa) {
+    const Dy::FeatherstoneArticulation* fa = static_cast<const Dy::FeatherstoneArticulation*>(f);
+    S.preArtWake.push_back(fa->mSolverDesc.core->wakeCounter);
+    std::vector<float> lw;
+    for (PxU32 l = 0; l < fa->mArticulationData.getLinkCount(); ++l) lw.push_back(fa->mArticulationData.mLinks[l].bodyCore->wakeCounter);
+    S.preLinkWake.push_back(lw);
   }
   S.valid = true;
   gInfo.valid = true;
@@ -491,6 +576,8 @@ class HookDispatcher : public PxCpuDispatcher {
         mQ.pop_front();
       }
       g1_islands_task(t->getName());
+      if (getenv("G1_TASKS")) fprintf(stderr, "[task] %s\n", t->getName());
+      if (!strcmp(t->getName(), "ScScene.afterIntegration")) takeLateSnapshot();
       if (!strcmp(t->getName(), "UpdateContinuationTask")) {
         takeSnapshot();
         gPrep.clear();
@@ -513,6 +600,7 @@ PxCpuDispatcher* g1_dispatcher() {
   static HookDispatcher* d = new HookDispatcher();  // 프로세스 끝까지 (PxPhysics 여러 개가 같이 씀)
   GS.on = true;
   GS.cmpOn = getenv("G1_SOLVER") != nullptr;
+  GS.full = getenv("G1_SOLVER_RIGID") == nullptr;  // 기본 = 관절체 결합 전체 그림자, G1_SOLVER_RIGID=1 이면 예전 관절체 없는 섬만
   return d;
 }
 
@@ -580,6 +668,159 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
       for (uint32_t k = 0; k < S.islands[i].cmCount; ++k) cmGroup[S.icm[S.islands[i].cmStart + k]] = g;
   if (S.friction.size() > GS.fr0.size()) GS.fr0.resize(S.friction.size());
   const auto& pool = static_cast<Dy::Context*>(static_cast<NpScene*>(scene)->getScScene().getDynamicsContext())->getConstraintWriteBackPool();
+
+  // ---- 전체 그림자 (관절체 결합): 섬 전부를 판 하나로, 관절체는 simulate 앞에 옮겨 담은 쌍둥이(g1_art.cpp)
+  if (GS.full) {
+    if (!S.fullOk) {
+      ++GS.fullSkipped;
+      fprintf(stderr, "[g1 solver] sim %llu 전체 그림자 건너뜀: 섬 못 넣음 (이유 %d: 1 관절체 2 운동학 3 수정 가능 접촉 4 기타)\n", (unsigned long long)sim, S.failWhy);
+      return;
+    }
+    const uint32_t na = uint32_t(S.artFa.size());
+    std::vector<eng::art::Articulation> arts(na);
+    for (uint32_t k = 0; k < na; ++k) {
+      eng::art::Articulation* tw = g1_art_twin(S.artFa[k]);
+      if (!tw) {
+        ++GS.fullSkipped;
+        fprintf(stderr, "[g1 solver] sim %llu 전체 그림자 건너뜀: 관절체 쌍둥이 없음 (%s)\n", (unsigned long long)sim, g1_art_name(S.artFa[k]));
+        return;
+      }
+      arts[k] = *tw;
+      if (!arts[k].awake) {  // simulate 안에서 깨어남 (Sc 활성화): 깸 카운터는 풀이 직전 PhysX 값
+        arts[k].awake = 1;
+        arts[k].readyForSleep = 0;
+        arts[k].wakeCounter = S.preArtWake[k];
+        for (uint32_t l = 0; l < arts[k].nLinks && l < S.preLinkWake[k].size(); ++l) arts[k].bodies[l].wakeCounter = S.preLinkWake[k][l];
+        ++GS.artWoken;
+      }
+    }
+    const uint32_t STATIC_CAP = 2048;
+    std::vector<eng::art::StaticLists> artLists(na);
+    std::vector<sv::SDesc> artS1(size_t(na) * STATIC_CAP), artSC(size_t(na) * STATIC_CAP);
+    std::vector<uint32_t> artN1(na), artNC(na), artBatch(na);
+    std::vector<sv::ArtProgress> artProg(na);
+    std::vector<uint32_t> deact, deactArts;
+    for (uint32_t b = 0; b < nb; ++b)
+      if (deactFlag[b]) deact.push_back(b);
+    {
+      const IG::IslandSim& is = static_cast<NpScene*>(scene)->getScScene().getSimpleIslandManager()->getAccurateIslandSim();
+      const PxU32 nda = is.getNbNodesToDeactivate(IG::Node::eARTICULATION_TYPE);
+      const PxNodeIndex* dia = is.getNodesToDeactivate(IG::Node::eARTICULATION_TYPE);
+      for (PxU32 k = 0; k < nda; ++k) {
+        auto it = S.artIndex.find(is.getNode(dia[k]).mObject);
+        if (it != S.artIndex.end()) deactArts.push_back(it->second);
+      }
+    }
+    sv::SolverBoard B{};
+    B.bodies = S.bodies.data();
+    B.nbBodies = nb;
+    B.cms = S.cms.data();
+    B.nbCMs = uint32_t(S.cms.size());
+    B.patches = S.patches.data();
+    B.contacts = S.contacts.data();
+    B.islands = S.islands.data();
+    B.nbIslands = uint32_t(S.islands.size());
+    B.islandBodies = S.ib.data();
+    B.islandCMs = S.icm.data();
+    B.activatedCMs = S.act.data();
+    B.nbActivatedCMs = uint32_t(S.act.size());
+    B.c1d = S.c1d.data();
+    B.nbC1D = uint32_t(S.c1d.size());
+    B.islandC1Ds = S.ic1d.data();
+    B.jointData = S.jd.data();
+    B.writebacks = GS.wbs.data();
+    B.rowScratch = GS.rowScratch.data();
+    B.vels = GS.vels.data();
+    B.txI = GS.txis.data();
+    B.datas = GS.datas.data();
+    B.poolCap = uint32_t(GS.vels.size());
+    B.descs = GS.descs.data();
+    B.ordered = GS.ordered.data();
+    B.temp = GS.temp.data();
+    B.headers = GS.headers.data();
+    B.descCap = uint32_t(GS.descs.size());
+    B.partitionCounts = GS.partCounts.data();
+    B.partitionCap = uint32_t(GS.partCounts.size());
+    B.bodySolverIndex = GS.bodySolverIndex.data();
+    B.constraints = sv::ByteArena{GS.arenaMem.data(), 0, uint32_t(GS.arenaMem.size()), 0};
+    B.frictionCurIdx = 0;
+    std::copy(S.friction.begin(), S.friction.end(), GS.fr0.begin());
+    B.friction[0] = sv::FrictionArena{GS.fr0.data(), uint32_t(S.friction.size()), uint32_t(GS.fr0.size()), 0};
+    B.friction[1] = sv::FrictionArena{GS.fr1.data(), 0, uint32_t(GS.fr1.size()), 0};
+    B.corr = GS.corr.get();
+    B.contactBuffer = GS.cbuf.data();
+    B.arts = arts.data();
+    B.nbArts = na;
+    B.islandArts = S.ia.data();
+    B.artLists = artLists.data();
+    B.artStatic1D = artS1.data();
+    B.artStaticContact = artSC.data();
+    B.artNbStatic1D = artN1.data();
+    B.artNbStaticContact = artNC.data();
+    B.artStaticCap = STATIC_CAP;
+    B.artBatchIndex = artBatch.data();
+    B.artProg = artProg.data();
+    sv::SolverParams prm = S.prm;
+    prm.solveArticulationContactLast = (scene->getFlags() & PxSceneFlag::eSOLVE_ARTICULATION_CONTACT_LAST);
+    {
+      FtzScope f;
+      sv::solverStepHost(B, prm);
+      sv::afterIntegrationHost(B);
+    }
+    // Sc 층 입력 (잠 판정 직전 값): 링크 상호작용 수, 링크·관절체 깸 카운터 올리기
+    if (S.lateValid)
+      for (uint32_t k = 0; k < na; ++k) {
+        eng::art::Articulation& a = arts[k];
+        for (uint32_t l = 0; l < a.nLinks && l < S.lateLinkWake[k].size(); ++l) {
+          a.bodies[l].numCountedInteractions = S.lateLinkCounted[k][l];
+          if (S.lateLinkWake[k][l] > a.bodies[l].wakeCounter) a.bodies[l].wakeCounter = S.lateLinkWake[k][l];
+        }
+        if (S.lateArtWake[k] > a.wakeCounter) a.wakeCounter = S.lateArtWake[k];
+      }
+    else
+      ++GS.noLate;
+    {
+      FtzScope f;
+      sv::afterIntegrationArtsHost(B, prm.dt, deactArts.data(), uint32_t(deactArts.size()));
+      sv::deactivateBodiesHost(B, deact.data(), uint32_t(deact.size()));
+    }
+    if (B.error) ++GS.engineErr;
+    ++GS.fullSteps;
+    GS.cmsSolved += S.cms.size();
+    GS.c1dSolved += S.c1d.size();
+    for (const sv::SolverCM& m : S.cms) GS.contactsSolved += m.nbContacts;
+    for (uint32_t i = 0; i < nb; ++i) {
+      const PxsRigidBody& rb = *S.rbs[i];
+      const PxsBodyCore& c = rb.getCore();
+      const eng::Body& e = S.bodies[i];
+      ++GS.bodiesCmp;
+      GS.tPose.f(&c.body2World.q.x, &e.body2World.q.x, 7, sim);
+      GS.tLin.f(&c.linearVelocity.x, &e.linVel.x, 3, sim);
+      GS.tAng.f(&c.angularVelocity.x, &e.angVel.x, 3, sim);
+      GS.tWake.f(&c.wakeCounter, &e.wakeCounter, 1, sim);
+    }
+    for (uint32_t k = 0; k < na; ++k) {
+      size_t fj = 0, nf = 0;
+      float pv = 0, ev = 0;
+      const bool diff = g1_art_diff(S.artFa[k], arts[k], &fj, &nf, &pv, &ev);
+      GS.tArt.u(!diff, sim);
+      if (diff && GS.show > 0) {
+        --GS.show;
+        fprintf(stderr, "[g1 solver 관절체 다름] sim %llu %s 칸 %zu/%zu: PhysX %.9g 우리 %.9g\n", (unsigned long long)sim, g1_art_name(S.artFa[k]), fj, nf, pv, ev);
+      }
+    }
+    const sv::FrictionArena& fa = B.friction[B.frictionCurIdx];
+    for (size_t k = 0; k < S.cms.size(); ++k) {
+      const PxcNpWorkUnit& u = S.cmKeys[k]->getWorkUnit();
+      const sv::SolverCM& m = S.cms[k];
+      bool same = u.mFrictionPatchCount == m.frictionCount;
+      const Dy::FrictionPatch* fp = reinterpret_cast<const Dy::FrictionPatch*>(u.mFrictionDataPtr);
+      for (uint32_t q = 0; same && q < m.frictionCount; ++q) same = fp && sameFriction(fa.data[m.frictionPtr + q], frictionFrom(fp[q]));
+      GS.tFric.u(same, sim);
+    }
+    for (const sv::Constraint1DIn& x : S.c1d) GS.tWb.u(!memcmp(&pool[x.index], &GS.wbs[x.index], sizeof(jnt::Writeback)), sim);
+    return;
+  }
 
   // PhysX 묶음마다 뗀 섬들을 따로 한 번씩 푼다
   for (uint32_t g = 0; g < S.groups.size(); ++g) {
@@ -723,13 +964,15 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
 
 void g1_solver_report() {
   if (!GS.on || !GS.cmpOn) return;
-  printf("G1 solver 그림자 (관절체 없는 섬, 스텝마다 PhysX 상태로 다시 맞춤): simulate %" PRIu64 " (스냅샷 없음 %" PRIu64 "), 엔진 오류 스텝 %" PRIu64 "\n",
-         GS.steps, GS.stepsNoSnap, GS.engineErr);
+  printf("G1 solver 그림자 (%s, 스텝마다 PhysX 상태로 다시 맞춤): simulate %" PRIu64 " (스냅샷 없음 %" PRIu64 "), 엔진 오류 스텝 %" PRIu64 "\n",
+         GS.full ? "관절체 결합 포함 섬 전부" : "관절체 없는 섬", GS.steps, GS.stepsNoSnap, GS.engineErr);
   printf("  활성 섬 %" PRIu64 " 중 푼 섬 %" PRIu64 " (PhysX 묶음 %" PRIu64 " 중 %" PRIu64 "), 뺀 섬: 관절체 묶음 %" PRIu64 ", 운동학 %" PRIu64 ", 수정 가능 접촉 %" PRIu64 ", 기타 %" PRIu64
          ", 뺀 묶음의 강체 %" PRIu64 "\n",
          GS.islandsAll, GS.islandsUsed, GS.batches, GS.batchesUsed, GS.skipArt, GS.skipKin, GS.skipMod, GS.skipOther, GS.bodiesSkipped);
   printf("  푼 것 누적: 몸체 %" PRIu64 ", 접촉 관리자 %" PRIu64 ", 접촉점 %" PRIu64 ", 조인트 %" PRIu64 "\n", GS.bodiesCmp, GS.cmsSolved, GS.contactsSolved, GS.c1dSolved);
-  for (const Tally* t : {&GS.tPose, &GS.tLin, &GS.tAng, &GS.tWake, &GS.tSleep, &GS.tFric, &GS.tWb})
+  if (GS.full) printf("  전체 그림자(관절체 결합): 푼 스텝 %" PRIu64 ", 못 넣어 건너뛴 스텝 %" PRIu64 ", 늦은 스냅샷 없음 %" PRIu64 "\n", GS.fullSteps, GS.fullSkipped, GS.noLate);
+  if (GS.full) printf("  simulate 안에서 깨어난 관절체 %" PRIu64 " 번\n", GS.artWoken);
+  for (const Tally* t : {&GS.tPose, &GS.tLin, &GS.tAng, &GS.tWake, &GS.tSleep, &GS.tFric, &GS.tWb, &GS.tArt})
     printf("  %-20s 비교 %10" PRIu64 "  비트 다름 %8" PRIu64 "  최대|차| %.3e%s\n", t->name, t->cmp, t->bad, t->maxd,
            t->bad ? ("  첫 다름 simulate " + std::to_string(t->first)).c_str() : "");
 }

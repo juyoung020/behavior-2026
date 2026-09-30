@@ -31,7 +31,8 @@ struct Twin {
 };
 
 struct ArtShadow {
-  bool on = false, inited = false;
+  bool on = false, snap = false, inited = false;
+  std::unordered_map<const void*, std::pair<const void*, uint32_t>> linkOfRb;  // 링크 PxsRigidBody* -> (FeatherstoneArticulation*, LL)
   std::unordered_map<const void*, Twin> twins;  // Dy::FeatherstoneArticulation* -> 이번 스텝 쌍둥이
   std::unordered_map<PxArticulationReducedCoordinate*, PxArticulationCache*> caches;
   uint64_t steps = 0, stepsNoInfo = 0, awakeSnap = 0, snapFail = 0, aloneSeen = 0, noTwin = 0, cmp = 0, bad = 0, nanBoth = 0, fields = 0;
@@ -47,10 +48,12 @@ void g1_art_before(PxScene* scene) {
   if (!AS.inited) {
     AS.inited = true;
     AS.on = getenv("G1_ART") != nullptr;
+    AS.snap = AS.on || getenv("G1_SOLVER") != nullptr;  // solver 전체 그림자(관절체 결합)도 쌍둥이를 쓴다
     AS.show = getenv("G1_ART_SHOW") ? atoi(getenv("G1_ART_SHOW")) : 0;
   }
-  if (!AS.on) return;
+  if (!AS.snap) return;
   AS.twins.clear();
+  AS.linkOfRb.clear();
   const PxU32 n = scene->getNbArticulations();
   std::vector<PxArticulationReducedCoordinate*> arts(n);
   scene->getArticulations(arts.data(), n);
@@ -59,7 +62,7 @@ void g1_art_before(PxScene* scene) {
   sc.length = tol.length;
   sc.speed = tol.speed;
   for (PxArticulationReducedCoordinate* a : arts) {
-    if (a->isSleeping()) continue;
+    if (a->isSleeping() && AS.on && !getenv("G1_SOLVER")) continue;  // solver 전체 그림자는 잠든 것도 (simulate 안에서 깨어 섬에 들 수 있음)
     Dy::FeatherstoneArticulation* fa = llArticulation(a);
     if (!fa) continue;
     Twin t;
@@ -69,6 +72,8 @@ void g1_art_before(PxScene* scene) {
     t.e.reset(new A::Articulation);
     ++AS.awakeSnap;
     t.ok = t.links.size() <= A::kMaxLinks && snapshotFromPx(a, *t.e, sc, t.links);
+    for (PxArticulationLink* l : t.links)
+      AS.linkOfRb[&static_cast<NpArticulationLink*>(l)->getCore().getSim()->getLowLevelBody()] = {fa, l->getLinkIndex()};
     if (!t.ok) ++AS.snapFail;
     AS.twins[fa] = std::move(t);
   }
@@ -157,6 +162,66 @@ void g1_art_after(PxScene* scene, uint64_t sim) {
       }
     }
   }
+}
+
+// ---- solver 전체 그림자(g1_solver.cpp)가 쓰는 것
+eng::art::Articulation* g1_art_twin(const void* fa) {
+  auto it = AS.twins.find(fa);
+  return it == AS.twins.end() || !it->second.ok ? nullptr : it->second.e.get();
+}
+bool g1_art_link_of_rb(const void* rb, const void** fa, uint32_t* ll) {
+  auto it = AS.linkOfRb.find(rb);
+  if (it == AS.linkOfRb.end()) return false;
+  *fa = it->second.first;
+  *ll = it->second.second;
+  return true;
+}
+// 우리 관절체 e 와 PhysX(fetchResults 뒤) 비교: 링크 자세·속도·깸, 관절 위치·속도, 관절체 깸·잠. 다르면 첫 칸과 두 값
+bool g1_art_diff(const void* fa, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev) {
+  auto it = AS.twins.find(fa);
+  if (it == AS.twins.end()) return true;
+  Twin& t = it->second;
+  std::vector<float> x, y;
+  for (uint32_t l = 0; l < t.links.size(); ++l) {
+    const PxTransform tp = t.links[l]->getGlobalPose();
+    const eng::Tf te = A::linkGlobalPose(e, l);
+    const PxVec3 lv = t.links[l]->getLinearVelocity(), av = t.links[l]->getAngularVelocity();
+    const A::LinkBody& b = e.bodies[e.ll[l]];
+    const float p13[13] = {tp.q.x, tp.q.y, tp.q.z, tp.q.w, tp.p.x, tp.p.y, tp.p.z, lv.x, lv.y, lv.z, av.x, av.y, av.z};
+    const float e13[13] = {te.q.x, te.q.y, te.q.z, te.q.w, te.p.x, te.p.y, te.p.z, b.linVel.x, b.linVel.y, b.linVel.z, b.angVel.x, b.angVel.y, b.angVel.z};
+    x.insert(x.end(), p13, p13 + 13);
+    y.insert(y.end(), e13, e13 + 13);
+    x.push_back(static_cast<NpArticulationLink*>(t.links[l])->getCore().getCore().wakeCounter);
+    y.push_back(b.wakeCounter);
+  }
+  if (e.dofs) {
+    PxArticulationCache*& c = AS.caches[t.px];
+    if (!c) c = t.px->createCache();
+    t.px->copyInternalStateToCache(*c, PxArticulationCacheFlag::ePOSITION | PxArticulationCacheFlag::eVELOCITY);
+    x.insert(x.end(), c->jointPosition, c->jointPosition + e.dofs);
+    x.insert(x.end(), c->jointVelocity, c->jointVelocity + e.dofs);
+    y.insert(y.end(), e.jointPosition, e.jointPosition + e.dofs);
+    y.insert(y.end(), e.jointVelocity, e.jointVelocity + e.dofs);
+  }
+  x.push_back(t.px->getWakeCounter());
+  y.push_back(e.wakeCounter);
+  x.push_back(t.px->isSleeping() ? 1.0f : 0.0f);
+  y.push_back(e.awake ? 0.0f : 1.0f);
+  *nFields = x.size();
+  for (size_t j = 0; j < x.size(); ++j) {
+    const bool nx = std::isnan(x[j]), ny = std::isnan(y[j]);
+    if ((nx || ny) ? (nx != ny) : memcmp(&x[j], &y[j], 4) != 0) {
+      *firstJ = j;
+      *pxv = x[j];
+      *ev = y[j];
+      return true;
+    }
+  }
+  return false;
+}
+const char* g1_art_name(const void* fa) {
+  auto it = AS.twins.find(fa);
+  return it == AS.twins.end() || !it->second.px->getName() ? "?" : it->second.px->getName();
 }
 
 void g1_art_report() {
