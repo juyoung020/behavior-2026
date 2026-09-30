@@ -16,4 +16,12 @@ struct ImageView {
 // Writes out_h x out_w x 3 into dst (row-major). Same size input -> plain copy of RGB.
 void resize_with_pad(const ImageView& src, int out_h, int out_w, uint8_t* dst);
 
+// Resample.c precompute_coeffs + normalize_coeffs_8bpc (22-bit fixed point): bounds [out][2], kk [out][ksize]
+int pil_coeffs(int in_size, int out_size, std::vector<int>& bounds, std::vector<int>& kk);
+
+// The same resize_with_pad on the GPU (device source RGB/RGBA with strides -> device 224x224x3): integer arithmetic
+// identical to the host version, so the bytes are identical.
+void resize_with_pad_gpu(const uint8_t* src, int h, int w, long long row_stride, int pix_stride, int out_h, int out_w,
+                         uint8_t* dst, void* stream);
+
 }  // namespace pi05

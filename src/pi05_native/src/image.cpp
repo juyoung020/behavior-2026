@@ -134,3 +134,9 @@ void resize_with_pad(const ImageView& src, int out_h, int out_w, uint8_t* dst) {
 }
 
 }  // namespace pi05
+
+namespace pi05 {
+int pil_coeffs(int in_size, int out_size, std::vector<int>& bounds, std::vector<int>& kk) {
+  return precompute(in_size, 0.0, (double)in_size, out_size, bounds, kk);
+}
+}  // namespace pi05

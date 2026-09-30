@@ -2,6 +2,7 @@
 // (openpi receding horizon for pi05; the 1st-place PiBehavior wrapper with stage voting / compression / inpainting).
 #define PI05_BUILD
 #include "../include/pi05_native.h"
+#include "../include/pi05_batch.h"
 
 #include <chrono>
 #include <cmath>
@@ -48,6 +49,7 @@ struct Pi05Engine {
   std::map<int, Slot> slots;
   std::map<int, PbSlot> pb_slots;
   std::string err;
+  int batch_cap = 0;
 };
 
 static bool stage_images(Pi05Engine* e, const Pi05Image imgs[3], bool* device_done) {
@@ -386,5 +388,332 @@ PI05_API void pi05_reset(Pi05Engine* e, int32_t slot) {
 PI05_API void pi05_seed(Pi05Engine* e, uint64_t seed) { e->rng = jax_key(seed); }
 
 PI05_API const char* pi05_last_error(Pi05Engine* e) { return e->err.c_str(); }
+
+}  // extern "C"
+
+// =====================================================================================================================
+// batched inference / batched wrappers (include/pi05_batch.h)
+// =====================================================================================================================
+namespace {
+
+// images of one episode -> model.d_img (host views: resize on the host into img_host, uploaded by upload_inputs;
+// device views: copy / resize_with_pad on the GPU straight into d_img). Returns false on bad input.
+bool stage_views(Pi05Engine* e, const Pi05View* v, bool* device_done) {
+  const size_t view = 224 * 224 * 3;
+  bool any_dev = false, any_host = false;
+  for (int i = 0; i < 3; ++i) {
+    if (!v[i].data || v[i].h <= 0 || v[i].w <= 0 || (v[i].pix_stride != 3 && v[i].pix_stride != 4)) {
+      e->err = "bad image view";
+      return false;
+    }
+    (v[i].on_device ? any_dev : any_host) = true;
+  }
+  if (any_dev && any_host) { e->err = "mixing host and device views in one episode"; return false; }
+  for (int i = 0; i < 3; ++i) {
+    const Pi05View& im = v[i];
+    if (im.on_device) {
+      resize_with_pad_gpu(im.data, im.h, im.w, im.row_stride, im.pix_stride, 224, 224, e->model.d_img + i * view, e->st);
+    } else {
+      ImageView iv{im.data, im.h, im.w, im.row_stride, im.pix_stride};
+      if (im.h == 224 && im.w == 224 && im.pix_stride == 3 && im.row_stride == 224 * 3) memcpy(e->img_host + i * view, im.data, view);
+      else resize_with_pad(iv, 224, 224, e->img_host + i * view);
+    }
+  }
+  *device_done = any_dev;
+  return true;
+}
+
+// what the host keeps of one episode between its prefix and the batched postprocess
+struct EpPrep {
+  std::vector<float> state_f32;  // pi05: normalized state (postprocess_actions)
+  float norm32[32];              // PiBehavior: normalized state (pb_postprocess)
+  int task = 0;
+  int T = 0;
+};
+
+// the input transforms of pi05_infer / pi05_infer_pb for one episode, then its prefix, stashed into batch slot `slot`
+bool prefix_episode(Pi05Engine* e, int slot, const Pi05View* views, const float* proprio, int n_proprio,
+                    const char* prompt, int task, int stage, const double* init, int n_init, const float* noise,
+                    EpPrep* ep) {
+  bool dev = false;
+  if (!stage_views(e, views, &dev)) return false;
+  if (!e->is_pb) {
+    if (n_proprio < e->rs.max_proprio_index() + 1) { e->err = "proprio too short"; return false; }
+    PreparedInput in;
+    prepare_input(e->rs, e->tok, proprio, n_proprio, prompt ? prompt : "", e->model.cfg.max_tok, e->model.cfg.ad, &in);
+    if (noise) memcpy(e->noise.data(), noise, e->noise.size() * 4);
+    else {
+      JaxKey sample;
+      jax_split(e->rng, &e->rng, &sample);
+      jax_normal(sample, e->noise.data(), (int)e->noise.size());
+    }
+    ep->state_f32 = in.state_f32;
+    e->model.upload_inputs(dev ? nullptr : e->img_host, in.tokens, e->noise.data(), e->st);
+  } else {
+    const PbSpec& s = e->pb;
+    if (task < 0 || task >= (int)s.stages.size()) { e->err = "task id out of range"; return false; }
+    if (n_proprio != 23 && n_proprio < 57) { e->err = "proprio too short"; return false; }
+    float st23[23];
+    std::vector<int> tokens(32);
+    pb_extract_state(proprio, n_proprio, st23);
+    pb_state_tokens(s, st23, ep->norm32, tokens.data());
+    const int n = s.ah * s.ad;
+    if (noise && !init) {
+      memcpy(e->noise.data(), noise, (size_t)n * 4);
+    } else {
+      JaxKey sample, r2, nk;
+      jax_split(e->rng, &e->rng, &sample);
+      jax_split(sample, &r2, &nk);
+      std::vector<float> z(n);
+      jax_normal(nk, z.data(), n);
+      pb_correlate(s, z.data(), e->noise.data());
+    }
+    std::vector<float> x0O;
+    if (init && n_init > 0) {
+      x0O.resize((size_t)n_init * s.ad);
+      pb_initial_actions(s, init, n_init, st23, x0O.data());
+    }
+    ep->task = task;
+    e->model.set_pb_inputs(task, stage, x0O.empty() ? nullptr : x0O.data(), x0O.empty() ? nullptr : e->noise.data(),
+                           n_init * s.ad, e->st);
+    e->model.upload_inputs(dev ? nullptr : e->img_host, tokens, e->noise.data(), e->st);
+  }
+  ep->T = e->model.h_dims.T;
+  e->model.forward_prefix(e->st);
+  e->model.stash_episode(slot, e->st);
+  return true;
+}
+
+// one chunk of <= batch_cap episodes: prefixes, batched suffix, postprocess
+struct EpIn {
+  const Pi05View* views;
+  const float* proprio;
+  const char* prompt;
+  int task, stage;
+  const double* init;
+  int n_init;
+  const float* noise;
+};
+bool run_chunk(Pi05Engine* e, const std::vector<EpIn>& eps, double* actions, float* stage_logits, Pi05BatchTiming* t,
+               int n_proprio) {
+  const int n = (int)eps.size();
+  const int ah = e->model.cfg.ah, ad = e->model.cfg.ad, na = e->rs.action_dim;
+  auto t0 = clk::now();
+  std::vector<EpPrep> prep(n);
+  std::vector<int> T(n);
+  for (int i = 0; i < n; ++i) {
+    const EpIn& x = eps[i];
+    if (!prefix_episode(e, i, x.views, x.proprio, n_proprio, x.prompt, x.task, x.stage, x.init, x.n_init, x.noise,
+                        &prep[i]))
+      return false;
+    T[i] = prep[i].T;
+  }
+  PI05_CUDA(cudaStreamSynchronize(e->st));
+  auto t1 = clk::now();
+  e->model.batch_suffix(n, T.data(), e->st);
+  std::vector<float> raw((size_t)n * ah * ad);
+  e->model.download_batch_actions(n, raw.data(), e->st);
+  std::vector<float> logits;
+  if (e->is_pb) {
+    logits.resize((size_t)n * 15);
+    e->model.download_batch_stage_logits(n, logits.data(), e->st);
+  }
+  auto t2 = clk::now();
+  for (int i = 0; i < n; ++i) {
+    double* out = actions + (size_t)i * ah * na;
+    if (!e->is_pb) {
+      postprocess_actions(e->rs, raw.data() + (size_t)i * ah * ad, ah, ad, prep[i].state_f32, out);
+    } else {
+      pb_postprocess(e->pb, raw.data() + (size_t)i * ah * ad, prep[i].norm32, out);
+      if (stage_logits)
+        for (int k = 0; k < 15; ++k)
+          stage_logits[(size_t)i * 15 + k] = k >= e->pb.stages[prep[i].task] ? -INFINITY : logits[(size_t)i * 15 + k];
+    }
+  }
+  if (t) {
+    t->prefix_ms += (float)std::chrono::duration<double, std::milli>(t1 - t0).count();
+    t->suffix_ms += (float)std::chrono::duration<double, std::milli>(t2 - t1).count();
+    t->host_ms += (float)ms_since(t2);
+    t->chunks += 1;
+  }
+  return true;
+}
+
+}  // namespace
+
+extern "C" {
+
+PI05_API Pi05Engine* pi05_create_batch(const char* weights_path, int32_t device, int32_t max_batch, char* err,
+                                       int32_t err_len) {
+  Pi05Engine* e = pi05_create(weights_path, device, err, err_len);
+  if (!e) return nullptr;
+  std::string m;
+  if (max_batch < 1 || !e->model.alloc_batch(max_batch, &m) || !e->model.capture_prefix_graph(e->st, &m)) {
+    if (err && err_len > 0) snprintf(err, err_len, "batch: %s", m.empty() ? "max_batch < 1" : m.c_str());
+    pi05_destroy(e);
+    return nullptr;
+  }
+  e->batch_cap = max_batch;
+  return e;
+}
+
+PI05_API int32_t pi05_batch_cap(Pi05Engine* e) { return e->batch_cap; }
+
+PI05_API int32_t pi05_infer_batch(Pi05Engine* e, const Pi05BatchIn* in, const Pi05BatchOut* out,
+                                  Pi05BatchTiming* timing) {
+  if (e->batch_cap < 1) { e->err = "engine was not created with pi05_create_batch"; return -1; }
+  auto t0 = clk::now();
+  if (timing) memset(timing, 0, sizeof *timing);
+  const int ah = e->model.cfg.ah, na = e->rs.action_dim;
+  for (int base = 0; base < in->n; base += e->batch_cap) {
+    const int n = std::min(e->batch_cap, in->n - base);
+    std::vector<EpIn> eps(n);
+    for (int j = 0; j < n; ++j) {
+      const int i = base + j;
+      EpIn& x = eps[j];
+      x.views = in->views + (size_t)i * 3;
+      x.proprio = in->proprio + (size_t)i * in->n_proprio;
+      x.prompt = in->prompts ? in->prompts[i] : in->prompt;
+      x.task = in->task ? in->task[i] : 0;
+      x.stage = in->stage ? in->stage[i] : 0;
+      const bool ui = in->initial_actions && (!in->use_initial || in->use_initial[i]);
+      x.init = ui ? in->initial_actions + (size_t)i * 4 * 23 : nullptr;
+      x.n_init = ui ? 4 : 0;
+      x.noise = in->noise ? in->noise + (size_t)i * ah * e->model.cfg.ad : nullptr;
+    }
+    if (!run_chunk(e, eps, out->actions + (size_t)base * ah * na,
+                   out->stage_logits ? out->stage_logits + (size_t)base * 15 : nullptr, timing, in->n_proprio))
+      return -1;
+  }
+  if (timing) {
+    timing->n = in->n;
+    timing->total_ms = (float)ms_since(t0);
+  }
+  return 0;
+}
+
+// pi05_act / pb_act for every slot in order, with this step's inferences batched
+PI05_API int32_t pi05_act_batch(Pi05Engine* e, const Pi05ActBatchIn* in, float* actions_out, uint8_t* new_chunk,
+                                Pi05BatchTiming* timing) {
+  if (e->batch_cap < 1) { e->err = "engine was not created with pi05_create_batch"; return -1; }
+  auto t0 = clk::now();
+  if (timing) memset(timing, 0, sizeof *timing);
+  const int n = in->n, ah = e->model.cfg.ah, na = e->rs.action_dim;
+  std::vector<int> need;
+  std::vector<EpIn> eps;
+  if (e->is_pb) {
+    const PbWrapperCfg& c = e->pbw;
+    for (int i = 0; i < n; ++i) {
+      if (in->task) pi05_set_task(e, in->slots[i], in->task[i]);
+      PbSlot& s = e->pb_slots[in->slots[i]];
+      if (s.task < 0) { e->err = "task not set"; return -1; }
+      if (s.n_last == 0 || s.index >= c.execute_in_n_steps) {
+        need.push_back(i);
+        EpIn x{};
+        x.views = in->views + (size_t)i * 3;
+        x.proprio = in->proprio + (size_t)i * in->n_proprio;
+        x.task = s.task;
+        x.stage = s.forced_stage >= 0 ? s.forced_stage : s.stage;
+        const int keep = s.next_init.empty() ? 0 : (int)s.next_init.size() / 23;
+        x.init = keep ? s.next_init.data() : nullptr;
+        x.n_init = keep;
+        eps.push_back(x);
+      }
+    }
+  } else {
+    for (int i = 0; i < n; ++i) {
+      Slot& s = e->slots[in->slots[i]];
+      if (!s.has || s.idx >= s.len || (s.step % in->replan_every) == 0) {
+        need.push_back(i);
+        EpIn x{};
+        x.views = in->views + (size_t)i * 3;
+        x.proprio = in->proprio + (size_t)i * in->n_proprio;
+        x.prompt = in->prompts ? in->prompts[i] : in->prompt;
+        eps.push_back(x);
+      }
+    }
+  }
+  // inferences (in slot order, so the random stream is drawn in the same order as sequential pi05_act calls)
+  std::vector<double> acts((size_t)need.size() * ah * na);
+  std::vector<float> logits((size_t)need.size() * 15);
+  for (size_t base = 0; base < eps.size(); base += e->batch_cap) {
+    const size_t m = std::min((size_t)e->batch_cap, eps.size() - base);
+    std::vector<EpIn> chunk(eps.begin() + base, eps.begin() + base + m);
+    if (!run_chunk(e, chunk, acts.data() + base * ah * na, e->is_pb ? logits.data() + base * 15 : nullptr, timing,
+                   in->n_proprio))
+      return -1;
+  }
+  // wrapper updates with the new chunks (pb_act / pi05_act bodies)
+  for (size_t k = 0; k < need.size(); ++k) {
+    const int i = need[k];
+    std::vector<double> a(acts.begin() + k * ah * na, acts.begin() + (k + 1) * ah * na);
+    if (e->is_pb) {
+      PbSlot& s = e->pb_slots[in->slots[i]];
+      const PbWrapperCfg& c = e->pbw;
+      float st23[23];
+      pb_extract_state(in->proprio + (size_t)i * in->n_proprio, in->n_proprio, st23);
+      const float* lg = logits.data() + k * 15;
+      bool compress = c.execute_in_n_steps < c.actions_to_execute;
+      if (c.apply_eval_tricks) {
+        const int corrected = pb_correction_rules(s.task, s.stage, st23, a, ah);
+        if (corrected != s.stage) {
+          s.stage = corrected;
+          s.history.clear();
+        }
+        if (compress && pb_gripper_variation(a, c.actions_to_execute)) compress = false;
+      }
+      const int ate = compress ? c.actions_to_execute : c.execute_in_n_steps;
+      if (c.actions_to_keep <= 0 || ah < ate + c.actions_to_keep) s.next_init.clear();
+      else s.next_init.assign(a.begin() + (size_t)ate * 23, a.begin() + (size_t)(ate + c.actions_to_keep) * 23);
+      std::vector<double> last(a.begin(), a.begin() + (size_t)ate * 23);
+      if (compress) {
+        last = pb_cubic_resample(last, ate, c.execute_in_n_steps);
+        const double factor = (double)ate / c.execute_in_n_steps;
+        for (int t = 0; t < c.execute_in_n_steps; ++t)
+          for (int d = 0; d < 3; ++d) last[(size_t)t * 23 + d] *= factor;
+      }
+      s.last = last;
+      s.n_last = (int)last.size() / 23;
+      s.index = 0;
+      s.predictions += 1;
+      int pred = 0;
+      for (int j = 1; j < 15; ++j)
+        if (lg[j] > lg[pred]) pred = j;
+      s.last_pred_stage = pred;
+      if (s.forced_stage < 0) pb_vote(s, e->pb.stages[s.task] - 1, pred, c);
+    } else {
+      Slot& s = e->slots[in->slots[i]];
+      s.len = ah;
+      s.buf.resize((size_t)ah * na);
+      for (size_t j = 0; j < a.size(); ++j) s.buf[j] = (float)a[j];
+      s.idx = 0;
+      s.has = true;
+    }
+  }
+  // this step's action for every slot
+  std::vector<uint8_t> is_new(n, 0);
+  for (int i : need) is_new[i] = 1;
+  for (int i = 0; i < n; ++i) {
+    float* o = actions_out + (size_t)i * na;
+    if (e->is_pb) {
+      PbSlot& s = e->pb_slots[in->slots[i]];
+      if (s.index >= s.n_last) s.index = 0;
+      for (int d = 0; d < 23; ++d) o[d] = (float)s.last[(size_t)s.index * 23 + d];
+      s.index += 1;
+      s.step += 1;
+    } else {
+      Slot& s = e->slots[in->slots[i]];
+      memcpy(o, &s.buf[(size_t)s.idx * na], na * 4);
+      s.idx += 1;
+      s.step += 1;
+    }
+    if (new_chunk) new_chunk[i] = is_new[i];
+  }
+  if (timing) {
+    timing->n = (int)need.size();
+    timing->total_ms = (float)ms_since(t0);
+  }
+  return 0;
+}
 
 }  // extern "C"

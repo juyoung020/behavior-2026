@@ -207,7 +207,7 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
       const int col = n0 + wn * WN + nt * 8 + 2 * t4;
       if (col >= N) continue;
       if (p.splits > 1) {
-        float* w = p.ws + (long long)split * p.M * p.N;
+        float* w = p.ws + ((long long)b * p.splits + split) * p.M * p.N;  // b = 0 unless batched split-K
         if (row < M) *reinterpret_cast<float2*>(w + (long long)row * p.N + col) = make_float2(acc[mt][nt][0], acc[mt][nt][1]);
         if (row + 8 < M)
           *reinterpret_cast<float2*>(w + (long long)(row + 8) * p.N + col) = make_float2(acc[mt][nt][2], acc[mt][nt][3]);
@@ -224,7 +224,7 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
     __shared__ int is_last;
     __threadfence();
     __syncthreads();
-    int* ctr = p.counters + blockIdx.y * gridDim.x + blockIdx.x;
+    int* ctr = p.counters + ((long long)b * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
     if (tid == 0) is_last = atomicAdd(ctr, 1) == p.splits - 1;
     __syncthreads();
     if (!is_last) return;
@@ -232,9 +232,10 @@ __global__ void __launch_bounds__(WARPS_M* WARPS_N * 32)
     const int rows = min(BM, M - m0), cols = min(BN, N - n0);
     for (int idx = tid; idx < rows * (cols / 2); idx += NT) {
       const int r = m0 + idx / (cols / 2), c = n0 + 2 * (idx % (cols / 2));
-      float2 s = __ldcg(reinterpret_cast<const float2*>(p.ws + (long long)r * p.N + c));
+      const float* wb = p.ws + (long long)b * p.splits * p.M * p.N;
+      float2 s = __ldcg(reinterpret_cast<const float2*>(wb + (long long)r * p.N + c));
       for (int k = 1; k < p.splits; ++k) {
-        const float2 v = __ldcg(reinterpret_cast<const float2*>(p.ws + (long long)k * p.M * p.N + (long long)r * p.N + c));
+        const float2 v = __ldcg(reinterpret_cast<const float2*>(wb + (long long)k * p.M * p.N + (long long)r * p.N + c));
         s.x += v.x;
         s.y += v.y;
       }
@@ -407,4 +408,42 @@ struct EpiGeluGate {  // Gemma MLP: gelu(x.Wg) * (x.Wu), columns interleaved (ga
   }
 };
 
+}  // namespace pi05
+
+namespace pi05 {
+// Batched suffix (many episodes): EpiQKVRope with per-episode q / KV cache / position. Launched with sC1 = 1 so the
+// epilogue offset is the episode index; every element is computed exactly as EpiQKVRope does for that episode.
+struct EpiQKVRopeB {
+  bf16* q;              // [episode][rows][heads][256]
+  long long q_stride;   // elements per episode
+  bf16* kc;             // layer base of episode 0's cache [pos][256]
+  bf16* vt;             // layer base of episode 0's transposed V cache [256][vt_ld]
+  long long kv_stride;  // elements per episode (depth * s_cap * 256)
+  const float2* rope;
+  const int* pos0;      // [episode] first position (= prefix tokens)
+  int heads, vt_ld;
+  __device__ void operator()(int r, int c, float v0, float v1, long long e) const {
+    const int blk = c >> 8, cc = c & 255;
+    const int pos = pos0[e] + r;
+    if (blk <= heads) {
+      const int j = cc >> 1;
+      const float2 cs = rope[pos * 128 + j];
+      const float x1 = bfr(v0), x2 = bfr(v1);
+      const float o1 = bfr(x1 * cs.x - x2 * cs.y), o2 = bfr(x2 * cs.x + x1 * cs.y);
+      if (blk < heads) {
+        bf16* qo = q + e * q_stride + ((long long)r * heads + blk) * 256;
+        qo[j] = f2b(o1 * 0.0625f);
+        qo[j + 128] = f2b(o2 * 0.0625f);
+      } else {
+        bf16* k = kc + e * kv_stride;
+        k[(long long)pos * 256 + j] = f2b(o1);
+        k[(long long)pos * 256 + j + 128] = f2b(o2);
+      }
+    } else {
+      bf16* v = vt + e * kv_stride;
+      v[(long long)cc * vt_ld + pos] = f2b(v0);
+      v[(long long)(cc + 1) * vt_ld + pos] = f2b(v1);
+    }
+  }
+};
 }  // namespace pi05

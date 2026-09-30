@@ -59,6 +59,17 @@ class Model {
   void suffix_head(int s, cudaStream_t st);
 
   Tap tap;  // optional
+
+  // ---- batched inference (pi05_infer_batch): prefix per episode through its own graph, then one batched suffix ----
+  bool alloc_batch(int cap, std::string* err);  // room for `cap` episodes
+  bool capture_prefix_graph(cudaStream_t st, std::string* err);
+  void forward_prefix(cudaStream_t st);           // SigLIP + text + prefix layers + tail (graph when captured)
+  void stash_episode(int e, cudaStream_t st);     // this inference's prefix KV, start noise, PiBehavior inputs -> slot e
+  void batch_suffix(int n, const int* T_host, cudaStream_t st);  // all denoising steps for slots [0, n)
+  void download_batch_actions(int n, float* out, cudaStream_t st);     // [n][ah][ad]
+  void download_batch_stage_logits(int n, float* out, cudaStream_t st);  // [n][15]
+  int batch_cap = 0;
+  size_t batch_bytes = 0;
   const float* ext_imgf = nullptr;  // when set, SigLIP reads these f32 images ([n_img][224][224][3] in [-1, 1], device)
   ModelCfg cfg;
   size_t weight_bytes = 0, act_bytes = 0;
@@ -116,7 +127,14 @@ class Model {
              *final_norm_ = nullptr;
   uint8_t* arena_ = nullptr;
   uint8_t* act_arena_ = nullptr;
-  cudaGraphExec_t graph_ = nullptr;
+  cudaGraphExec_t graph_ = nullptr, graph_prefix_ = nullptr;
+  uint8_t* batch_arena_ = nullptr;
+  bf16 *bkc_ = nullptr, *bvt_ = nullptr, *bh_ = nullptr, *bhn_ = nullptr, *bsq_ = nullptr, *bspr_ = nullptr,
+       *bsatt_ = nullptr, *bshid_ = nullptr, *bv_ = nullptr, *blog_ = nullptr;
+  float *bxt_ = nullptr, *bslg_ = nullptr, *bws_ = nullptr, *bx0O_ = nullptr, *bzO_ = nullptr;
+  int *bcnt_ = nullptr, *bT_ = nullptr, *bS_ = nullptr, *bints_ = nullptr;
+  size_t bws_floats_ = 0;
+  void suffix_layer_b(int s, int l, int n, int smax, int kmax, cudaStream_t st);
   void do_tap(const std::string& name, const void* p, int dt, std::vector<int64_t> shape, cudaStream_t st);
   bool precompute_modulation(const WeightFile& wf, std::string* err);
 };

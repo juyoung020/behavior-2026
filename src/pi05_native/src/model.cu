@@ -4,6 +4,7 @@
 #include <map>
 
 #include "gemm.cuh"
+#include "batch_kernels.cuh"
 #include "pb_kernels.cuh"
 
 namespace pi05 {
@@ -109,6 +110,8 @@ float host_bf2f(uint16_t b) {
 // ---------------------------------------------------------------------------------------------------
 Model::~Model() {
   if (graph_) cudaGraphExecDestroy(graph_);
+  if (graph_prefix_) cudaGraphExecDestroy(graph_prefix_);
+  if (batch_arena_) cudaFree(batch_arena_);
   if (arena_) cudaFree(arena_);
   if (act_arena_) cudaFree(act_arena_);
   if (embed_host) cudaFreeHost(embed_host);
@@ -670,6 +673,196 @@ void Model::forward(cudaStream_t st) {
 void Model::download_actions(float* out, cudaStream_t st) {
   PI05_CUDA(cudaMemcpyAsync(out, xt, (size_t)cfg.ah * cfg.ad * 4, cudaMemcpyDeviceToHost, st));
   PI05_CUDA(cudaStreamSynchronize(st));
+}
+
+// ---------------------------------------------------------------------------------------------------
+// batched inference: prefix per episode (its own graph, identical to the single-inference prefix), KV caches and
+// start noise stashed per episode, then all episodes' denoising steps in one batched suffix. Every suffix kernel
+// computes each episode's elements exactly as the single-inference kernels do (same GEMM tile K-order, the same
+// split-K partition per episode, same softmax / norm reductions), so each episode's actions are bit-identical to
+// pi05_infer / pi05_infer_pb with the same inputs, for any batch size.
+// ---------------------------------------------------------------------------------------------------
+namespace {
+// the single path's skinny-M (A = 32 rows) GEMM, per episode: same split factor rule and workspace cap as gemm()
+template <class Epi>
+void gemm_skinny_b(GemmParams p, const Epi& epi, int n, float* ws, size_t ws_cap_single, int* counters,
+                   cudaStream_t st) {
+  const int ctas = cdiv(p.N, 64);
+  const int ktiles = cdiv(p.K, GEMM_BK);
+  int splits = 1;
+  while (ctas * splits < 2 * g_sms && ktiles / (splits * 2) >= 4) splits *= 2;
+  if (splits > 1 && (size_t)splits * p.M * p.N > ws_cap_single) splits = 1;
+  p.splits = splits;
+  p.ws = ws;
+  p.counters = counters;
+  launch_tile<32, 64, 1, 4, 6, 32>(p, epi, n, st);
+}
+}  // namespace
+
+bool Model::alloc_batch(int cap, std::string* err) {
+  const size_t SC = cfg.s_cap(), HD = cfg.hd, A = cfg.ah, D = cfg.ae_w, H = cfg.heads;
+  const size_t kv = (size_t)cfg.depth * SC * HD;
+  // split-K workspace: per episode at most the single path's ws_floats
+  bws_floats_ = ws_floats * cap;
+  struct Buf { void** p; size_t bytes; };
+  std::vector<Buf> bufs = {
+      {(void**)&bkc_, kv * cap * 2}, {(void**)&bvt_, kv * cap * 2},
+      {(void**)&bxt_, A * cfg.ad * cap * 4}, {(void**)&bh_, A * D * cap * 2}, {(void**)&bhn_, A * D * cap * 2},
+      {(void**)&bsq_, A * H * HD * cap * 2}, {(void**)&bslg_, A * H * SC * cap * 4}, {(void**)&bspr_, A * H * SC * cap * 2},
+      {(void**)&bsatt_, A * H * HD * cap * 2}, {(void**)&bshid_, A * cfg.ae_mlp * cap * 2},
+      {(void**)&bv_, A * cfg.ad * cap * 2}, {(void**)&bws_, bws_floats_ * 4}, {(void**)&bcnt_, (size_t)cap * 4096 * 4},
+      {(void**)&bT_, (size_t)cap * 4}, {(void**)&bS_, (size_t)cap * 4}, {(void**)&bints_, (size_t)cap * 16},
+      {(void**)&bx0O_, (size_t)cap * 512 * 4}, {(void**)&bzO_, (size_t)cap * 512 * 4}, {(void**)&blog_, (size_t)cap * 16 * 2},
+  };
+  size_t tot = 0;
+  for (auto& b : bufs) tot += (b.bytes + 255) / 256 * 256;
+  if (cudaMalloc(&batch_arena_, tot) != cudaSuccess) { *err = "batch buffers: out of GPU memory"; return false; }
+  PI05_CUDA(cudaMemset(batch_arena_, 0, tot));  // K/V pad rows finite, split-K tickets zero
+  size_t o = 0;
+  for (auto& b : bufs) {
+    *b.p = batch_arena_ + o;
+    o += (b.bytes + 255) / 256 * 256;
+  }
+  batch_cap = cap;
+  batch_bytes = tot;
+  return true;
+}
+
+bool Model::capture_prefix_graph(cudaStream_t st, std::string* err) {
+  Tap saved = tap;
+  tap = nullptr;
+  cudaGraph_t g;
+  if (cudaStreamBeginCapture(st, cudaStreamCaptureModeThreadLocal) != cudaSuccess) { *err = "begin capture"; return false; }
+  siglip(st);
+  text_embed(st);
+  for (int l = 0; l < cfg.depth; ++l) prefix_layer(l, st);
+  prefix_tail(st);
+  if (cudaStreamEndCapture(st, &g) != cudaSuccess) { *err = "end capture"; return false; }
+  if (cudaGraphInstantiate(&graph_prefix_, g, 0) != cudaSuccess) { *err = "instantiate"; return false; }
+  cudaGraphDestroy(g);
+  tap = saved;
+  return true;
+}
+
+void Model::forward_prefix(cudaStream_t st) {
+  if (graph_prefix_ && !tap) {
+    PI05_CUDA(cudaGraphLaunch(graph_prefix_, st));
+    return;
+  }
+  siglip(st);
+  text_embed(st);
+  for (int l = 0; l < cfg.depth; ++l) prefix_layer(l, st);
+  prefix_tail(st);
+}
+
+void Model::stash_episode(int e, cudaStream_t st) {
+  const size_t kv = (size_t)cfg.depth * cfg.s_cap() * cfg.hd;
+  const bf16* k = cfg.pb ? kc2 : kc;  // PiBehavior: layer-mixed cache
+  const bf16* v = cfg.pb ? vt2 : vt;
+  PI05_CUDA(cudaMemcpyAsync(bkc_ + e * kv, k, kv * 2, cudaMemcpyDeviceToDevice, st));
+  PI05_CUDA(cudaMemcpyAsync(bvt_ + e * kv, v, kv * 2, cudaMemcpyDeviceToDevice, st));
+  PI05_CUDA(cudaMemcpyAsync(bxt_ + (size_t)e * cfg.ah * cfg.ad, xt, (size_t)cfg.ah * cfg.ad * 4,
+                            cudaMemcpyDeviceToDevice, st));
+  if (cfg.pb) {
+    PI05_CUDA(cudaMemcpyAsync(bints_ + e * 4, pb_ints, 16, cudaMemcpyDeviceToDevice, st));
+    PI05_CUDA(cudaMemcpyAsync(bx0O_ + (size_t)e * 512, pb_x0O, 512 * 4, cudaMemcpyDeviceToDevice, st));
+    PI05_CUDA(cudaMemcpyAsync(bzO_ + (size_t)e * 512, pb_zO, 512 * 4, cudaMemcpyDeviceToDevice, st));
+    PI05_CUDA(cudaMemcpyAsync(blog_ + (size_t)e * 16, pb_logits, 16 * 2, cudaMemcpyDeviceToDevice, st));
+  }
+}
+
+void Model::suffix_layer_b(int s, int l, int n, int smax, int kmax, cudaStream_t st) {
+  const AeLayer& w = al_[l];
+  const int A = cfg.ah, D = cfg.ae_w, H = cfg.heads, HD = cfg.hd, SC = cfg.s_cap();
+  const long long kvs = (long long)cfg.depth * SC * HD;
+  bf16* m1 = mod(s, l, 0);
+  bf16* m2 = mod(s, l, 1);
+  launch_adarms(bh_, m1, bhn_, n * A, D, st);
+  {
+    GemmParams g = gw(bhn_, D, w.qkv_w, D, A, (H + 2) * HD, D);
+    g.sA1 = (long long)A * D;
+    g.sC1 = 1;  // epilogue offset = episode index
+    gemm_skinny_b(g,
+                  EpiQKVRopeB{bsq_, (long long)A * H * HD, bkc_ + (size_t)l * SC * HD, bvt_ + (size_t)l * HD * SC, kvs,
+                              rope, bT_, H, SC},
+                  n, bws_, ws_floats, bcnt_, st);
+  }
+  {  // logits [(t,h)][keys] f32 per episode; columns beyond the episode's keys are masked by the softmax
+    GemmParams g = gp(bsq_, HD, bkc_ + (size_t)l * SC * HD, HD, A * H, smax, HD);
+    g.sA1 = (long long)A * H * HD;
+    g.sB1 = kvs;
+    g.sC1 = (long long)A * H * SC;
+    gemm(g, EpiF32{bslg_, SC}, st, nullptr, 0, n);
+  }
+  launch_softmax_f32_rows_b(bslg_, SC, (long long)A * H * SC, bspr_, SC, (long long)A * H * SC, A * H, n, bS_, kmax,
+                            st);
+  {
+    GemmParams g = gp(bspr_, SC, bvt_ + (size_t)l * HD * SC, SC, A * H, HD, kmax);
+    g.sA1 = (long long)A * H * SC;
+    g.sB1 = kvs;
+    g.sC1 = (long long)A * H * HD;
+    gemm(g, EpiBf16{bsatt_, HD}, st, nullptr, 0, n);
+  }
+  {
+    GemmParams g = gw(bsatt_, H * HD, w.o_w, H * HD, A, D, H * HD);
+    g.sA1 = (long long)A * H * HD;
+    g.sC1 = (long long)A * D;
+    gemm_skinny_b(g, EpiGatedResid{bh_, D, bh_, m1 + 2 * D}, n, bws_, ws_floats, bcnt_, st);
+  }
+  launch_adarms(bh_, m2, bhn_, n * A, D, st);
+  {
+    GemmParams g = gw(bhn_, D, w.gu_w, D, A, 2 * cfg.ae_mlp, D);
+    g.sA1 = (long long)A * D;
+    g.sC1 = (long long)A * cfg.ae_mlp;
+    gemm_skinny_b(g, EpiGeluGate{bshid_, cfg.ae_mlp}, n, bws_, ws_floats, bcnt_, st);
+  }
+  {
+    GemmParams g = gw(bshid_, cfg.ae_mlp, w.down_w, cfg.ae_mlp, A, D, cfg.ae_mlp);
+    g.sA1 = (long long)A * cfg.ae_mlp;
+    g.sC1 = (long long)A * D;
+    gemm_skinny_b(g, EpiGatedResid{bh_, D, bh_, m2 + 2 * D}, n, bws_, ws_floats, bcnt_, st);
+  }
+}
+
+void Model::batch_suffix(int n, const int* T_host, cudaStream_t st) {
+  const int A = cfg.ah, D = cfg.ae_w;
+  std::vector<int> S(n);
+  int smax = 0, kmax = 0;
+  for (int e = 0; e < n; ++e) {
+    S[e] = T_host[e] + A;
+    smax = std::max(smax, S[e]);
+    kmax = std::max(kmax, (S[e] + 7) / 8 * 8);
+  }
+  PI05_CUDA(cudaMemcpyAsync(bT_, T_host, (size_t)n * 4, cudaMemcpyHostToDevice, st));
+  PI05_CUDA(cudaMemcpyAsync(bS_, S.data(), (size_t)n * 4, cudaMemcpyHostToDevice, st));
+  for (int s = 0; s < cfg.steps; ++s) {
+    launch_action_in(bxt_, ain_w_, ain_b_, bh_, n * A, cfg.ad, D, st);
+    for (int l = 0; l < cfg.depth; ++l) suffix_layer_b(s, l, n, smax, kmax, st);
+    launch_adarms(bh_, final_mod(s), bhn_, n * A, D, st);
+    {
+      GemmParams g = gw(bhn_, D, aout_w_, D, A, cfg.ad, D);
+      g.sA1 = (long long)A * D;
+      g.sC1 = (long long)A * cfg.ad;
+      gemm_skinny_b(g, EpiBias{bv_, cfg.ad, aout_b_}, n, bws_, ws_floats, bcnt_, st);
+    }
+    launch_flow_update(bxt_, bv_, n * A * cfg.ad, cfg.dtb, st);
+    if (cfg.pb && t_new[s] > inpaint_threshold)
+      launch_inpaint_b(bxt_, (long long)A * cfg.ad, bx0O_, bzO_, 512, pb_C, pb_nO, pb_nU, t_new[s], bints_, n, st);
+  }
+  PI05_CUDA(cudaStreamSynchronize(st));  // S (host) goes out of scope
+}
+
+void Model::download_batch_actions(int n, float* out, cudaStream_t st) {
+  PI05_CUDA(cudaMemcpyAsync(out, bxt_, (size_t)n * cfg.ah * cfg.ad * 4, cudaMemcpyDeviceToHost, st));
+  PI05_CUDA(cudaStreamSynchronize(st));
+}
+
+void Model::download_batch_stage_logits(int n, float* out, cudaStream_t st) {
+  std::vector<uint16_t> hb((size_t)n * 16);
+  PI05_CUDA(cudaMemcpyAsync(hb.data(), blog_, hb.size() * 2, cudaMemcpyDeviceToHost, st));
+  PI05_CUDA(cudaStreamSynchronize(st));
+  for (int e = 0; e < n; ++e)
+    for (int i = 0; i < 15; ++i) out[e * 15 + i] = host_bf2f(hb[(size_t)e * 16 + i]);
 }
 
 }  // namespace pi05
