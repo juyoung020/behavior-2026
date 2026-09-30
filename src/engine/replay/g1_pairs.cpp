@@ -11,6 +11,7 @@
 #include <cstring>
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <cstddef>
 #include <set>
@@ -46,9 +47,9 @@
 #undef private
 #undef protected
 
-#define private public  // resetManagerCachedState (API 자세 설정이 부르는 것) 를 밖에서 부르려고
 #include "core/contact/sc_pairs.h"
-#undef private
+#include "core/scene/pairs_log.h"
+#include "core/scene/scene_file.h"
 #include "omni_filter.h"
 #include "g1_hooks.h"
 
@@ -258,50 +259,15 @@ void W(_ZN5physx10PxsContext22fillManagerTouchEventsEPNS_27PxvContactManagerTouc
 
 namespace {
 
-// ---- 우리 섬 갈고리 (PhysX 가 한 호출과 맞춰 보고, 돌려줄 값은 PhysX 가 받은 값)
-struct Hooks : public ss::IslandHooks {
-  const Capture* cap = nullptr;
-  size_t preallocPos = 0, addCmPos = 0;
+namespace sc2 = eng::scene;
+
+// ---- 우리 섬 갈고리: 돌려줄 값은 기록(PhysX 가 받은 값), 호출은 모아 PhysX 호출과 비교
+struct Hooks : public sc2::PairsHooks {
   std::vector<IslandCall> mine[OP_COUNT];
-  ss::ScPairs* m = nullptr;
-  void reset(const Capture* c) {
-    cap = c;
+  void onCall(int op, uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e) override { mine[op].push_back(IslandCall{op, a, b, c, d, e}); }
+  void clearMine() {
     for (auto& v : mine) v.clear();
-    preallocPos = addCmPos = 0;
   }
-  uint64_t pairOf(int32_t it) const { return it < 0 ? 0 : packPair({m->inters[size_t(it)].elem0, m->inters[size_t(it)].elem1}); }
-  void rec(const IslandCall& c) { mine[c.op].push_back(c); }
-  uint32_t addContactManager(int32_t cm, uint64_t n0, uint64_t n1, int32_t it, int32_t t) override {
-    rec(IslandCall{OP_ADD_CM, cm < 0 ? 0xffffffffull : uint64_t(cm), n0, n1, pairOf(it), uint64_t(t)});
-    return addCmPos < cap->addCmEdges.size() ? cap->addCmEdges[addCmPos++] : 0xffffffffu;
-  }
-  void preallocateContactManagers(uint32_t n, uint32_t* h) override {
-    rec(IslandCall{OP_PREALLOC, n, 0, 0, 0, 0});
-    for (uint32_t i = 0; i < n; ++i) h[i] = preallocPos < cap->preallocHandles.size() ? cap->preallocHandles[preallocPos++] : 0xffffffffu;
-  }
-  bool addPreallocatedContactManager(uint32_t e, int32_t cm, uint64_t n0, uint64_t n1, int32_t it, int32_t) override {
-    rec(IslandCall{OP_ADD_PREALLOC, e, cm < 0 ? 0xffffffffull : uint64_t(cm), n0, n1, pairOf(it)});
-    return false;
-  }
-  void addDelayedDirtyEdges(uint32_t, const uint32_t*) override {}
-  void setEdgeConnected(uint32_t e, int32_t t) override { rec(IslandCall{OP_CONNECT, e, uint64_t(t), 0, 0, 0}); }
-  void setEdgeDisconnected(uint32_t e) override { rec(IslandCall{OP_DISCONNECT, e, 0, 0, 0, 0}); }
-  void removeConnection(uint32_t e) override { rec(IslandCall{OP_REMOVE, e, 0, 0, 0, 0}); }
-  void setEdgeRigidCM(uint32_t e, int32_t cm) override { rec(IslandCall{OP_SET_RIGID_CM, e, uint64_t(uint32_t(cm)), 0, 0, 0}); }
-  void clearEdgeRigidCM(uint32_t e) override { rec(IslandCall{OP_CLEAR_RIGID_CM, e, 0, 0, 0, 0}); }
-  void deactivateEdge(uint32_t e) override { rec(IslandCall{OP_DEACT_EDGE, e, 0, 0, 0, 0}); }
-  std::map<uint64_t, bool> nodeActive;
-  int forced = -1;
-  bool isSpeculativeNodeActive(uint64_t n) override {
-    if (forced >= 0) return forced != 0;
-    const auto it = nodeActive.find(n);
-    return it != nodeActive.end() && it->second;
-  }
-  bool isSpeculativeNodeActiveOrActivating(uint64_t n) override { return isSpeculativeNodeActive(n); }
-  int forcedDeact = -1;
-  bool isActorActive(int32_t a) override { return forcedDeact >= 0 ? forcedDeact == 0 : !m->actors[size_t(a)].isStatic(); }
-  void internalWakeUp(int32_t) override {}
-  void addToLostTouchList(int32_t, int32_t) override {}
 };
 
 // ---- 상태
@@ -309,7 +275,7 @@ struct PairsShadow {
   bool inited = false, on = false, started = false;
   PxScene* scene = nullptr;
   Sc::Scene* sc = nullptr;
-  ss::ScPairs M;
+  std::unique_ptr<ss::ScPairs> Mp{new ss::ScPairs};  // 파일 넘겨받기 때 새로 만들려고 포인터로
   Hooks hooks;
   std::map<const Sc::ActorSim*, int32_t> actorIndex;
   std::vector<const PxActor*> actorPx;          // 행위자 번호 -> PhysX 행위자 (pair-found 콜백에 넘김)
@@ -319,14 +285,25 @@ struct PairsShadow {
   std::map<int32_t, ss::FilterData> lastFD;             // 요소 -> 지난 거르기 자료
   std::map<int32_t, uint32_t> lastAttr;                 // 행위자 -> 지난 거르기 속성
   std::set<int32_t> liveElems;
+  // 이번 스텝 입력 (넘겨받기 기록과 같은 꼴)
+  sc2::PairsStep step;
+  std::vector<const Sc::Interaction*> stepAdded;  // 이번 스텝 새 조인트 상호작용 (EXT_ADD 순서)
+  // 넘겨받기 기록 (G1_DUMP_AT 앞까지) / 파일에서 다시 세우기 (G1_PAIRS_FROM)
+  long long logUntil = -1;
+  sc2::PairsLog log;
+  std::string from;
+  bool fromDone = false;
   // 통계
   uint64_t steps = 0, bad = 0, cmpList = 0, cmpEvents = 0, cmpCalls = 0, cmpActor = 0, cmpPool = 0;
-  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nAct = 0, nDeact = 0, nRefilter = 0, nKinToggle = 0, nJointAdd = 0, nJointRemove = 0, nShapeAdd = 0, nShapeRemove = 0, nApiReset = 0, nSleepChange = 0;
+  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nAct = 0, nDeact = 0, nRefilter = 0, nKinToggle = 0, nJointAdd = 0, nJointRemove = 0, nShapeAdd = 0,
+           nShapeRemove = 0, nApiReset = 0, nSleepChange = 0;
   long long firstBad = -1;
   std::string firstWhat;
   bool show = false;
   uint64_t curSim = 0;
 } PS;
+
+bool logging() { return PS.logUntil >= 0 && (long long)PS.curSim < PS.logUntil; }
 
 void fail(const char* what) {
   if (!PS.bad) {
@@ -365,21 +342,25 @@ uint32_t ourPairFound(uint64_t id, uint32_t a0, const ss::FilterData& f0, int32_
 int32_t actorOf(Sc::ActorSim* as) {
   auto it = PS.actorIndex.find(as);
   if (it != PS.actorIndex.end()) return it->second;
-  const int32_t idx = int32_t(PS.M.actors.size());
+  const int32_t idx = int32_t(PS.step.actors.size());
   PS.actorIndex[as] = idx;
-  PS.M.actors.push_back(ss::Actor());
+  PS.step.actors.push_back(sc2::PairsActorIn{});
   PS.actorPx.push_back(nullptr);
   return idx;
 }
+// 행위자 입력 값 (ss::Actor 칸과 같은 뜻)
 void refreshActor(Sc::ActorSim* as, const PxActor* px) {
   const int32_t ai = actorOf(as);
-  ss::Actor& A = PS.M.actors[size_t(ai)];
+  sc2::PairsActorIn& A = PS.step.actors[size_t(ai)];
   PS.actorPx[size_t(ai)] = px;
+  A = sc2::PairsActorIn{};
+  A.articulation = -1;
+  A.parentLinkId = ss::INVALID;
   A.type = int32_t(as->getActorType());
   A.filterAttr = as->getFilterAttributes();
   A.actorID = as->getActorID();
   A.nodeIndex = as->getNodeIndex().getInd();
-  A.hasConstraints = as->readInternalFlag(Sc::ActorSim::BF_HAS_CONSTRAINTS);
+  A.hasConstraints = as->readInternalFlag(Sc::ActorSim::BF_HAS_CONSTRAINTS) ? 1 : 0;
   A.dominanceGroup = as->getActorCore().getDominanceGroup();
   if (as->isDynamicRigid()) {
     Sc::BodySim* bs = static_cast<Sc::BodySim*>(as);
@@ -417,11 +398,15 @@ std::vector<PxRigidActor*> sceneActors(PxScene* scene) {
   return out;
 }
 
-// 모양·행위자 입력을 PhysX 에서. 바뀐 것(모양 새로·없어짐, 거르기 자료, 운동학)은 PhysX 가 한 순서대로 우리 층에 알린다
-void syncScene(bool first) {
+// 이번 스텝 앞 입력을 PhysX 에서 뜬다 (PS.step 의 앞 칸). 장면 변경은 PhysX 가 한 순서대로 연산 목록에.
+void captureScene(bool first) {
+  PS.step.shapes.resize(PS.Mp->shapes.size());
+  for (size_t i = 0; i < PS.Mp->shapes.size(); ++i) PS.step.shapes[i] = PS.Mp->shapes[i];  // 없어진 모양의 칸도 그대로 이어 간다
+  PS.step.ops.clear();
+  PS.step.joints.clear();
   std::set<int32_t> seen;
   std::vector<int32_t> refiltered;
-  std::vector<std::pair<int32_t, bool>> kinToggles;  // 행위자, 운동학으로
+  std::vector<std::pair<int32_t, bool>> kinToggles;
   for (PxRigidActor* a : sceneActors(PS.scene)) {
     const PxU32 n = a->getNbShapes();
     std::vector<PxShape*> sh(n);
@@ -432,13 +417,13 @@ void syncScene(bool first) {
       if (!sim) continue;
       const int32_t e = int32_t(sim->getElementID());
       seen.insert(e);
-      if (size_t(e) >= PS.M.shapes.size()) PS.M.shapes.resize(size_t(e) + 1);
-      ss::Shape& S = PS.M.shapes[size_t(e)];
+      if (size_t(e) >= PS.step.shapes.size()) PS.step.shapes.resize(size_t(e) + 1);
+      ss::Shape& S = PS.step.shapes[size_t(e)];
       Sc::ActorSim* as = &sim->getActor();
       const int32_t ai = actorOf(as);
       const uint32_t oldAttr = PS.lastAttr.count(ai) ? PS.lastAttr[ai] : 0xffffffffu;
       refreshActor(as, a);
-      const uint32_t newAttr = PS.M.actors[size_t(ai)].filterAttr;
+      const uint32_t newAttr = PS.step.actors[size_t(ai)].filterAttr;
       if (!first && oldAttr != 0xffffffffu && ((oldAttr ^ newAttr) & ss::FilterObj::eKINEMATIC))
         if (std::find_if(kinToggles.begin(), kinToggles.end(), [&](auto& k) { return k.first == ai; }) == kinToggles.end())
           kinToggles.push_back({ai, (newAttr & ss::FilterObj::eKINEMATIC) != 0});
@@ -466,8 +451,8 @@ void syncScene(bool first) {
     }
   }
   // 조인트 충돌 표 (Scene::findConstraintCore: 행위자 쌍의 첫 조인트)
-  PS.M.jointPairs.clear();
   {
+    std::set<uint64_t> keys;
     const PxU32 nc = PS.scene->getNbConstraints();
     std::vector<PxConstraint*> cs(nc);
     PS.scene->getConstraints(cs.data(), nc);
@@ -481,27 +466,25 @@ void syncScene(bool first) {
       if (!PS.actorIndex.count(s0) || !PS.actorIndex.count(s1)) continue;
       const int32_t a0 = PS.actorIndex[s0], a1 = PS.actorIndex[s1];
       const uint64_t k = (uint64_t(uint32_t(std::min(a0, a1))) << 32) | uint32_t(std::max(a0, a1));
-      if (PS.M.jointPairs.findPtr(k)) continue;
+      if (!keys.insert(k).second) continue;
       Sc::ConstraintCore* cc = PS.sc->findConstraintCore(s0, s1);
-      PS.M.jointPairs[k] = ss::JointPairInfo{cc ? cc->getFlags().isSet(PxConstraintFlag::eCOLLISION_ENABLED) : true};
+      PS.step.joints.push_back(sc2::PairsJoint{k, cc ? (cc->getFlags().isSet(PxConstraintFlag::eCOLLISION_ENABLED) ? 1u : 0u) : 1u, 0});
     }
   }
   if (first) {
     PS.liveElems = seen;
     return;
   }
-  // PhysX 순서: 거르기 자료·운동학 전환 -> 조인트 -> 모양·행위자 빼기 (test_sc_pairs 와 같음)
+  // PhysX 순서: 거르기 자료·운동학 전환 -> 조인트 -> 모양·행위자 빼기 (test_sc_pairs 와 같음) -> 사용자 자세 set 의 관리자 다시 등록
   for (int32_t e : refiltered) {
-    PS.M.setElementInteractionsDirty(e, ss::DirtyFlag::eFILTER_STATE, ss::IFlag::eFILTERABLE);
+    PS.step.ops.push_back(sc2::PairsPreOp{sc2::PPO_REFILTER, e, 0, 0});
     ++PS.nRefilter;
   }
   for (auto& k : kinToggles) {
-    PS.M.setActorsInteractionsDirty(k.first, ss::DirtyFlag::eBODY_KINEMATIC, -1,
-                                    k.second ? ss::IFlag::eFILTERABLE : uint8_t(ss::IFlag::eFILTERABLE | ss::IFlag::eCONSTRAINT));
+    PS.step.ops.push_back(sc2::PairsPreOp{sc2::PPO_KIN, k.first, k.second ? 1 : 0, 0});
     ++PS.nKinToggle;
     fail("운동학 전환 (모양 다시 넣기 번호 추적은 아직)");
   }
-  // 조인트·관절 상호작용 생기고 없어짐
   std::set<const Sc::Interaction*> nowExt;
   std::vector<const Sc::Interaction*> added;
   for (auto& kv : PS.actorIndex) {
@@ -515,42 +498,57 @@ void syncScene(bool first) {
   }
   for (auto it = PS.extIndex.begin(); it != PS.extIndex.end();) {
     if (!nowExt.count(it->first)) {
-      PS.M.removeExternalInteraction(it->second);
+      PS.step.ops.push_back(sc2::PairsPreOp{sc2::PPO_EXT_REMOVE, it->second, 0, 0});
       ++PS.nJointRemove;
       it = PS.extIndex.erase(it);
     } else
       ++it;
   }
+  PS.stepAdded.assign(added.begin(), added.end());
   for (const Sc::Interaction* it : added) {
-    const int32_t a0 = PS.actorIndex.count(&const_cast<Sc::Interaction*>(it)->getActorSim0()) ? PS.actorIndex[&const_cast<Sc::Interaction*>(it)->getActorSim0()] : -1;
-    const int32_t a1 = PS.actorIndex.count(&const_cast<Sc::Interaction*>(it)->getActorSim1()) ? PS.actorIndex[&const_cast<Sc::Interaction*>(it)->getActorSim1()] : -1;
-    PS.extIndex[it] = PS.M.addExternalInteraction(a0, a1, uint8_t(it->getType()));
+    Sc::ActorSim* s0 = &const_cast<Sc::Interaction*>(it)->getActorSim0();
+    Sc::ActorSim* s1 = &const_cast<Sc::Interaction*>(it)->getActorSim1();
+    const int32_t a0 = PS.actorIndex.count(s0) ? PS.actorIndex[s0] : -1;
+    const int32_t a1 = PS.actorIndex.count(s1) ? PS.actorIndex[s1] : -1;
+    PS.step.ops.push_back(sc2::PairsPreOp{sc2::PPO_EXT_ADD, a0, a1, int32_t(it->getType())});
     ++PS.nJointAdd;
   }
-  // 없어진 모양 (행위자 빼기)
   for (int32_t e : PS.liveElems)
     if (!seen.count(e)) {
-      PS.M.onVolumeRemoved(e, true);
+      PS.step.ops.push_back(sc2::PairsPreOp{sc2::PPO_SHAPE_REMOVE, e, 0, 0});
       ++PS.nShapeRemove;
     }
   PS.liveElems = seen;
+  for (auto& e : gApiResets) {
+    PS.step.ops.push_back(sc2::PairsPreOp{sc2::PPO_API_RESET, e.first, e.second, 0});
+    ++PS.nApiReset;
+  }
+}
+
+void setFilters(ss::ScPairs& M) {
+  M.filterShader = ourShader;
+  M.filterShaderData = PS.scene->getFilterShaderData();
+  M.filterPairFound = PS.sc->getFilterCallbackFast() ? ourPairFound : nullptr;
 }
 
 void start(PxScene* scene) {
   PS.started = true;
   PS.scene = scene;
   PS.sc = &static_cast<NpScene*>(scene)->getScScene();
-  PS.hooks.m = &PS.M;
-  PS.M.islands = &PS.hooks;
-  PS.M.filterShader = ourShader;
-  PS.M.filterShaderData = scene->getFilterShaderData();
-  PS.M.filterPairFound = PS.sc->getFilterCallbackFast() ? ourPairFound : nullptr;
-  PS.M.kineKineFilteringMode = int32_t(PS.sc->getKineKineFilteringMode());
-  PS.M.staticKineFilteringMode = int32_t(PS.sc->getStaticKineFilteringMode());
-  PxsContext* ctx = PS.sc->getLowLevelContext();
-  PS.M.cmPool.eltsPerSlab = ctx->mContactManagerPool.mEltsPerSlab;
-  syncScene(true);
+  PS.hooks.m = PS.Mp.get();
+  PS.Mp->islands = &PS.hooks;
+  setFilters(*PS.Mp);
+  captureScene(true);
+  sc2::PairsLog& L = PS.log;
+  L = sc2::PairsLog{};
+  L.eltsPerSlab = PS.sc->getLowLevelContext()->mContactManagerPool.mEltsPerSlab;
+  L.kineKine = int32_t(PS.sc->getKineKineFilteringMode());
+  L.staticKine = int32_t(PS.sc->getStaticKineFilteringMode());
+  L.actors0 = PS.step.actors;
+  L.shapes0 = PS.step.shapes;
+  L.joints0 = PS.step.joints;
   // 조인트·관절체 관절 상호작용: 행위자 목록에 섞인 순서 그대로 자리표로
+  std::map<const Sc::Interaction*, int32_t> rec;
   for (auto& kv : PS.actorIndex) {
     const Sc::ActorSim* as = kv.first;
     for (PxU32 i = 0; i < as->getActorInteractionCount(); ++i) {
@@ -559,15 +557,21 @@ void start(PxScene* scene) {
         fail("시작 때 이미 겹침 상호작용이 있음");
         continue;
       }
-      auto e = PS.extIndex.find(it);
-      if (e == PS.extIndex.end()) {
-        const int32_t a0 = PS.actorIndex.count(&const_cast<Sc::Interaction*>(it)->getActorSim0()) ? PS.actorIndex[&const_cast<Sc::Interaction*>(it)->getActorSim0()] : -1;
-        const int32_t a1 = PS.actorIndex.count(&const_cast<Sc::Interaction*>(it)->getActorSim1()) ? PS.actorIndex[&const_cast<Sc::Interaction*>(it)->getActorSim1()] : -1;
-        e = PS.extIndex.emplace(it, PS.M.newInteractionRecord(a0, a1, uint8_t(it->getType()))).first;
+      auto e = rec.find(it);
+      if (e == rec.end()) {
+        Sc::ActorSim* s0 = &const_cast<Sc::Interaction*>(it)->getActorSim0();
+        Sc::ActorSim* s1 = &const_cast<Sc::Interaction*>(it)->getActorSim1();
+        const int32_t a0 = PS.actorIndex.count(s0) ? PS.actorIndex[s0] : -1;
+        const int32_t a1 = PS.actorIndex.count(s1) ? PS.actorIndex[s1] : -1;
+        e = rec.emplace(it, int32_t(L.extRecords.size())).first;
+        L.extRecords.push_back(sc2::PairsPreOp{0, a0, a1, int32_t(it->getType())});
       }
-      PS.M.appendToActorList(kv.second, e->second);
+      L.appends.push_back({kv.second, e->second});
     }
   }
+  const std::vector<int32_t> ids = sc2::pairsStart(*PS.Mp, L);
+  for (auto& kv : rec) PS.extIndex[kv.first] = ids[size_t(kv.second)];
+  L.valid = true;
   G.clearStep();
   G.on = true;
 }
@@ -580,31 +584,66 @@ void g1_pairs_before(PxScene* scene, uint64_t sim) {
     PS.inited = true;
     PS.on = getenv("G1_PAIRS") != nullptr;
     PS.show = getenv("G1_PAIRS_SHOW") != nullptr;
+    if (const char* a = getenv("G1_DUMP_AT")) PS.logUntil = atoll(a);
+    if (const char* f = getenv("G1_PAIRS_FROM")) PS.from = f;
   }
   if (!PS.on) return;
   PS.curSim = sim;
-  if (!PS.started) start(scene);
-  else if (scene != PS.scene) return;
-  else {
-    syncScene(false);
-    // 사용자 API 가 부른 관리자 다시 등록 (자세 set -> ShapeSimBase::onVolumeOrTransformChange -> resetManagerCachedState), 부른 순서대로
-    for (auto& e : gApiResets) {
-      const int32_t it = PS.M.findInteraction(e.first, e.second);
-      if (it >= 0) PS.M.resetManagerCachedState(it);
-      ++PS.nApiReset;
+  if (!PS.started) {
+    start(scene);
+  } else if (scene != PS.scene) {
+    return;
+  } else {
+    // 파일 넘겨받기: 경계 simulate 에서 우리 층을 기록으로 처음부터 다시 세운다 (그 뒤로만 비교)
+    if (!PS.from.empty() && !PS.fromDone) {
+      static sc2::SceneFile ff;
+      static int state = 0;
+      if (state == 0) {
+        std::string err;
+        state = sc2::readScene(PS.from.c_str(), ff, &err) && ff.pairs.valid ? 1 : 2;
+        if (state == 2) fprintf(stderr, "[g1 pairs] 파일 쌍 관리층 기록 읽기 실패: %s\n", err.c_str());
+      }
+      if (state == 1 && sim == ff.h.sim) {
+        PS.fromDone = true;
+        PS.Mp.reset(new ss::ScPairs);
+        setFilters(*PS.Mp);
+        uint32_t actBad = 0;
+        sc2::PairsLog lg = ff.pairs;
+        if (getenv("G1_PAIRS_FROM_NEG") && lg.steps.size() > 1) {  // 음성 대조: 새 겹침이 가장 많은 스텝 뒤쪽 입력(겹침)을 비우면 달라져야 한다
+          size_t best = 0;
+          for (size_t k = 1; k < lg.steps.size(); ++k)
+            if (lg.steps[k].created.size() > lg.steps[best].created.size()) best = k;
+          lg.steps[best].created.clear();
+        }
+        sc2::pairsReplay(*PS.Mp, PS.hooks, lg, &actBad);
+        PS.hooks.m = PS.Mp.get();
+        PS.Mp->islands = &PS.hooks;
+        printf("G1 쌍 관리층 넘겨받기: simulate %llu 에서 파일 기록(스텝 %zu)으로 우리 층을 다시 세움 (활성화 재생 어긋남 %u) — 이 뒤로만 비교\n",
+               (unsigned long long)sim, ff.pairs.steps.size(), actBad);
+        PS.steps = PS.bad = PS.cmpList = PS.cmpEvents = PS.cmpCalls = PS.cmpActor = PS.cmpPool = 0;
+        PS.firstBad = -1;
+      }
     }
-    // 잠든 쌍의 onShapeChangeWhileSleeping 은 Scene::addToLostTouchList(깨우기 목록)만 건드린다 -> 쌍 관리층 상태 영향 없음 (섬·깨우기 쪽 몫). 세기만.
-    PS.nSleepChange += gSleepShapeChange;
+    captureScene(false);
+    std::vector<int32_t> extIds;
+    sc2::pairsPre(*PS.Mp, PS.hooks, PS.step, &extIds);
+    for (size_t k = 0; k < extIds.size() && k < PS.stepAdded.size(); ++k) PS.extIndex[PS.stepAdded[k]] = extIds[k];
+    PS.nSleepChange += gSleepShapeChange;  // 잠든 쌍의 onShapeChangeWhileSleeping: 깨우기 목록만 (쌍 관리층 영향 없음)
   }
   gApiResets.clear();
   gSleepShapeChange = 0;
   gInSimulate = true;
   // 새 겹침 때 쓸 노드 활성 상태 = simulate 직전 추측 섬
   const IG::IslandSim& is = PS.sc->getSimpleIslandManager()->getSpeculativeIslandSim();
+  PS.step.nodes.clear();
   PS.hooks.nodeActive.clear();
   for (auto& kv : PS.actorIndex) {
     const PxNodeIndex n = kv.first->getNodeIndex();
-    if (n.isValid()) PS.hooks.nodeActive[n.getInd()] = is.getNode(n).isActive();
+    if (n.isValid()) {
+      const bool act = is.getNode(n).isActive();
+      PS.step.nodes.push_back(sc2::PairsNode{n.getInd(), act ? 1u : 0u, 0});
+      PS.hooks.nodeActive[n.getInd()] = act;
+    }
   }
 }
 
@@ -614,88 +653,60 @@ void g1_pairs_after(PxScene* scene, uint64_t sim) {
   (void)sim;
   gInSimulate = false;
   ++PS.steps;
-  ss::ScPairs& M = PS.M;
+  ss::ScPairs& M = *PS.Mp;
   Hooks& hooks = PS.hooks;
   std::lock_guard<std::mutex> lk(gCapMu);
-  hooks.reset(&G);
+  hooks.clearMine();
+  // 뒤 입력 (PhysX 가 받은 것)
+  sc2::PairsStep& S = PS.step;
   std::sort(G.createdShapeChunks.begin(), G.createdShapeChunks.end(), [](const Capture::Chunk& a, const Capture::Chunk& b) { return a.base < b.base; });
-  std::vector<int32_t> created;
-  for (auto& c : G.createdShapeChunks) created.insert(created.end(), c.pairs.begin(), c.pairs.end());
-  PS.nCreated += created.size() / 2;
-  M.updateDirtyInteractions();
-  M.finishBroadPhase(G.createdTrigger.data(), uint32_t(G.createdTrigger.size() / 2), created.data(), uint32_t(created.size() / 2));
-  auto replayActs = [&](bool afterFill) {
-    for (const auto& a : G.acts) {
-      if (a.afterFill != afterFill) continue;
-      const int32_t it = M.findInteraction(a.e0, a.e1);
-      if (it < 0) { fail("활성화 재생: 상호작용 없음"); continue; }
-      bool r;
-      if (a.activate) {
-        hooks.forced = a.result ? 1 : 0;
-        r = M.activateInteraction(it);
-      } else {
-        hooks.forcedDeact = a.result ? 1 : 0;
-        r = M.deactivateInteraction(it);
+  S.created.clear();
+  for (auto& c : G.createdShapeChunks) S.created.insert(S.created.end(), c.pairs.begin(), c.pairs.end());
+  S.createdTrigger = G.createdTrigger;
+  S.removedPairs = G.removedPairs;
+  S.acts.clear();
+  for (const auto& a : G.acts) S.acts.push_back(sc2::PairsAct{uint8_t(a.activate), uint8_t(a.result), uint8_t(a.afterFill), 0, a.e0, a.e1});
+  S.npStatus = G.npStatus;
+  S.npPatches = G.npPatches;
+  S.preallocHandles = G.preallocHandles;
+  S.addCmEdges = G.addCmEdges;
+  PS.nCreated += S.created.size() / 2;
+  PS.nRemoved += S.removedPairs.size() / 2;
+  for (const auto& a : G.acts)
+    if (a.result) (a.activate ? PS.nAct : PS.nDeact)++;
+  auto check = [&](int stage) {
+    if (stage == 0) {
+      bool same = M.npMain.size() == G.npCms.size();
+      for (uint32_t i = 0; same && i < M.npMain.size(); ++i) {
+        const ss::ContactManager& c = M.cmsData[size_t(M.npMain.cms[i])];
+        ++PS.cmpList;
+        same = M.npMain.cms[i] == G.npCms[i] && uint32_t(c.shape0) == G.npShape0[i] && uint32_t(c.shape1) == G.npShape1[i] && c.wuFlags == G.npWuFlags[i] &&
+               fbits(c.restDistance) == G.npRest[i] && c.npIndex == G.npNpIndex[i] && (uint32_t(c.dominance0) | (uint32_t(c.dominance1) << 8)) == G.npDom[i];
+        if (!same && PS.show && !PS.bad)
+          printf("    칸 %u: PhysX cm %d (%u,%u) 플래그 %x np %x / 우리 cm %d (%d,%d) 플래그 %x np %x\n", i, G.npCms[i], G.npShape0[i], G.npShape1[i], G.npWuFlags[i],
+                 G.npNpIndex[i], M.npMain.cms[i], c.shape0, c.shape1, c.wuFlags, c.npIndex);
       }
-      hooks.forced = -1;
-      hooks.forcedDeact = -1;
-      if (r) (a.activate ? PS.nAct : PS.nDeact)++;
-      if (r != a.result) fail("활성화 결과");
+      if (!same) {
+        if (PS.show && !PS.bad) printf("    목록 길이 PhysX %zu / 우리 %u\n", G.npCms.size(), M.npMain.size());
+        fail("좁은 단계 목록");
+      }
+    } else {
+      auto cmpEv = [&](const ss::Vec<ss::TouchEvent>& ours, const std::vector<std::pair<int32_t, int32_t>>& px, const char* name) {
+        bool same = ours.size() == px.size();
+        for (size_t i = 0; same && i < ours.size(); ++i) {
+          ++PS.cmpEvents;
+          const ss::Interaction& I = M.inters[size_t(ours[i].inter)];
+          same = I.elem0 == px[i].first && I.elem1 == px[i].second;
+        }
+        if (!same) fail(name);
+      };
+      cmpEv(M.touchFound, G.touchFound, "닿음 시작 사건");
+      cmpEv(M.touchLost, G.touchLost, "닿음 끝 사건");
+      PS.nTouch += G.touchFound.size();
     }
   };
-  replayActs(false);
-  M.beginNarrowPhase();
-  M.mergeNarrowPhase();
-  {
-    bool same = M.npMain.size() == G.npCms.size();
-    for (uint32_t i = 0; same && i < M.npMain.size(); ++i) {
-      const ss::ContactManager& c = M.cmsData[size_t(M.npMain.cms[i])];
-      ++PS.cmpList;
-      same = M.npMain.cms[i] == G.npCms[i] && uint32_t(c.shape0) == G.npShape0[i] && uint32_t(c.shape1) == G.npShape1[i] && c.wuFlags == G.npWuFlags[i] &&
-             fbits(c.restDistance) == G.npRest[i] && c.npIndex == G.npNpIndex[i] && (uint32_t(c.dominance0) | (uint32_t(c.dominance1) << 8)) == G.npDom[i];
-      if (!same && PS.show && !PS.bad)
-        printf("    칸 %u: PhysX cm %d (%u,%u) 플래그 %x np %x / 우리 cm %d (%d,%d) 플래그 %x np %x\n", i, G.npCms[i], G.npShape0[i], G.npShape1[i], G.npWuFlags[i],
-               G.npNpIndex[i], M.npMain.cms[i], c.shape0, c.shape1, c.wuFlags, c.npIndex);
-    }
-    if (!same) {
-      if (PS.show && !PS.bad) printf("    목록 길이 PhysX %zu / 우리 %u\n", G.npCms.size(), M.npMain.size());
-      fail("좁은 단계 목록");
-    } else
-      for (uint32_t i = 0; i < M.npMain.size(); ++i) M.narrowPhaseResult(false, i, G.npStatus[i], G.npPatches[i]);
-  }
-  M.fillTouchEvents();
-  {
-    auto cmpEv = [&](const ss::Vec<ss::TouchEvent>& ours, const std::vector<std::pair<int32_t, int32_t>>& px, const char* name) {
-      bool same = ours.size() == px.size();
-      for (size_t i = 0; same && i < ours.size(); ++i) {
-        ++PS.cmpEvents;
-        const ss::Interaction& I = M.inters[size_t(ours[i].inter)];
-        same = I.elem0 == px[i].first && I.elem1 == px[i].second;
-      }
-      if (!same) fail(name);
-    };
-    cmpEv(M.touchFound, G.touchFound, "닿음 시작 사건");
-    cmpEv(M.touchLost, G.touchLost, "닿음 끝 사건");
-    PS.nTouch += G.touchFound.size();
-  }
-  M.processNewTouches();
-  M.setEdgesConnected();
-  std::vector<int32_t> lostS, lostT;
-  for (size_t i = 0; i < G.removedPairs.size(); i += 2) {
-    const bool trig = M.shapes[size_t(G.removedPairs[i])].trigger || M.shapes[size_t(G.removedPairs[i + 1])].trigger;
-    (trig ? lostT : lostS).push_back(G.removedPairs[i]);
-    (trig ? lostT : lostS).push_back(G.removedPairs[i + 1]);
-  }
-  PS.nRemoved += G.removedPairs.size() / 2;
-  M.processLostContacts(lostS.data(), uint32_t(lostS.size() / 2), lostT.data(), uint32_t(lostT.size() / 2));
-  M.processNarrowPhaseLostTouchEventsIslands();
-  M.processNarrowPhaseLostTouchEvents();
-  M.processLostContacts2();
-  M.lostTouchReports();
-  M.unregisterInteractions();
-  M.destroyManagers();
-  M.processLostContacts3();
-  replayActs(true);
+  if (sc2::pairsPost(M, hooks, S, check)) fail("활성화 재생");
+  if (logging()) PS.log.steps.push_back(S);
   // 섬 호출 (종류별 순서)
   for (int op = 0; op < OP_COUNT; ++op) {
     if (op == OP_DELAYED) continue;  // isDirty 는 섬 상태 (solver)
@@ -748,6 +759,14 @@ void g1_pairs_after(PxScene* scene, uint64_t sim) {
     if (!same) fail("스텝 끝 좁은 단계 목록");
   }
   G.clearStep();
+}
+
+// 장면 파일 뜨기(g1_dump.cpp)가 부른다: 지금까지(경계 앞) 모은 쌍 관리층 입력 기록
+const eng::scene::PairsLog* g1_pairs_log() {
+  if (!PS.on || !PS.log.valid) return nullptr;
+  PxSimulationFilterCallback* cb = PS.sc ? PS.sc->getFilterCallbackFast() : nullptr;
+  PS.log.reportAll = cb ? (static_cast<engine::OmniFilterCallback*>(cb)->report_all ? 1u : 0u) : 0u;
+  return &PS.log;
 }
 
 void g1_pairs_report() {

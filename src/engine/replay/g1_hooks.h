@@ -50,4 +50,6 @@ const eng::scene::BpLog* g1_bp_log();
 void g1_pairs_before(physx::PxScene* scene, uint64_t sim);
 void g1_pairs_after(physx::PxScene* scene, uint64_t sim);
 void g1_pairs_report();
+namespace eng { namespace scene { struct PairsLog; } }
+const eng::scene::PairsLog* g1_pairs_log();
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)

@@ -682,6 +682,10 @@ class ScPairs {
     return it;
   }
 
+  // ---- 사용자 API 가 부른 관리자 다시 등록 (자세 set -> ShapeSimBase::onVolumeOrTransformChange -> ShapeInteraction::resetManagerCachedState).
+  // 장면 적재(core/scene/pairs_log.h)·그림자 시험이 쓴다 (리드 09-30 추가, 안쪽 함수는 그대로).
+  SCHD void userResetManagerCachedState(int32_t it) { resetManagerCachedState(it); }
+
   // ---- 조회
   SCHD int32_t findInteraction(int32_t e0, int32_t e1) const {
     const int32_t* it = elementSimMap.findPtr(key(e0, e1));
