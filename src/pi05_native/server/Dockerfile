@@ -10,12 +10,12 @@
 #   weights/pb2025_ckpt{1,2,3,4}.pi05w           MODEL=pb2025 (2025 1st place, one checkpoint per task group)
 #   weights/task_checkpoint_mapping.json
 #   weights/pi05_radio.pi05w                     MODEL=radio
-# GPU architectures: Ampere (sm_80, sm_86 = RTX 3090 / A5000), Ada (sm_89), Hopper (sm_90), Blackwell (sm_120).
-# Turing (sm_75, TitanRTX) has no bf16 tensor cores: the engine does not run there.
+# GPU architectures: Turing (sm_75 = TitanRTX: fp16 tensor-core path), Ampere (sm_80, sm_86 = RTX 3090 / A5000),
+# Ada (sm_89), Hopper (sm_90), Blackwell (sm_120). The driver picks the matching code at run time.
 
 ARG CUDA_VERSION=12.8.1
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS build
-ARG ARCHS="-gencode arch=compute_80,code=sm_80 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 -gencode arch=compute_90,code=sm_90 -gencode arch=compute_120,code=sm_120"
+ARG ARCHS="-gencode arch=compute_75,code=sm_75 -gencode arch=compute_80,code=sm_80 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 -gencode arch=compute_90,code=sm_90 -gencode arch=compute_120,code=sm_120"
 COPY src/pi05_native /src/pi05_native
 RUN CUDA_HOME=/usr/local/cuda PI05_ARCH="${ARCHS}" bash /src/pi05_native/build_linux.sh /opt/pi05 \
     && strip /opt/pi05/pi05_server

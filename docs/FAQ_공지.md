@@ -144,3 +144,6 @@ A. 설치 문서 요구사항 원문: "Ubuntu 22.04+ / Windows 10+", "RAM: 32GB+
 6. 남이 공개한 2025 체크포인트에서 출발하는 것의 허용 여부·표기 방법
 7. 팀원 추가·변경 규정
 8. "Self-evaluation results URL" 에 final zip(JSON+래퍼+로봇 설정+README) 하나를 걸면 되는지
+9. 최종 재평가 Docker 가 실제로 어느 GPU 에 배정되는지, GPU 를 지정·제외할 수 있는지. 원문 예시 "RTX 3090, A5000, and TitanRTX" 중
+   TitanRTX 는 Turing(sm_75)이라 bf16 텐서코어가 없다. 우리 엔진은 sm_75 에서 fp16 텐서코어 대체 경로로 돈다
+   ([π05_네이티브엔진.md](π05_네이티브엔진.md) 14절).

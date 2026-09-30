@@ -2,7 +2,7 @@
 # One GPU-lock session: JAX GPU reference dumps (+bench), CPU teacher-forced floor dumps, native verify.
 # usage: session_verify.sh [steps...]  steps: gpu cpuplant verify gemm (default: all)
 T=/mnt/c/behavior-2026/src/pi05_native/tools
-B=~/pi05_native_build
+B=${PI05_NB:-~/pi05_native_build}
 R=/mnt/c/behavior-2026/data/pi05_native/ref
 W=/mnt/c/behavior-2026/data/pi05_native/pi05_radio.pi05w
 STEPS=${@:-gpu cpuplant verify gemm}

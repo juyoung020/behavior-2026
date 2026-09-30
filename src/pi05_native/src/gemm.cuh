@@ -32,23 +32,63 @@ struct GemmParams {
 __device__ __forceinline__ uint32_t smem_u32(const void* p) {
   return static_cast<uint32_t>(__cvta_generic_to_shared(p));
 }
-__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"(dst), "l"(src), "r"(src_bytes));
+// fp16 tensor-core path (Turing sm_75 has no bf16 mma and no cp.async; PI05_FP16_MMA forces it on any GPU for
+// accuracy checks): tiles are loaded with plain 16-byte loads, converted bf16 -> fp16 on the way into shared memory
+// (exact for |x| in [6.1e-5, 65504]; smaller values lose low bits as fp16 subnormals, larger ones saturate), and
+// multiplied with m16n8k8 f16 MMAs with fp32 accumulation.
+#if defined(PI05_FP16_MMA) || (defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 800)
+#define PI05_F16_GEMM 1
+#endif
+__device__ __forceinline__ uint32_t bf2_to_h2(uint32_t v) {
+  const float lo = __uint_as_float(v << 16), hi = __uint_as_float(v & 0xffff0000u);
+  const __half2 h = __floats2half2_rn(fminf(fmaxf(lo, -65504.f), 65504.f), fminf(fmaxf(hi, -65504.f), 65504.f));
+  return *reinterpret_cast<const uint32_t*>(&h);
 }
-__device__ __forceinline__ void cp_async_commit() { asm volatile("cp.async.commit_group;\n" ::); }
+__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
+#ifdef PI05_F16_GEMM
+  uint4 v = make_uint4(0, 0, 0, 0);
+  if (src_bytes) v = *reinterpret_cast<const uint4*>(src);
+  v.x = bf2_to_h2(v.x);
+  v.y = bf2_to_h2(v.y);
+  v.z = bf2_to_h2(v.z);
+  v.w = bf2_to_h2(v.w);
+  asm volatile("st.shared.v4.b32 [%0], {%1,%2,%3,%4};\n" ::"r"(dst), "r"(v.x), "r"(v.y), "r"(v.z), "r"(v.w));
+#else
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"(dst), "l"(src), "r"(src_bytes));
+#endif
+}
+__device__ __forceinline__ void cp_async_commit() {
+#ifndef PI05_F16_GEMM
+  asm volatile("cp.async.commit_group;\n" ::);
+#endif
+}
 template <int N>
-__device__ __forceinline__ void cp_async_wait() { asm volatile("cp.async.wait_group %0;\n" ::"n"(N)); }
+__device__ __forceinline__ void cp_async_wait() {
+#ifndef PI05_F16_GEMM
+  asm volatile("cp.async.wait_group %0;\n" ::"n"(N));
+#endif
+}
 __device__ __forceinline__ void ldmatrix_x4(uint32_t (&r)[4], uint32_t addr) {
   asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
                : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
                : "r"(addr));
 }
 __device__ __forceinline__ void mma_bf16(float (&d)[4], const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
+#ifdef PI05_F16_GEMM
+  // k16 as two k8 halves: (a0, a1, b0) then (a2, a3, b1)
+  asm volatile("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5}, {%6}, {%0,%1,%2,%3};\n"
+               : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+               : "r"(a[0]), "r"(a[1]), "r"(b0));
+  asm volatile("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5}, {%6}, {%0,%1,%2,%3};\n"
+               : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+               : "r"(a[2]), "r"(a[3]), "r"(b1));
+#else
   asm volatile(
       "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, "
       "{%0,%1,%2,%3};\n"
       : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
       : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
+#endif
 }
 
 constexpr int GEMM_BK = 32;  // K granularity every config supports (tails are zero-filled per 8 elements)

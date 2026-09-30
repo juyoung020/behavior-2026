@@ -92,5 +92,8 @@ docker run --gpus all -p 8000:8000 behavior-policy:pb2025
 python -m omnigibson.eval.evaluator ... --policy websocket --host <server> --port 8000   # official evaluator
 ```
 
-GPUs: Ampere or newer (sm_80 / 86 / 89 / 90 / 120 in the image). Turing (TitanRTX, sm_75) has no bf16 tensor cores
-and is not supported.
+GPUs: sm_75 (Turing, e.g. TitanRTX) and newer; the image carries sm_75 / 80 / 86 / 89 / 90 / 120 code and the driver
+picks the matching one. Turing has no bf16 tensor cores, so its GEMMs convert bf16 tiles to fp16 in shared memory
+and multiply on fp16 tensor cores with fp32 accumulation. This is exact except for values outside the fp16 range.
+Forced on an RTX 5070 Ti (`-DPI05_FP16_MMA`), its final actions stay inside the JAX CPU-vs-GPU difference for radio and
+the 1st place.

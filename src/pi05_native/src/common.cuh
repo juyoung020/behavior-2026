@@ -1,6 +1,7 @@
 // Shared CUDA helpers for the pi0.5 engine.
 #pragma once
 #include <cuda_bf16.h>
+#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include <cstdint>
@@ -72,7 +73,10 @@ __device__ __forceinline__ void pdl_entry() {
 inline bool pdl_enabled() {
   static const bool on = [] {
     const char* v = getenv("PI05_PDL");
-    return !(v && v[0] == '0');
+    int dev = 0, major = 0;
+    cudaGetDevice(&dev);
+    cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
+    return !(v && v[0] == '0') && major >= 9;  // programmatic dependent launch needs sm_90+
   }();
   return on;
 }
