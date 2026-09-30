@@ -83,7 +83,7 @@ void logOp(const eng::scene::BpOp& o) {
 void init() {
   if (BS.inited) return;
   BS.inited = true;
-  BS.on = getenv("G1_BP") != nullptr;
+  BS.on = getenv("G1_BP") != nullptr || getenv("G1_SC_EDIT") != nullptr || getenv("G1_SCENE") != nullptr;  // 편집·장면 그림자는 넓은 단계 호출을 받아야 함
   BS.show = getenv("G1_BP_SHOW") ? atoi(getenv("G1_BP_SHOW")) : 0;
   if (const char* a = getenv("G1_DUMP_AT")) BS.logUntil = atoll(a);
   if (const char* f = getenv("G1_BP_FROM")) BS.from = f;

@@ -29,6 +29,7 @@
 #include "g1_hooks.h"
 
 using namespace physx;
+void flushTemplates(physx::PxScene* scene, uint64_t sim);  // 새 행위자 틀 창 닫기 (아래)
 namespace ep = eng::px;
 
 void g1sc_update(const float* s2a, const unsigned char* flags, const float* a2w, const float* b2a, const eng::contact::ShapeGeom& g, float* pose, float* bounds);
@@ -356,6 +357,7 @@ struct EditShadow {
   std::vector<PxActor*> addedWin;
   std::vector<std::string> removedWin;
   uint64_t tmplFiles = 0;
+  bool tmplStopped = false;  // 장면 해체(정적 행위자 삭제)가 시작되면 더 쓰지 않음
 } ES;
 void edNote(const char* what) { ES.bySim[SS.sim][what]++; }
 
@@ -665,7 +667,16 @@ void W(_ZN5physx2Sc5Scene10removeBodyERNS0_8BodyCoreERNS_13PxInlineArrayIPKNS0_9
     Sc::Scene* self, Sc::BodyCore& body, PxInlineArray<const Sc::ShapeCore*, 64>& rs, bool wake) {
   int32_t h = -1;
   const void* key = body.getSim();
-  if (!ES.tmplDir.empty() && SS.inited && body.getSim()) {
+  if (!ES.tmplDir.empty() && !ES.tmplStopped && SS.inited && body.getSim() && !ES.addedWin.empty()) {
+    // 전이 규칙은 한 창에서 빼기를 모두 한 뒤 넣는다 -> 넣은 뒤의 빼기 = 기록 끝 장면 해체: 열린 창을 닫고 멈춤
+    flushTemplates(SS.scene, SS.sim + 1);
+    ES.tmplStopped = true;
+  }
+  if (!ES.tmplDir.empty() && !ES.tmplStopped && ES.removedWin.size() >= 32) {  // 넣기 없는 창의 대량 빼기 = 해체
+    ES.removedWin.clear();
+    ES.tmplStopped = true;
+  }
+  if (!ES.tmplDir.empty() && !ES.tmplStopped && SS.inited && body.getSim()) {
     const char* nm = body.getSim()->getPxActor()->getName();
     ES.removedWin.push_back(nm ? nm : "?");
   }
@@ -691,6 +702,10 @@ void W(_ZN5physx2Sc5Scene12removeStaticERNS0_10StaticCoreERNS_13PxInlineArrayIPK
     Sc::Scene* self, Sc::StaticCore& st, PxInlineArray<const Sc::ShapeCore*, 64>& rs, bool wake) {
   int32_t h = -1;
   const void* key = st.getSim();
+  if (!ES.tmplDir.empty() && !ES.tmplStopped && SS.scene) {  // 판 도중에는 정적을 지우지 않는다 -> 해체 시작: 열린 창을 닫고 멈춤
+    flushTemplates(SS.scene, SS.sim + 1);
+    ES.tmplStopped = true;
+  }
   if (ES.on && ES.inited && key) {
     auto it = ES.handle.find(key);
     if (it != ES.handle.end()) h = it->second;
@@ -825,22 +840,10 @@ void W(_ZN5physx2Sc12ShapeSimBase18reinsertBroadPhaseEv)(Sc::ShapeSimBase* self)
 }
 }
 
-void g1_sc_before(PxScene* scene, uint64_t sim) {
-  if (!SS.inited) {
-    SS.inited = true;
-    SS.on = getenv("G1_SC") != nullptr;
-    SS.show = getenv("G1_SC_SHOW") ? atoi(getenv("G1_SC_SHOW")) : 0;
-    ES.on = SS.on && getenv("G1_SC_EDIT") != nullptr;
-    if (const char* d = getenv("G1_SC_TEMPLATES")) ES.tmplDir = d;
-    if (getenv("G1_SC_TRACE")) SS.trace = atoll(getenv("G1_SC_TRACE"));
-    if (getenv("G1_SC_TRACE_SIM")) sscanf(getenv("G1_SC_TRACE_SIM"), "%lld:%lld", &SS.traceFrom, &SS.traceTo);
-  }
-  if (!SS.on) return;
-  SS.scene = scene;
-  SS.sim = sim;
-  SS.inSim = true;
-  traceElem("(simulate 시작)");
-  if (!ES.tmplDir.empty() && (!ES.addedWin.empty() || !ES.removedWin.empty())) {
+// 창 끝(다음 simulate 앞, 또는 기록 끝의 장면 해체 직전)에 틀 파일·목록 한 줄을 쓴다
+void flushTemplates(PxScene* scene, uint64_t sim) {
+  if (ES.tmplDir.empty() || ES.tmplStopped || (ES.addedWin.empty() && ES.removedWin.empty())) return;
+  {
     // 창 끝: 이름이 붙은 뒤라 여기서 쓴다. 목록 파일 한 줄 = simulate, 뺀 행위자들, 넣은 틀 파일과 행위자들
     std::string path;
     if (!ES.addedWin.empty()) {
@@ -859,6 +862,24 @@ void g1_sc_before(PxScene* scene, uint64_t sim) {
     ES.addedWin.clear();
     ES.removedWin.clear();
   }
+}
+
+void g1_sc_before(PxScene* scene, uint64_t sim) {
+  if (!SS.inited) {
+    SS.inited = true;
+    SS.on = getenv("G1_SC") != nullptr;
+    SS.show = getenv("G1_SC_SHOW") ? atoi(getenv("G1_SC_SHOW")) : 0;
+    ES.on = SS.on && getenv("G1_SC_EDIT") != nullptr;
+    if (const char* d = getenv("G1_SC_TEMPLATES")) ES.tmplDir = d;
+    if (getenv("G1_SC_TRACE")) SS.trace = atoll(getenv("G1_SC_TRACE"));
+    if (getenv("G1_SC_TRACE_SIM")) sscanf(getenv("G1_SC_TRACE_SIM"), "%lld:%lld", &SS.traceFrom, &SS.traceTo);
+  }
+  if (!SS.on) return;
+  SS.scene = scene;
+  SS.sim = sim;
+  SS.inSim = true;
+  traceElem("(simulate 시작)");
+  flushTemplates(scene, sim);
   if (getenv("G1_SC_IDS")) idsCheck();
   if (ES.on) {
     Sc::Scene& sc = static_cast<NpScene*>(scene)->getScScene();
