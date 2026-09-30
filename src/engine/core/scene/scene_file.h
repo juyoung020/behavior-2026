@@ -128,6 +128,9 @@ struct SceneFile {
   OmniFilterSpec omniFilter;
   // v8 뒤 선택 절 (머리 "SCSTATE1", 옛 파일엔 없음): Sc 입력 조각 상태 (sc_state_io.h) — PhysX 없이 env 를 세울 때
   ScState sc;
+  // 그 뒤 선택 절 (머리 "SVPRM001"): 풀이 매개변수 (Dy 문맥 값: 반발 문턱·마찰 기준 거리·묶음 크기 등, 머리에 없는 것)
+  bool hasSolverPrm = false;
+  sv::SolverParams solverPrm{};
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -197,6 +200,10 @@ inline bool writeScene(const char* path, SceneFile& s) {
          wr(f, s.omniFilter.filteredPairs) && fwrite(fl, 1, 4, f) == 4;
   }
   if (ok && s.sc.valid) ok = writeScState(f, s.sc);
+  if (ok && s.sc.valid && s.hasSolverPrm) {
+    const uint32_t sz = sizeof(sv::SolverParams);
+    ok = fwrite("SVPRM001", 1, 8, f) == 8 && fwrite(&sz, 4, 1, f) == 1 && fwrite(&s.solverPrm, sizeof(s.solverPrm), 1, f) == 1;
+  }
   ok = fclose(f) == 0 && ok;
   return ok;
 }
@@ -240,7 +247,12 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
     s.omniFilter.anyContactReport = fl[1];
     s.omniFilter.reportAll = fl[2];
   }
-  if (ok) readScState(f, s.sc);  // 선택 절 (없으면 s.sc.valid = false)
+  if (ok && readScState(f, s.sc)) {  // 선택 절 (없으면 s.sc.valid = false)
+    char m[8];
+    uint32_t sz = 0;
+    s.hasSolverPrm = fread(m, 1, 8, f) == 8 && !memcmp(m, "SVPRM001", 8) && fread(&sz, 4, 1, f) == 1 && sz == sizeof(sv::SolverParams) &&
+                     fread(&s.solverPrm, sizeof(s.solverPrm), 1, f) == 1;
+  }
   fclose(f);
   return ok ? true : fail("짧음");
 }

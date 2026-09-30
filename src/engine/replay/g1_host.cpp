@@ -347,6 +347,7 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
       void bp() { sc2::hostPairsBP(P, S); }
       void np() { sc2::hostPairsNP(P, S); }
       void solve(sc2::HostWake& p) { p = post; }
+      void afterIntegration(sc2::HostWake& p) { (void)p; }
       void lost() { sc2::hostPairsLost(P, S); }
       void lost3() { sc2::hostPairsLost3(P); }
       std::vector<sc2::PairsAct>* acts() { return &a; }

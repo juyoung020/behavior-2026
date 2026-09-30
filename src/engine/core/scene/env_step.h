@@ -25,7 +25,8 @@ struct EnvStep;
 // 풀이·관절체 자리
 struct EnvSolve {
   virtual ~EnvSolve() {}
-  virtual void solve(EnvStep& E, HostWake& post) = 0;
+  virtual void solve(EnvStep& E, HostWake& post) = 0;             // 풀이 (post: 강체 solverWc)
+  virtual void afterIntegration(EnvStep& E, HostWake& post) { (void)E; (void)post; }  // 적분 뒤 (post: 링크·관절체 wc)
 };
 
 // Sc 편집(sc_scene.h)이 넓은 단계·섬·쌍 관리층으로 퍼지는 길 — PhysX 가 편집 API 안에서 부르는 차례 그대로 (sc_scene.h 가 차례를 정함)
@@ -106,18 +107,31 @@ struct EnvPhases {
   void bp() {
     ScScene& sc = *E.sc;
     BpRuntime& bpr = *E.C->bp;
-    const uint32_t nb = uint32_t(bpr.bounds->size() > sc.bounds.size() ? bpr.bounds->size() : sc.bounds.size());
+    // 칸 수 = 요소 번호 최댓값 (모양·집합체가 같은 번호 표를 씀 — BoundsArray::size 는 용량이라 쓰면 안 됨)
+    const uint32_t nb = uint32_t(sc.elementIds.maxId() > sc.bounds.size() ? sc.elementIds.maxId() : sc.bounds.size());
     std::vector<px::PxBounds3> b(nb);
     for (uint32_t e = 0; e < nb; ++e) {
       const bool isShape = e < sc.shapes.size() && sc.shapes[e].alive;
       if (isShape) b[e] = sc.bounds[e];
       else if (e < bpr.bounds->size()) b[e] = bpr.bounds->begin()[e];
     }
+    // 접촉 거리·바뀜 비트도 넓은 단계 칸 전체 길이로 (집합체 칸 = AABB 관리자가 든 값, 비트 0)
+    std::vector<float> d(nb, 0.0f);
+    for (uint32_t e = 0; e < nb; ++e) {
+      const bool isShape = e < sc.shapes.size() && sc.shapes[e].alive;
+      if (isShape && e < sc.contactDist.size()) d[e] = sc.contactDist[e];
+      else if (e < bpr.dist->size()) d[e] = bpr.dist->begin()[e];
+    }
+    std::vector<uint32_t> w((nb + 31) / 32, 0u);
+    for (size_t k = 0; k < w.size() && k < sc.changed.size(); ++k) w[k] = sc.changed[k];
     bool changed = false;
-    for (uint32_t w : sc.changed) changed = changed || w != 0;
-    bpr.step(b.data(), nb, changed, sc.contactDist.data(), uint32_t(sc.contactDist.size()), sc.changed.data(), uint32_t(sc.changed.size()),
-             E.contactDistChanged);
+    for (uint32_t x : w) changed = changed || x != 0;
+    if (getenv("G1_ENV_TRACE"))
+      fprintf(stderr, "[env bp] 칸 %u (넓은 단계 %u, Sc %zu) 거리 %u 비트 낱말 %zu 바뀜 %d\n", nb, uint32_t(bpr.bounds->size()), sc.bounds.size(),
+              uint32_t(bpr.dist->size()), w.size(), int(changed));
+    bpr.step(b.data(), nb, changed, d.data(), nb, w.data(), uint32_t(w.size()), E.contactDistChanged);
     E.contactDistChanged = false;
+    std::fill(sc.changed.begin(), sc.changed.end(), 0u);  // AABB 관리자가 바뀜 표를 쓰고 비움 (다음 표시는 이번 적분 뒤)
     envGrabOverlaps(S);
     contact::contactPairs(S);
   }
@@ -132,6 +146,9 @@ struct EnvPhases {
   }
   void solve(HostWake& post) {
     if (E.solver) E.solver->solve(E, post);
+  }
+  void afterIntegration(HostWake& post) {
+    if (E.solver) E.solver->afterIntegration(E, post);
   }
   void lost() {
     ss::ScPairs& M = S.pairs;
@@ -157,7 +174,6 @@ inline void envStep(EnvStep& E) {
   contact::contactBroadPhaseEnd(S);
   E.C->bp->endStep();
   E.sc->endStep();
-  std::fill(E.sc->changed.begin(), E.sc->changed.end(), 0u);
   ++E.steps;
 }
 

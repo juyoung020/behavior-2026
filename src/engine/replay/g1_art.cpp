@@ -318,6 +318,31 @@ void g1_art_persist(const void* fa, const eng::art::Articulation& e, uint64_t si
   *p = e;
   AS.curSim = sim + 1;
 }
+// env 닫힌 고리(g1_env.cpp): 장면 관절체 차례(getArticulations = 장면 뜨기 차례)로 PhysX 관절체 -> 엔진 관절체 뜨기, 우리 것과 비교, 이번 창 옮긴 호출
+std::vector<const void*> g1_env_px_arts(PxScene* scene) {
+  const PxU32 n = scene->getNbArticulations();
+  std::vector<PxArticulationReducedCoordinate*> arts(n);
+  scene->getArticulations(arts.data(), n);
+  return std::vector<const void*>(arts.begin(), arts.end());
+}
+bool g1_env_art_snapshot(PxScene* scene, const void* pa, eng::art::Articulation& out) {
+  PxArticulationReducedCoordinate* a = static_cast<PxArticulationReducedCoordinate*>(const_cast<void*>(pa));
+  std::vector<PxArticulationLink*> links(a->getNbLinks());
+  a->getLinks(links.data(), a->getNbLinks());
+  const PxTolerancesScale& tol = scene->getPhysics().getTolerancesScale();
+  A::SceneScale sc;
+  sc.length = tol.length;
+  sc.speed = tol.speed;
+  return links.size() <= A::kMaxLinks && snapshotFromPx(a, out, sc, links);
+}
+bool g1_env_art_diff(const void* pa, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev) {
+  Twin t;
+  t.px = static_cast<PxArticulationReducedCoordinate*>(const_cast<void*>(pa));
+  t.links.resize(t.px->getNbLinks());
+  t.px->getLinks(t.links.data(), t.px->getNbLinks());
+  return diffTwin(t, e, firstJ, nFields, pxv, ev);
+}
+void g1_env_art_apply_ops(eng::art::Articulation& e, const std::vector<G1ArtOp>& ops) { applyOps(e, ops); }
 const char* g1_art_name(const void* fa) {
   auto it = AS.twins.find(fa);
   return it == AS.twins.end() || !it->second.px->getName() ? "?" : it->second.px->getName();

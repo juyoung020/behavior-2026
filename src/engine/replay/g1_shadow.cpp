@@ -241,6 +241,7 @@ void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_pairs_after(scene, sim);
   g1_scene_after(scene, sim);  // 우리 contact 한 스텝 (닫힌 고리 2단: solver 가 이 접촉 입력을 쓴다 -> 먼저)
   g1_host_after(scene, sim);  // 순서기: 쌍 관리층 입력·섬 기록·우리 넓은/좁은 단계 결과가 다 모인 뒤, 다른 그림자가 PhysX 를 건드리기 전
+  g1_env_after(scene, sim);  // env 닫힌 고리: 장면 파일 env 가 스스로 한 스텝, PhysX 스텝 끝과 비교
   g1_islands_after(scene, sim);  // 우리 섬 스텝 끝 상태 (3단: solver 가 잠들 노드를 여기서 읽는다 -> 먼저)
   g1_solver_after(scene, sim);
   g1_art_after(scene, sim);
@@ -362,6 +363,7 @@ void g1_report() {
   g1_scene_report();
   g1_loop_report();
   g1_host_report();
+  g1_env_report();
   if (!G.on) return;
   printf("G1 contact 그림자: 관리자·simulate %" PRIu64 " (좁은 단계 돈 것 %" PRIu64 ", 건너뜀 %" PRIu64 ", 못 옮긴 모양 %" PRIu64 ", 넘침 %" PRIu64 ", 뒤에도 새 표시 %" PRIu64 ", 다시 등록 %" PRIu64 ")\n",
          G.nCM, G.nRun, G.nSkip, G.nUnsup, G.nOverflow, G.nNewAfter, G.nRefresh);

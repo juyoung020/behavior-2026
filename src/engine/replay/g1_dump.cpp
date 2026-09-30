@@ -414,6 +414,7 @@ void dumpScene(PxScene* scene, uint64_t sim) {
     for (uint32_t k = 0; k < F.shapeElems.size(); ++k)
       if (F.shapeElems[k] != sc::kNone && F.shapeElems[k] < e2s.size()) e2s[F.shapeElems[k]] = k;
     F.sc = sc::scSave(cap, e2s);
+    F.hasSolverPrm = g1_solver_params(scene, F.solverPrm);
   }
   if (!sc::writeScene(D.out.c_str(), F)) {
     fprintf(stderr, "[장면 뜨기] 쓰기 실패: %s\n", D.out.c_str());

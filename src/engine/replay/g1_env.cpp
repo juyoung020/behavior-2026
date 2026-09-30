@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/scene/env_load.h"
+#include "core/scene/env_solve.h"
 namespace physx { class PxActor; }
 #include "g1_hooks.h"
 
@@ -22,6 +23,8 @@ void g1_islands_compare_store(const sc2::IslandStore& O, uint64_t* n, uint64_t* 
 ss::ScPairs* g1_pairs_M();
 void g1_pairs_actor_active(std::vector<int8_t>& out);
 void g1_pairs_wake(sc2::HostWake& out);
+size_t g1_islands_rec_count();
+bool g1_islands_rec(size_t i, sc2::IslOp& o);
 
 namespace {
 struct EnvCheck {
@@ -30,6 +33,23 @@ struct EnvCheck {
   sc2::SceneFile f;
   std::unique_ptr<sc2::SceneShared> sh;
   std::unique_ptr<sc2::EnvOwned> env;
+  // ---- 닫힌 고리 (G1_ENV_RUN): 경계 뒤로 env 가 스스로 스텝을 돈다. 창 입력만 재생기에서 (옮긴 API = 관절체 드라이브·깨움, 그 밖은 건드림 = PhysX 로 다시 맞춤)
+  bool run = false, running = false, first = true;
+  sc2::EnvSolveImpl solver;
+  std::vector<const void*> pxArts;  // 파일 관절체 번호 차례
+  size_t cursor = 0, boundary = 0;
+  std::vector<G1BodyState> pre;     // 창 뒤 PhysX 몸체 상태 (건드린 것 다시 맞춤용)
+  std::vector<std::vector<G1ArtOp>> artOps;
+  std::vector<uint8_t> artTouched;
+  std::vector<std::unique_ptr<eng::art::Articulation>> artSnap;
+  sc2::HostWake preWake;
+  std::vector<int8_t> preActive;
+  uint64_t steps = 0, resyncBodies = 0, resyncArts = 0, artOpsN = 0, winExt = 0, winOurs = 0, winMismatch = 0, bpNot = 0;
+  // 대조
+  uint64_t cmpBody = 0, badBody = 0, cmpArt = 0, badArt = 0, cmpWake = 0, badWake = 0;
+  long long firstBad = -1;
+  std::string firstWhat;
+  int show = 5;
 } EC;
 
 struct Tally {
@@ -74,6 +94,7 @@ void compareSc(const sc2::ScScene& A, const sc2::ScScene& B, Tally& t) {
 
 }  // namespace
 
+void g1_env_capture_window(physx::PxScene* scene);
 void g1_env_before(physx::PxScene* scene, uint64_t sim) {
   if (!EC.inited) {
     EC.inited = true;
@@ -87,6 +108,11 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
         EC.sh = sc2::makeShared(EC.f);
       }
     }
+  }
+  if (EC.running && sim > EC.f.h.sim) {
+    EC.first = false;
+    g1_env_capture_window(scene);
+    return;
   }
   if (!EC.on || EC.done || sim != EC.f.h.sim) return;
   EC.done = true;
@@ -155,4 +181,216 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
   tSc.print();
   tWake.print();
   tAct.print();
+  // 닫힌 고리 준비
+  EC.run = getenv("G1_ENV_RUN") != nullptr;
+  if (EC.run) {
+    EC.solver.load(EC.f);
+    EC.solver.seedPairs(o.C.S->pairs);
+    o.E.solver = &EC.solver;
+    EC.pxArts = g1_env_px_arts(scene);
+    EC.running = true;
+    EC.first = true;
+    EC.cursor = EC.boundary = g1_islands_rec_count();
+    if (EC.pxArts.size() != EC.solver.arts.size()) printf("G1 env 닫힌 고리: 관절체 수가 다름 (PhysX %zu / 파일 %zu)\n", EC.pxArts.size(), EC.solver.arts.size());
+    // 경계 simulate 의 창 입력도 아래 before 몸통에서 뜬다
+  }
+  if (!EC.running) return;
+  EC.first = true;
+  g1_env_capture_window(scene);
+}
+
+// 창 뒤(simulate 앞) PhysX 에서 뜨는 것: 옮긴 관절체 호출, 건드린 몸체·관절체의 지금 상태, 깸 카운터·활성 (API 는 아직 바깥)
+void g1_env_capture_window(physx::PxScene* scene) {
+  EC.boundary = g1_islands_rec_count();
+  g1_pairs_body_states(EC.pre);
+  g1_pairs_wake(EC.preWake);
+  g1_pairs_actor_active(EC.preActive);
+  const size_t na = EC.pxArts.size();
+  EC.artOps.assign(na, {});
+  EC.artTouched.assign(na, 0);
+  EC.artSnap.clear();
+  EC.artSnap.resize(na);
+  for (size_t k = 0; k < na; ++k) {
+    g1_loop_take_art_ops(EC.pxArts[k], EC.artOps[k]);
+    bool sleepOp = false;
+    for (const G1ArtOp& op : EC.artOps[k]) sleepOp = sleepOp || op.type == 3;
+    if (g1_loop_touched(EC.pxArts[k]) || sleepOp || EC.first) {
+      EC.artTouched[k] = 1;
+      EC.artSnap[k].reset(new eng::art::Articulation);
+      if (!g1_env_art_snapshot(scene, EC.pxArts[k], *EC.artSnap[k])) EC.artSnap[k].reset();
+    }
+  }
+}
+
+namespace {
+void envBad(const char* what, uint64_t sim, uint64_t& counter) {
+  ++counter;
+  if (EC.firstBad < 0) {
+    EC.firstBad = (long long)sim;
+    EC.firstWhat = what;
+  }
+}
+eng::Tf tfOf(const float* v) { return eng::Tf{eng::Q{v[0], v[1], v[2], v[3]}, eng::V3{v[4], v[5], v[6]}}; }
+}  // namespace
+
+// fetchResults 뒤: 창 입력을 우리 env 에 넣고 한 스텝, PhysX 스텝 끝 공개 상태와 비교
+void g1_env_after(physx::PxScene*, uint64_t sim) {
+  if (!EC.running) return;
+  sc2::EnvOwned& o = *EC.env;
+  sc2::EnvStep& E = o.E;
+  ss::ScPairs& P = o.C.S->pairs;
+  eng::ig::IslandManager& M = o.isl.M;
+  sc2::LiveIslands& L = E.live;
+  const sc2::PairsStep* Sp = g1_pairs_step();
+  if (!Sp) return;
+  ++EC.steps;
+  // 1. 창: 쌍 관리층 앞 연산 (섬 호출은 모아 둠), 섬 바깥 호출은 기록 차례대로, 우리 쌍 호출은 기록의 쌍 호출 자리에
+  L.clearStep();
+  L.defer = true;
+  sc2::pairsPreOps(P, *Sp);
+  L.defer = false;
+  size_t gi = 0;
+  if (!EC.first) {
+    for (size_t i = EC.cursor; i < EC.boundary; ++i) {
+      sc2::IslOp r;
+      g1_islands_rec(i, r);
+      if (sc2::islExternalOp(r)) {
+        sc2::islApplyExternal(M, r);
+        ++EC.winExt;
+      } else if (sc2::islPairsOp(r)) {
+        if (gi < L.out.size()) {
+          if (!sc2::islSame(L.out[gi], r)) ++EC.winMismatch;
+          L.apply(gi++);
+          ++EC.winOurs;
+        } else {
+          ++EC.winMismatch;
+        }
+      }
+    }
+    for (; gi < L.out.size(); ++gi) {
+      L.apply(gi);
+      ++EC.winMismatch;
+    }
+  }  // 경계 simulate: 파일 섬 상태가 이미 창을 담았다 -> 우리 쌍 호출은 버림
+  L.clearStep();
+  EC.cursor = g1_islands_rec_count();
+  // 2. 깸 카운터·활성 = 창 뒤 PhysX (API 는 바깥)
+  E.wake = EC.preWake;
+  if (E.active.size() < P.actors.size()) E.active.resize(P.actors.size(), 0);
+  for (size_t k = 0; k < EC.preActive.size() && k < E.active.size(); ++k)
+    if (EC.preActive[k] >= 0) E.active[k] = uint8_t(EC.preActive[k]);
+  // 3. 몸체: 건드린 것은 창 뒤 PhysX 값으로 (자세·속도·깸) + Sc 칸
+  std::unordered_map<uint64_t, int32_t> scByNode;
+  for (size_t h = 0; h < o.sc.actors.size(); ++h)
+    if (o.sc.actors[h].alive && o.sc.actors[h].kind != 0) scByNode[o.sc.actors[h].node] = int32_t(h);
+  for (const G1BodyState& b : EC.pre) {
+    if (b.link || !(b.touched || EC.first)) continue;
+    const int32_t bi = EC.solver.bodyOf(uint32_t(b.node & 0xffffffffu));
+    if (bi < 0) continue;
+    eng::Body& x = EC.solver.bodies[size_t(bi)];
+    x.body2World = tfOf(b.b2w);
+    x.body2Actor = tfOf(b.b2a);
+    x.linVel = eng::V3{b.lin[0], b.lin[1], b.lin[2]};
+    x.angVel = eng::V3{b.ang[0], b.ang[1], b.ang[2]};
+    x.wakeCounter = b.wc;
+    ++EC.resyncBodies;
+    auto it = scByNode.find(b.node);
+    if (it != scByNode.end()) {
+      eng::px::PxTransform t;
+      memcpy(&t, b.b2w, 28);
+      eng::px::PxTransform a;
+      memcpy(&a, b.b2a, 28);
+      o.sc.updateActorCached(it->second, t, a, false);
+    }
+  }
+  // 4. 관절체: 옮긴 호출, 건드린 것은 창 뒤 PhysX 값 (+ 링크 Sc 칸)
+  for (size_t k = 0; k < EC.pxArts.size() && k < EC.solver.arts.size(); ++k) {
+    if (EC.artTouched[k] && EC.artSnap[k]) {
+      EC.solver.arts[k] = *EC.artSnap[k];
+      ++EC.resyncArts;
+      for (const G1BodyState& b : EC.pre) {
+        if (!b.link || EC.solver.artOf(uint32_t(b.node & 0xffffffffu)) != int32_t(k)) continue;
+        auto it = scByNode.find(b.node);
+        if (it == scByNode.end()) continue;
+        eng::px::PxTransform t, a;
+        memcpy(&t, b.b2w, 28);
+        memcpy(&a, b.b2a, 28);
+        o.sc.updateActorCached(it->second, t, a, false);
+      }
+    } else if (!EC.artOps[k].empty()) {
+      g1_env_art_apply_ops(EC.solver.arts[k], EC.artOps[k]);
+      EC.artOpsN += EC.artOps[k].size();
+    }
+  }
+  // 5. 한 스텝
+  if (getenv("G1_ENV_TRACE"))
+    fprintf(stderr, "[g1 env] sim %llu 앞: 활성 섬 %u, 몸체 %zu, 관리자 목록 %u, 상호작용 %u\n", (unsigned long long)sim, M.accurate.activeIslands.size,
+            EC.solver.bodies.size(), P.npMain.size(), P.inters.size());
+  sc2::envStep(E);
+  if (getenv("G1_ENV_TRACE"))
+    fprintf(stderr, "[g1 env] sim %llu 뒤: 판 섬 %zu 몸체 %zu 관리자 %zu 1D %zu 관절체 %zu\n", (unsigned long long)sim, EC.solver.islands.size(), EC.solver.ib.size(),
+            EC.solver.icm.size(), EC.solver.c1d.size(), EC.solver.ia.size());
+  // 6. PhysX 스텝 끝과 비교: 몸체·링크 자세·속도, 관절체 전체, 깸 카운터 표
+  std::vector<G1BodyState> now;
+  g1_pairs_body_states(now);
+  for (const G1BodyState& b : now) {
+    const uint32_t node = uint32_t(b.node & 0xffffffffu);
+    if (!b.link) {
+      const int32_t bi = EC.solver.bodyOf(node);
+      if (bi < 0) continue;
+      const eng::Body& x = EC.solver.bodies[size_t(bi)];
+      ++EC.cmpBody;
+      const bool same = !memcmp(&x.body2World, b.b2w, 28) && !memcmp(&x.linVel, b.lin, 12) && !memcmp(&x.angVel, b.ang, 12);
+      if (!same) {
+        envBad("몸체 자세·속도", sim, EC.badBody);
+        if (EC.show > 0) {
+          --EC.show;
+          fprintf(stderr, "[g1 env] sim %llu 몸체 노드 %u: 우리 p %.9g %.9g %.9g / PhysX %.9g %.9g %.9g\n", (unsigned long long)sim, node, x.body2World.p.x,
+                  x.body2World.p.y, x.body2World.p.z, b.b2w[4], b.b2w[5], b.b2w[6]);
+        }
+      }
+    }
+  }
+  for (size_t k = 0; k < EC.pxArts.size() && k < EC.solver.arts.size(); ++k) {
+    size_t fj = 0, nf = 0;
+    float pv = 0, ev = 0;
+    ++EC.cmpArt;
+    if (g1_env_art_diff(EC.pxArts[k], EC.solver.arts[k], &fj, &nf, &pv, &ev)) {
+      envBad("관절체", sim, EC.badArt);
+      if (EC.show > 0) {
+        --EC.show;
+        fprintf(stderr, "[g1 env] sim %llu 관절체 %zu 칸 %zu/%zu: PhysX %.9g 우리 %.9g\n", (unsigned long long)sim, k, fj, nf, pv, ev);
+      }
+    }
+  }
+  {
+    sc2::HostWake px;
+    g1_pairs_wake(px);
+    for (const sc2::HostBodyWake& w : E.wake.bodies) {
+      const sc2::HostBodyWake* q = px.body(w.node);
+      if (!q) continue;
+      ++EC.cmpWake;
+      if (q->wc != w.wc) {
+        envBad("깸 카운터 표", sim, EC.badWake);
+        if (EC.show > 0) {
+          --EC.show;
+          fprintf(stderr, "[g1 env] sim %llu 깸 카운터 노드 %llx (링크 %d): 우리 %.9g / PhysX %.9g\n", (unsigned long long)sim, (unsigned long long)w.node, int(w.link),
+                  w.wc, q->wc);
+        }
+      }
+    }
+  }
+  EC.first = false;
+}
+
+void g1_env_report() {
+  if (!EC.run) return;
+  printf("G1 env 닫힌 고리 (장면 파일에서 세운 env 가 스스로 %" PRIu64 " 스텝, 창 입력만 재생기) — 몸체 %" PRIu64 " 다름 %" PRIu64 ", 관절체 %" PRIu64 " 다름 %" PRIu64
+         ", 깸 카운터 %" PRIu64 " 다름 %" PRIu64 "%s\n",
+         EC.steps, EC.cmpBody, EC.badBody, EC.cmpArt, EC.badArt, EC.cmpWake, EC.badWake,
+         EC.firstBad >= 0 ? ("  첫 다름 simulate " + std::to_string(EC.firstBad) + " " + EC.firstWhat).c_str() : "");
+  printf("  창: 바깥 섬 호출 %" PRIu64 ", 우리 쌍 호출 %" PRIu64 " (어긋남 %" PRIu64 "), 옮긴 관절체 호출 %" PRIu64 ", 다시 맞춤 몸체 %" PRIu64 " 관절체 %" PRIu64
+         "; 풀이: 섬 안 운동학 %" PRIu64 ", 모르는 간선 %" PRIu64 ", 모르는 노드 %" PRIu64 ", 판 오류 %" PRIu64 "\n",
+         EC.winExt, EC.winOurs, EC.winMismatch, EC.artOpsN, EC.resyncBodies, EC.resyncArts, EC.solver.kinInIsland, EC.solver.unknownEdge, EC.solver.unknownNode,
+         EC.solver.engineErr);
 }

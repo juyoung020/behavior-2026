@@ -805,6 +805,31 @@ void g1_pairs_actor_active(std::vector<int8_t>& out) {
     }
   }
 }
+// env 닫힌 고리(g1_env.cpp): 동적 몸체(링크 포함) 공개 상태, 노드 원값 순. touched = 이번 창에 옮기지 않은 API 로 건드림
+void g1_pairs_body_states(std::vector<G1BodyState>& out) {
+  out.clear();
+  if (!PS.scene) return;
+  for (PxRigidActor* a : sceneActors(PS.scene)) {
+    Sc::BodyCore* bc = nullptr;
+    if (a->getConcreteType() == PxConcreteType::eRIGID_DYNAMIC) bc = &static_cast<NpRigidDynamic*>(a)->getCore();
+    else if (a->getConcreteType() == PxConcreteType::eARTICULATION_LINK) bc = &static_cast<NpArticulationLink*>(a)->getCore();
+    Sc::BodySim* bs = bc ? bc->getSim() : nullptr;
+    if (!bs || !bs->getNodeIndex().isValid()) continue;
+    G1BodyState s{};
+    s.node = bs->getNodeIndex().getInd();
+    const PxsBodyCore& c = bc->getCore();
+    memcpy(s.b2w, &c.body2World, 28);
+    memcpy(s.b2a, &c.getBody2Actor(), 28);
+    memcpy(s.lin, &c.linearVelocity, 12);
+    memcpy(s.ang, &c.angularVelocity, 12);
+    s.wc = c.wakeCounter;
+    s.touched = g1_loop_touched(a) ? 1 : 0;
+    s.link = bs->isArticulationLink() ? 1 : 0;
+    s.px = a;
+    out.push_back(s);
+  }
+  std::sort(out.begin(), out.end(), [](const G1BodyState& x, const G1BodyState& y) { return x.node < y.node; });
+}
 // 진단 (순서기 그림자): PhysX 의 잃은 닿음 쌍 목록 (행위자 번호, 쌍 행위자 번호, 지워짐 표시)
 void g1_pairs_lost_touch_px(std::vector<int64_t>& out) {
   out.clear();

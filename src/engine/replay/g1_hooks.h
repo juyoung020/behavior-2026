@@ -79,9 +79,13 @@ void g1_host_before(physx::PxScene* scene, uint64_t sim);
 void g1_host_after(physx::PxScene* scene, uint64_t sim);
 void g1_host_report();
 void g1_env_before(physx::PxScene* scene, uint64_t sim);  // g1_env.cpp: 장면 파일로 세운 env 상태 = PhysX 대조 (G1_ENV_FROM)
+void g1_env_after(physx::PxScene* scene, uint64_t sim);
+void g1_env_report();
 void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf& b2a, bool frozen);
 eng::scene::ScScene* g1_sc_scene();
 void g1_sc_capture(physx::PxScene* scene, eng::scene::ScScene& out);  // 지금 PhysX 장면 -> 우리 Sc 장면 (g1_sc.cpp)
+namespace eng { namespace sv { struct SolverParams; } }
+bool g1_solver_params(physx::PxScene* scene, eng::sv::SolverParams& prm);  // g1_solver.cpp: 풀이 매개변수 (장면 뜨기)
 const physx::PxActor* g1_sc_actor_px(int32_t h);
 const void* g1_art_link_sim(const void* fa, uint32_t creationIdx);  // g1_art.cpp: 관절체 링크 -> Sc::ActorSim*
 namespace eng { namespace sv { struct SolverCM; struct ContactPatchIn; struct ContactIn; } }
@@ -91,6 +95,14 @@ void g1_loop_before(physx::PxScene* scene, uint64_t sim);
 void g1_loop_after(physx::PxScene* scene, uint64_t sim);
 void g1_loop_report();
 // 닫힌 고리 (2b) 지속 모드 (G1_LOOP_PERSIST=1): 우리 상태를 스텝 사이에 들고 가고 창의 API 호출만 넣는다
+// env 닫힌 고리(g1_env.cpp): 동적 몸체 공개 상태 (g1_pairs.cpp)
+struct G1BodyState {
+  uint64_t node;
+  float b2w[7], b2a[7], lin[3], ang[3], wc;
+  uint8_t touched, link, pad[2];
+  const void* px;
+};
+void g1_pairs_body_states(std::vector<G1BodyState>& out);
 struct G1ArtOp {
   uint8_t type;  // 0 드라이브 목표, 1 드라이브 목표 속도, 2 wakeUp, 3 putToSleep
   uint8_t axis;
@@ -100,6 +112,11 @@ struct G1ArtOp {
 bool g1_loop_persist();                                        // 지속 모드인가
 bool g1_loop_touched(const void* obj);                          // 이번 창에 옮기지 않은 API 로 건드린 객체 (PxArticulationReducedCoordinate* / PxRigidActor*)
 void g1_loop_take_art_ops(const void* art, std::vector<G1ArtOp>& out);  // 이번 창에 옮긴 관절체 호출 (부른 순서)
+std::vector<const void*> g1_env_px_arts(physx::PxScene* scene);  // g1_art.cpp: 장면 관절체 (뜨기 차례)
+namespace eng { namespace art { struct Articulation; } }
+bool g1_env_art_snapshot(physx::PxScene* scene, const void* pxArt, eng::art::Articulation& out);
+bool g1_env_art_diff(const void* pxArt, const eng::art::Articulation& e, size_t* firstJ, size_t* nFields, float* pxv, float* ev);
+void g1_env_art_apply_ops(eng::art::Articulation& e, const std::vector<G1ArtOp>& ops);
 namespace eng { namespace art { struct Articulation; } }
 void g1_art_persist(const void* fa, const eng::art::Articulation& e, uint64_t sim);  // g1_art.cpp: 풀이 뒤 우리 관절체 상태를 다음 스텝으로
 // 다른 그림자가 내주는 것

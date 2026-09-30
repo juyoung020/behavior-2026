@@ -32,6 +32,21 @@ inline bool envLoad(EnvOwned& o, const SceneFile& f, const SceneShared& sh, std:
   if (!o.isl.load(f.islands)) return fail("섬 상태 적재 실패(용량)");
   const uint32_t miss = scLoad(o.sc, f.sc, [&](uint32_t k) -> const contact::ShapeGeom* { return k < sh.shapes.size() ? &sh.shapes[k].geom : nullptr; });
   if (miss) return fail("Sc 모양 기하를 틀에서 못 찾음");
+  // 섬 간선 -> 객체 번호: 파일은 접촉 관리자를 장면 파일 관리자 번호로 적는다 -> 우리 접촉 관리자 풀 번호로 (새 간선은 쌍 관리층이 풀 번호를 적음)
+  {
+    const ss::ScPairs& P0 = o.C.S->pairs;
+    std::vector<uint32_t> poolOf(f.cms.size(), ig::INVALID_EDGE);
+    for (size_t k = 0; k < f.cms.size(); ++k) {
+      const SceneCM& c = f.cms[k];
+      if (c.shape0 >= f.shapeElems.size() || c.shape1 >= f.shapeElems.size()) continue;
+      const int32_t it = P0.findInteraction(int32_t(f.shapeElems[c.shape0]), int32_t(f.shapeElems[c.shape1]));
+      if (it >= 0 && P0.inters[size_t(it)].cm >= 0) poolOf[k] = uint32_t(P0.inters[size_t(it)].cm);
+    }
+    for (size_t h = 0; h < f.islands.constraintOrCm.size(); ++h) {
+      const uint32_t v = o.isl.M.constraintOrCm[h];
+      if (v != ig::INVALID_EDGE && !(v & 0x80000000u) && v < poolOf.size()) o.isl.M.constraintOrCm[h] = poolOf[v];
+    }
+  }
   EnvStep& E = o.E;
   E.C = &o.C;
   E.isl = &o.isl;

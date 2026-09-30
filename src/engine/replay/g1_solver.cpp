@@ -685,6 +685,25 @@ PxCpuDispatcher* g1_dispatcher() {
 
 const G1StepInfo& g1_step_info() { return gInfo; }
 
+// 장면 뜨기(g1_dump.cpp): 풀이 매개변수 (takeSnapshot 과 같은 값)
+bool g1_solver_params(PxScene* scene, eng::sv::SolverParams& prm) {
+  Sc::Scene& sc = static_cast<NpScene*>(scene)->getScScene();
+  Dy::Context* dy = static_cast<Dy::Context*>(sc.getDynamicsContext());
+  if (!dy) return false;
+  prm = sv::SolverParams{};
+  prm.gravity = toV(dy->getGravity());
+  prm.dt = dy->getDt();
+  prm.enableStabilization = (scene->getFlags() & PxSceneFlag::eENABLE_STABILIZATION);
+  prm.bounceThreshold = dy->getBounceThreshold();
+  prm.frictionOffsetThreshold = dy->getFrictionOffsetThreshold();
+  prm.correlationDistance = dy->getCorrelationDistance();
+  prm.solverBatchSize = dy->getSolverBatchSize();
+  prm.solverArticBatchSize = dy->getSolverArticBatchSize();
+  prm.lengthScale = scene->getPhysics().getTolerancesScale().length;
+  prm.solveArticulationContactLast = (scene->getFlags() & PxSceneFlag::eSOLVE_ARTICULATION_CONTACT_LAST);
+  return true;
+}
+
 // ovd_replay 가 simulate 바로 앞에서 (g1_shadow.cpp 의 g1_before_simulate 를 거쳐)
 void g1_solver_before(PxScene* scene, uint64_t sim) {
   if (!GS.on) return;
