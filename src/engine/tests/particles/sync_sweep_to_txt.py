@@ -66,36 +66,59 @@ seen = {}
 for i, h, k, v in blocks:
     if k == "PxRigidStatic":
         seen.setdefault(h, []).append(i)
-# 벌 = 정적 행위자의 마지막 두 쓰기 (앞의 쓰기는 운동학 물체 되돌리기 등)
-multi = [L for L in seen.values() if len(L) >= 2]
-n_sweep = 2
-bounds = [min(L[-2] for L in multi), min(L[-1] for L in multi)]
+# 벌 나누기: 정적 자세 쓰기를 차례로 보며 같은 정적이 다시 나오면 새 묶음. 정적 수의 절반 넘게 든 묶음만 벌
+# (앞쪽 작은 묶음 = 운동학 물체 되돌리기의 XForm 쓰기 등)
+runs, cur_run, cur_set = [], [], set()
+for i, h, k, v in blocks:
+    if k != "PxRigidStatic":
+        continue
+    if h in cur_set:
+        runs.append(cur_run)
+        cur_run, cur_set = [], set()
+    cur_set.add(h)
+    cur_run.append(i)
+runs.append(cur_run)
+n_static = len(seen)
+big = [r for r in runs if len(r) > n_static // 2]
+n_sweep = len(big)
+bounds = [r[0] for r in big]
 bounds.append(stop)
+# 벌 안 차례는 실행마다 달라질 수 있어(omni.physx 안쪽 용기) 행위자별로 가른다: 창 앞부터 있던 행위자의 마지막 n_sweep 번 쓰기 = 벌 0..n-1,
+# 그 앞 쓰기 = 벌 입력. 창 안에서 새로 생긴 행위자(반쪽)는 뺀다. 차례는 벌 번호별 창 안 사건 번호 차례로 적는다(참고용).
+created_in = {h for i, c, h, a, v in blk if c == "create"}
+writes = {}
+for idx, (i, c, h, a, v) in enumerate(blk):
+    if a == "PxRigidActor.globalPose":
+        writes.setdefault(h, []).append(idx)
 rows = []
-for s in range(n_sweep):
-    lo, hi = bounds[s], bounds[s + 1]
-    # 벌 s 의 끝 = 다음 벌 시작 앞의 마지막 자세 쓰기
-    for idx, (i, c, h, a, v) in enumerate(blk):
-        if not (lo <= i < hi):
-            continue
-        if a == "PxRigidActor.globalPose":
-            k = "static" if cls.get(h) == "PxRigidStatic" else "dynamic"
-            rows.append(f"S {s} {names.get(h, '?' + h)} {k} " + v.strip("[]"))
-        elif a in ("PxRigidBody.linearVelocity",):
-            nxt = blk[idx + 1]
-            rows.append(f"V {s} {names.get(h, '?' + h)} " + v.strip("[]") + " " + nxt[4].strip("[]"))
-# 벌 앞 마지막 자세 (벌 입력)
-for i, c, h, a, v in blk:
-    if a == "PxRigidActor.globalPose" and i < bounds[0]:
-        load_pose[h] = v
-for h, v in load_pose.items():
-    rows.append(f"L {names.get(h, '?' + h)} " + v.strip("[]"))
+per_sweep = {}
+for h, L in writes.items():
+    if h in created_in or len(L) < n_sweep:
+        continue
+    k = "static" if cls.get(h) == "PxRigidStatic" else "dynamic"
+    for sw in range(n_sweep):
+        idx = L[len(L) - n_sweep + sw]
+        per_sweep.setdefault(sw, []).append((blk[idx][0], h, k, idx))
+    if len(L) > n_sweep:
+        rows.append(f"L {names.get(h, '?' + h)} " + blk[L[len(L) - n_sweep - 1]][4].strip("[]"))
+for sw, lst in sorted(per_sweep.items()):
+    for ev_i, h, k, idx in sorted(lst):
+        rows.append(f"S {sw} {names.get(h, '?' + h)} {k} " + blk[idx][4].strip("[]"))
+        if k == "dynamic" and idx + 2 < len(blk) and blk[idx + 1][3] == "PxRigidBody.linearVelocity":
+            rows.append(f"V {sw} {names.get(h, '?' + h)} " + blk[idx + 1][4].strip("[]") + " " + blk[idx + 2][4].strip("[]"))
 bp = os.path.join(rec, "harvest_base.json")
 base = json.load(open(bp)) if os.path.exists(bp) else {"windows": []}
 hm = json.load(open(os.path.join(rec, "harvest_map.json")))
 step = [e["step"] for e in hm if any(n["name"] == newname for n in e.get("new", []))][0]
 win = ([w for w in base["windows"] if w["step"] == step] + [{"objects": []}])[0]
 for o in win["objects"]:
+    for lp, ls in (o.get("link_scale") or {}).items():
+        if ls:
+            rows.append(" ".join(["K", lp] + [repr(float(x)) for x in ls]))  # 행위자 prim 세계 척도 (USD double 행 길이)
     rows.append(" ".join(["O", o["name"], o["root_link"]] + [repr(x) for x in o.get("scale", [1, 1, 1])] + [str(len(o["dynamic_links"]))] + o["dynamic_links"]))
 open(out, "w").write("\n".join(rows) + "\n")
-print("창", start, stop, "벌", n_sweep, "경계", bounds, "줄", len(rows))
+print("창", start, stop, "벌", n_sweep, "경계", bounds, "줄", len(rows), "정적 묶음 크기", [(r[0], len(r)) for r in runs], "정적 수", n_static)
+if len(sys.argv) > 4:  # 진단: 이 이름이 든 행위자의 창 안 자세 쓰기
+    for i, c, h, a, v in blk:
+        if a == "PxRigidActor.globalPose" and sys.argv[4] in names.get(h, ""):
+            print(i, names.get(h), v)

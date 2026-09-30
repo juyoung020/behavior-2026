@@ -49,6 +49,7 @@ struct Trans {
   std::vector<Half> halves;
   std::vector<ObjLine> objs;
   std::map<std::string, std::vector<float>> scale;  // 물체 이름 -> 척도 (C 줄)
+  std::map<std::string, std::vector<float>> actorScale;  // 행위자 prim -> 세계 척도 (K 줄, 있으면 우선)
   std::map<int, std::vector<std::pair<std::string, int>>> sweepOrder;  // 벌 -> (행위자 이름, 정적?) 공식 차례 (PARTICLES_SYNC_ORDER)
 };
 
@@ -187,6 +188,12 @@ struct Hook {
         for (float& x : h.h.native_bb) x = F(is);
         for (float& x : h.h.base_link_offset) x = F(is);
         T.back().halves.push_back(h);
+      } else if (k == "K") {
+        std::string n;
+        is >> n;
+        std::vector<float> v(3);
+        for (float& x : v) x = F(is);
+        T.back().actorScale[n] = v;
       } else if (k == "C") {
         std::string n;
         is >> n;
@@ -362,12 +369,19 @@ void SyncFromPlan::order(int sweep, std::vector<TransitionEditWindow::SyncActor>
       }
       a.h = it->second;
       scaleOf(objOfActor.count(actor) ? objOfActor[actor] : std::string(), a.scale);
+      auto as = t.actorScale.find(actor);
+      if (as != t.actorScale.end()) memcpy(a.scale, as->second.data(), 12);
     }
     out.push_back(a);
   };
   auto so = t.sweepOrder.find(sweep);
   if (so != t.sweepOrder.end()) {
     for (auto& e : so->second) push(e.first, e.second);
+    if (getenv("PARTICLES_HOOK_TRACE")) {
+      size_t st = 0, neg = 0;
+      for (auto& a : out) st += a.isStatic, neg += a.h < 0;
+      fprintf(stderr, "[particles 편집] 벌 %d: 행위자 %zu (정적 %zu, 몸체 손잡이 %zu), 공식 목록 %zu\n", sweep, out.size(), st, neg, so->second.size());
+    }
     return;
   }
   for (const ObjLine& o : t.objs)
@@ -420,15 +434,24 @@ int g1_env_edit_hook(uint64_t sim, eng::scene::EnvStep& E, eng::scene::EnvSolveI
         auto hh = hOfNode.find(nb->second);
         if (hh != hOfNode.end()) more += G.handleOf.emplace(G.f.name(a.name), hh->second).second;
       }
-      fprintf(stderr, "[particles 편집] 몸체 노드로 더 찾은 동적 행위자 %zu\n", more);
+      size_t shapeless = 0;  // 모양 없는 동적 행위자 (meta 링크 등): 리드 EnvBodyApi::bodyHandle (3aec382)
+      for (const scene::SceneActor& a : G.f.actors)
+        if (a.kind == scene::kDynamic) shapeless += G.handleOf.emplace(G.f.name(a.name), api.bodyHandle(a.body)).second;
+      fprintf(stderr, "[particles 편집] 몸체 노드로 더 찾은 동적 행위자 %zu, 몸체 손잡이로 %zu\n", more, shapeless);
       if (const char* dn = getenv("PARTICLES_NODE_NAMES")) {  // 진단: 섬 노드 번호 -> 이름
         std::map<int32_t, std::string> nameOfH;
         for (auto& kv : G.handleOf) nameOfH[kv.second] = kv.first;
         std::stringstream ss(dn);
         std::string t;
         while (std::getline(ss, t, ',')) {
-          auto it = hOfNode.find(uint64_t(atoll(t.c_str())));
-          fprintf(stderr, "[particles 편집] 노드 %s = %s\n", t.c_str(), it != hOfNode.end() && nameOfH.count(it->second) ? nameOfH[it->second].c_str() : "?");
+          const uint32_t id = uint32_t(atoll(t.c_str()));
+          auto it = hOfNode.find(id);
+          std::string byBody = "?";
+          if (id < S.bodyOfNode.size() && S.bodyOfNode[id] >= 0)
+            for (const scene::SceneActor& a : G.f.actors)
+              if (a.kind == scene::kDynamic && int32_t(a.body) == S.bodyOfNode[id]) byBody = G.f.name(a.name);
+          fprintf(stderr, "[particles 편집] 노드 %s = %s (몸체로 %s, 손잡이 %d)\n", t.c_str(), it != hOfNode.end() && nameOfH.count(it->second) ? nameOfH[it->second].c_str() : "?",
+                  byBody.c_str(), G.handleOf.count(byBody) ? G.handleOf[byBody] : -99999);
         }
       }
     }

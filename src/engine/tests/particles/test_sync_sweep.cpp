@@ -16,10 +16,22 @@ using namespace eng::particles;
 namespace gf = eng::omni::gf;
 
 // USD 왕복 (pxr RemoveScaleShear → ExtractRotationQuat → float) 후 PhysX getNormalized
-static Q sweepQuat(const float q[4], const float p[3], const float s[3]) {
+static int gVar = 0;  // 0: double 행렬, 1: float 행렬(Fabric float32 scaled_transform), 2: float 회전 × double 척도
+static Q sweepQuat(const float q[4], const float p[3], const double s[3]) {
   gf::M4 M = gf::from_physx_pose(p, q);
-  for (int r = 0; r < 3; ++r)
-    for (int c = 0; c < 3; ++c) M.m[r][c] *= (double)s[r];
+  if (gVar == 0) {
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) M.m[r][c] *= s[r];
+  } else {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float R[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (z * x - y * w), 2 * (x * y - z * w), 1 - 2 * (z * z + x * x),
+                        2 * (y * z + x * w), 2 * (z * x + y * w), 2 * (y * z - x * w), 1 - 2 * (y * y + x * x)};
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) M.m[r][c] = gVar == 1 ? (double)(R[3 * r + c] * (float)s[r]) : (double)R[3 * r + c] * s[r];
+    if (gVar == 3)
+      for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) M.m[r][c] = (double)(float)(gf::from_physx_pose(p, q).m[r][c] * s[r]);
+  }
   double o[4];
   gf::extract_rotation_quat(gf::remove_scale_shear(M), o);
   return normalized(Q{(float)o[0], (float)o[1], (float)o[2], (float)o[3]});
@@ -27,6 +39,7 @@ static Q sweepQuat(const float q[4], const float p[3], const float s[3]) {
 
 int main(int argc, char** argv) {
   if (argc < 2) return 2;
+  if (getenv("SWEEP_VAR")) gVar = atoi(getenv("SWEEP_VAR"));
   FILE* f = fopen(argv[1], "r");
   if (!f) return 1;
   struct Obj {
@@ -38,6 +51,8 @@ int main(int argc, char** argv) {
   std::map<std::string, std::vector<float>> input;                 // 벌 앞 자세 (q4 p3)
   std::map<int, std::vector<std::pair<std::string, std::vector<float>>>> sweeps;  // 벌 -> (행위자, q4p3)
   std::map<int, std::vector<std::pair<std::string, std::vector<float>>>> vels;
+  std::map<std::string, int> isStatic;
+  std::map<std::string, std::vector<double>> linkScale;  // 행위자 prim 세계 척도 (있으면 물체 척도 대신)
   char buf[1 << 16];
   while (fgets(buf, sizeof buf, f)) {
     std::istringstream is(buf);
@@ -68,6 +83,16 @@ int main(int argc, char** argv) {
         o.links.push_back(l);
       }
       objs.push_back(o);
+    } else if (k == "K") {
+      std::string n;
+      is >> n;
+      std::vector<double> d(3);
+      for (double& x : d) {
+        std::string t;
+        is >> t;
+        x = strtod(t.c_str(), nullptr);
+      }
+      linkScale[n] = d;
     } else if (k == "L") {
       std::string n;
       is >> n;
@@ -76,6 +101,7 @@ int main(int argc, char** argv) {
       int s;
       std::string n, kind;
       is >> s >> n >> kind;
+      isStatic[n] = kind == "static";
       sweeps[s].push_back({n, rd(7)});
     } else if (k == "V") {
       int s;
@@ -123,8 +149,13 @@ int main(int argc, char** argv) {
       auto ob = objOfActor.find(e.first);
       if (in != cur.end()) {
         const float one[3] = {1, 1, 1};
-        const float* sc = ob != objOfActor.end() ? ob->second->s : one;
-        const Q g = sweepQuat(in->second.data(), in->second.data() + 4, sc);
+        const float* scf = ob != objOfActor.end() ? ob->second->s : one;
+        double sc[3] = {scf[0], scf[1], scf[2]};
+        auto ls = linkScale.find(e.first);
+        if (ls != linkScale.end() && !getenv("SWEEP_OBJ_SCALE"))
+          for (int k = 0; k < 3; ++k) sc[k] = getenv("SWEEP_FLOAT_SCALE") ? (double)(float)ls->second[size_t(k)] : ls->second[size_t(k)];
+        // 정적은 값 그대로 (공식 212/212), 동적은 USD 왕복
+        const Q g = isStatic[e.first] ? Q{in->second[0], in->second[1], in->second[2], in->second[3]} : sweepQuat(in->second.data(), in->second.data() + 4, sc);
         const bool okq = memcmp(&g, e.second.data(), 16) == 0, okp = memcmp(in->second.data() + 4, e.second.data() + 4, 12) == 0;
         ++cmpPose;
         if (!(okq && okp)) {

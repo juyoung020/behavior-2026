@@ -203,13 +203,25 @@ def _install_base(cap):
     cur = {"win": None, "phase": None}
     out = os.path.join(cap.dump_dir, "harvest_base.json")
 
+    import omnigibson.lazy as lazy
+
+    def world_scale(path):
+        """USD 세계 행렬(double) 의 행 길이 = 동기화 벌 USD 왕복에 들어가는 척도 (double 그대로)"""
+        try:
+            prim = og.sim.stage.GetPrimAtPath(path)
+            M = lazy.pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(lazy.pxr.Usd.TimeCode.Default())
+            return [float((M[r][0] ** 2 + M[r][1] ** 2 + M[r][2] ** 2) ** 0.5) for r in range(3)]
+        except Exception:
+            return None
+
     def table():
         scene = og.sim.scenes[0]
         t = []
         for o in scene.objects:
             links = [l.prim_path for l in o.links.values() if isinstance(l, RigidDynamicPrim)]
+            ws = {p: world_scale(p) for p in set(links + [o.root_link.prim_path])}
             t.append(dict(name=o.name, articulated=bool(o.articulated), n_joints=int(o.n_joints), kinematic_only=bool(o.kinematic_only),
-                          root_link=o.root_link.prim_path, dynamic_links=links, scale=[float(x) for x in o.scale.tolist()]))
+                          root_link=o.root_link.prim_path, dynamic_links=links, scale=[float(x) for x in o.scale.tolist()], link_scale=ws))
         return t
 
     def log(*a):

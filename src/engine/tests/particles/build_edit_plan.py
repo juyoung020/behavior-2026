@@ -5,6 +5,7 @@
 #   H <틀 파일> <틀 안 행위자> <새 물체 이름> <부분> bb_pos3 bb_orn4 bb_size3 native_bb3 base_link_offset3
 #   O <이름> <종류 0 강체 1 관절체 2 운동학> <관절 수> <뿌리 링크 경로> <동적 링크 수> <링크...>   (그 창 dump 때 등록부 차례)
 #   C <이름> <척도 3>   (있으면 — 물체 척도)
+#   K <행위자 prim 경로> <세계 척도 3>   (있으면 — USD 세계 행렬 행 길이, 동기화 벌 척도)
 #   E
 # 다지기(입자)는 아직 (자르기만).
 import json
@@ -59,6 +60,9 @@ for ev in hm:
             lines.append(" ".join(["O", o["name"], str(kind), str(o["n_joints"]), o["root_link"], str(len(o["dynamic_links"]))] + o["dynamic_links"]))
             if "scale" in o:
                 lines.append(" ".join(["C", o["name"]] + [repr(float(x)) for x in o["scale"]]))  # 물체 척도 (동기화 벌 USD 왕복)
+            for lp, ls in (o.get("link_scale") or {}).items():
+                if ls:
+                    lines.append(" ".join(["K", lp] + [repr(float(x)) for x in ls]))  # 행위자 prim 세계 척도 (있으면 물체 척도 대신)
     lines.append("E")
 open(out, "w").write("\n".join(lines) + "\n")
 print("전이", sum(1 for l in lines if l.startswith("T ")))
