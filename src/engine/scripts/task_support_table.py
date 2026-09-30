@@ -6,6 +6,9 @@
 물체 여부, 초기(init)·목표에 쓰인 상태 술어를 core/omni 지원 여부와 대조한다.
 지원(09-30): inside ontop nextto under touching open toggled_on cooked frozen on_fire hot(온도 사슬) inroom(정적) attached(부분)
 물리 지원: 강체·관절체(PhysX 비계 재생·엔진 자유 실행). 입자(PBD)·천·연체는 재생기에서 빠짐("지원 안 한 것 physics list:PBDMaterials").
+09-30 정정(문서 20.2, particles 작업자): OG 는 softBody 를 강체로 불러온다 -> 천은 `cloth` 능력(과 rope)만 센다.
+자르개가 범위에 있어도 목표에 sliced/diced·future/real 이 없으면 막지 않는다(주의만). 입자 물질·술어가 초기(init)에만 있고
+목표에 없으면 막지 않는다(주의: 초기 입자 렌더). 막힘 판단은 목표 쪽만.
 """
 import argparse
 import csv
@@ -94,13 +97,19 @@ def main():
         cats = objects(section(tok, "objects"))
         g = preds(section(tok, "goal"))
         ini = preds(section(tok, "init"))
-        subst = sorted(c for c in cats if c in sets.get("substance", set()))
-        cloth = sorted(c for c in cats if c in sets.get("cloth", set()) or c in sets.get("softBody", set()) or c in sets.get("rope", set()))
+        goal_tok = section(tok, "goal")
+        in_goal = lambda c: any(x == c or x.startswith(c + "_") or x.startswith("?" + c) for x in goal_tok)
+        subst_all = sorted(c for c in cats if c in sets.get("substance", set()))
+        subst = [c for c in subst_all if in_goal(c)]
+        cloth = sorted(c for c in cats if c in sets.get("cloth", set()) or c in sets.get("rope", set()))
         attach = sorted(c for c in cats if c in sets.get("attachable", set()))
         heat = sorted(c for c in cats if c in sets.get("heatSource", set()) or c in sets.get("coldSource", set()))
         slic = sorted(c for c in cats if c in sets.get("slicer", set()))
-        need = []
-        unsup = sorted((g | ini) - SUPPORTED - PARTIAL - {"agent"})
+        need, note = [], []
+        unsup = sorted(g - SUPPORTED - PARTIAL - {"agent"})
+        unsup_init = sorted(ini - g - SUPPORTED - PARTIAL - {"agent"})
+        if unsup_init or (set(subst_all) - set(subst)):
+            note.append("초기만(" + ",".join(unsup_init + [c.split(".")[0] for c in subst_all if c not in subst]) + ", 렌더)")
         if subst:
             need.append("입자·유체(" + ",".join(s.split(".")[0] for s in subst) + ")")
         if cloth:
@@ -109,9 +118,13 @@ def main():
             need.append("술어(" + ",".join(unsup) + ")")
         if "attached" in g or attach:
             need.append("붙이기(부분 지원)")
-        if slic or ({"sliced", "diced"} & g):
+        if {"sliced", "diced"} & g:
             need.append("자르기 전이")
+        elif slic:
+            note.append("자르개(" + ",".join(c.split(".")[0] for c in slic) + ", 우연히 자를 때만)")
         status = "됨(radio 와 같은 부류)" if not need else ("부분" if need == ["붙이기(부분 지원)"] else "막힘")
+        if note and status.startswith("됨"):
+            status = "됨(주의: " + "; ".join(note) + ")"
         rows.append(dict(idx=t["task_index"], task=name, scene=scene_of.get(name, "?"), goal=" ".join(sorted(g)),
                          need="; ".join(need), heat="열원" if heat else "", status=status))
     # 출력

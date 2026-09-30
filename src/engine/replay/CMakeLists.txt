@@ -61,3 +61,25 @@ target_compile_definitions(engine_capi PRIVATE ${PX_DEFS})
 target_compile_options(engine_capi PRIVATE ${COMMON_FLAGS})
 set_target_properties(ovd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(engine_capi ovd ${PHYSX_LIBS})
+
+# G1a 그림자 시험 (문서 15절): ovd_replay + g1_shadow.cpp (PhysX 내부 헤더 + 우리 모듈), 실행 파일 ovd_replay_g1
+set(G1_PX_INC
+  ${PHYSX_ROOT}/source/physx/src ${PHYSX_ROOT}/source/physx/src/buffering ${PHYSX_ROOT}/source/physx/src/device
+  ${PHYSX_ROOT}/source/simulationcontroller/include ${PHYSX_ROOT}/source/simulationcontroller/src
+  ${PHYSX_ROOT}/source/lowlevel/common/include/collision ${PHYSX_ROOT}/source/lowlevel/common/include/pipeline
+  ${PHYSX_ROOT}/source/lowlevel/common/include/utils ${PHYSX_ROOT}/source/lowlevel/api/include ${PHYSX_ROOT}/source/lowlevel/software/include
+  ${PHYSX_ROOT}/source/lowleveldynamics/include ${PHYSX_ROOT}/source/lowlevelaabb/include ${PHYSX_ROOT}/source/scenequery/include
+  ${PHYSX_ROOT}/source/physxmetadata/core/include ${PHYSX_ROOT}/source/pvd/include ${PHYSX_ROOT}/source/physxgpu/include
+  ${PHYSX_ROOT}/source/omnipvd ${PHYSX_ROOT}/source/physxextensions/src ${PHYSX_ROOT}/source/filebuf/include
+  ${PHYSX_ROOT}/source/geomutils/include ${PHYSX_ROOT}/source/geomutils/src ${PHYSX_ROOT}/source/geomutils/src/pcm
+  ${PHYSX_ROOT}/source/geomutils/src/gjk ${PHYSX_ROOT}/source/geomutils/src/convex ${PHYSX_ROOT}/source/geomutils/src/contact
+  ${PHYSX_ROOT}/source/geomutils/src/common ${PHYSX_ROOT}/source/geomutils/src/mesh ${PHYSX_ROOT}/source/geomutils/src/intersection
+  ${PHYSX_ROOT}/source/geomutils/src/distance ${PHYSX_ROOT}/source/geomutils/src/hf
+  ${PHYSX_ROOT}/source/common/include ${PHYSX_ROOT}/source/common/src ${PHYSX_ROOT}/source/foundation/include)
+add_executable(ovd_replay_g1 ovd_replay.cpp g1_shadow.cpp px_gpu_stub.cpp)
+target_include_directories(ovd_replay_g1 PRIVATE ${PHYSX_ROOT}/include ${PHYSX_ROOT}/pvdruntime/include ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_source_files_properties(g1_shadow.cpp PROPERTIES INCLUDE_DIRECTORIES "${G1_PX_INC}"
+  COMPILE_DEFINITIONS "PX_PUBLIC_RELEASE=1;PX_NVTX=0" COMPILE_OPTIONS "-fno-strict-aliasing;-Wno-macro-redefined")
+target_compile_definitions(ovd_replay_g1 PRIVATE ${PX_DEFS})
+target_compile_options(ovd_replay_g1 PRIVATE ${COMMON_FLAGS})
+target_link_libraries(ovd_replay_g1 ovd ${PHYSX_LIBS})

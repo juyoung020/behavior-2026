@@ -35,6 +35,11 @@
 #include "ovd.h"
 #include "sidecar.h"
 #include "core/omni/controllers.h"
+// G1 그림자 시험 갈고리 (g1_shadow.cpp 가 채우면 ovd_replay_g1, 없으면 비어 있음)
+void g1_before_simulate(physx::PxScene*, physx::PxPhysics*, uint64_t) __attribute__((weak));
+void g1_after_simulate(physx::PxScene*, physx::PxPhysics*, uint64_t) __attribute__((weak));
+bool g1_simulate(physx::PxScene*, float, uint64_t) __attribute__((weak));  // 참을 돌려주면 simulate+fetchResults 를 대신 했다는 뜻 (collide/advance 로 나눠 좁은 단계 입력을 잡는다)
+void g1_report() __attribute__((weak));
 #include "core/omni/states.h"
 #include "core/omni/bddl.h"
 #include "core/omni/agframe.h"
@@ -2719,8 +2724,12 @@ class Replayer {
             if (!gravity_off.empty() && !gravity_applied) apply_gravity_off();
             if (int64_t(sims + side_offset + 1) == dump_art_at && !dump_art_name.empty()) dump_art();
             ctrl_before_simulate();
-            so.scene->simulate(dt);
-            so.scene->fetchResults(true);
+            if (g1_before_simulate) g1_before_simulate(so.scene, phys, sims + side_offset + 1);
+            if (!(g1_simulate && g1_simulate(so.scene, dt, sims + side_offset + 1))) {
+              so.scene->simulate(dt);
+              so.scene->fetchResults(true);
+            }
+            if (g1_after_simulate) g1_after_simulate(so.scene, phys, sims + side_offset + 1);
             last_scene = so.scene;
             last_dt = dt;
             sims++;
@@ -2775,8 +2784,12 @@ class Replayer {
     while (run_i >= F.events.size() && last_scene && int64_t(sims) < target) {
       apply_side_until(sims + side_offset);
       ctrl_before_simulate();
-      last_scene->simulate(last_dt);
-      last_scene->fetchResults(true);
+      if (g1_before_simulate) g1_before_simulate(last_scene, phys, sims + side_offset + 1);
+      if (!(g1_simulate && g1_simulate(last_scene, last_dt, sims + side_offset + 1))) {
+        last_scene->simulate(last_dt);
+        last_scene->fetchResults(true);
+      }
+      if (g1_after_simulate) g1_after_simulate(last_scene, phys, sims + side_offset + 1);
       sims++;
       s3_after_simulate();
     }
@@ -2900,6 +2913,7 @@ int main(int argc, char** argv) {
   R.run();
   if (!R.trace_sub.empty()) R.trace_flush();
   R.s3_report();
+  if (g1_report) g1_report();
   if (R.C.free_run) { printf("자유 실행(--free): 에피소드 동안 넣지 않은 OVD 입력\n"); for (auto& kv : R.C.free_skipped) printf("  %8" PRIu64 "  %s\n", kv.second, kv.first.c_str()); }
   if (R.C.on && R.C.dropped_flush) printf("닫힌 고리: 잡기 조인트 생성·해제로 목표를 안 쓴 서브스텝 %" PRIu64 "\n", R.C.dropped_flush);
   if (R.C.on) printf("닫힌 고리(--ctrl): 제어기 스텝 %" PRIu64 ", 건너뛴 OVD 드라이브 목표 %" PRIu64 ", 공식 목표와 비교 %" PRIu64 " 다름 %" PRIu64 " 첫 다름 %s\n", R.C.applied_steps, R.C.suppressed, R.C.cmp_n, R.C.cmp_bad, R.C.first_bad.empty() ? "없음" : R.C.first_bad.c_str());
