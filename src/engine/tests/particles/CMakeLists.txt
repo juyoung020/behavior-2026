@@ -1,0 +1,11 @@
+# particles 시험 (particles 작업자). 정답은 공식 OmniGibson/scipy 파이썬 (gen_*.py 가 ~/engine-data/particles/ 에 적음, docs 20.5)
+engine_test(test_visual test_visual.cpp)
+engine_test(test_slice test_slice.cpp)
+engine_test(test_rule test_rule.cpp)
+engine_test(test_delaunay test_delaunay.cpp)
+engine_test(test_covered_capture test_covered_capture.cpp)
+# 층 2 (CUDA). torch 는 비정규수를 유지하므로 FTZ 를 끈다 (omni 와 같음)
+add_executable(test_visual_gpu test_visual_gpu.cu)
+target_include_directories(test_visual_gpu PRIVATE ${CMAKE_SOURCE_DIR}/..)
+target_compile_options(test_visual_gpu PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr -Xcompiler=-ffp-contract=off>)
