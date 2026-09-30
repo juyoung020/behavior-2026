@@ -350,7 +350,8 @@ struct Hooks : public ss::IslandHooks {
     return it != nodeActive.end() && it->second;
   }
   bool isSpeculativeNodeActiveOrActivating(uint64_t n) override { return isSpeculativeNodeActive(n); }
-  bool isActorActive(int32_t a) override { return !m->actors[size_t(a)].isStatic(); }
+  int forcedDeact = -1;  // 비활성화 재생: PhysX 결과가 참이면 두 행위자 모두 비활성으로 답한다
+  bool isActorActive(int32_t a) override { return forcedDeact >= 0 ? forcedDeact == 0 : !m->actors[size_t(a)].isStatic(); }
   void internalWakeUp(int32_t) override {}
   void addToLostTouchList(int32_t, int32_t) override {}
 };
@@ -358,11 +359,13 @@ struct Hooks : public ss::IslandHooks {
 // ---------------------------------------------------------------------------------------------------------------------
 int main(int argc, char** argv) {
   int nb = 150, steps = 300, seed = 1, threads = 2;
+  bool sleep = false;  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--bodies") && i + 1 < argc) nb = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--steps") && i + 1 < argc) steps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--sleep")) sleep = true;
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
@@ -438,7 +441,7 @@ int main(int argc, char** argv) {
     }
     if (i % 17 == 3) d->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, true), kinematics.push_back(d);
     else PxRigidBodyExt::updateMassAndInertia(*d, 300.0f);
-    d->setSleepThreshold(0.0f);
+    if (!sleep) d->setSleepThreshold(0.0f);
     scene->addActor(*d);
     actorsPx.push_back(d);
     dyns.push_back(d);
@@ -459,7 +462,7 @@ int main(int argc, char** argv) {
   for (int a = 0; a < 2; ++a) {
     PxArticulationReducedCoordinate* art = phys->createArticulationReducedCoordinate();
     if (a == 0) art->setArticulationFlag(PxArticulationFlag::eFIX_BASE, true);
-    art->setSleepThreshold(0.0f);
+    if (!sleep) art->setSleepThreshold(0.0f);
     PxArticulationLink* parent = nullptr;
     const PxVec3 base(2.0f * U(rng), 2.0f * U(rng), 0.8f);
     for (int l = 0; l < 5; ++l) {
@@ -604,12 +607,20 @@ int main(int argc, char** argv) {
     ++bad;
   };
   const float dt = 1.0f / 60.0f;
-  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0;
+  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0;
   for (int step = 0; step < steps; ++step) {
-    for (size_t k = 0; k < kinematics.size(); ++k) {  // 운동학 몸체 옮기기
+    for (size_t k = 0; k < kinematics.size(); ++k) {  // 운동학 몸체 옮기기 (잠 켬이면 절반은 150 스텝 뒤 멈춤)
+      if (sleep && (k & 1) && step > 150) continue;
       PxTransform t = kinematics[k]->getGlobalPose();
       t.p += PxVec3(0.02f * std::sin(0.05f * float(step) + float(k)), 0.02f * std::cos(0.07f * float(step) + float(k)), 0.0f);
       kinematics[k]->setKinematicTarget(t);
+    }
+    if (sleep && step % 37 == 20 && !dyns.empty()) {  // 가끔 깨우기·밀기
+      PxRigidDynamic* d = dyns[size_t(P(rng) * float(dyns.size())) % dyns.size()];
+      if (!(d->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC)) {
+        if (P(rng) < 0.5f) d->wakeUp();
+        else d->addForce(PxVec3(0, 0, 200.0f));
+      }
     }
     syncScene();
     G.clearStep();
@@ -639,11 +650,17 @@ int main(int argc, char** argv) {
         if (a.afterFill != afterFill) continue;
         const int32_t it = M.findInteraction(a.e0, a.e1);
         if (it < 0) { fail(step, "활성화 재생: 상호작용 없음"); continue; }
-        hooks.forced = a.result ? 1 : 0;
         bool r;
-        if (a.activate) r = M.activateInteraction(it);
-        else r = M.deactivateInteraction(it);
+        if (a.activate) {
+          hooks.forced = a.result ? 1 : 0;
+          r = M.activateInteraction(it);
+        } else {
+          hooks.forcedDeact = a.result ? 1 : 0;
+          r = M.deactivateInteraction(it);
+        }
         hooks.forced = -1;
+        hooks.forcedDeact = -1;
+        if (r) (a.activate ? nAct : nDeact)++;
         if (r != a.result) fail(step, "활성화 결과");
       }
     };
@@ -785,7 +802,8 @@ int main(int argc, char** argv) {
     }
     if (bad && step > firstBad + 2) break;
   }
-  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 "\n", steps, nCreated, nTrig, nRemoved, nTouch);
+  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 "\n", steps, nCreated,
+         nTrig, nRemoved, nTouch, nAct, nDeact);
   printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents, cmpCalls, cmpActor,
          bad);
   if (bad) printf(" (첫 다름 스텝 %d)", firstBad);
