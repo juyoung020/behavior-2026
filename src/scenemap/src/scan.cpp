@@ -93,12 +93,13 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
   const float* T = d.T_bc;
   for (int j = 0; j < gh; ++j) {
     const int v = j * d.step;
-    const uint16_t* row = d.mm + size_t(v) * d.w;
+    const uint16_t* row = d.m ? nullptr : d.mm + size_t(v) * d.w;
+    const float* rowf = d.m ? d.m + size_t(v) * d.w : nullptr;
     const float yn = (v - d.cy) / d.fy;
     for (int i = 0; i < gw; ++i) {
       const int u = i * d.step;
-      if (!row[u]) continue;
-      const float z = row[u] * 1e-3f;
+      const float z = rowf ? rowf[u] : row[u] * 1e-3f;
+      if (!(z > 0.f)) continue;
       if (z < p.zmin || z > p.zmax) continue;
       const float X = (u - d.cx) / d.fx * z, Y = yn * z;
       float* q = &P[(size_t(j) * gw + i) * 3];

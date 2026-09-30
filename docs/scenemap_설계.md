@@ -180,6 +180,12 @@ int  sm_snapshot(sm_ctx*, sm_snapshot_t** out);   // 읽기 전용 스냅숏(참
 - simlink 가 이미 받는 것(평가기 원 텐서: RGBA u8, 깊이 f32 m, proprio 61)을 그대로 넘긴다. 자르기·축소는 scenemap 안에서 한다(ROS 계약의 640×480 은 더 이상 필요 없음).
 - 카메라 외부 자세는 scenemap 이 proprio 로 직접 계산한다(순기구학 코드는 `src\agent\src\fk.rs` 와 같은 상수, C++ 로 새로).
 
+- **09-30 구현**: `src/scenemap/include/scenemap.h` 에 통합 담당 제안(`src/integ/scenemap_stub/sm_api.h`, 00d745b)의 이름·형을 그대로 옮기고 `src/scenemap/src/capi.cpp` 로 구현했다(두 헤더는 같은 가드 `SM_API_H`).
+  - 지금 되는 것: 자세(slam2d, 스냅숏 때 아직 영상 짝이 안 된 proprio 까지 적분해 최신 stamp 로), 상태, 격자(`sm_snap_map`), `sm_snap_reachable`(8방향 A*, 점유 ≥ 65 % 를 0.30 m 부풀림, 모르는 칸 1.5배, 목표 0.6 m 안 도착, 지도 밖이면 직선 거리).
+  - 아직: 물체(`sm_snap_objects/find/near` 는 0 개) — objmap 이 붙으면 채운다. `sm_create` 의 설정 JSON 은 아직 읽지 않는다(기본값).
+  - 짝짓기: 영상 stamp 까지 쌓인 proprio 를 적분하고, stamp 가 같은(없으면 그 앞 가장 가까운) proprio 의 순기구학으로 카메라 자세를 만든다. 깊이 표본 간격 = 가로 160 점 안팎(720 → 4 px).
+  - 검증: `tools/capi_replay`(ep200 을 C ABI 로 넣음) — slam2d_eval 과 keyframe 자세 차 5e-16 m, 스냅숏 평균 81 µs, A* 0.4 ms. simlink 를 `SCENEMAP_LIB_DIR=<빌드 폴더>` 로 libscenemap.a 에 링크해 `cargo test` 통과(따로 둔 target 폴더).
+
 ### 4.2 검출기(YOLOE) 출력 — 약속(확정 09-30, `src/ovdet/include/ovdet.h` 와 `src/scenemap/include/scenemap.h` 가 같은 정의를 `SM_DETECTIONS_DEFINED` 가드로 가짐)
 
 ```c

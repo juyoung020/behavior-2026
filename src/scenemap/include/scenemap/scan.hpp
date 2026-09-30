@@ -13,7 +13,8 @@ namespace scenemap {
 
 struct DepthView {
   int w = 0, h = 0;
-  const uint16_t* mm = nullptr;   // 깊이 mm (0 = 없음). float m 입력은 호출자가 바꿔서 넘김
+  const uint16_t* mm = nullptr;   // 깊이 mm (0 = 없음)
+  const float* m = nullptr;       // 또는 깊이 m(평가기 원 텐서, 0·NaN = 없음). m 이 있으면 m 을 쓴다
   int step = 1;                   // 화소 간격(원 해상도 입력이면 4)
   float fx = 0, fy = 0, cx = 0, cy = 0;
   float T_bc[12] = {0};           // 베이스 ← 카메라 광학 프레임, 행 우선 3×4
