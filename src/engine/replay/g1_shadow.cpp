@@ -135,6 +135,7 @@ void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_art_before(scene);
   g1_dump_before(scene, sim);
   g1_islands_before(scene, sim);
+  g1_bp_before(scene, sim);
   if (!G.on) G.on = getenv("G1_CONTACT") != nullptr;
   if (!G.on) return;
   (void)sim;
@@ -345,6 +346,7 @@ void g1_report() {
   g1_solver_report();
   g1_art_report();
   g1_islands_report();
+  g1_bp_report();
   if (!G.on) return;
   printf("G1 contact 그림자: 관리자·simulate %" PRIu64 " (좁은 단계 돈 것 %" PRIu64 ", 건너뜀 %" PRIu64 ", 못 옮긴 모양 %" PRIu64 ", 넘침 %" PRIu64 ", 뒤에도 새 표시 %" PRIu64 ", 다시 등록 %" PRIu64 ")\n",
          G.nCM, G.nRun, G.nSkip, G.nUnsup, G.nOverflow, G.nNewAfter, G.nRefresh);

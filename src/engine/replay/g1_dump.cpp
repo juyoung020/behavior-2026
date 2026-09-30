@@ -375,6 +375,7 @@ void dumpScene(PxScene* scene, uint64_t sim) {
     };
     g1_islands_capture(scene, F.islands, nodeId, edgeId, &maps);
   }
+  if (const sc::BpLog* bl = g1_bp_log()) F.bp = *bl;  // 넓은 단계 입력 기록 (G1_BP 로 모은 것, 이 simulate 앞까지)
   if (!sc::writeScene(D.out.c_str(), F)) {
     fprintf(stderr, "[장면 뜨기] 쓰기 실패: %s\n", D.out.c_str());
     return;
@@ -498,6 +499,8 @@ void dumpScene(PxScene* scene, uint64_t sim) {
   printf("  판 %u 개 배치에 다시 넣음: 틀 %zu 벌 공유, 판당 상태 %.2f MB (몸체 %zu B, 관절체 %zu B/개, 조인트 %zu B/개)\n", D.envs, B.shareds.size(),
          double(B.stateBytes()) / D.envs / 1e6, sizeof(eng::Body), sizeof(eng::art::Articulation), sizeof(sc::SceneJoint));
   printf("  접촉 관리자 %zu (다양체 %zu, 마찰 패치 %zu, 캐시 못 찾음 %" PRIu64 ")\n", R.cms.size(), R.manifolds.size(), R.friction.size(), nNoCache);
+  printf("  넓은 단계 기록: %s (구조 변경 %zu, 스텝 %zu, %.1f MB)\n", R.bp.valid ? "있음" : "없음(G1_BP 로 떠야 함)", R.bp.ops.size(), R.bp.frames.size(),
+         double(R.bp.bounds.size() * 4 + R.bp.dist.size() * 4 + R.bp.words.size() * 4) / 1e6);
   printf("  섬 관리자: 노드 %zu, 간선 %zu, 섬 %zu (활성 %zu)\n", R.islands.accurate.nodes.size(), R.islands.edgeNodeIndices.size() / 2, R.islands.accurate.islands.size(),
          R.islands.accurate.activeIslands.size());
   printf("  PhysX 공개 API 값과 비교 %" PRIu64 ", 비트 다름 %" PRIu64 "%s\n", D.cmp, D.bad, D.bad ? ("  첫 다름: " + D.firstBad).c_str() : "");

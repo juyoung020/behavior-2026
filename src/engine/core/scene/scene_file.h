@@ -17,6 +17,7 @@
 #include "core/joints/joint_types.h"
 #include "core/solver/solver_io.h"  // FrictionPatch (지난 스텝 마찰 패치)
 #include "core/scene/island_state.h"
+#include "core/scene/bp_log.h"
 
 namespace eng {
 namespace scene {
@@ -89,7 +90,7 @@ struct SceneHeader {
   uint32_t artMaxLinks, artMaxDofs;
   uint32_t nActors, nShapes, nJoints, nBodies, nArts, nMaterials, nHulls;
   uint32_t nCMs, nManifolds, nFriction, sizeCM, sizeManifold, sizeFriction;
-  uint32_t hasIslands, sizeIgNode, sizeIgIsland, padH;
+  uint32_t hasIslands, sizeIgNode, sizeIgIsland, hasBp;
   uint64_t hullBytes, nameBytes;
   float gravity[3], dt, lengthScale, speedScale;
   uint32_t sceneFlags, solverType, posIters, velIters;
@@ -117,6 +118,7 @@ struct SceneFile {
   std::vector<contact::ManifoldSlot> manifolds;  // 파일에는 바이트 그대로 (읽은 뒤 relocateManifold)
   std::vector<sv::FrictionPatch> friction;
   IslandMgrState islands;  // 섬 관리자 (v1-b)
+  BpLog bp;                // 넓은 단계 입력 기록 (v1-b, 적재 때 다시 넣음)
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -137,7 +139,7 @@ inline bool rd(FILE* f, std::vector<T>& v, size_t n) { v.resize(n); return n == 
 
 inline void fillSizes(SceneHeader& h) {
   memcpy(h.magic, "ENGSCN1", 8);
-  h.version = 5;
+  h.version = 6;
   h.sizeIgNode = sizeof(ig::Node);
   h.sizeIgIsland = sizeof(ig::Island);
   h.sizeCM = sizeof(SceneCM);
@@ -167,6 +169,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
   s.h.nManifolds = uint32_t(s.manifolds.size());
   s.h.nFriction = uint32_t(s.friction.size());
   s.h.hasIslands = s.islands.valid ? 1u : 0u;
+  s.h.hasBp = s.bp.valid ? 1u : 0u;
   s.h.hullBytes = s.hulls.size();
   s.h.nameBytes = s.names.size();
   FILE* f = fopen(path, "wb");
@@ -175,7 +178,7 @@ inline bool writeScene(const char* path, SceneFile& s) {
   bool ok = fwrite(&s.h, sizeof(s.h), 1, f) == 1 && wr(f, s.materials) && wr(f, s.actors) && wr(f, s.shapes) && wr(f, s.hullOffsets) && wr(f, s.hulls) &&
             wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.jointWritebacks) && wr(f, s.artName) && wr(f, s.shapeFilters) && wr(f, s.cms) &&
             (s.manifolds.empty() || fwrite(static_cast<const void*>(s.manifolds.data()), sizeof(contact::ManifoldSlot), s.manifolds.size(), f) == s.manifolds.size()) &&
-            wr(f, s.friction) && (!s.islands.valid || writeIslands(f, s.islands));
+            wr(f, s.friction) && (!s.islands.valid || writeIslands(f, s.islands)) && (!s.bp.valid || writeBpLog(f, s.bp));
   ok = fclose(f) == 0 && ok;
   return ok;
 }
@@ -207,6 +210,7 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
   }
   ok = ok && rd(f, s.friction, s.h.nFriction);
   if (ok && s.h.hasIslands) ok = readIslands(f, s.islands);
+  if (ok && s.h.hasBp) ok = readBpLog(f, s.bp);
   fclose(f);
   return ok ? true : fail("짧음");
 }

@@ -40,4 +40,10 @@ void g1_islands_task(const char* name);  // 가로채기 디스패처가 작업�
 void g1_islands_report();
 bool g1_islands_capture(physx::PxScene* scene, eng::scene::IslandMgrState& s, uint32_t (*objectId)(const void*, uint32_t, void*),
                         uint32_t (*edgeObject)(const void*, void*), void* user);
+// 넓은 단계 그림자 (g1_bp.cpp, G1_BP)
+void g1_bp_before(physx::PxScene* scene, uint64_t sim);
+void g1_bp_task(const char* name);
+void g1_bp_report();
+namespace eng { namespace scene { struct BpLog; } }
+const eng::scene::BpLog* g1_bp_log();
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)
