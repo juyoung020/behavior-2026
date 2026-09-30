@@ -1015,7 +1015,7 @@ int main(int argc, char** argv) {
         for (uint32_t i = 0; i < M.npMain.size(); ++i) {
           const SlotData& sd = caches.L[0][i];
           ++cmpNp;
-          bool ok = (sd.out.statusFlag & ec::NpStatus::eTOUCH_KNOWN) == (G.npStatus[i] & ec::NpStatus::eTOUCH_KNOWN) && sd.out.nbPatches == G.npPatches[i] &&
+          bool ok = sd.out.statusFlag == G.npStatus[i] && sd.out.nbPatches == G.npPatches[i] &&  // 상태 바이트 전체 (09-30: 닿음 비트만 보다가 startContacts 상태 0 누락을 놓침)
                     sd.out.nbContacts == G.npNbContacts[i];
           if (ok && sd.out.nbContacts) {
             ok = G.npPatchBytes[i].size() == sizeof(ec::ContactPatch) * sd.out.nbPatches && G.npContactBytes[i].size() == sizeof(ec::Contact) * sd.out.nbContacts &&
