@@ -233,3 +233,39 @@ struct EAddBf16F32 {  // f32 += bf16(acc): a bf16 einsum result summed in f32
 };
 
 }  // namespace pi05t
+
+namespace pi05t {
+struct EAddToBf16 {  // out = bf16(out + bf16(acc))  (bf16 add of two bf16 einsum results)
+  bf16* out;
+  long long ldo;
+  __device__ void operator()(int r, int c, float v0, float v1, long long off) const {
+    bf162* p = reinterpret_cast<bf162*>(out + off + r * ldo + c);
+    const bf162 x = *p;
+    *p = __floats2bfloat162_rn(__low2float(x) + bfr(v0), __high2float(x) + bfr(v1));
+  }
+};
+struct EBiasBf16 {  // flax Dense(dtype=bf16): bf16(bf16(acc) + bias)
+  bf16* out;
+  long long ldo;
+  const bf16* bias;
+  __device__ void operator()(int r, int c, float v0, float v1, long long off) const {
+    *reinterpret_cast<bf162*>(out + off + r * ldo + c) =
+        __floats2bfloat162_rn(bfr(v0) + b2f(bias[c]), bfr(v1) + b2f(bias[c + 1]));
+  }
+};
+}  // namespace pi05t
+
+namespace pi05t {
+struct EBiasResidBf16 {  // SigLIP x + Dense(y): bf16(resid + bf16(bf16(acc) + bias))
+  bf16* out;
+  long long ldo;
+  const bf16* bias;
+  const bf16* resid;
+  __device__ void operator()(int r, int c, float v0, float v1, long long off) const {
+    const long long i = off + r * ldo + c;
+    const bf162 x = *reinterpret_cast<const bf162*>(resid + i);
+    *reinterpret_cast<bf162*>(out + i) = __floats2bfloat162_rn(__low2float(x) + bfr(bfr(v0) + b2f(bias[c])),
+                                                               __high2float(x) + bfr(bfr(v1) + b2f(bias[c + 1])));
+  }
+};
+}  // namespace pi05t

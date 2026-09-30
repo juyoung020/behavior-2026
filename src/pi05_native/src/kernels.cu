@@ -44,7 +44,8 @@ __device__ float block_max(float v, float* sh) {
 // f32 SIMT GEMM: patches [n_img*256, 588] x W[1152, 588]^T. Tile 64x64, 256 threads, 4x4 per thread.
 __global__ void __launch_bounds__(256) stem_kernel(const uint8_t* __restrict__ img, const bf16* __restrict__ w,
                                                    const bf16* __restrict__ b, const bf16* __restrict__ pos,
-                                                   float* __restrict__ stem_out, bf16* __restrict__ x, int M) {
+                                                   float* __restrict__ stem_out, bf16* __restrict__ x, int M,
+                                                   const float* __restrict__ imgf) {
   pdl_entry();
   constexpr int K = 588, N = 1152, BK = 16;
   __shared__ float sa[BK][64 + 4];
@@ -60,8 +61,13 @@ __global__ void __launch_bounds__(256) stem_kernel(const uint8_t* __restrict__ i
       if (k < K && p < M) {
         const int im = p >> 8, py = (p >> 4) & 15, px = p & 15;
         const int kh = k / 42, kw = (k / 3) % 14, c = k % 3;
-        const uint8_t u = img[(((size_t)im * 224 + py * 14 + kh) * 224 + px * 14 + kw) * 3 + c];
-        av = __fdiv_rn(__uint2float_rn(u), 255.0f) * 2.0f - 1.0f;
+        const size_t src = (((size_t)im * 224 + py * 14 + kh) * 224 + px * 14 + kw) * 3 + c;
+        if (imgf) {
+          av = imgf[src];  // already in [-1, 1] (training-time augmentation output, model.py:168-187)
+        } else {
+          const uint8_t u = img[src];
+          av = __fdiv_rn(__uint2float_rn(u), 255.0f) * 2.0f - 1.0f;
+        }
       }
       if (k < K) bv = b2f(w[(size_t)(n0 + r) * K + k]);
       sa[kk][r] = av;
@@ -97,9 +103,9 @@ __global__ void __launch_bounds__(256) stem_kernel(const uint8_t* __restrict__ i
 }
 
 void launch_stem(const uint8_t* img, const bf16* w, const bf16* b, const bf16* pos, float* stem_out, bf16* x,
-                 int n_img, cudaStream_t st) {
+                 int n_img, cudaStream_t st, const float* imgf) {
   const int M = n_img * 256;
-  launch_k(stem_kernel, dim3(1152 / 64, cdiv(M, 64)), 256, 0, st, img, w, b, pos, stem_out, x, M);
+  launch_k(stem_kernel, dim3(1152 / 64, cdiv(M, 64)), 256, 0, st, img, w, b, pos, stem_out, x, M, imgf);
 }
 
 // ---- LayerNorm (flax nn.LayerNorm(dtype=bf16), use_fast_variance=True) -----------------------------------

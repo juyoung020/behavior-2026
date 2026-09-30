@@ -16,7 +16,7 @@ struct Dims {
 };
 
 void launch_stem(const uint8_t* img, const bf16* w, const bf16* b, const bf16* pos, float* stem_out, bf16* x,
-                 int n_img, cudaStream_t st);
+                 int n_img, cudaStream_t st, const float* imgf = nullptr);  // imgf: f32 images in [-1, 1] instead
 void launch_layernorm(const bf16* x, const bf16* scale, const bf16* bias, bf16* y, int rows, int dim, cudaStream_t st);
 void launch_siglip_attn_prep(const bf16* qkv, bf16* qs, bf16* vt, int n_img, cudaStream_t st);
 void launch_softmax_bf16_rows(bf16* s, int rows, int cols, cudaStream_t st);

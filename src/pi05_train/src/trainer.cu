@@ -25,93 +25,28 @@ TGemm G(const bf16* A, long long lda, const bf16* B, long long ldb, int M, int N
 }
 }  // namespace
 
-double OptCfg::lr(int c) const {  // optax, f32 arithmetic
-  const float pk = (float)peak;
-  if (c < warmup) {
-    const float init = (float)(peak / (warmup + 1));
-    const float frac = 1.0f - (float)c / (float)warmup;
-    return (init - pk) * frac + pk;
-  }
-  const int ds = decay_steps - warmup;
-  const int cc = std::min(c - warmup, ds);
-  const float cosd = 0.5f * (1.0f + cosf(3.14159265358979323846f * (float)cc / (float)ds));
-  const float alpha = (float)(end / peak);
-  return pk * ((1.0f - alpha) * cosd + alpha);
-}
-
-template <class T>
-T* Trainer::dalloc(size_t n) {
-  void* p = nullptr;
-  PI05_CUDA(cudaMalloc(&p, std::max<size_t>(n, 1) * sizeof(T)));
-  PI05_CUDA(cudaMemset(p, 0, std::max<size_t>(n, 1) * sizeof(T)));
-  allocs_.push_back(p);
-  return (T*)p;
-}
-
 Trainer::~Trainer() {
-  for (void* p : allocs_) cudaFree(p);
   if (st) cudaStreamDestroy(st);
 }
 
-TParam* Trainer::param(const std::string& name) {
-  auto it = idx_.find(name);
-  return it == idx_.end() ? nullptr : &params_[it->second];
-}
-
-bool Trainer::init(const std::string& state_path, const std::string& model_path, std::string* err) {
+bool Trainer::init(const std::string& state_path, const std::string& model_path, std::string* err, int offload) {
   PI05_CUDA(cudaStreamCreateWithFlags(&st, cudaStreamNonBlocking));
   pi05::WeightFile mf;
   if (!mf.open(model_path, err)) return false;
   if (!prefix_.load(mf, err)) return false;
   if (!wf_.open(state_path, err)) return false;
-  auto cfgd = [&](const char* k, double d) {
-    const auto* v = wf_.cfg(k);
-    return v && !v->empty() ? std::stod((*v)[0]) : d;
-  };
-  opt.warmup = (int)cfgd("lr.warmup", 1000);
-  opt.peak = cfgd("lr.peak", 2.5e-5);
-  opt.decay_steps = (int)cfgd("lr.decay_steps", 30000);
-  opt.end = cfgd("lr.end", 2.5e-6);
-  opt.b1 = cfgd("adam.b1", 0.9); opt.b2 = cfgd("adam.b2", 0.95); opt.eps = cfgd("adam.eps", 1e-8);
-  opt.wd = cfgd("adam.wd", 1e-10); opt.clip = cfgd("clip", 1.0);
-  const auto* ev = wf_.cfg("ema");
-  opt.use_ema = ev && !ev->empty() && (*ev)[0] != "None";
-  opt.ema = opt.use_ema ? std::stod((*ev)[0]) : 0.0;
+  opt.read(wf_);
   if (wf_.cfg_str("mode", "expert") != "expert") { *err = "only mode expert is implemented"; return false; }
   L_ = wf_.cfg_int("llm.depth", 18);
   if (L_ != prefix_.cfg.depth) { *err = "state/model depth mismatch"; return false; }
 
-  std::vector<float> host;
-  for (const pi05::TensorInfo& t : wf_.tensors()) {
-    if (t.name.rfind("p.", 0) != 0) continue;
-    if (t.dtype != pi05::DType::F32) { *err = "trainable param not f32: " + t.name; return false; }
-    TParam P;
-    P.name = t.name.substr(2);
-    P.shape = t.shape;
-    P.n = t.numel();
-    host.resize(P.n);
-    if (!wf_.read(t, host.data(), err)) return false;
-    P.p = dalloc<float>(P.n);
-    P.g = dalloc<float>(P.n);
-    P.m = dalloc<float>(P.n);
-    P.v = dalloc<float>(P.n);
-    if (opt.use_ema) P.ema = dalloc<float>(P.n);
-    PI05_CUDA(cudaMemcpy(P.p, host.data(), P.n * 4, cudaMemcpyHostToDevice));
-    if (P.ema) PI05_CUDA(cudaMemcpy(P.ema, host.data(), P.n * 4, cudaMemcpyHostToDevice));
-    P.round_grad = P.name.rfind("PaliGemma/llm/", 0) == 0;  // expert einsums and bf16 Dense modulations
-    if (P.round_grad) {
-      P.pb = dalloc<bf16>(P.n);
-      f32_to_bf16(P.p, P.pb, P.n, st);
-    }
-    idx_[P.name] = params_.size();
-    params_.push_back(std::move(P));
-  }
+  auto is_llm = [](const std::string& n) { return n.rfind("PaliGemma/llm/", 0) == 0; };
+  if (!ps_.load(wf_, offload, opt, mem_, is_llm, is_llm, st, err)) return false;  // expert einsums + bf16 Dense
   for (const std::string& n : {N_Q, N_KV, N_O, N_G, N_LIN, N_AMW, N_AMB, N_FMW, N_FMB, N_FINW, N_FINB, N_INW, N_INB,
                                N_OUTW, N_OUTB, N_T1W, N_T1B, N_T2W, N_T2B})
     if (!param(n)) { *err = "missing trainable " + n; return false; }
   rope_ = dalloc<float2>(1024 * 128);
   pi05::launch_rope_tables(rope_, 1024, 128, st);
-  d_sumsq_ = dalloc<double>(1);
   alloc_work();
   PI05_CUDA(cudaStreamSynchronize(st));
   return true;
@@ -146,9 +81,7 @@ void Trainer::alloc_work() {
   dmod_ = dalloc<bf16>(3 * W); dy_ = dalloc<bf16>(AH * W);
 }
 
-void Trainer::zero_grads() {
-  for (auto& P : params_) PI05_CUDA(cudaMemsetAsync(P.g, 0, P.n * 4, st));
-}
+void Trainer::zero_grads() { ps_.zero_grads(st); }
 
 // K_all / V_all for layer l: rows [0, Tp) = prefix cache of the frozen inference engine, [Tp, Tp+32) = suffix k / v
 // of this layer (after RoPE), rows up to Sp zero.
@@ -167,7 +100,8 @@ static void build_kv(const pi05::Model& m, int l, const bf16* kv, int Tp, int Sp
 
 void Trainer::forward_suffix(const Sample& s) {
   // frozen prefix through the inference engine (bf16 frozen params = the inference weights)
-  prefix_.upload_inputs(s.img, s.tokens, s.noise, st);
+  prefix_.ext_imgf = s.img_f32_dev;
+  prefix_.upload_inputs(s.img_f32_dev ? nullptr : s.img, s.tokens, s.noise, st);
   prefix_.siglip(st);
   prefix_.text_embed(st);
   for (int l = 0; l < L_; ++l) prefix_.prefix_layer(l, st);
@@ -328,33 +262,11 @@ float Trainer::accumulate(const Sample& s, float scale) {
   return (float)(sum / AH);
 }
 
-void Trainer::finalize_grads() {
-  for (auto& P : params_)
-    if (P.round_grad) round_bf16_inplace(P.g, P.n, st);
-}
-
-double Trainer::grad_norm() {
-  PI05_CUDA(cudaMemsetAsync(d_sumsq_, 0, 8, st));
-  for (auto& P : params_) sumsq_f32(P.g, P.n, d_sumsq_, st);
-  double s = 0;
-  PI05_CUDA(cudaMemcpyAsync(&s, d_sumsq_, 8, cudaMemcpyDeviceToHost, st));
-  PI05_CUDA(cudaStreamSynchronize(st));
-  return std::sqrt(s);
-}
-
+void Trainer::finalize_grads() { ps_.finalize(st); }
+double Trainer::grad_norm() { return ps_.grad_norm(st); }
 void Trainer::opt_step() {
-  const float gn = (float)grad_norm();
-  const float lr = (float)opt.lr(count_);
-  const int t = count_ + 1;
-  const float bc1 = 1.0f - powf((float)opt.b1, (float)t), bc2 = 1.0f - powf((float)opt.b2, (float)t);
-  for (auto& P : params_) {
-    adamw_step(P.p, P.g, P.m, P.v, P.n, gn, (float)opt.clip, (float)opt.b1, (float)(1.0 - opt.b1), (float)opt.b2,
-               (float)(1.0 - opt.b2), (float)opt.eps, (float)opt.wd, lr, bc1, bc2, st);
-    if (P.ema) ema_step(P.ema, P.p, P.n, (float)opt.ema, (float)(1.0 - opt.ema), st);
-    if (P.pb) f32_to_bf16(P.p, P.pb, P.n, st);
-  }
+  ps_.step(opt, count_, st);
   ++count_;
-  PI05_CUDA(cudaStreamSynchronize(st));
 }
 
 }  // namespace pi05t

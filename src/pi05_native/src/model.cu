@@ -490,7 +490,7 @@ void Model::siglip_head(cudaStream_t st) {
 }
 
 void Model::siglip(cudaStream_t st) {
-  launch_stem(d_img, patch_w_, patch_b_, pos_, tap ? stem : nullptr, xi, cfg.n_img, st);
+  launch_stem(d_img, patch_w_, patch_b_, pos_, tap ? stem : nullptr, xi, cfg.n_img, st, ext_imgf);
   if (tap) for (int c = 0; c < cfg.n_img; ++c) {
     do_tap("img.c" + std::to_string(c) + ".stem", stem + (size_t)c * 256 * cfg.img_w, 1, {256, cfg.img_w}, st);
     do_tap("img.c" + std::to_string(c) + ".x0", xi + (size_t)c * 256 * cfg.img_w, 0, {256, cfg.img_w}, st);

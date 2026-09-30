@@ -6,6 +6,25 @@
 namespace pi05t {
 using namespace pi05;
 
+// Reverse mode of jax.nn.gelu(approximate=True) as JAX differentiates it, every op rounded to bf16:
+//   x3 = x**3 ; inner = c1*(x + c0*x3) ; th = tanh(inner) ; cdf = 0.5*(1 + th) ; out = x*cdf
+__device__ __forceinline__ float gelu_bwd_bf16(float x, float g) {
+  const float c0 = 0.044677734375f, c1 = 0.796875f;
+  const float x2 = bfr(x * x), x3 = bfr(x2 * x);
+  const float inner = bfr(c1 * bfr(x + bfr(c0 * x3)));
+  const float th = bfr(tanhf(inner));
+  const float cdf = bfr(0.5f * bfr(1.0f + th));
+  const float dxa = bfr(g * cdf);
+  const float dcdf = bfr(g * x);
+  const float dth = bfr(0.5f * dcdf);
+  const float dq = bfr(dth * bfr(1.0f - th));
+  const float dinner = bfr(dq + bfr(dq * th));
+  const float ds = bfr(dinner * c1);
+  const float dx3 = bfr(ds * c0);
+  const float dxc = bfr(dx3 * bfr(3.0f * x2));
+  return bfr(bfr(dxa + ds) + dxc);
+}
+
 // ---- f32 dense layers (nnx.Linear, f32 params: action_in_proj, time_mlp_in/out, action_out_proj) -------------------
 // y[r][o] = sum_i x[r][i] W[i][o] + b[o]  (W openpi layout [in][out]); act 1 = swish. x may be bf16 (xb) or f32 (xf).
 void lin_f32_fwd(const float* xf, const bf16* xb, const float* W, const float* b, float* z, float* y, int rows,
@@ -81,4 +100,35 @@ void adamw_step(float* p, const float* g, float* m, float* v, long long n, float
                 float ob1, float b2, float ob2, float eps, float wd, float lr, float bc1, float bc2, cudaStream_t st);
 void ema_step(float* e, const float* p, long long n, float decay, float one_minus, cudaStream_t st);
 
+}  // namespace pi05t
+
+namespace pi05t {
+// ---- LoRA-mode additions ------------------------------------------------------------------------------------------------
+// flax LayerNorm(dtype=bf16) with f32 params (normalization.py:107-222, use_fast_variance):
+//   mu = mean(x), var = max(0, mean(x^2) - mu^2), y = bf16((x - mu) * (rsqrt(var + 1e-6) * scale) + bias)
+void layernorm_fwd(const bf16* x, const float* scale, const float* bias, bf16* y, float* mu, float* rs, int rows,
+                   int dim, cudaStream_t st);
+// dx = rs * (g - mean(g) - xhat * mean(g * xhat)), g = dy * scale ; dscale += sum dy * xhat ; dbias += sum dy
+void layernorm_bwd(const bf16* x, const float* scale, const float* mu, const float* rs, const bf16* dy, bf16* dx,
+                   float* dscale, float* dbias, int rows, int dim, cudaStream_t st);
+// jax.nn.softmax on bf16 rows (inference kernel semantics) and its bf16 VJP (custom_jvp y * (g - sum(y g)))
+void softmax_bf16_fwd(const bf16* x, bf16* y, int rows, int cols, cudaStream_t st);
+void softmax_bf16_bwd(const bf16* y, const bf16* dy, bf16* dx, int rows, int cols, cudaStream_t st);
+void gelu_fwd(const bf16* h, bf16* a, long long n, cudaStream_t st);
+void gelu_bwd(const bf16* h, const bf16* da, bf16* dh, long long n, cudaStream_t st);
+// acc[c] += sum_r f32(x[r][c])  (bias gradients of bf16 Dense layers)
+void colsum_bf16(const bf16* x, float* acc, int rows, int cols, long long ld, cudaStream_t st);
+void div_bf16(bf16* x, long long n, float c, cudaStream_t st);  // x = bf16(x / c)
+// f32 GEMM (SIMT): C[M][N] (=|+=) sum_k A(m,k) B(k,n); A_KM: A[m*lda+k] else A[k*lda+m]; B_KM: B[n*ldb+k] else B[k*ldb+n]
+void sgemm(bool a_km, bool b_km, int M, int N, int K, const float* A, long long lda, const float* B, long long ldb,
+           float* C, long long ldc, bool accumulate, cudaStream_t st);
+// images u8 [n][224][224][3] or f32 [-1,1] -> patches f32 [n*256][588] (row = py*16+px, col = (kh*14+kw)*3+c)
+void im2col_patches(const uint8_t* img_u8, const float* img_f32, float* patches, int n_img, cudaStream_t st);
+// x0 = bf16(stem + bias + pos[tok])  (stem f32 [rows][1152], bias/pos f32)
+void stem_finish(const float* stem, const float* bias, const float* pos, bf16* x, int rows, cudaStream_t st);
+// B [N][r][D] -> Bsum [r][D] = bf16(sum_n B[n])  (einsum "BTL,NLD->BTD" sums the head axis of the LoRA B factor)
+void sum_heads_bf16(const bf16* B, bf16* Bsum, int N, long long rd, cudaStream_t st);
+void bcast_add_f32(const float* src, float* dst, int copies, long long n, cudaStream_t st);  // dst[k*n + i] += src[i]
+// stem f32 cotangent [n_img*256][1152] -> bias += sum over rows, pos[tok] += sum over images
+void stem_bias_pos_grads(const float* dstem, float* dbias, float* dpos, int n_img, cudaStream_t st);
 }  // namespace pi05t

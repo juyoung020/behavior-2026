@@ -317,24 +317,6 @@ __global__ void gelu_mul_fwd_k(const bf16* g, const bf16* u, bf16* a, int n) {
 void gelu_mul_fwd(const bf16* g, const bf16* u, bf16* a, int n, cudaStream_t st) {
   gelu_mul_fwd_k<<<cdiv(n, 256), 256, 0, st>>>(g, u, a, n);
 }
-// Reverse mode of jax.nn.gelu(approximate=True) as JAX differentiates it, every op rounded to bf16:
-//   x3 = x**3 ; inner = c1*(x + c0*x3) ; th = tanh(inner) ; cdf = 0.5*(1 + th) ; out = x*cdf
-__device__ __forceinline__ float gelu_bwd_bf16(float x, float g) {
-  const float c0 = 0.044677734375f, c1 = 0.796875f;
-  const float x2 = bfr(x * x), x3 = bfr(x2 * x);
-  const float inner = bfr(c1 * bfr(x + bfr(c0 * x3)));
-  const float th = bfr(tanhf(inner));
-  const float cdf = bfr(0.5f * bfr(1.0f + th));
-  const float dxa = bfr(g * cdf);
-  const float dcdf = bfr(g * x);
-  const float dth = bfr(0.5f * dcdf);
-  const float dq = bfr(dth * bfr(1.0f - th));
-  const float dinner = bfr(dq + bfr(dq * th));
-  const float ds = bfr(dinner * c1);
-  const float dx3 = bfr(ds * c0);
-  const float dxc = bfr(dx3 * bfr(3.0f * x2));
-  return bfr(bfr(dxa + ds) + dxc);
-}
 __global__ void gelu_mul_bwd_k(const bf16* g, const bf16* u, const bf16* da, bf16* dg, bf16* du, int n) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;

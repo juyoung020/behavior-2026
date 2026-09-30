@@ -13,29 +13,13 @@
 #include <vector>
 
 #include "../../pi05_native/src/model.h"
-#include "tkern.cuh"
+#include "tparams.h"
 
 namespace pi05t {
 
-struct TParam {
-  std::string name;              // openpi path, '/'-joined (e.g. PaliGemma/llm/layers/attn/q_einsum_1/w)
-  std::vector<int64_t> shape;
-  long long n = 0;
-  float *p = nullptr, *g = nullptr, *m = nullptr, *v = nullptr, *ema = nullptr;  // f32 master, grad, Adam, EMA
-  bf16* pb = nullptr;            // bf16 working copy (params used through .astype(bf16))
-  bool round_grad = false;       // JAX gradient is a bf16 einsum result
-};
-
-struct OptCfg {
-  int warmup = 1000, decay_steps = 30000;
-  double peak = 2.5e-5, end = 2.5e-6;
-  double b1 = 0.9, b2 = 0.95, eps = 1e-8, wd = 1e-10, clip = 1.0, ema = 0.99;
-  bool use_ema = true;
-  double lr(int count) const;  // optax.warmup_cosine_decay_schedule(peak/(warmup+1), peak, warmup, decay_steps, end)
-};
-
 struct Sample {
-  const uint8_t* img = nullptr;  // [3][224][224][3]
+  const uint8_t* img = nullptr;  // [3][224][224][3] host, or:
+  const float* img_f32_dev = nullptr;  // device f32 images in [-1, 1] (augmented)
   std::vector<int> tokens;       // valid prompt tokens
   const float* actions = nullptr;  // [ah][ad] normalized
   const float* noise = nullptr;    // [ah][ad]
@@ -47,7 +31,8 @@ class Trainer {
   ~Trainer();
   // state: params container (p.<name> f32 trainable, f.<name> bf16 frozen; cfg lr/adam/clip/ema), model: the same
   // (cut) model in the inference format for the frozen prefix.
-  bool init(const std::string& state_path, const std::string& model_path, std::string* err);
+  // offload: 0 = optimizer state on the GPU, 1 = EMA in pinned host memory, 2 = EMA and Adam moments on the host
+  bool init(const std::string& state_path, const std::string& model_path, std::string* err, int offload = 0);
   void zero_grads();
   // forward + backward of one sample; returns its loss (mean over horizon and dims); `scale` = 1 / batch
   float accumulate(const Sample& s, float scale);
@@ -55,8 +40,8 @@ class Trainer {
   double grad_norm();
   void opt_step();  // one optimizer step from the current gradients (after finalize)
   int step_count() const { return count_; }
-  const std::vector<TParam>& params() const { return params_; }
-  TParam* param(const std::string& name);
+  std::vector<TParam>& params() { return ps_.all(); }
+  TParam* param(const std::string& name) { return ps_.get(name); }
   OptCfg opt;
   cudaStream_t st = nullptr;
 
@@ -66,13 +51,12 @@ class Trainer {
   void alloc_work();
   pi05::WeightFile wf_;
   pi05::Model prefix_;
-  std::vector<TParam> params_;
-  std::map<std::string, size_t> idx_;
+  DevMem mem_;
+  ParamSet ps_;
   int L_ = 0, count_ = 0;
   int Tp_ = 0, S_ = 0, Sp_ = 0;  // valid prefix tokens, keys, keys padded to 8
   static constexpr int AH = 32, AD = 32, W = 1024, F = 4096, NH = 8, HD = 256;
   float2* rope_ = nullptr;
-  double* d_sumsq_ = nullptr;
   // per-sample tensors (device)
   float *xt_ = nullptr, *u_ = nullptr, *temb_ = nullptr, *z1_ = nullptr, *c1_ = nullptr, *z2_ = nullptr,
         *cond_ = nullptr, *h0f_ = nullptr, *v_ = nullptr, *dv_ = nullptr, *lossr_ = nullptr, *dcond_ = nullptr,
@@ -91,9 +75,8 @@ class Trainer {
   bf16 *dh_ = nullptr, *dh2_ = nullptr, *dx_ = nullptr, *dd_ = nullptr, *da_ = nullptr, *dg_ = nullptr, *du_ = nullptr,
        *dn_ = nullptr, *dn_b_ = nullptr, *do_ = nullptr, *denc_ = nullptr, *dp_ = nullptr, *d3_ = nullptr,
        *dq_ = nullptr, *dkv_ = nullptr, *dvall_ = nullptr, *dmod_ = nullptr, *dy_ = nullptr;
-  std::vector<void*> allocs_;
   template <class T>
-  T* dalloc(size_t n);
+  T* dalloc(size_t n) { return mem_.dev<T>(n); }
 };
 
 }  // namespace pi05t

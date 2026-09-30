@@ -59,6 +59,7 @@ class Model {
   void suffix_head(int s, cudaStream_t st);
 
   Tap tap;  // optional
+  const float* ext_imgf = nullptr;  // when set, SigLIP reads these f32 images ([n_img][224][224][3] in [-1, 1], device)
   ModelCfg cfg;
   size_t weight_bytes = 0, act_bytes = 0;
 

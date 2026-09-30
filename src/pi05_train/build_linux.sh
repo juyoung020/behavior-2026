@@ -14,11 +14,15 @@ cd $HERE/tools
 $NVCC -o $B/tgemm_test tgemm_test.cu &
 if [ -f ../src/tkern.cu ]; then
   cd $HERE/src
-  for f in tkern trainer; do $NVCC -c $f.cu -o $B/obj/$f.o & done
+  for f in tkern tkern2 tparams trainer lora augment; do $NVCC -c $f.cu -o $B/obj/$f.o & done
   wait
   ar rcs $B/libpi05train.a $B/obj/*.o
   cd $HERE/tools
-  [ -f train_verify.cpp ] && $NVCC -o $B/pi05_train_verify train_verify.cpp $B/libpi05train.a $NB/libpi05.a
+  $NVCC -o $B/pi05_train_verify train_verify.cpp $B/libpi05train.a $NB/libpi05.a &
+  $NVCC -o $B/pi05_train_bench train_bench.cpp $B/libpi05train.a $NB/libpi05.a &
+  $NVCC -o $B/pi05_aug_test aug_test.cu $B/libpi05train.a $NB/libpi05.a &
+  FTL=${FT_WORK:-$HOME/fasttrain_work}/build/native
+  [ -f $FTL/libftcore.so ] && $NVCC -o $B/pi05_train train_main.cu $B/libpi05train.a $NB/libpi05.a -L$FTL -lftcore -Xlinker -rpath=$FTL &
 fi
 wait
 echo "built into $B"
