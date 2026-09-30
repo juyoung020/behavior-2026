@@ -71,14 +71,22 @@ def _install(cap):
     def xwrap(self, position=None, orientation=None, frame="world"):
         rec = None
         try:
-            if self.name.split(":")[0].startswith(("half_", "diced__")) or "half_" in self.prim_path:
+            if self.name.split(":")[0].startswith(("half_", "diced__")) or "half_" in self.prim_path or STATE.get("base_loading"):
                 par = str(lazy.isaacsim.core.utils.prims.get_prim_parent(self._prim).GetPath())
                 import omnigibson as og
 
                 M = og.sim.fabric_hierarchy.get_world_xform(lazy.usdrt.Sdf.Path(par))
                 rec = dict(path=self.prim_path, parent=par, frame=frame, pos=None if position is None else th.as_tensor(position).tolist(),
                            orn=None if orientation is None else th.as_tensor(orientation).tolist(),
-                           parent_f32=get_world_pose_with_scale(par).tolist(), parent_d=[[M[i][j] for j in range(4)] for i in range(4)])
+                           parent_f32=get_world_pose_with_scale(par).tolist(), parent_d=[[M[i][j] for j in range(4)] for i in range(4)],
+                           step=STATE.get("step", -1))
+                try:  # pxr 판 부모 세계 행렬 (omni.physx 가 USD 에서 읽는 쪽 후보)
+                    Mp = lazy.pxr.UsdGeom.Xformable(og.sim.stage.GetPrimAtPath(par)).ComputeLocalToWorldTransform(lazy.pxr.Usd.TimeCode.Default())
+                    rec["parent_pxr"] = [[Mp[i][j] for j in range(4)] for i in range(4)]
+                    sc = self._prim.GetAttribute("xformOp:scale").Get()
+                    rec["local_scale"] = list(sc) if sc is not None else None
+                except Exception as e:
+                    rec["pxr_err"] = repr(e)
         except Exception as e:
             rec = dict(err=repr(e))
         r = orig_x(self, position=position, orientation=orientation, frame=frame)
@@ -243,10 +251,12 @@ def _install_base(cap):
         if cur["win"] is None:
             return orig_load(self, state, serialized=serialized)
         cur["phase"] = "load"
+        STATE["base_loading"] = True
         try:
             return orig_load(self, state, serialized=serialized)
         finally:
             cur["phase"] = None
+            STATE["base_loading"] = False
             rec["windows"].append(cur["win"])
             cur["win"] = None
             with open(out, "w") as f:
