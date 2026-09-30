@@ -52,4 +52,8 @@ void g1_pairs_after(physx::PxScene* scene, uint64_t sim);
 void g1_pairs_report();
 namespace eng { namespace scene { struct PairsLog; } }
 const eng::scene::PairsLog* g1_pairs_log();
+// Sc 층 입력 그림자 (g1_sc.cpp, G1_SC)
+void g1_sc_before(physx::PxScene* scene, uint64_t sim);
+void g1_sc_task(const char* name);
+void g1_sc_report();
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)
