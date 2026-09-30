@@ -5,7 +5,8 @@
 //           (판끼리 공유 전역 상태가 없음 = G2 N 판의 관문).
 // --batch: 판들을 발맞춰 돌린다 (G2a 틀). 스텝마다 판마다 envStepBegin(판 짜기까지, 스레드 T 개) -> 모든 판의 풀이 본체를 한 번에
 //          (runCore: 지금은 CPU — 판마다 solverStepHost+afterIntegrationHost 를 스레드로, GPU 판 sv::gpuSolveBatch 로 바꿀 자리) -> envStepEnd.
-// 빌드: replay/CMakeLists.txt 의 env_run (ovd_replay_g1 과 같은 컴파일러·같은 부동소수 옵션, PhysX 링크 없음).
+// --gpu (env_run_gpu 빌드만, --batch 와 함께): 풀이 본체를 sv::gpuSolveBatch 로 N 판 한 번에 (core/solver/solver_gpu.h, engine-solver-art).
+// 빌드: replay/CMakeLists.txt 의 env_run / tests/scene/CMakeLists.txt 의 env_run_gpu (-DENV_RUN_GPU, solver_gpu.cu) (ovd_replay_g1 과 같은 컴파일러·같은 부동소수 옵션, PhysX 링크 없음).
 #include <xmmintrin.h>
 
 #include <atomic>
@@ -25,109 +26,15 @@
 #include "core/scene/env_load.h"
 #include "core/scene/env_solve.h"
 #include "core/scene/env_window.h"
+#include "tests/scene/env_lockstep.h"
+#ifdef ENV_RUN_GPU
+#include "core/solver/solver_gpu.h"
+#endif
 
 namespace sc2 = eng::scene;
 namespace sv = eng::sv;
 
-namespace {
-
-struct EnvResult {
-  uint64_t n = 0, badB = 0, badA = 0, badW = 0;
-  long long firstBad = -1;
-  double ms = 0;
-  sc2::EnvTimes times;
-  sc2::EnvWinStats st;
-  uint64_t unknownEdge = 0, unknownNode = 0, engineErr = 0;
-  std::string err;
-  std::vector<std::string> shown;
-  int show = 0;
-};
-
-// 판 하나 (적재된 env + 풀이 자리 + 쌍 관리층 앞 입력 표)
-struct Env {
-  std::unique_ptr<sc2::EnvOwned> o;
-  std::unique_ptr<sc2::EnvSolveImpl> S;
-  sc2::PairsStep front;
-  bool load(const sc2::SceneFile& f, const sc2::SceneShared& sh, EnvResult& R) {
-    o.reset(new sc2::EnvOwned);
-    if (!sc2::envLoad(*o, f, sh, &R.err)) return false;
-    S.reset(new sc2::EnvSolveImpl);
-    S->load(f);
-    S->seedPairs(o->C.S->pairs);
-    o->E.solver = S.get();
-    o->E.times = &R.times;
-    return true;
-  }
-  void apply(const sc2::EnvWindow& W, EnvResult& R) { sc2::envApplyWindow(o->E, o->sc, *S, o->C.S->pairs, o->isl.M, W, front, R.st); }
-  void check(const sc2::EnvWindow& W, EnvResult& R) {
-    uint64_t b = 0, a = 0, w = 0;
-    sc2::envDigest(o->E, *S, b, a, w);
-    ++R.n;
-    const bool okB = b == W.dBody, okA = a == W.dArt, okW = w == W.dWake;
-    R.badB += !okB;
-    R.badA += !okA;
-    R.badW += !okW;
-    if (!(okB && okA && okW)) {
-      if (R.firstBad < 0) R.firstBad = (long long)W.sim;
-      if (R.show > 0) {
-        --R.show;
-        char buf[160];
-        snprintf(buf, sizeof(buf), "simulate %" PRIu64 ": 몸체 %s 관절체 %s 깸 카운터 %s", W.sim, okB ? "같음" : "다름", okA ? "같음" : "다름", okW ? "같음" : "다름");
-        R.shown.push_back(buf);
-      }
-    }
-  }
-  void finish(EnvResult& R) {
-    R.unknownEdge = S->unknownEdge;
-    R.unknownNode = S->unknownNode;
-    R.engineErr = S->engineErr;
-  }
-};
-
-// 스레드 모음: parallelFor(n, fn) 은 fn(i) 를 i = 0..n-1 에 나눠 부르고 모두 끝나면 돌아온다.
-// 나눔은 고정(스레드 w 가 i = w, w+T, ...) — 판이 늘 같은 스레드(같은 코어 캐시)에 머문다
-struct Pool {
-  // 도는 대기(spin): 발맞춰 모드는 스텝마다 세 번 모이므로 잠들었다 깨는 비용(스레드마다 수십 µs)이 크다. 부르는 스레드가 0 번 몫을 한다.
-  std::vector<std::thread> th;
-  const std::function<void(int)>* fn = nullptr;
-  int n = 0, T = 1;
-  std::atomic<uint64_t> gen{0};
-  std::atomic<int> pending{0};
-  std::atomic<bool> quit{false};
-  explicit Pool(int t) : T(t) {
-    for (int k = 1; k < t; ++k)
-      th.emplace_back([this, k]() {
-        uint64_t seen = 0;
-        for (;;) {
-          uint64_t g;
-          for (int spin = 0; (g = gen.load(std::memory_order_acquire)) == seen; ++spin) {
-            if (quit.load(std::memory_order_relaxed)) return;
-            if (spin > 20000) std::this_thread::yield();
-            else _mm_pause();
-          }
-          seen = g;
-          for (int i = k; i < n; i += T) (*fn)(i);
-          pending.fetch_sub(1, std::memory_order_acq_rel);
-        }
-      });
-  }
-  void parallelFor(int count, const std::function<void(int)>& f) {
-    fn = &f;
-    n = count;
-    pending.store(T - 1, std::memory_order_relaxed);
-    gen.fetch_add(1, std::memory_order_acq_rel);
-    for (int i = 0; i < n; i += T) f(i);
-    for (int spin = 0; pending.load(std::memory_order_acquire) != 0; ++spin)
-      if (spin > 20000) std::this_thread::yield();
-      else _mm_pause();
-  }
-  ~Pool() {
-    quit.store(true);
-    for (std::thread& t : th) t.join();
-  }
-};
-
-}  // namespace
+using namespace envrun;
 
 int main(int argc, char** argv) {
   if (argc < 3) {
@@ -135,9 +42,10 @@ int main(int argc, char** argv) {
     return 2;
   }
   int show = 5, envs = 1, threads = 1;
-  bool batchMode = false;
+  bool batchMode = false, gpu = false;
   for (int i = 3; i < argc; ++i) {
     if (!strcmp(argv[i], "--batch")) batchMode = true;
+    if (!strcmp(argv[i], "--gpu")) gpu = batchMode = true;
     if (i + 1 >= argc) continue;
     if (!strcmp(argv[i], "--show")) show = atoi(argv[i + 1]);
     if (!strcmp(argv[i], "--envs")) envs = atoi(argv[i + 1]);
@@ -153,38 +61,17 @@ int main(int argc, char** argv) {
   }
   std::unique_ptr<sc2::SceneShared> sh = sc2::makeShared(f);
   // 흐름 전체를 먼저 읽음 (편집·다시 맞춤 창 앞까지)
-  FILE* in = fopen(argv[2], "rb");
-  if (!in) {
-    fprintf(stderr, "흐름 파일 못 엶: %s\n", argv[2]);
-    return 1;
-  }
-  char magic[8];
-  uint64_t s0 = 0;
-  if (fread(magic, 1, 8, in) != 8 || memcmp(magic, sc2::kEnvWinMagic, 8) || fread(&s0, 8, 1, in) != 1) {
-    fprintf(stderr, "흐름 머리가 다름\n");
-    return 1;
-  }
-  if (s0 != f.h.sim) {
-    fprintf(stderr, "흐름은 simulate %" PRIu64 " 파일에서, 장면 파일은 %" PRIu64 "\n", s0, uint64_t(f.h.sim));
-    return 1;
-  }
   std::vector<sc2::EnvWindow> wins;
   long long stopAt = -1;
-  {
-    sc2::EnvWindow W;
-    while (sc2::envReadWindow(in, W)) {
-      if (W.edit || W.unsup) {  // 편집 창·관절체 다시 맞춤: 흐름만으로 못 따라 함
-        stopAt = (long long)W.sim;
-        break;
-      }
-      wins.push_back(std::move(W));
-    }
+  if (!readStream(argv[2], f.h.sim, wins, stopAt, err)) {
+    fprintf(stderr, "%s\n", err.c_str());
+    return 1;
   }
-  fclose(in);
   std::vector<EnvResult> R(static_cast<size_t>(envs));
   R[0].show = show;
   Pool pool(threads);
   double wall = 0, coreMs = 0;
+  bool gpuFail = false;
   uint64_t coreCalls = 0;
   if (!batchMode) {  // 판마다 끝까지 따로
     const auto t0 = std::chrono::steady_clock::now();
@@ -219,6 +106,17 @@ int main(int argc, char** argv) {
     }
     // 풀이 본체 N 판 한 번 (지금 CPU: 판마다 스레드로. GPU 판이 나오면 sv::gpuSolveBatch(boards, prms, n))
     auto runCore = [&](sv::SolverBoard* const* B, const sv::SolverParams* const* P, int n) {
+#ifdef ENV_RUN_GPU
+      if (gpu) {
+        if (!sv::gpuSolveBatch(B, P, n)) gpuFail = true;
+        return;
+      }
+#else
+      if (gpu) {
+        fprintf(stderr, "--gpu 는 env_run_gpu 빌드에서만\n");
+        exit(2);
+      }
+#endif
       pool.parallelFor(n, [&](int i) {
         sc2::EnvFtz ftz;
         sv::solverStepHost(*B[i], *P[i]);
@@ -273,10 +171,10 @@ int main(int argc, char** argv) {
            r0.ms * k, tm.total * k, tm.bp * k, tm.np * k, tm.solve * k, tm.solveCore * k, tm.after * k, tm.lost * k,
            (tm.total - tm.bp - tm.np - tm.solve - tm.after - tm.lost) * k);
   else
-    printf("  발맞춰: 스텝마다 풀이 본체 한 번 (%" PRIu64 " 번) — 풀이 본체 %.3f ms/스텝(판 %d 개 합), 나머지 %.3f ms/스텝\n", coreCalls,
+    printf("  발맞춰(풀이 본체 %s%s): 스텝마다 풀이 본체 한 번 (%" PRIu64 " 번) — 풀이 본체 %.3f ms/스텝(판 %d 개 합), 나머지 %.3f ms/스텝\n", gpu ? "GPU" : "CPU", gpuFail ? ", CUDA 오류 있음" : "", coreCalls,
            coreCalls ? coreMs / double(coreCalls) : 0.0, envs, coreCalls ? (wall - coreMs) / double(coreCalls) : 0.0);
   if (envs > 1 || batchMode)
     printf("  전체: 판 %d 스레드 %d 벽시계 %.1f ms = 판·스텝당 %.4f ms (판 스텝 처리량 %.0f /s)\n", envs, threads, wall,
            wall / double(envs) / double(wins.size() ? wins.size() : 1), double(envs) * double(wins.size()) / (wall / 1000.0));
-  return (badEnvs || mism) ? 3 : 0;
+  return (badEnvs || mism || gpuFail) ? 3 : 0;
 }

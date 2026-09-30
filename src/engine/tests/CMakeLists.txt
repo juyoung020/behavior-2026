@@ -44,7 +44,7 @@ function(engine_test name)
   endif()
 endfunction()
 
-foreach(m common contact solver articulation joints omni render particles integration)
+foreach(m common contact solver articulation joints omni render particles integration scene)
   if(EXISTS ${CMAKE_SOURCE_DIR}/${m}/CMakeLists.txt)
     add_subdirectory(${m})
   endif()
