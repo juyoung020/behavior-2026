@@ -5,6 +5,9 @@
 // 켜기: G1_SC=1 (디스패처 필요).
 #include <cinttypes>
 #include <execinfo.h>
+#include <signal.h>
+#include <ucontext.h>
+#include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -347,6 +350,7 @@ struct EditShadow {
   bool on = false, inited = false, capturing = false;
   es::ScScene E;
   std::unordered_map<const void*, int32_t> handle;  // Sc::ActorSim* -> 우리 손잡이
+  std::vector<const PxActor*> hPx;                  // 손잡이 -> PhysX 행위자 (닫힌 고리: 건드림 확인)
   std::vector<EdCall> px;
   uint64_t adds = 0, removes = 0, reinserts = 0, flagChanges = 0, untracked = 0, attaches = 0, detaches = 0, shapeChanges = 0, calls = 0, bad = 0, unsup = 0, idBad = 0, cellBad = 0, trackerBad = 0;
   long long firstBad = -1;
@@ -523,8 +527,11 @@ void edInit() {
       E.cache[e] = toEp(t);
       memcpy(&E.bounds[e], &ba.getBounds(e), 24);
       if (cd) E.contactDist[e] = cd[e];
+      E.cacheFlags[e] = tc.getTransformCache(e).flags;
     }
     ES.handle[&as] = h;
+    if (ES.hPx.size() <= size_t(h)) ES.hPx.resize(size_t(h) + 1, nullptr);
+    ES.hPx[size_t(h)] = as.getPxActor();
   }
 }
 
@@ -625,6 +632,8 @@ void W(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3
   compareCalls(m, "추가(동적) 모듈 호출");
   if (Sc::BodySim* sim = body.getSim()) {
     ES.handle[sim] = h;
+    if (ES.hPx.size() <= size_t(h)) ES.hPx.resize(size_t(h) + 1, nullptr);
+    ES.hPx[size_t(h)] = sim->getPxActor();
     edCheckAdded(h, *sim);
   }
 }
@@ -870,6 +879,7 @@ void g1_sc_before(PxScene* scene, uint64_t sim) {
     SS.on = getenv("G1_SC") != nullptr;
     SS.show = getenv("G1_SC_SHOW") ? atoi(getenv("G1_SC_SHOW")) : 0;
     ES.on = SS.on && getenv("G1_SC_EDIT") != nullptr;
+
     if (const char* d = getenv("G1_SC_TEMPLATES")) ES.tmplDir = d;
     if (getenv("G1_SC_TRACE")) SS.trace = atoll(getenv("G1_SC_TRACE"));
     if (getenv("G1_SC_TRACE_SIM")) sscanf(getenv("G1_SC_TRACE_SIM"), "%lld:%lld", &SS.traceFrom, &SS.traceTo);
@@ -978,4 +988,53 @@ void W(_ZN5physx2Sc8BodyCore13setBody2WorldERKNS_12PxTransformTIfEE)(Sc::BodyCor
   R(_ZN5physx2Sc8BodyCore13setBody2WorldERKNS_12PxTransformTIfEE)(c, p);
   if (getenv("G1_SC") && c->getSim()) releaseBody(c->getSim());  // 모양 더럽힘 -> 넓은 단계 전 preRigidBodyNarrowPhase 에서 다시 계산 (ScPipeline.cpp:199)
 }
+}
+
+// ---- 닫힌 고리 2단: 우리 Sc 층(ES.E)의 입력 조각을 우리 몸체 결과로 갱신하고 contact 층이 쓴다 (G1_LOOP_SC=1, G1_SC_EDIT 필요)
+bool g1_sc_loop_on() { return ES.on && ES.inited && getenv("G1_LOOP_SC") != nullptr; }
+void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf& b2a, bool frozen) {
+  if (!g1_sc_loop_on()) return;
+  auto it = ES.handle.find(actorSim);
+  if (it == ES.handle.end()) return;
+  auto tf = [](const eng::Tf& t) { return ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w)); };
+  ES.E.updateActorCached(it->second, tf(b2w), tf(b2a), frozen);
+}
+eng::scene::ScScene* g1_sc_scene() { return g1_sc_loop_on() ? &ES.E : nullptr; }
+const PxActor* g1_sc_actor_px(int32_t h) { return h >= 0 && size_t(h) < ES.hPx.size() ? ES.hPx[size_t(h)] : nullptr; }
+
+// 진단 (G1_SEGV=1): 덤프 없이 호출 스택만 찍고 끝냄. 프로그램 시작 때 걸고, 스택 넘침도 잡게 대체 스택을 쓴다
+__attribute__((constructor)) static void g1SegvInstall() {
+  if (!getenv("G1_SEGV")) return;
+  {  // backtrace 는 처음 부를 때 libgcc 를 불러오며 malloc 을 쓴다 -> 미리 한 번 (더미 힙이 깨진 뒤에도 핸들러가 돌게)
+    void* w[2];
+    backtrace(w, 2);
+  }
+  static char altStack[1 << 16];
+  stack_t ss{};
+  ss.ss_sp = altStack;
+  ss.ss_size = sizeof(altStack);
+  sigaltstack(&ss, nullptr);
+  struct sigaction sa{};
+  sa.sa_flags = SA_ONSTACK | SA_RESETHAND;
+  sa.sa_flags |= SA_SIGINFO;
+  sa.sa_sigaction = [](int sig, siginfo_t* si, void* uc) {
+    // 스택 되짚기(backtrace)가 깨진 스택에서 다시 죽으므로 레지스터만: 명령 주소·스택 위 반환 주소 후보
+    const ucontext_t* u = static_cast<const ucontext_t*>(uc);
+    const uintptr_t rip = uintptr_t(u->uc_mcontext.gregs[REG_RIP]), rsp = uintptr_t(u->uc_mcontext.gregs[REG_RSP]),
+                    rbp = uintptr_t(u->uc_mcontext.gregs[REG_RBP]);
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf), "[g1 segv] 신호 %d 주소 %p rip %p rsp %p rbp %p 기준 g1_sc_report %p\n", sig, si->si_addr, (void*)rip, (void*)rsp, (void*)rbp,
+                     (void*)&g1_sc_report);
+    (void)!write(2, buf, size_t(n));
+    // 스택 위 64 칸 (반환 주소 후보; 실행 파일 안 주소만 addr2line 으로 보면 됨)
+    const uintptr_t* sp = reinterpret_cast<const uintptr_t*>(rsp);
+    for (int k = 0; k < 64; ++k) {
+      n = snprintf(buf, sizeof(buf), "[g1 segv 스택] %p\n", (void*)sp[k]);
+      (void)!write(2, buf, size_t(n));
+    }
+    _exit(3);
+  };
+  sigaction(SIGSEGV, &sa, nullptr);
+  sigaction(SIGBUS, &sa, nullptr);
+  sigaction(SIGABRT, &sa, nullptr);
 }

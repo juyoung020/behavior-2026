@@ -2383,6 +2383,14 @@ class Replayer {
     Obj& o = it->second;
     std::string c = cname(o.cls);
     if (o.px) {
+      // 판 도중 지운 행위자(자르기·다지기 removing_objects)를 가리키는 곳을 먼저 비운다: 거르기 다시 목록·이름표
+      // (09-30 리드: 양파 다지기 기록에서 모양 플래그 변경으로 거르기 다시 목록에 든 행위자를 같은 창에서 지운 뒤 do_refilter 가 죽었다)
+      if (PxRigidActor* ra = o.px->is<PxRigidActor>()) {
+        refilter.erase(std::remove(refilter.begin(), refilter.end(), ra), refilter.end());
+        for (auto ib = actor_by_name.begin(); ib != actor_by_name.end();) ib = ib->second == ra ? actor_by_name.erase(ib) : std::next(ib);
+      }
+      if (auto* ar = o.px->is<PxArticulationReducedCoordinate>())
+        for (auto ia = art_by_name.begin(); ia != art_by_name.end();) ia = ia->second == ar ? art_by_name.erase(ia) : std::next(ia);
       if (c == "PxArticulationLink" || c == "PxArticulationJointReducedCoordinate" || c == "PxConstraint") {}  // 주인이 지운다
       else if (F.is_a(o.cls, F.cls("PxJoint"))) static_cast<PxJoint*>(o.px)->release();
       else if (c == "PxArticulationMimicJoint") static_cast<PxArticulationMimicJoint*>(o.px)->release();

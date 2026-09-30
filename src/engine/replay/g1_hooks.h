@@ -69,6 +69,15 @@ void g1_scene_task(const char* name);
 void g1_scene_before(physx::PxScene* scene, uint64_t sim);
 void g1_scene_after(physx::PxScene* scene, uint64_t sim);
 void g1_scene_report();
+// 닫힌 고리 2단 Sc 입력 조각 (g1_sc.cpp 의 우리 Sc 장면)
+namespace eng { struct Tf; namespace scene { struct ScScene; } }
+bool g1_sc_loop_on();
+void g1_sc_update_actor(const void* actorSim, const eng::Tf& b2w, const eng::Tf& b2a, bool frozen);
+eng::scene::ScScene* g1_sc_scene();
+const physx::PxActor* g1_sc_actor_px(int32_t h);
+const void* g1_art_link_sim(const void* fa, uint32_t creationIdx);  // g1_art.cpp: 관절체 링크 -> Sc::ActorSim*
+namespace eng { namespace sv { struct SolverCM; struct ContactPatchIn; struct ContactIn; } }
+bool g1_scene_solver_input(uint32_t cmIndex, const eng::sv::SolverCM** m, const eng::sv::ContactPatchIn** patches, const eng::sv::ContactIn** contacts);
 // 닫힌 고리 (2a) API 창 (g1_loop.cpp, G1_LOOP)
 void g1_loop_before(physx::PxScene* scene, uint64_t sim);
 void g1_loop_after(physx::PxScene* scene, uint64_t sim);

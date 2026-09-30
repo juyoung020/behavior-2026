@@ -79,6 +79,8 @@ struct ScScene {
   std::vector<px::PxTransform> cache;
   std::vector<px::PxBounds3> bounds;
   std::vector<float> contactDist;
+  std::vector<uint32_t> cacheFlags;  // PxsTransformFlag (eFROZEN = 1) — 요소별
+  std::vector<uint32_t> changed;     // 넓은 단계 바뀜 비트맵 (AABBManager changedAABBMgActorHandleMap), 요소 번호 비트
   uint32_t unsupported = 0;
 
   static uint32_t bpGroup(const ScActorRec& a) {  // Bp::getFilterGroup (BpFiltering.h:80)
@@ -94,6 +96,34 @@ struct ScScene {
       cache.resize(e + 1);
       bounds.resize(e + 1);
       contactDist.resize(e + 1, 0.f);
+      cacheFlags.resize(e + 1, 0u);
+    }
+  }
+  void markChanged(uint32_t e) {
+    if (changed.size() <= e / 32) changed.resize(e / 32 + 1, 0u);
+    changed[e / 32] |= 1u << (e & 31);
+  }
+  // 한 모양 칸을 행위자 지금 자세로 (ShapeSimBase::updateCached 의 계산 부분)
+  void computeCached(uint32_t e) {
+    ScShapeRec& s = shapes[e];
+    const ScActorRec& a = actors[size_t(s.actor)];
+    ShapePoseIn pin{};
+    pin.shape2Actor = s.in.localPose;
+    pin.isStatic = a.kind == 0;
+    pin.idtShape = s.in.idtShape;
+    pin.idtBody2Actor = a.idtBody2Actor;
+    updateShapeCached(pin, s.in.geom.get(), a.pose, a.body2Actor, cache[e], bounds[e]);
+  }
+  // 적분 뒤 갱신 (ScScene.cpp:150-240 afterIntegration: 깨어 있고 안 얼린 강체, 이번에 잠든 강체(되돌린 자세로), 깨어 있는 관절체 링크):
+  // 행위자 자세를 받아 모양 칸을 다시 계산하고, 시뮬레이션·트리거 모양은 넓은 단계 바뀜 표시 (changedMap pattern #1)
+  void updateActorCached(int32_t h, const px::PxTransform& body2World, const px::PxTransform& body2Actor, bool frozen) {
+    ScActorRec& a = actors[size_t(h)];
+    a.pose = body2World;
+    a.body2Actor = body2Actor;
+    for (uint32_t e : a.elements) {
+      computeCached(e);
+      cacheFlags[e] = frozen ? 1u : 0u;
+      if (shapes[e].in.shapeFlags & (kShapeSimulation | kShapeTrigger)) markChanged(e);
     }
   }
   // initSubsystemsDependingOnElementID (ScShapeSimBase.cpp:176)

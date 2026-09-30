@@ -44,6 +44,7 @@
 #include "core/scene/pairs_log.h"
 #include "core/scene/omni_filter.h"
 #include "core/scene/env_runtime.h"
+#include "core/scene/sc_scene.h"
 #include "omni_filter.h"
 #include "g1_hooks.h"
 
@@ -99,6 +100,10 @@ struct SceneShadow {
   std::vector<sv::SolverCM> solverCms;
   ec::SolverInputOut solverIn;
   uint64_t cmpSolver = 0, badSolver = 0;
+  // 닫힌 고리 2단: Sc 입력 조각을 우리 Sc 장면(g1_sc)에서
+  uint64_t lsSteps = 0, lsCells = 0, lsResync = 0, lsBoundsDiff = 0, lsWordDiff = 0, lsCacheDiff = 0, lsDistDiff = 0, lsNonShape = 0;
+  long long lsFirst = -1;
+  std::string lsFirstWhat;
   es::OmniFilterCtx fctx;
   bool coreFilter = false;
   // 통계
@@ -292,6 +297,21 @@ void runStep(PxScene* scene) {
     const PxTransform& t = cache[k].transform;
     tc[k].transform = ep::PxTransform32(ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w)));
     tc[k].flags = cache[k].flags;
+  }
+  if (es::ScScene* E = g1_sc_scene()) {  // 2단: 좁은 단계 변환 캐시도 우리 Sc 칸 (모양 칸만)
+    for (size_t k = 0; k < ncache && k < E->shapes.size(); ++k) {
+      if (!E->shapes[k].alive) continue;
+      const ep::PxTransform& t = E->cache[k];
+      const float a7[7] = {t.q.x, t.q.y, t.q.z, t.q.w, t.p.x, t.p.y, t.p.z};
+      const float b7[7] = {cache[k].transform.q.x, cache[k].transform.q.y, cache[k].transform.q.z, cache[k].transform.q.w, cache[k].transform.p.x,
+                           cache[k].transform.p.y, cache[k].transform.p.z};
+      if (memcmp(a7, b7, 28) || E->cacheFlags[k] != cache[k].flags) {
+        ++SC.lsCacheDiff;
+        if (SC.lsFirst < 0) { SC.lsFirst = (long long)SC.sim; SC.lsFirstWhat = "변환 캐시"; }
+      }
+      tc[k].transform = ep::PxTransform32(t);
+      tc[k].flags = E->cacheFlags[k];
+    }
   }
   {  // 재질 표 (g1_shadow 가 첫 simulate 앞에서 채움 -> 스텝마다 옮겨 담음, 판 도중 새 재질 대비)
     size_t nm = 0;
@@ -508,6 +528,48 @@ void g1_scene_task(const char* name) {
   SC.hasCD = sc.mHasContactDistanceChanged;
   SC.boundsChanged = pb.hasChanged();
   SC.haveInput = true;
+  if (es::ScScene* E = g1_sc_scene()) {  // 2단: 우리 Sc 칸으로 (건드린 행위자 모양만 PhysX 로 다시 맞춤), PhysX 와 비교
+    ++SC.lsSteps;
+    auto lsBad = [&](const char* w) {
+      if (SC.lsFirst < 0) { SC.lsFirst = (long long)SC.sim; SC.lsFirstWhat = w; }
+    };
+    PxsTransformCache& ptc = sc.getLowLevelContext()->getTransformCache();
+    const size_t nb = pb.size();
+    std::vector<uint32_t> w(SC.words.size(), 0u);
+    for (size_t e = 0; e < nb; ++e) {
+      const bool pxBit = e / 32 < SC.words.size() && (SC.words[e / 32] >> (e & 31)) & 1u;
+      const bool isShape = e < E->shapes.size() && E->shapes[e].alive;
+      if (!isShape) {  // 집합체 칸 등 (Sc 모양이 아님): PhysX 값 그대로
+        ++SC.lsNonShape;
+        if (pxBit) w[e / 32] |= 1u << (e & 31);
+        continue;
+      }
+      ++SC.lsCells;
+      const PxActor* ax = g1_sc_actor_px(E->shapes[e].actor);
+      bool touched = ax && g1_loop_touched(ax);
+      if (ax && !touched)
+        if (const PxArticulationLink* lk = ax->is<PxArticulationLink>()) touched = g1_loop_touched(&lk->getArticulation());
+      const bool ourBit = e / 32 < E->changed.size() && (E->changed[e / 32] >> (e & 31)) & 1u;
+      if (touched || SC.lsSteps == 1) {  // 첫 스텝 = 넘겨받기 (장면 짓기 뒤 더럽힘 처리까지 끝난 PhysX 칸)  // 옮기지 않은 API (자세 set 등): 모양 더럽힘 -> PhysX 가 simulate 안에서 다시 계산한 값
+        if (touched) ++SC.lsResync;
+        memcpy(&E->bounds[e], &SC.bounds[6 * e], 24);
+        if (e < SC.dist.size()) E->contactDist[e] = SC.dist[e];
+        const PxTransform& t = ptc.getTransformCache(PxU32(e)).transform;
+        E->cache[e] = ep::PxTransform(ep::PxVec3(t.p.x, t.p.y, t.p.z), ep::PxQuat(t.q.x, t.q.y, t.q.z, t.q.w));
+        E->cacheFlags[e] = ptc.getTransformCache(PxU32(e)).flags;
+        if (pxBit) w[e / 32] |= 1u << (e & 31);
+        continue;
+      }
+      if (memcmp(&E->bounds[e], &SC.bounds[6 * e], 24)) { ++SC.lsBoundsDiff; lsBad("경계 상자"); }
+      if (ourBit != pxBit) { ++SC.lsWordDiff; lsBad("바뀜 비트"); }
+      if (e < SC.dist.size() && memcmp(&E->contactDist[e], &SC.dist[e], 4)) { ++SC.lsDistDiff; lsBad("접촉 거리"); }
+      memcpy(&SC.bounds[6 * e], &E->bounds[e], 24);
+      if (e < SC.dist.size()) SC.dist[e] = E->contactDist[e];
+      if (ourBit) w[e / 32] |= 1u << (e & 31);
+    }
+    SC.words.swap(w);
+    E->changed.assign(E->changed.size(), 0u);  // 넓은 단계가 씀 -> 비움
+  }
 }
 void g1_scene_before(PxScene* scene, uint64_t sim) {
   init();
@@ -574,9 +636,23 @@ void g1_scene_after(PxScene* scene, uint64_t sim) {
 }
 void g1_scene_report() {
   if (!SC.on) return;
+  if (SC.lsSteps)
+    printf("G1 닫힌 고리 2단 Sc 입력(우리 Sc 장면): 스텝 %" PRIu64 ", 모양 칸 %" PRIu64 " (건드림 다시 맞춤 %" PRIu64 ", Sc 모양 아닌 칸 %" PRIu64 ") — PhysX 와 다름: 경계 상자 %" PRIu64
+           ", 바뀜 비트 %" PRIu64 ", 접촉 거리 %" PRIu64 ", 변환 캐시 %" PRIu64 "%s\n",
+           SC.lsSteps, SC.lsCells, SC.lsResync, SC.lsNonShape, SC.lsBoundsDiff, SC.lsWordDiff, SC.lsDistDiff, SC.lsCacheDiff,
+           SC.lsFirst >= 0 ? ("  첫 simulate " + std::to_string(SC.lsFirst) + " " + SC.lsFirstWhat).c_str() : "");
   printf("G1 contact 장면 단위 그림자 (scene_step.h 한 줄: 우리 넓은 단계 -> 쌍 관리 -> 좁은 단계 -> 풀이 뒤 정리, 거르개 %s): 스텝 %" PRIu64 "\n", SC.coreFilter ? "core/scene/omni_filter.h" : "재생기 PhysX 콜백", SC.steps);
   printf("  넓은 단계 겹침 %" PRIu64 " (다름 %" PRIu64 "), 좁은 단계 칸 %" PRIu64 " (값 비교 %" PRIu64 ", 다름 %" PRIu64 "), 스텝 끝 목록 %" PRIu64 " (다름 %" PRIu64
          "), solver 입력 관리자 %" PRIu64 " (다름 %" PRIu64 "), 활성화 재생 어긋남 %" PRIu64 ", PhysX 에 없는 칸 %" PRIu64 " — 다름 합 %" PRIu64 "%s\n",
          SC.cmpOverlap, SC.badOverlap, SC.cmpSlot, SC.cmpVal, SC.badSlot, SC.cmpList, SC.badEnd, SC.cmpSolver, SC.badSolver, SC.actBad, SC.goneCm, SC.bad,
          SC.firstBad >= 0 ? ("  첫 다름 simulate " + std::to_string(SC.firstBad) + " " + SC.firstWhat).c_str() : "");
+}
+
+// 닫힌 고리 2단: 이번 스텝 우리 solver 입력 (관리자 번호 = PhysX 접촉 관리자 풀 번호). 없으면 false
+bool g1_scene_solver_input(uint32_t cmIndex, const eng::sv::SolverCM** m, const eng::sv::ContactPatchIn** patches, const eng::sv::ContactIn** contacts) {
+  if (!SC.on || !SC.started || cmIndex >= SC.solverCms.size()) return false;
+  *m = &SC.solverCms[cmIndex];
+  *patches = SC.solverIn.patches.data();
+  *contacts = SC.solverIn.contacts.data();
+  return true;
 }

@@ -342,3 +342,9 @@ void g1_art_report() {
   for (auto& kv : AS.badByName)
     if (k++ < 10) printf("    다름 %6" PRIu64 "  %s\n", kv.second, kv.first.c_str());
 }
+
+const void* g1_art_link_sim(const void* fa, uint32_t creationIdx) {
+  auto it = AS.twins.find(fa);
+  if (it == AS.twins.end() || creationIdx >= it->second.links.size()) return nullptr;
+  return static_cast<NpArticulationLink*>(it->second.links[creationIdx])->getCore().getSim();
+}

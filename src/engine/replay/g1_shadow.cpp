@@ -236,12 +236,12 @@ bool g1_simulate(PxScene* scene, float dt, uint64_t sim) {
 
 // ovd_replay 가 fetchResults 뒤에 부른다
 void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
+  g1_pairs_after(scene, sim);
+  g1_scene_after(scene, sim);  // 우리 contact 한 스텝 (닫힌 고리 2단: solver 가 이 접촉 입력을 쓴다 -> 먼저)
   g1_solver_after(scene, sim);
   g1_art_after(scene, sim);
   g1_islands_after(scene, sim);
-  g1_pairs_after(scene, sim);
   g1_sc_after(scene, sim);
-  g1_scene_after(scene, sim);
   g1_loop_after(scene, sim);
   if (!G.on) return;
   (void)phys;

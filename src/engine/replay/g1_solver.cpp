@@ -165,6 +165,7 @@ struct SolverShadow {
   std::unordered_map<const PxsRigidBody*, eng::Body> pBodies;
   std::map<std::pair<const void*, const void*>, std::vector<sv::FrictionPatch>> pFric;  // (모양 핵 0, 1) -> 지난 마찰 패치
   std::unordered_set<uint32_t> pWbSeen;
+  uint64_t lcUsed = 0, lcDiff = 0, lcMissing = 0;  // 2단 접촉 입력
   uint64_t pBodyUsed = 0, pBodyResync = 0, pBodyNew = 0, pBodyDiff = 0, pFricUsed = 0, pFricDiff = 0, pFricReset = 0, pFricNew = 0, pWbUsed = 0, pWbDiff = 0;
   long long pFirstBody = -1, pFirstFric = -1, pFirstWb = -1;
 
@@ -682,6 +683,44 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
   GS.skipMod += S.skipMod;
   GS.skipOther += S.skipOther;
   if (S.islands.empty()) return;
+  // 닫힌 고리 2단 (G1_LOOP_CONTACT=1): 접촉 입력(패치·접촉점·작업 단위 값)을 우리 contact 장면 단위(g1_scene.cpp)에서
+  if (GS.persist && getenv("G1_LOOP_CONTACT")) {
+    std::vector<sv::ContactPatchIn> np;
+    std::vector<sv::ContactIn> nc;
+    for (size_t k = 0; k < S.cms.size(); ++k) {
+      sv::SolverCM& m = S.cms[k];
+      const sv::SolverCM* o = nullptr;
+      const sv::ContactPatchIn* op = nullptr;
+      const sv::ContactIn* oc = nullptr;
+      if (!g1_scene_solver_input(S.cmKeys[k]->getIndex(), &o, &op, &oc)) {
+        ++GS.lcMissing;
+        np.insert(np.end(), S.patches.begin() + m.patchStart, S.patches.begin() + m.patchStart + m.nbPatches);
+        nc.insert(nc.end(), S.contacts.begin() + m.contactStart, S.contacts.begin() + m.contactStart + m.nbContacts);
+        m.patchStart = uint32_t(np.size() - m.nbPatches);
+        m.contactStart = uint32_t(nc.size() - m.nbContacts);
+        continue;
+      }
+      bool same = o->npFlags == m.npFlags && o->nbPatches == m.nbPatches && o->nbContacts == m.nbContacts && !memcmp(&o->restDistance, &m.restDistance, 16);
+      for (uint32_t q = 0; same && q < m.nbPatches; ++q)
+        same = !memcmp(&op[o->patchStart + q], &S.patches[m.patchStart + q], offsetof(sv::ContactPatchIn, materialIndex1) + 2);
+      if (same && m.nbContacts) same = !memcmp(&oc[o->contactStart], &S.contacts[m.contactStart], sizeof(sv::ContactIn) * m.nbContacts);
+      if (!same) ++GS.lcDiff;
+      ++GS.lcUsed;
+      m.npFlags = o->npFlags;
+      m.restDistance = o->restDistance;
+      m.torsionalPatchRadius = o->torsionalPatchRadius;
+      m.minTorsionalPatchRadius = o->minTorsionalPatchRadius;
+      m.offsetSlop = o->offsetSlop;
+      m.nbPatches = o->nbPatches;
+      m.nbContacts = o->nbContacts;
+      m.patchStart = uint32_t(np.size());
+      m.contactStart = uint32_t(nc.size());
+      np.insert(np.end(), op + o->patchStart, op + o->patchStart + o->nbPatches);
+      nc.insert(nc.end(), oc + o->contactStart, oc + o->contactStart + o->nbContacts);
+    }
+    S.patches.swap(np);
+    S.contacts.swap(nc);
+  }
   S.bodies0 = S.bodies;
   const uint32_t nb = uint32_t(S.bodies.size());
   if (nb + 64 > GS.vels.size()) {
@@ -843,6 +882,24 @@ void g1_solver_after(PxScene* scene, uint64_t sim) {
     if (g1_loop_persist()) {
       for (uint32_t k = 0; k < na; ++k) g1_art_persist(S.artFa[k], arts[k], sim);
       for (uint32_t i = 0; i < nb; ++i) GS.pBodies[S.rbs[i]] = S.bodies[i];
+      if (g1_sc_loop_on()) {  // 2단: 적분 뒤 Sc 칸 갱신 (ScScene.cpp afterIntegration — 얼린 몸체는 안 고침, 잠든 몸체는 되돌린 자세로)
+        for (uint32_t i = 0; i < nb; ++i) {
+          const eng::Body& b = S.bodies[i];
+          const bool frozen = (b.internalFlags & 1u) != 0;  // PxsRigidBody::eFROZEN
+          if (frozen) continue;  // updateCached 는 얼린 몸체를 건너뜀 (ScBodySim.cpp:166, ScScene.cpp:180)
+          const Sc::BodySim* bs = reinterpret_cast<const Sc::BodySim*>(reinterpret_cast<const PxU8*>(S.rbs[i]) - Sc::BodySim::getRigidBodyOffset());
+          g1_sc_update_actor(static_cast<const Sc::ActorSim*>(bs), b.body2World, b.body2Actor, frozen);
+        }
+        std::unordered_set<uint32_t> artDeact(deactArts.begin(), deactArts.end());
+        for (uint32_t k = 0; k < na; ++k) {
+          if (artDeact.count(k) || !arts[k].awake) continue;  // 이번에 잠든 관절체는 안 고침 (putToSleep)
+          const eng::art::Articulation& a = arts[k];
+          for (uint32_t l = 0; l < a.nLinks; ++l) {
+            const eng::art::LinkBody& lb = a.bodies[a.ll[l]];
+            g1_sc_update_actor(g1_art_link_sim(S.artFa[k], l), lb.body2World, lb.body2Actor, false);
+          }
+        }
+      }
       const sv::FrictionArena& fa2 = B.friction[B.frictionCurIdx];
       for (size_t k = 0; k < S.cms.size(); ++k) {
         const PxcNpWorkUnit& u = S.cmKeys[k]->getWorkUnit();
@@ -1043,6 +1100,8 @@ void g1_solver_report() {
            GS.pBodyUsed, GS.pBodyNew, GS.pBodyResync, GS.pBodyDiff, GS.pFirstBody >= 0 ? (" 첫 " + std::to_string(GS.pFirstBody)).c_str() : "", GS.pFricUsed,
            GS.pFricNew, GS.pFricReset, GS.pFricDiff, GS.pFirstFric >= 0 ? (" 첫 " + std::to_string(GS.pFirstFric)).c_str() : "", GS.pWbUsed, GS.pWbDiff,
            GS.pFirstWb >= 0 ? (" 첫 " + std::to_string(GS.pFirstWb)).c_str() : "");
+  if (GS.persist && getenv("G1_LOOP_CONTACT"))
+    printf("  닫힌 고리 2단 접촉 입력(우리 contact 장면 단위): 관리자 %" PRIu64 " (PhysX 와 다름 %" PRIu64 ", 우리 쪽에 없음 %" PRIu64 ")\n", GS.lcUsed, GS.lcDiff, GS.lcMissing);
   for (const Tally* t : {&GS.tPose, &GS.tLin, &GS.tAng, &GS.tWake, &GS.tSleep, &GS.tFric, &GS.tWb, &GS.tArt})
     printf("  %-20s 비교 %10" PRIu64 "  비트 다름 %8" PRIu64 "  최대|차| %.3e%s\n", t->name, t->cmp, t->bad, t->maxd,
            t->bad ? ("  첫 다름 simulate " + std::to_string(t->first)).c_str() : "");
