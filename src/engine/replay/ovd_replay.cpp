@@ -2683,7 +2683,8 @@ class Replayer {
         C.free_skipped[what]++;
         if (e.cmd == ovd::kSet || e.cmd == ovd::kAddToList || e.cmd == ovd::kRemoveFromList) continue;  // 생성·파괴는 넣는다(객체 대응 유지, 개수만 보고)
         if ((AGF.post >= 0 || AG.on) && e.cmd == ovd::kCreate && is_ext_joint_cls(e.cls)) { C.free_skipped["AG 관절 생성(엔진이 만듦)"]++; skip_objs.insert(e.obj); continue; }
-        if (e.cmd == ovd::kDestroy && skip_objs.count(e.obj)) continue;
+        // 파괴: 에피소드 동안 OVD 의 파괴는 잡기 관절(엔진이 한다) 아니면 기록 끝의 장면 해체(Kit 종료)뿐이다 -> 넣지 않는다
+        if (e.cmd == ovd::kDestroy) { C.free_skipped["파괴(넣지 않음)"]++; continue; }
       }
       switch (e.cmd) {
         case ovd::kCreate: {

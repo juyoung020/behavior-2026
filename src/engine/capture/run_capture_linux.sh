@@ -30,7 +30,7 @@ cd $BASE/BEHAVIOR-1K/OmniGibson
 set +e
 # WSL 에는 RTX 렌더 장치가 없다 -> --no-render (카메라 관측만 0 영상, 물리 무관)
 python ${ENGINE_CAPTURE_PY:-/mnt/c/behavior-2026/src/engine/capture/physx_capture.py} --dump-dir "$OUT" --no-render "${EXTRA[@]}" -- --trace -- \
-  --task-name turning_on_radio --robot-config /mnt/c/behavior-2026/src/configs/r1pro_openpi.yaml \
+  --task-name ${TASK_NAME:-turning_on_radio} --robot-config /mnt/c/behavior-2026/src/configs/r1pro_openpi.yaml \
   --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode ${EVAL_MODE:-public_test} \
   --host 127.0.0.1 --port $PORT --instance-indices ${INSTANCE_IDX:-0} --num-envs 1 --max-steps "$MAXSTEPS" \
   --output-dir "$OUT" --headless 2>&1 | tee "$OUT/eval.log"
