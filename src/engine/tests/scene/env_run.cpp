@@ -3,6 +3,7 @@
 //   env_run <장면 파일> <창 입력 흐름> [--show N] [--envs N] [--threads T]
 // --envs N: 같은 장면 틀(SceneShared)을 나눠 쓰는 판 N 개에 같은 흐름을 넣어 스레드 T 개로 나눠 돌린다 — 판마다 요약값이 모두 같아야 한다
 //           (판끼리 공유 전역 상태가 없음 = G2 N 판의 관문).
+// --batch: 판마다 스레드 하나, 풀이 본체를 모든 판이 모여 한 번에(core/scene/env_batch.h — 지금은 CPU 흉내, 나중에 GPU).
 // 빌드: replay/CMakeLists.txt 의 env_run (ovd_replay_g1 과 같은 컴파일러·같은 부동소수 옵션, PhysX 링크 없음).
 #include <atomic>
 #include <chrono>
@@ -35,10 +36,15 @@ struct EnvResult {
 };
 
 // 판 하나: 적재 -> 창마다 넣고 스텝 -> 요약값 대조
-void runEnv(const sc2::SceneFile& f, const sc2::SceneShared& sh, const std::vector<sc2::EnvWindow>& wins, int show, EnvResult& R) {
+void runEnv(const sc2::SceneFile& f, const sc2::SceneShared& sh, const std::vector<sc2::EnvWindow>& wins, int show, EnvResult& R, sc2::SolveBatch* batch) {
+  struct Leave {
+    sc2::SolveBatch* b;
+    ~Leave() { if (b) b->leave(); }
+  } leave{batch};
   std::unique_ptr<sc2::EnvOwned> o(new sc2::EnvOwned);
   if (!sc2::envLoad(*o, f, sh, &R.err)) return;
   std::unique_ptr<sc2::EnvSolveImpl> S(new sc2::EnvSolveImpl);
+  S->batch = batch;
   S->load(f);
   S->seedPairs(o->C.S->pairs);
   o->E.solver = S.get();
@@ -79,6 +85,9 @@ int main(int argc, char** argv) {
     return 2;
   }
   int show = 5, envs = 1, threads = 1;
+  bool batchMode = false;
+  for (int i = 3; i < argc; ++i)
+    if (!strcmp(argv[i], "--batch")) batchMode = true;
   for (int i = 3; i + 1 < argc; ++i) {
     if (!strcmp(argv[i], "--show")) show = atoi(argv[i + 1]);
     if (!strcmp(argv[i], "--envs")) envs = atoi(argv[i + 1]);
@@ -124,12 +133,24 @@ int main(int argc, char** argv) {
   fclose(in);
   // 판 N 개를 스레드 T 개로
   std::vector<EnvResult> R(static_cast<size_t>(envs));
+  std::unique_ptr<sc2::SolveBatch> batch;
+  if (batchMode) {
+    threads = envs;  // 판마다 스레드 하나 (풀이 자리에서 모두 모임)
+    batch.reset(new sc2::SolveBatch(envs));
+    batch->run = [](eng::sv::SolverBoard* const* B, const eng::sv::SolverParams* const* P, int n) {  // CPU 흉내 (GPU 판이 나오면 교체)
+      sc2::EnvFtz f;
+      for (int i = 0; i < n; ++i) {
+        eng::sv::solverStepHost(*B[i], *P[i]);
+        eng::sv::afterIntegrationHost(*B[i]);
+      }
+    };
+  }
   std::atomic<int> next{0};
   const auto t0 = std::chrono::steady_clock::now();
   std::vector<std::thread> pool;
   for (int t = 0; t < threads; ++t)
     pool.emplace_back([&]() {
-      for (int e; (e = next.fetch_add(1)) < envs;) runEnv(f, *sh, wins, e == 0 ? show : 0, R[size_t(e)]);
+      for (int e; (e = next.fetch_add(1)) < envs;) runEnv(f, *sh, wins, e == 0 ? show : 0, R[size_t(e)], batch.get());
     });
   for (std::thread& th : pool) th.join();
   const double wall = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -160,6 +181,8 @@ int main(int argc, char** argv) {
   printf("  판 0 시간: 창+스텝 %.3f ms/스텝 — 스텝 %.3f = 넓은 단계+쌍 %.3f, 좁은 단계 %.3f, 풀이 %.3f (그중 풀이 본체 %.3f), 적분 뒤 %.3f, 사라진 겹침 %.3f, 나머지(섬·순서기) %.3f\n",
          r0.ms * k, tm.total * k, tm.bp * k, tm.np * k, tm.solve * k, tm.solveCore * k, tm.after * k, tm.lost * k,
          (tm.total - tm.bp - tm.np - tm.solve - tm.after - tm.lost) * k);
+  if (batch) printf("  풀이 모으기: 실행 %" PRIu64 " 번, 판 %" PRIu64 " 개 (실행당 평균 %.1f 판)\n", batch->launches, batch->boardsSolved,
+                    batch->launches ? double(batch->boardsSolved) / double(batch->launches) : 0.0);
   if (envs > 1)
     printf("  전체: 판 %d 스레드 %d 벽시계 %.1f ms = 판·스텝당 %.4f ms (판 스텝 처리량 %.0f /s)\n", envs, threads, wall,
            wall / double(envs) / double(wins.size() ? wins.size() : 1), double(envs) * double(wins.size()) / (wall / 1000.0));
