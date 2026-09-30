@@ -31,6 +31,7 @@
 
 #include "core/contact/narrowphase.h"
 #include "core/contact/patches.h"
+#include "core/scene/scene_file.h"
 
 using namespace physx;
 namespace ec = eng::contact;
@@ -130,7 +131,7 @@ struct Shadow {
 
 // ovd_replay 가 simulate 바로 앞에서 부른다
 void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
-  g1_solver_before(scene);
+  g1_solver_before(scene, sim);
   g1_art_before(scene);
   g1_dump_before(scene, sim);
   if (!G.on) G.on = getenv("G1_CONTACT") != nullptr;
@@ -155,6 +156,54 @@ void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
     G.statusBefore[cm] = outputs.getContactManagerOutput(cm->getWorkUnit().mNpIndex).statusFlag;
   }
   if (dbg) fprintf(stderr, "[g1] cache %zu, 관리자 %zu\n", G.cacheBefore.size(), G.statusBefore.size());
+  // v1 넘겨받기 시험 (G1_CONTACT_FROM=<엔진 장면 파일>): 파일의 경계 simulate 에서 우리 다양체를 전부 버리고 파일의 것(다른 실행에서 뜬 PhysX
+  // 다양체 바이트)으로 채운 뒤, 그 simulate 부터만 비교한다 -> "넘겨받은 상태에서 이어 가도 PhysX 와 같은가"
+  {
+    static bool fromInit = false;
+    static eng::scene::SceneFile fromFile;
+    static bool fromOk = false;
+    if (!fromInit) {
+      fromInit = true;
+      if (const char* p = getenv("G1_CONTACT_FROM")) {
+        std::string err;
+        fromOk = eng::scene::readScene(p, fromFile, &err);
+        if (!fromOk) fprintf(stderr, "[g1] G1_CONTACT_FROM 읽기 실패: %s\n", err.c_str());
+      }
+    }
+    if (fromOk && sim == fromFile.h.sim) {
+      const std::vector<const void*> cores = g1_shape_cores(scene);
+      std::unordered_map<const void*, uint32_t> idx;
+      for (uint32_t k = 0; k < cores.size(); ++k) idx[cores[k]] = k;
+      std::map<std::pair<uint32_t, uint32_t>, uint32_t> fileCM;
+      for (uint32_t k = 0; k < fromFile.cms.size(); ++k) fileCM[{fromFile.cms[k].shape0, fromFile.cms[k].shape1}] = k;
+      G.pairs.clear();
+      G.seen.clear();
+      uint64_t got = 0, miss = 0, noMani = 0;
+      for (PxU32 ii = 0; ii < nInter; ++ii) {
+        const PxsContactManager* cm = static_cast<const Sc::ShapeInteraction*>(inter[ii])->getContactManager();
+        if (!cm) continue;
+        const PxcNpWorkUnit& wu = cm->getWorkUnit();
+        auto a = idx.find(wu.getShapeCore0()), b = idx.find(wu.getShapeCore1());
+        auto f = (a == idx.end() || b == idx.end()) ? fileCM.end() : fileCM.find({a->second, b->second});
+        if (f == fileCM.end()) { ++miss; continue; }
+        const eng::scene::SceneCM& c = fromFile.cms[f->second];
+        G.seen.insert(cm);
+        if (c.manifold == eng::scene::kNone) { ++noMani; G.pairs[cm].slot = ec::ManifoldSlot{}; continue; }
+        G.pairs[cm].slot = fromFile.manifolds[c.manifold];  // 대입이 자기 버퍼 포인터를 다시 건다
+        if (getenv("G1_CONTACT_FROM_NEG")) {  // 음성 대조: 다양체를 새로 비운 것으로 (이러면 달라져야 한다)
+          const int t0 = fromFile.shapes[c.shape0].geom.type, t1 = fromFile.shapes[c.shape1].geom.type;
+          ec::initManifold(G.pairs[cm].slot, t0 < t1 ? t0 : t1, t0 < t1 ? t1 : t0);
+        }
+        ++got;
+      }
+      G.tCnt = Tally{"패치·점 수·상태"};
+      G.tPatch = Tally{"패치 머리"};
+      G.tPt = Tally{"접촉점·분리"};
+      G.nCM = G.nRun = G.nSkip = G.nUnsup = G.nOverflow = G.nNewAfter = G.nRefresh = 0;
+      printf("G1 contact 넘겨받기: simulate %llu 에서 파일 관리자 %zu 중 다양체 %" PRIu64 " 개를 넣음 (다양체 없는 관리자 %" PRIu64 ", 파일에 없는 관리자 %" PRIu64 ") — 이 뒤로만 비교\n",
+             (unsigned long long)sim, fromFile.cms.size(), got, noMani, miss);
+    }
+  }
   if (!G.inited) {
     G.initMaterials(*phys);
     if (dbg) fprintf(stderr, "[g1] 재질 %zu\n", G.mats.size());

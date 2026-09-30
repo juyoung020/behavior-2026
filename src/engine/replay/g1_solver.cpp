@@ -21,6 +21,8 @@
 #include "DyFeatherstoneArticulation.h"
 #include "g1_hooks.h"
 #include "g1_px.h"
+#include "core/scene/scene_file.h"
+#include <map>
 #if defined(G1_SOLVER_IO)
 #include G1_SOLVER_IO  // solver_host.cpp 와 같은 뿌리의 판 정의 (CMake G1_CORE_ROOT)
 #else
@@ -121,6 +123,7 @@ G1StepInfo gInfo;  // 관절체 단독 그림자(g1_art.cpp)에 넘기는 것
 struct SolverShadow {
   bool on = false, cmpOn = false, checked = false;
   PxScene* curScene = nullptr;
+  uint64_t stepSim = 0;
   Step st;
   // 판 작업 공간 (용량 고정, 스텝마다 재사용)
   std::vector<sv::SBodyVel> vels;
@@ -381,6 +384,38 @@ void takeSnapshot() {
   }
   S.valid = true;
   gInfo.valid = true;
+  // v1 넘겨받기 확인 (G1_SOLVER_FROM=<엔진 장면 파일>): 파일 경계 simulate 에서, 풀이가 읽는 지난 마찰 패치(PhysX, 풀이 직전)가
+  // 파일(다른 실행, simulate 앞에서 뜬 값)과 같은지. 다를 수 있는 것 = simulate 안에서 PhysX 가 지운 관리자(활성화·다시 등록) — 그건 우리 엔진도 스스로 지운다.
+  if (const char* fp = getenv("G1_SOLVER_FROM")) {
+    static eng::scene::SceneFile ff;
+    static int state = 0;  // 0 안 읽음, 1 읽음, 2 실패
+    if (state == 0) state = eng::scene::readScene(fp, ff) ? 1 : 2;
+    if (state == 1 && GS.stepSim == ff.h.sim) {
+      const std::vector<const void*> cores = g1_shape_cores(GS.curScene);
+      std::unordered_map<const void*, uint32_t> idx;
+      for (uint32_t k = 0; k < cores.size(); ++k) idx[cores[k]] = k;
+      std::map<std::pair<uint32_t, uint32_t>, uint32_t> fileCM;
+      for (uint32_t k = 0; k < ff.cms.size(); ++k) fileCM[{ff.cms[k].shape0, ff.cms[k].shape1}] = k;
+      std::unordered_set<uint32_t> actSet(S.act.begin(), S.act.end());
+      uint64_t same = 0, diffReset = 0, diffOther = 0, miss = 0;
+      for (uint32_t k = 0; k < S.cms.size(); ++k) {
+        const PxcNpWorkUnit& u = S.cmKeys[k]->getWorkUnit();
+        auto a = idx.find(u.getShapeCore0()), b = idx.find(u.getShapeCore1());
+        auto f = (a == idx.end() || b == idx.end()) ? fileCM.end() : fileCM.find({a->second, b->second});
+        if (f == fileCM.end()) { ++miss; continue; }
+        const eng::scene::SceneCM& c = ff.cms[f->second];
+        const sv::SolverCM& m = S.cms[k];
+        bool eq = c.frictionCount == m.frictionCount;
+        for (uint32_t q = 0; eq && q < m.frictionCount; ++q) eq = sameFriction(ff.friction[c.frictionStart + q], S.friction[m.frictionPtr + q]);
+        if (eq) ++same;
+        else if (m.frictionCount == 0 || actSet.count(k)) ++diffReset;
+        else ++diffOther;
+      }
+      printf("G1 solver 넘겨받기 확인: simulate %llu 풀이 입력 관리자 %zu — 파일 마찰 패치와 같음 %" PRIu64 ", 다름(PhysX 가 simulate 안에서 지움) %" PRIu64
+             ", 다름(그 밖) %" PRIu64 ", 파일에 없음 %" PRIu64 "\n",
+             (unsigned long long)GS.stepSim, S.cms.size(), same, diffReset, diffOther, miss);
+    }
+  }
 }
 
 // ---------------- 진단: PhysX 가 접촉 준비를 4 개 묶음(SIMD)으로 했는지 하나씩 했는지 (몸체 틀 bodyFrame0 위치로 가림)
@@ -471,9 +506,10 @@ PxCpuDispatcher* g1_dispatcher() {
 const G1StepInfo& g1_step_info() { return gInfo; }
 
 // ovd_replay 가 simulate 바로 앞에서 (g1_shadow.cpp 의 g1_before_simulate 를 거쳐)
-void g1_solver_before(PxScene* scene) {
+void g1_solver_before(PxScene* scene, uint64_t sim) {
   if (!GS.on) return;
   GS.curScene = scene;
+  GS.stepSim = sim;
   GS.st.valid = false;
   gInfo.valid = false;
 }

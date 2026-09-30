@@ -67,7 +67,7 @@ inline std::unique_ptr<SceneShared> makeShared(const SceneFile& f) {
 }
 
 struct BatchCaps {
-  uint32_t bodies = 0, arts = 0, joints = 0, shapes = 0;
+  uint32_t bodies = 0, arts = 0, joints = 0, shapes = 0, cms = 0, friction = 0;
 };
 
 struct Batch {
@@ -80,6 +80,10 @@ struct Batch {
   std::vector<art::Articulation> arts;  // n * cap.arts
   std::vector<SceneJoint> joints;       // n * cap.joints
   std::vector<ShapeFilter> filters;     // n * cap.shapes (모양 거르기 자료, 판마다 다름)
+  std::vector<SceneCM> cms;             // n * cap.cms (접촉 관리자, v1)
+  std::vector<contact::ManifoldSlot> manifolds;  // n * cap.cms (관리자 칸과 같은 번호)
+  std::vector<sv::FrictionPatch> friction;       // n * cap.friction
+  std::vector<uint32_t> nCMs;
   std::vector<uint64_t> sim;            // 판별 뜬 경계
 
   void init(uint32_t nEnvs, const BatchCaps& c) {
@@ -94,21 +98,31 @@ struct Batch {
     arts.resize(size_t(n) * cap.arts);
     joints.assign(size_t(n) * cap.joints, SceneJoint{});
     filters.assign(size_t(n) * cap.shapes, ShapeFilter{});
+    cms.assign(size_t(n) * cap.cms, SceneCM{});
+    manifolds.assign(size_t(n) * cap.cms, contact::ManifoldSlot{});
+    friction.assign(size_t(n) * cap.friction, sv::FrictionPatch{});
+    nCMs.assign(n, 0);
   }
   Body* envBodies(uint32_t e) { return bodies.data() + size_t(e) * cap.bodies; }
   art::Articulation* envArts(uint32_t e) { return arts.data() + size_t(e) * cap.arts; }
   SceneJoint* envJoints(uint32_t e) { return joints.data() + size_t(e) * cap.joints; }
   ShapeFilter* envFilters(uint32_t e) { return filters.data() + size_t(e) * cap.shapes; }
+  SceneCM* envCMs(uint32_t e) { return cms.data() + size_t(e) * cap.cms; }
+  contact::ManifoldSlot* envManifolds(uint32_t e) { return manifolds.data() + size_t(e) * cap.cms; }
+  sv::FrictionPatch* envFriction(uint32_t e) { return friction.data() + size_t(e) * cap.friction; }
   const SceneShared* shared(uint32_t e) const { return sharedOf[e] == kNone ? nullptr : shareds[sharedOf[e]].get(); }
   size_t stateBytes() const {
-    return bodies.size() * sizeof(Body) + arts.size() * sizeof(art::Articulation) + joints.size() * sizeof(SceneJoint) + filters.size() * sizeof(ShapeFilter);
+    return bodies.size() * sizeof(Body) + arts.size() * sizeof(art::Articulation) + joints.size() * sizeof(SceneJoint) + filters.size() * sizeof(ShapeFilter) +
+           cms.size() * sizeof(SceneCM) + manifolds.size() * sizeof(contact::ManifoldSlot) + friction.size() * sizeof(sv::FrictionPatch);
   }
 
   // 파일 하나를 판 e 에 넣는다. 용량을 넘으면 false.
   bool load(uint32_t e, const SceneFile& f, std::string* err = nullptr) {
     auto fail = [&](const char* w) { if (err) *err = w; return false; };
     if (e >= n) return fail("판 번호 넘침");
-    if (f.bodies.size() > cap.bodies || f.arts.size() > cap.arts || f.joints.size() > cap.joints || f.shapeFilters.size() > cap.shapes) return fail("용량 넘침");
+    if (f.bodies.size() > cap.bodies || f.arts.size() > cap.arts || f.joints.size() > cap.joints || f.shapeFilters.size() > cap.shapes ||
+        f.cms.size() > cap.cms || f.friction.size() > cap.friction)
+      return fail("용량 넘침");
     std::unique_ptr<SceneShared> s = makeShared(f);
     uint32_t si = kNone;
     for (uint32_t k = 0; k < shareds.size(); ++k)
@@ -126,6 +140,17 @@ struct Batch {
     std::copy(f.arts.begin(), f.arts.end(), envArts(e));
     std::copy(f.joints.begin(), f.joints.end(), envJoints(e));
     std::copy(f.shapeFilters.begin(), f.shapeFilters.end(), envFilters(e));
+    // 관리자 칸 k 의 다양체는 manifolds[k] 로 (파일의 다양체 번호 -> 관리자 번호). ManifoldSlot 대입이 자기 버퍼 포인터를 다시 건다.
+    nCMs[e] = uint32_t(f.cms.size());
+    SceneCM* C = envCMs(e);
+    contact::ManifoldSlot* M = envManifolds(e);
+    for (size_t k = 0; k < f.cms.size(); ++k) {
+      C[k] = f.cms[k];
+      if (f.cms[k].manifold != kNone) M[k] = f.manifolds[f.cms[k].manifold];
+      else M[k] = contact::ManifoldSlot{};
+      C[k].manifold = f.cms[k].manifold != kNone ? uint32_t(k) : kNone;
+    }
+    std::copy(f.friction.begin(), f.friction.end(), envFriction(e));
     return true;
   }
 };

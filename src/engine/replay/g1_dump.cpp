@@ -13,6 +13,10 @@
 #include "NpShape.h"
 #include "NpConstraint.h"
 #include "ScConstraintSim.h"
+#include "ScShapeInteraction.h"
+#include "PxsNphaseImplementationContext.h"
+#include "PxsContactManagerState.h"
+#include "DyFrictionPatch.h"
 #include "core/contact/hull_pack.h"
 #include "core/scene/batch.h"
 #include "g1_hooks.h"
@@ -55,6 +59,39 @@ bool geomFrom(const PxGeometry& pg, ec::ShapeGeom& o) {
     }
     default: return false;
   }
+}
+
+// PhysX 마찰 패치 -> 우리 것 (g1_solver.cpp frictionFrom 과 같은 규칙)
+eng::sv::FrictionPatch frictionOf(const Dy::FrictionPatch& p) {
+  eng::sv::FrictionPatch f;
+  f.broken = p.broken;
+  f.materialFlags = p.materialFlags;
+  f.anchorCount = p.anchorCount;
+  f.restitution = p.restitution;
+  f.staticFriction = p.staticFriction;
+  f.dynamicFriction = p.dynamicFriction;
+  f.body0Normal = g1px::toV(p.body0Normal);
+  f.body1Normal = g1px::toV(p.body1Normal);
+  for (int a = 0; a < 2; ++a) {
+    f.body0Anchors[a] = g1px::toV(p.body0Anchors[a]);
+    f.body1Anchors[a] = g1px::toV(p.body1Anchors[a]);
+  }
+  f.relativeQuat = eng::Q{p.relativeQuat.x, p.relativeQuat.y, p.relativeQuat.z, p.relativeQuat.w};
+  return f;
+}
+
+// 관리자의 Gu::Cache (좁은 단계 목록 칸; 새 표시면 새 목록)
+Gu::Cache* cacheOf(PxsNphaseImplementationContext* np, PxU32 npIndex) {
+  const bool isNew = (npIndex & PxsContactManagerBase::NEW_CONTACT_MANAGER_MASK) != 0;
+  PxsContactManagers& L = isNew ? np->mNewNarrowPhasePairs : np->mNarrowPhasePairs;
+  const PxU32 idx = PxsContactManagerBase::computeIndexFromId(npIndex & ~PxsContactManagerBase::NEW_CONTACT_MANAGER_MASK);
+  return idx < L.mCaches.size() ? &L.mCaches[idx] : nullptr;
+}
+const PxsContactManagerOutput* outputOf(PxsNphaseImplementationContext* np, PxU32 npIndex) {
+  const bool isNew = (npIndex & PxsContactManagerBase::NEW_CONTACT_MANAGER_MASK) != 0;
+  PxsContactManagers& L = isNew ? np->mNewNarrowPhasePairs : np->mNarrowPhasePairs;
+  const PxU32 idx = PxsContactManagerBase::computeIndexFromId(npIndex & ~PxsContactManagerBase::NEW_CONTACT_MANAGER_MASK);
+  return idx < L.mOutputContactManagers.size() ? &L.mOutputContactManagers[idx] : nullptr;
 }
 
 struct Dumper {
@@ -112,6 +149,7 @@ void dumpScene(PxScene* scene, uint64_t sim) {
     }
   }
   std::unordered_map<const void*, uint32_t> hullIdx;       // Gu::ConvexMesh* -> 덩어리 번호
+  std::unordered_map<const PxsShapeCore*, uint32_t> shapeOfCore;  // 좁은 단계 모양 -> SceneShape 번호
   std::unordered_map<const PxsRigidBody*, uint32_t> actorOfLL;  // 조인트 몸체 -> 행위자
   auto addShapes = [&](PxRigidActor* a, sc::SceneActor& sa, uint32_t actorIdx) {
     sa.shapeStart = uint32_t(F.shapes.size());
@@ -150,6 +188,7 @@ void dumpScene(PxScene* scene, uint64_t sim) {
       PxMaterial* m0 = nullptr;
       if (s->getNbMaterials()) s->getMaterials(&m0, 1);
       o.material = m0 ? static_cast<NpMaterial*>(m0)->mMaterial.mMaterialIndex : 0xffff;
+      shapeOfCore[&static_cast<NpShape*>(s)->getCore().getCore()] = uint32_t(F.shapes.size());
       F.shapes.push_back(o);
     }
     sa.shapeCount = uint32_t(F.shapes.size()) - sa.shapeStart;
@@ -245,6 +284,55 @@ void dumpScene(PxScene* scene, uint64_t sim) {
       F.joints.push_back(j);
     }
   }
+  // 접촉 관리자 (v1): 겹침 상호작용 순서
+  uint64_t nNoCache = 0;
+  {
+    auto* np = static_cast<PxsNphaseImplementationContext*>(scs.getLowLevelContext()->getNphaseImplementationContext());
+    const PxU32 nInter = scs.getNbInteractions(Sc::InteractionType::eOVERLAP);
+    Sc::ElementSimInteraction** inter = scs.getInteractions(Sc::InteractionType::eOVERLAP);
+    for (PxU32 ii = 0; ii < nInter; ++ii) {
+      const PxsContactManager* cm = static_cast<const Sc::ShapeInteraction*>(inter[ii])->getContactManager();
+      if (!cm) continue;  // 관리자 없는 상호작용(잠든 쌍 등)은 넘길 것이 없다
+      const PxcNpWorkUnit& u = cm->getWorkUnit();
+      sc::SceneCM c{};
+      auto s0 = shapeOfCore.find(u.getShapeCore0()), s1 = shapeOfCore.find(u.getShapeCore1());
+      if (s0 == shapeOfCore.end() || s1 == shapeOfCore.end()) { ++D.unsup; continue; }
+      c.shape0 = s0->second;
+      c.shape1 = s1->second;
+      c.npIndex = u.mNpIndex;
+      c.npFlags = u.mFlags;
+      c.restDistance = u.mRestDistance;
+      c.torsionalPatchRadius = u.mTorsionalPatchRadius;
+      c.minTorsionalPatchRadius = u.mMinTorsionalPatchRadius;
+      c.offsetSlop = u.mOffsetSlop;
+      c.manifold = sc::kNone;
+      if (const PxsContactManagerOutput* o = outputOf(np, u.mNpIndex)) c.statusFlag = o->statusFlag;
+      Gu::Cache* gc = cacheOf(np, u.mNpIndex);
+      if (!gc) ++nNoCache;
+      else {
+        c.pairData = gc->mPairData;
+        c.manifoldFlags = gc->mManifoldFlags;
+        if (gc->isManifold() && !gc->isMultiManifold()) {
+          const int t0 = F.shapes[c.shape0].geom.type, t1 = F.shapes[c.shape1].geom.type;
+          ec::ManifoldSlot m;
+          ec::initManifold(m, t0 < t1 ? t0 : t1, t0 < t1 ? t1 : t0);  // 종류(구 1점 / 큰 4점)와 자리
+          const size_t bytes = m.kind == 1 ? sizeof(Gu::SpherePersistentContactManifold) : sizeof(Gu::LargePersistentContactManifold);
+          static_assert(sizeof(Gu::LargePersistentContactManifold) == sizeof(eng::px::Gu::LargePersistentContactManifold), "다양체 배치");
+          if (m.kind) {
+            memcpy(m.storage, gc->mCachedData, bytes);
+            ec::relocateManifold(m);
+            c.manifold = uint32_t(F.manifolds.size());
+            F.manifolds.push_back(m);
+          } else ++D.unsup;
+        } else if (gc->isMultiManifold()) ++D.unsup;
+      }
+      c.frictionStart = uint32_t(F.friction.size());
+      const Dy::FrictionPatch* fp = reinterpret_cast<const Dy::FrictionPatch*>(u.mFrictionDataPtr);
+      for (PxU32 k = 0; fp && k < u.mFrictionPatchCount; ++k) F.friction.push_back(frictionOf(fp[k]));
+      c.frictionCount = uint32_t(F.friction.size()) - c.frictionStart;
+      F.cms.push_back(c);
+    }
+  }
   if (!sc::writeScene(D.out.c_str(), F)) {
     fprintf(stderr, "[장면 뜨기] 쓰기 실패: %s\n", D.out.c_str());
     return;
@@ -258,7 +346,7 @@ void dumpScene(PxScene* scene, uint64_t sim) {
     return;
   }
   sc::Batch B;
-  B.init(D.envs, sc::BatchCaps{uint32_t(R.bodies.size()), uint32_t(R.arts.size()), uint32_t(R.joints.size()), uint32_t(R.shapes.size())});
+  B.init(D.envs, sc::BatchCaps{uint32_t(R.bodies.size()), uint32_t(R.arts.size()), uint32_t(R.joints.size()), uint32_t(R.shapes.size()), uint32_t(R.cms.size()), uint32_t(R.friction.size())});
   for (uint32_t e = 0; e < D.envs; ++e)
     if (!B.load(e, R, &err)) fprintf(stderr, "[장면 뜨기] 판 %u 넣기 실패: %s\n", e, err.c_str());
   for (uint32_t e = 0; e < D.envs; ++e) {
@@ -367,10 +455,35 @@ void dumpScene(PxScene* scene, uint64_t sim) {
          R.materials.size(), R.joints.size(), D.unsup);
   printf("  판 %u 개 배치에 다시 넣음: 틀 %zu 벌 공유, 판당 상태 %.2f MB (몸체 %zu B, 관절체 %zu B/개, 조인트 %zu B/개)\n", D.envs, B.shareds.size(),
          double(B.stateBytes()) / D.envs / 1e6, sizeof(eng::Body), sizeof(eng::art::Articulation), sizeof(sc::SceneJoint));
+  printf("  접촉 관리자 %zu (다양체 %zu, 마찰 패치 %zu, 캐시 못 찾음 %" PRIu64 ")\n", R.cms.size(), R.manifolds.size(), R.friction.size(), nNoCache);
   printf("  PhysX 공개 API 값과 비교 %" PRIu64 ", 비트 다름 %" PRIu64 "%s\n", D.cmp, D.bad, D.bad ? ("  첫 다름: " + D.firstBad).c_str() : "");
 }
 
 }  // namespace
+
+// 장면 파일 모양 순서 = 정적·동적 행위자(PxScene::getActors) 순서, 그다음 관절체(getArticulations)의 링크(getLinks) 순서, 행위자 안은 getShapes 순서
+std::vector<const void*> g1_shape_cores(PxScene* scene) {
+  std::vector<const void*> out;
+  auto add = [&](PxRigidActor* a) {
+    const PxU32 ns = a->getNbShapes();
+    std::vector<PxShape*> shs(ns);
+    a->getShapes(shs.data(), ns);
+    for (PxShape* s : shs) out.push_back(&static_cast<NpShape*>(s)->getCore().getCore());
+  };
+  const PxU32 na = scene->getNbActors(PxActorTypeFlag::eRIGID_STATIC | PxActorTypeFlag::eRIGID_DYNAMIC);
+  std::vector<PxActor*> acts(na);
+  scene->getActors(PxActorTypeFlag::eRIGID_STATIC | PxActorTypeFlag::eRIGID_DYNAMIC, acts.data(), na);
+  for (PxActor* a : acts) add(static_cast<PxRigidActor*>(a));
+  const PxU32 nArt = scene->getNbArticulations();
+  std::vector<PxArticulationReducedCoordinate*> arts(nArt);
+  scene->getArticulations(arts.data(), nArt);
+  for (PxArticulationReducedCoordinate* a : arts) {
+    std::vector<PxArticulationLink*> links(a->getNbLinks());
+    a->getLinks(links.data(), a->getNbLinks());
+    for (PxArticulationLink* l : links) add(l);
+  }
+  return out;
+}
 
 // g1_shadow.cpp 의 g1_before_simulate 가 부른다 (simulate 바로 앞)
 void g1_dump_before(PxScene* scene, uint64_t sim) {

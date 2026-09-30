@@ -15,6 +15,7 @@
 #include "core/contact/narrowphase.h"
 #include "core/contact/patches.h"
 #include "core/joints/joint_types.h"
+#include "core/solver/solver_io.h"  // FrictionPatch (지난 스텝 마찰 패치)
 
 namespace eng {
 namespace scene {
@@ -65,12 +66,28 @@ struct SceneJoint {
   jnt::D6Data data;
 };
 
+// 접촉 관리자 (v1: 내부 상태 넘겨받기). 순서 = Sc::Scene 의 겹침 상호작용 배열 순서(getInteractions(eOVERLAP)).
+// 좁은 단계·풀이가 스텝 사이에 들고 가는 것: 지속 다양체(PhysX Gu::Cache 가 가리키는 PersistentContactManifold 바이트),
+// Gu::Cache::mPairData, 지난 스텝 출력 상태(statusFlag: 더러움 판정), 지난 스텝 마찰 패치(PxcNpWorkUnit::mFrictionDataPtr).
+struct SceneCM {
+  uint32_t shape0, shape1;  // SceneShape 번호 (작업 단위 모양 0·1 순서 그대로)
+  uint32_t npIndex;         // PxcNpWorkUnit::mNpIndex (새 표시 0x80000000 포함, 순서 확인용)
+  uint16_t npFlags;         // PxcNpWorkUnitFlag
+  uint8_t statusFlag;       // 지난 PxsContactManagerOutput::statusFlag (새 관리자면 0)
+  uint8_t pairData;         // Gu::Cache::mPairData
+  float restDistance, torsionalPatchRadius, minTorsionalPatchRadius, offsetSlop;
+  uint32_t manifold;        // manifolds 번호, kNone = 다양체 없음
+  uint32_t frictionStart, frictionCount;  // friction 안 범위
+  uint8_t manifoldFlags, pad[3];          // Gu::Cache::mManifoldFlags
+};
+
 struct SceneHeader {
   char magic[8];  // "ENGSCN1"
   uint32_t version;
   uint32_t sizeActor, sizeShape, sizeJoint, sizeBody, sizeArt, sizeMaterial, sizeGeom;
   uint32_t artMaxLinks, artMaxDofs;
   uint32_t nActors, nShapes, nJoints, nBodies, nArts, nMaterials, nHulls;
+  uint32_t nCMs, nManifolds, nFriction, sizeCM, sizeManifold, sizeFriction;
   uint64_t hullBytes, nameBytes;
   float gravity[3], dt, lengthScale, speedScale;
   uint32_t sceneFlags, solverType, posIters, velIters;
@@ -93,6 +110,9 @@ struct SceneFile {
   std::vector<SceneJoint> joints;
   std::vector<uint32_t> artName;  // 관절체별 이름 위치
   std::vector<ShapeFilter> shapeFilters;  // 모양별 (shapes 와 같은 순서)
+  std::vector<SceneCM> cms;
+  std::vector<contact::ManifoldSlot> manifolds;  // 파일에는 바이트 그대로 (읽은 뒤 relocateManifold)
+  std::vector<sv::FrictionPatch> friction;
 
   uint32_t addName(const char* s) {
     const uint32_t at = uint32_t(names.size());
@@ -113,7 +133,10 @@ inline bool rd(FILE* f, std::vector<T>& v, size_t n) { v.resize(n); return n == 
 
 inline void fillSizes(SceneHeader& h) {
   memcpy(h.magic, "ENGSCN1", 8);
-  h.version = 2;
+  h.version = 3;
+  h.sizeCM = sizeof(SceneCM);
+  h.sizeManifold = sizeof(contact::ManifoldSlot);
+  h.sizeFriction = sizeof(sv::FrictionPatch);
   h.sizeActor = sizeof(SceneActor);
   h.sizeShape = sizeof(SceneShape);
   h.sizeJoint = sizeof(SceneJoint);
@@ -134,13 +157,18 @@ inline bool writeScene(const char* path, SceneFile& s) {
   s.h.nArts = uint32_t(s.arts.size());
   s.h.nMaterials = uint32_t(s.materials.size());
   s.h.nHulls = uint32_t(s.hullOffsets.size());
+  s.h.nCMs = uint32_t(s.cms.size());
+  s.h.nManifolds = uint32_t(s.manifolds.size());
+  s.h.nFriction = uint32_t(s.friction.size());
   s.h.hullBytes = s.hulls.size();
   s.h.nameBytes = s.names.size();
   FILE* f = fopen(path, "wb");
   if (!f) return false;
   using detail::wr;
   bool ok = fwrite(&s.h, sizeof(s.h), 1, f) == 1 && wr(f, s.materials) && wr(f, s.actors) && wr(f, s.shapes) && wr(f, s.hullOffsets) && wr(f, s.hulls) &&
-            wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.artName) && wr(f, s.shapeFilters);
+            wr(f, s.names) && wr(f, s.bodies) && wr(f, s.arts) && wr(f, s.joints) && wr(f, s.artName) && wr(f, s.shapeFilters) && wr(f, s.cms) &&
+            (s.manifolds.empty() || fwrite(static_cast<const void*>(s.manifolds.data()), sizeof(contact::ManifoldSlot), s.manifolds.size(), f) == s.manifolds.size()) &&
+            wr(f, s.friction);
   ok = fclose(f) == 0 && ok;
   return ok;
 }
@@ -155,14 +183,22 @@ inline bool readScene(const char* path, SceneFile& s, std::string* err = nullptr
   if (fread(&s.h, sizeof(s.h), 1, f) != 1 || memcmp(s.h.magic, want.magic, 8)) { fclose(f); return fail("머리 틀림"); }
   if (s.h.version != want.version || s.h.sizeActor != want.sizeActor || s.h.sizeShape != want.sizeShape || s.h.sizeJoint != want.sizeJoint ||
       s.h.sizeBody != want.sizeBody || s.h.sizeArt != want.sizeArt || s.h.sizeMaterial != want.sizeMaterial || s.h.sizeGeom != want.sizeGeom ||
-      s.h.artMaxLinks != want.artMaxLinks || s.h.artMaxDofs != want.artMaxDofs) {
+      s.h.artMaxLinks != want.artMaxLinks || s.h.artMaxDofs != want.artMaxDofs || s.h.sizeCM != want.sizeCM || s.h.sizeManifold != want.sizeManifold ||
+      s.h.sizeFriction != want.sizeFriction) {
     fclose(f);
     return fail("구조체 크기·판이 이 빌드와 다름 (ENG_ART_MAX_LINKS 등)");
   }
   using detail::rd;
   bool ok = rd(f, s.materials, s.h.nMaterials) && rd(f, s.actors, s.h.nActors) && rd(f, s.shapes, s.h.nShapes) && rd(f, s.hullOffsets, s.h.nHulls) &&
             rd(f, s.hulls, s.h.hullBytes) && rd(f, s.names, s.h.nameBytes) && rd(f, s.bodies, s.h.nBodies) && rd(f, s.arts, s.h.nArts) &&
-            rd(f, s.joints, s.h.nJoints) && rd(f, s.artName, s.h.nArts) && rd(f, s.shapeFilters, s.h.nShapes);
+            rd(f, s.joints, s.h.nJoints) && rd(f, s.artName, s.h.nArts) && rd(f, s.shapeFilters, s.h.nShapes) &&
+            rd(f, s.cms, s.h.nCMs);
+  if (ok) {
+    s.manifolds.resize(s.h.nManifolds);
+    ok = s.h.nManifolds == 0 || fread(static_cast<void*>(s.manifolds.data()), sizeof(contact::ManifoldSlot), s.h.nManifolds, f) == s.h.nManifolds;
+    for (contact::ManifoldSlot& m : s.manifolds) contact::relocateManifold(m);  // 자기 버퍼 포인터를 새 자리로
+  }
+  ok = ok && rd(f, s.friction, s.h.nFriction);
   fclose(f);
   return ok ? true : fail("짧음");
 }
