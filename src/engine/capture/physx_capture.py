@@ -54,6 +54,9 @@ class Capture:
         self.convex_done = False
         self.dump_at_pre = set()  # 여러 번호 가능 (쉼표)
         self.dump_at_post = set()
+        self.record_toggle = False  # --record-toggle : S3 판정 기준(켜짐 상태 내부값·접촉 행렬·표식·손가락 메시)
+        self.toggle_rows = []
+        self.toggle_static = []
         # 상태 보정(09-30 S0 로봇): 곁기록에 안 잡히는 경로로 관절 상태가 바뀐다(post 43→pre 44 속도 0, post 44→pre 45 바닥 관절 6 개).
         # simulate 직후와 다음 simulate 직전의 관절 위치·속도를 새 뷰로 읽어, 달라졌거나 그 사이 위치·속도 쓰기가 있었으면
         # 직전 값을 곁기록 끝에 set_dof_positions/velocities(eff=3) 로 덧붙인다 -> 재생은 마지막 쓰기로 공식 상태가 된다
@@ -90,6 +93,13 @@ class Capture:
                 except Exception as e:
                     import traceback
                     print(f"[capture] 상태 보정 실패(_patch_pre, post {self.n_post} pre {self.n_pre}): {e!r} | " + traceback.format_exc(limit=6).replace(chr(10), " | "), flush=True)
+            if self.record_toggle:
+                try:
+                    self._toggle_record()
+                except Exception as e:
+                    if not getattr(self, "_toggle_err", False):
+                        print(f"[capture] 켜짐 기록 실패: {e!r}", flush=True)
+                        self._toggle_err = True
             if self.n_pre in self.dump_at_pre:
                 try:
                     self.dump_prim_state()
@@ -127,6 +137,63 @@ class Capture:
             except Exception:
                 k = f"{id(view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
         return k
+
+    # ------------------------------------------------------------------ S3 기준: ToggledOn 내부값 (object_states/toggle.py)
+    def _toggle_record(self):
+        """매 simulate 직전(= 앞 스텝의 OmniGibson 상태 갱신이 끝난 뒤) ToggledOn 값·누적 시간, 손가락 행 × 켜짐 물체 열 접촉 행렬을 적는다.
+        설정(표식 부모 링크·국소 위치·반지름, 손가락 링크, 손가락 충돌 메시, 행/열 경로)은 바뀔 때마다 한 벌 적는다. 읽기만 한다."""
+        from omnigibson.object_states.toggle import ToggledOn as TO
+        from omnigibson.utils.usd_utils import RigidBodyViewAPI as RB, RigidContactAPI as RC
+
+        if TO.VALUES_WP is None or TO._robots_can_toggle_time is None or TO._marker_finger_pair is None:
+            return
+        key = (id(TO._marker_finger_pair), id(TO._finger_query_mask[0]) if TO._finger_query_mask else 0)
+        if key != getattr(self, "_toggle_key", None):
+            self._toggle_key = key
+            st = {"post": self.n_post, "pre": self.n_pre}
+            st["pairs"] = TO._marker_finger_pair.numpy().astype(np.int32)
+            st["marker_parent"] = TO._marker_parent_link_idx.numpy().astype(np.int32)
+            st["marker_offset"] = TO._marker_local_offset.numpy().astype(np.float32)
+            st["marker_radius"] = TO._marker_radii.numpy().astype(np.float32)
+            st["marker_obj"] = TO._marker_to_obj_idx_flat.numpy().astype(np.int32)
+            st["rb_paths"] = list(RB._IDX_TO_PATH)
+            st["objs"] = [[None if o is None else o.name for o in row] for row in TO.IDX_OBJS]
+            fl = sorted({int(x) for x in st["pairs"][:, 1]})
+            meshes = {}
+            for i in fl:
+                path = RB._IDX_TO_PATH[i]
+                c = RB._link_mesh_cache.get(path)
+                if c is not None:
+                    meshes[path] = (c["mesh"].points.numpy().astype(np.float32), c["mesh"].indices.numpy().astype(np.int32))
+            st["finger_meshes"] = meshes
+            if TO._finger_query_mask and TO._finger_query_mask[0] is not None:
+                q = TO._finger_query_mask[0].numpy().astype(np.uint8)
+                w = TO._toggable_objs_with_mask[0].numpy().astype(np.uint8)
+                st["query_mask"], st["with_mask"] = q, w
+                st["rows"] = [RC._ROW_IDX_TO_PATH[0][r] for r in np.where(q.any(0))[0]]
+                st["cols"] = [RC._COL_IDX_TO_PATH[0][c] for c in np.where(w.any(0))[0]]
+                self._toggle_rc = (np.where(q.any(0))[0], np.where(w.any(0))[0])
+            self.toggle_static.append(st)
+        row = {"post": self.n_post, "pre": self.n_pre, "static": len(self.toggle_static) - 1,
+               "value": TO.VALUES_WP.numpy().astype(np.uint8).copy(),
+               "time": TO._robots_can_toggle_time.numpy().astype(np.float32).copy()}
+        rc = getattr(self, "_toggle_rc", None)
+        if rc is not None and 0 in RC._CONTACT_MATRIX_GPU_WP:
+            cm = RC._CONTACT_MATRIX_GPU_WP[0].numpy()
+            ccm = RC._CURRENT_CONTACT_MATRIX_GPU_WP[0].numpy()
+            row["cm"] = cm[np.ix_(rc[0], rc[1])].astype(np.uint8)
+            row["ccm"] = ccm[np.ix_(rc[0], rc[1])].astype(np.uint8)
+        if self.toggle_rows and all(np.array_equal(row[k], self.toggle_rows[-1][k]) for k in ("value", "time"))                 and ("cm" not in row or ("cm" in self.toggle_rows[-1] and np.array_equal(row["cm"], self.toggle_rows[-1]["cm"])))                 and row["static"] == self.toggle_rows[-1]["static"]:
+            return  # 서브스텝 사이 같은 값은 한 번만
+        self.toggle_rows.append(row)
+
+    def _toggle_save(self):
+        if not self.record_toggle:
+            return
+        import pickle
+        with open(os.path.join(self.dump_dir, "toggle.pkl"), "wb") as f:
+            pickle.dump({"static": self.toggle_static, "rows": self.toggle_rows}, f)
+        print(f"[capture] 켜짐 기록: 설정 {len(self.toggle_static)} 벌, 행 {len(self.toggle_rows)} -> toggle.pkl", flush=True)
 
     def _patch_read(self, paths):
         # 시뮬 뷰가 새로 만들어지는 중이면 캐시한 확인용 뷰가 무효일 수 있다 -> 한 번 버리고 다시 만든다
@@ -602,6 +669,10 @@ class Capture:
         self.meta["post_step_count"] = self.n_post
         self.meta["pre_step_count"] = self.n_pre
         self.meta["state_patches"] = getattr(self, "n_patch", 0)
+        try:
+            self._toggle_save()
+        except Exception as e:
+            print(f"[capture] 켜짐 기록 저장 실패: {e!r}", flush=True)
         if self.sidelog:
             kinds = np.array([e[2] for e in self.log])
             np.savez_compressed(
@@ -771,6 +842,7 @@ def main():
     cap.dump_at_pre = {int(x) for x in ours[ours.index("--dump-at-pre") + 1].split(",")} if "--dump-at-pre" in ours else set()
     cap.dump_at_post = {int(x) for x in ours[ours.index("--dump-at-post") + 1].split(",")} if "--dump-at-post" in ours else set()
     cap.patch_debug = {int(x) for x in ours[ours.index("--patch-debug") + 1].split(",")} if "--patch-debug" in ours else set()
+    cap.record_toggle = "--record-toggle" in ours
     cap.dump_prim = ours[ours.index("--dump-prim") + 1] if "--dump-prim" in ours else "/World/scene_0/controllable__r1pro__robot"
     cap.meta["no_render"] = cap.no_render
     install(cap)

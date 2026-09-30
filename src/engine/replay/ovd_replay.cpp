@@ -35,6 +35,8 @@
 #include "ovd.h"
 #include "sidecar.h"
 #include "core/omni/controllers.h"
+#include "core/omni/states.h"
+#include "core/omni/bddl.h"
 
 using namespace physx;
 
@@ -400,6 +402,12 @@ class Replayer {
     int64_t last_t = -1;
     bool on = false;
     uint64_t suppressed = 0, applied_steps = 0;
+    // 잡기 보조(AG) 조인트가 이 서브스텝 직전에 생기거나 없어지면 OmniGibson 은 pre-physics 안에서 update_handles 를 부르고,
+    // ControllableObjectViewAPI 가 새로 만들어지며 쓰기 캐시가 비어 그 서브스텝의 flush_control 이 아무것도 안 쓴다
+    // (simulator.py:1579 step_all → robot.post_step(AG) → :1587 flush_control, robot.py:2060 _release_grasp update_handles).
+    // 제어기 상태는 그대로 나아가고 드라이브 목표만 앞 서브스텝 값이 남는다.
+    bool joint_event = false;
+    uint64_t dropped_flush = 0;
   } C;
 
   bool load_ctrl(const std::string& dir) {
@@ -474,10 +482,265 @@ class Replayer {
     return true;
   }
   // simulate 직전: 이번 서브스텝 목표를 계산해 넣는다
+  // ------------------------------------------------------------------ S3 판정 (문서 15절): --s3 <폴더> (capture/export_s3.py)
+  // 스텝 끝(마지막 서브스텝 뒤)마다 OmniGibson ToggledOn 갱신을 core/omni/states.h 로 한다: 접촉 단계(공식 접촉 행렬 입력, v0),
+  // 표식-손가락 겹침(우리 PhysX 링크 자세 → pose_to_mat), 누적 시간·뒤집기. 그 값으로 core/omni/bddl.h 가 목표를 판정해
+  // 공식 ToggledOn 값·시간(toggle 기록)과 trace 의 goal_satisfied 에 스텝마다 비트 비교한다.
+  struct S3Setup {
+    bool on = false;
+    int S = 0, O = 0, nr = 0, nc = 0;
+    std::vector<std::string> obj_bddl;
+    std::vector<std::string> mk_parent;
+    std::vector<float> mk_off, mk_rad;
+    std::vector<std::string> fg_path;
+    std::vector<std::vector<float>> fg_pts;
+    std::vector<std::vector<int32_t>> fg_tri;
+    std::vector<std::pair<int, int>> pairs;
+    std::vector<std::vector<uint8_t>> with;  // 물체마다 (nc,)
+    std::vector<uint8_t> qrow;
+    uint64_t episode_start = 0;
+    int substeps = 4, steps = 0;
+    struct Row {
+      uint64_t post;
+      std::vector<uint8_t> val;
+      std::vector<float> time;
+      std::vector<uint8_t> cm;
+      bool has_cm;
+    };
+    std::vector<Row> rows;
+    std::vector<std::string> goals;
+    eng::omni::bddl::Compiled G;
+    std::vector<int> atom_obj;  // 원자 -> 물체 칸 (toggled_on 만), -1 = 모름
+    std::vector<uint8_t> val;
+    std::vector<float> time;
+    bool init = false;
+    uint64_t n_steps = 0, bad_val = 0, bad_time = 0, bad_goal = 0, n_goal_true = 0;
+    int64_t first_bad = -1;
+    std::string first_bad_what;
+  } S3;
+
+  static float hexf(const std::string& h) {
+    uint32_t u = uint32_t(strtoul(h.c_str(), nullptr, 16));
+    float f;
+    memcpy(&f, &u, 4);
+    return f;
+  }
+
+  bool load_s3(const std::string& dir) {
+    std::ifstream f(dir + "/s3_setup.txt");
+    if (!f) return false;
+    std::string line, bddl_path;
+    std::vector<std::pair<int, int>> fsz;
+    while (std::getline(f, line)) {
+      std::istringstream is(line);
+      std::string k;
+      is >> k;
+      if (k == "so") {
+        is >> S3.S >> S3.O;
+        S3.obj_bddl.assign(S3.S * S3.O, "-");
+        S3.with.assign(S3.S * S3.O, {});
+      } else if (k == "obj") {
+        int i;
+        std::string n, b;
+        is >> i >> n >> b;
+        S3.obj_bddl[i] = b;
+      } else if (k == "marker") {
+        int i;
+        std::string par, a, b, c, r;
+        is >> i >> par >> a >> b >> c >> r;
+        if (int(S3.mk_parent.size()) <= i) {
+          S3.mk_parent.resize(i + 1);
+          S3.mk_off.resize((i + 1) * 3);
+          S3.mk_rad.resize(i + 1);
+        }
+        S3.mk_parent[i] = par;
+        S3.mk_off[i * 3] = hexf(a);
+        S3.mk_off[i * 3 + 1] = hexf(b);
+        S3.mk_off[i * 3 + 2] = hexf(c);
+        S3.mk_rad[i] = hexf(r);
+      } else if (k == "finger") {
+        int i, np_, nt;
+        std::string pth;
+        is >> i >> pth >> np_ >> nt;
+        S3.fg_path.push_back(pth);
+        fsz.push_back({np_, nt});
+      } else if (k == "pair") {
+        int a, b;
+        is >> a >> b;
+        S3.pairs.push_back({a, b});
+      } else if (k == "rowcol") {
+        is >> S3.nr >> S3.nc;
+      } else if (k == "with") {
+        int i, c;
+        is >> i;
+        S3.with[i].assign(S3.nc, 0);
+        while (is >> c) S3.with[i][c] = 1;
+      } else if (k == "qrow") {
+        S3.qrow.assign(S3.nr, 0);
+        int r;
+        while (is >> r) S3.qrow[r] = 1;
+      } else if (k == "episode_start") {
+        std::string t;
+        is >> S3.episode_start >> t >> S3.substeps >> t >> S3.steps >> t >> bddl_path;
+      }
+    }
+    FILE* fm = fopen((dir + "/s3_meshes.bin").c_str(), "rb");
+    if (!fm) return false;
+    for (auto& z : fsz) {
+      std::vector<float> p(size_t(z.first) * 3);
+      std::vector<int32_t> t(size_t(z.second) * 3);
+      if (fread(p.data(), 4, p.size(), fm) != p.size() || fread(t.data(), 4, t.size(), fm) != t.size()) {
+        fclose(fm);
+        return false;
+      }
+      S3.fg_pts.push_back(std::move(p));
+      S3.fg_tri.push_back(std::move(t));
+    }
+    fclose(fm);
+    FILE* fr = fopen((dir + "/s3_rows.bin").c_str(), "rb");
+    uint32_t n = 0;
+    if (!fr || fread(&n, 4, 1, fr) != 1) return false;
+    const int SO = S3.S * S3.O, RC = S3.nr * S3.nc;
+    for (uint32_t i = 0; i < n; ++i) {
+      S3Setup::Row r;
+      r.val.resize(SO);
+      r.time.resize(SO);
+      r.cm.resize(RC);
+      std::vector<uint8_t> ccm(RC);
+      uint8_t has = 0;
+      bool ok = fread(&r.post, 8, 1, fr) == 1 && fread(r.val.data(), 1, SO, fr) == size_t(SO) &&
+                fread(r.time.data(), 4, SO, fr) == size_t(SO) && fread(r.cm.data(), 1, RC, fr) == size_t(RC) &&
+                fread(ccm.data(), 1, RC, fr) == size_t(RC) && fread(&has, 1, 1, fr) == 1;
+      if (!ok) {
+        fclose(fr);
+        return false;
+      }
+      r.has_cm = has != 0;
+      S3.rows.push_back(std::move(r));
+    }
+    fclose(fr);
+    std::ifstream fg(dir + "/s3_goal.txt");
+    while (std::getline(fg, line)) S3.goals.push_back(line);
+    std::ifstream fb(bddl_path);
+    if (!fb) {
+      fprintf(stderr, "S3: BDDL 을 못 읽음 %s\n", bddl_path.c_str());
+      return false;
+    }
+    std::stringstream ss;
+    ss << fb.rdbuf();
+    S3.G = eng::omni::bddl::compile_problem(eng::omni::bddl::parse_problem(ss.str()));
+    for (auto& at : S3.G.atoms) {
+      int o = -1;
+      if (at.pred == "toggled_on" && at.args.size() == 1)
+        for (int k = 0; k < SO; ++k)
+          if (S3.obj_bddl[k] == at.args[0]) o = k;
+      S3.atom_obj.push_back(o);
+    }
+    S3.on = true;
+    return true;
+  }
+
+  const S3Setup::Row* s3_row_at(uint64_t post) const {  // post 이하 마지막 기록 (기록은 바뀔 때만 남음)
+    const S3Setup::Row* r = nullptr;
+    for (auto& x : S3.rows) {
+      if (x.post <= post) r = &x;
+      else break;
+    }
+    return r;
+  }
+  bool s3_mat(const std::string& path, eng::omni::wf::M44& M) {
+    auto it = actor_by_name.find(path);
+    if (it == actor_by_name.end()) return false;
+    const PxTransform t = it->second->getGlobalPose();
+    const float p7[7] = {t.p.x, t.p.y, t.p.z, t.q.x, t.q.y, t.q.z, t.q.w};
+    M = eng::omni::wf::pose_to_mat(p7);
+    return true;
+  }
+  void s3_after_simulate() {
+    if (!S3.on) return;
+    const uint64_t g = sims + side_offset;  // 방금 끝난 simulate 의 전체 번호 = post 번호
+    if (g < S3.episode_start || (g - S3.episode_start) % S3.substeps != 0) return;
+    const int SO = S3.S * S3.O;
+    const S3Setup::Row* off = s3_row_at(g);
+    if (!off) return;
+    if (!S3.init) {  // 에피소드 시작 시점 공식 값·시간에서 출발
+      S3.val = off->val;
+      S3.time = off->time;
+      S3.init = true;
+      return;
+    }
+    const int64_t t = int64_t((g - S3.episode_start) / S3.substeps) - 1;  // 방금 끝난 평가 스텝
+    namespace st = eng::omni::st;
+    std::vector<int32_t> mask(SO, 0);
+    for (int k = 0; k < SO; ++k)
+      mask[k] = off->has_cm ? st::toggle_contact(S3.qrow.data(), off->cm.data(), S3.nr, S3.nc, S3.with[k].data()) : 0;
+    for (auto& pr : S3.pairs) {
+      const int k = pr.first, f = pr.second;
+      if (mask[k] != 1 || S3.fg_tri[f].empty()) continue;
+      eng::omni::wf::M44 Mp, Mf;
+      if (!s3_mat(S3.mk_parent[k], Mp) || !s3_mat(S3.fg_path[f], Mf)) continue;
+      if (st::toggle_marker_overlap(Mp, &S3.mk_off[k * 3], S3.mk_rad[k], Mf, S3.fg_pts[f].data(), S3.fg_tri[f].data(),
+                                    int(S3.fg_tri[f].size() / 3)))
+        mask[k] = 2;
+    }
+    for (int k = 0; k < SO; ++k) st::toggle_set_value(&S3.val[k], &mask[k], &S3.time[k], 0.15f, float(1.0 / 30.0));
+    std::vector<uint8_t> atom(S3.G.atoms.size(), 0), node(S3.G.nodes.size(), 0), head(S3.G.heads.size(), 0);
+    for (size_t a = 0; a < atom.size(); ++a) atom[a] = S3.atom_obj[a] >= 0 ? S3.val[S3.atom_obj[a]] : 0;
+    eng::omni::bddl::eval_goal(S3.G.nodes.data(), int(S3.G.nodes.size()), S3.G.kids.data(), S3.G.heads.data(),
+                               int(S3.G.heads.size()), atom.data(), node.data(), head.data());
+    std::string gs = "[";
+    bool first = true;
+    for (size_t h = 0; h < head.size(); ++h)
+      if (head[h]) {
+        gs += (first ? "" : ", ") + std::to_string(h);
+        first = false;
+      }
+    gs += "]";
+    if (gs != "[]") S3.n_goal_true++;
+    S3.n_steps++;
+    auto bad = [&](const std::string& w) {
+      if (S3.first_bad < 0) {
+        S3.first_bad = t;
+        S3.first_bad_what = w;
+      }
+    };
+    // 공식 기록은 다음 simulate 직전에 적힌다 -> 에피소드 마지막 스텝 뒤 값은 기록이 없다 (그 스텝은 목표만 비교)
+    const bool have_off = off->post == g || &off[0] != &S3.rows.back();
+    for (int k = 0; k < SO && have_off; ++k) {
+      if (S3.val[k] != off->val[k]) {
+        S3.bad_val++;
+        bad("value " + std::to_string(k));
+      }
+      uint32_t a, b;
+      memcpy(&a, &S3.time[k], 4);
+      memcpy(&b, &off->time[k], 4);
+      if (a != b) {
+        S3.bad_time++;
+        bad("time " + std::to_string(k));
+      }
+    }
+    if (t >= 0 && t < int64_t(S3.goals.size()) && gs != S3.goals[t]) {
+      S3.bad_goal++;
+      bad("goal " + gs + " vs " + S3.goals[t]);
+    }
+  }
+  void s3_report() {
+    if (!S3.on) return;
+    const std::string fb = S3.first_bad < 0 ? std::string("없음") : "스텝 " + std::to_string(S3.first_bad) + " " + S3.first_bad_what;
+    printf("S3 판정(--s3): 평가 스텝 %" PRIu64 " (목표 참 %" PRIu64 "), ToggledOn 값 다름 %" PRIu64 ", 시간 다름 %" PRIu64
+           ", 목표 다름 %" PRIu64 ", 첫 다름 %s\n",
+           S3.n_steps, S3.n_goal_true, S3.bad_val, S3.bad_time, S3.bad_goal, fb.c_str());
+  }
+
+  bool is_ext_joint_cls(uint32_t cls) {
+    const std::string n = cname(cls);
+    return n == "PxFixedJoint" || n == "PxD6Joint" || n == "PxSphericalJoint" || n == "PxRevoluteJoint" || n == "PxPrismaticJoint" ||
+           n == "PxDistanceJoint";
+  }
   void ctrl_before_simulate() {
     if (!C.on) return;
     const uint64_t g = sims + side_offset + 1;  // 곧 할 simulate 의 전체 번호
-    if (g <= C.episode_start) return;
+    if (g <= C.episode_start) { C.joint_event = false; return; }
     const int64_t k = int64_t(g - C.episode_start - 1), t = k / C.substeps;
     if (t >= int64_t(C.T) || !ctrl_bind()) return;
     namespace ct = eng::omni::ctrl;
@@ -495,6 +758,12 @@ class Replayer {
     for (int d = 0; d < C.n_dof; ++d) q[d] = C.sign[d] * C.joint[d]->getJointPosition(PxArticulationAxis::Enum(C.axis[d]));
     ct::DriveTargets out{};
     ct::step(C.cfg, C.st, q, out);
+    if (C.joint_event) {  // 이 서브스텝은 flush 가 비었다 (위 설명)
+      C.joint_event = false;
+      C.dropped_flush++;
+      C.rec.clear();
+      return;
+    }
     // 공식 순서: 위치 목표 한 번에(set_dof_position_targets), 그다음 속도 목표 (dof 순서)
     for (int d = 0; d < C.n_dof; ++d) if (out.set_pos[d]) C.joint[d]->setDriveTarget(PxArticulationAxis::Enum(C.axis[d]), C.sign[d] * out.pos[d]);
     for (int d = 0; d < C.n_dof; ++d) if (out.set_vel[d]) C.joint[d]->setDriveVelocity(PxArticulationAxis::Enum(C.axis[d]), C.sign[d] * out.vel[d]);
@@ -1849,6 +2118,7 @@ class Replayer {
       switch (e.cmd) {
         case ovd::kCreate: {
           gen_run[e.obj]++;
+          if (sims > 0 && is_ext_joint_cls(e.cls)) C.joint_event = true;
           Obj o;
           o.cls = e.cls;
           o.name = F.str(e);
@@ -1857,6 +2127,7 @@ class Replayer {
           break;
         }
         case ovd::kDestroy:
+          if (sims > 0) { auto io = objs.find(e.obj); if (io != objs.end() && is_ext_joint_cls(io->second.cls)) C.joint_event = true; }
           destroy(e.obj);
           break;
         case ovd::kAddToList:
@@ -1880,6 +2151,7 @@ class Replayer {
             so.scene->simulate(dt);
             so.scene->fetchResults(true);
             sims++;
+            s3_after_simulate();
             out_block = true;
             out_ctx = e.obj;  // 프레임 명령의 문맥 = 장면 핸들 (OmniPvdPxSampler.cpp:101)
             break;
@@ -2006,6 +2278,7 @@ int main(int argc, char** argv) {
     else if (a == "--side-skip" && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t; while (std::getline(ss, t, ',')) R.side_skip.insert(size_t(atoll(t.c_str()))); }
     else if (a == "--gravity-off" && i + 1 < argc) { std::ifstream gf(argv[++i]); std::string ln; while (std::getline(gf, ln)) if (!ln.empty()) R.gravity_off.push_back(ln); }
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
+    else if (a == "--s3" && i + 1 < argc) { if (!R.load_s3(argv[++i])) { fprintf(stderr, "--s3 입력을 못 읽음\n"); return 1; } }
     else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }
     else if (a == "--dump-art-at" && i + 1 < argc) R.dump_art_at = atoll(argv[++i]);
     else if (a == "--filter-history") { while (i + 1 < argc && argv[i + 1][0] != '-') filter_hist.push_back(argv[++i]); }
@@ -2025,6 +2298,8 @@ int main(int argc, char** argv) {
   if (R.side_offset) printf("곁기록: 앞선 인스턴스 몫 %zu 건 버림 (post < %" PRIu64 ")\n", side_dropped, R.side_offset);
   R.run();
   if (!R.trace_sub.empty()) R.trace_flush();
+  R.s3_report();
+  if (R.C.on && R.C.dropped_flush) printf("닫힌 고리: 잡기 조인트 생성·해제로 목표를 안 쓴 서브스텝 %" PRIu64 "\n", R.C.dropped_flush);
   if (R.C.on) printf("닫힌 고리(--ctrl): 제어기 스텝 %" PRIu64 ", 건너뛴 OVD 드라이브 목표 %" PRIu64 ", 공식 목표와 비교 %" PRIu64 " 다름 %" PRIu64 " 첫 다름 %s\n", R.C.applied_steps, R.C.suppressed, R.C.cmp_n, R.C.cmp_bad, R.C.first_bad.empty() ? "없음" : R.C.first_bad.c_str());
   R.report();
   if (R.csv) fclose(R.csv);
