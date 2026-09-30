@@ -3,6 +3,9 @@
 //   native_loop <장면 파일> <창 입력 흐름> <렌더 폴더 | -> [--envs N] [--threads T] [--render-every K] [--steps S] [--ctrl <기록 폴더>]
 // --ctrl: 로봇 드라이브 목표를 흐름 대신 우리 제어기(native_ctrl.h, 기록 행동 s1_actions.bin)로 — 흐름 값과 비교, 요약값도 같아야 함.
 // 렌더 폴더가 - 이면 렌더 없이 (물리·제어만).
+// --free (--ctrl 과 함께): 경계 뒤 창에서 흐름 입력(섬 호출·깸 카운터/활성 차이·쌍 관리층 표)을 하나도 안 쓰고, 로봇 입력만 엔진 API 로 —
+//   드라이브 목표(우리 제어기) = setDriveTarget/Velocity(autowake: 깸 카운터 < 0.4 면 NpArticulation autoWakeInternal = EnvArtApi::wakeUpInternal),
+//   흐름에 로봇 wakeUp/putToSleep 호출이 있던 자리 = EnvArtApi::wakeUp/putToSleep (언제 부르는지는 아직 흐름에서).
 // 렌더 폴더 = scene.rsc + frame_<k>.rfr (render_capture -> convert_scene) + anchors.txt (export_render_anchors.py).
 // 확인:
 //  (1) 물리 = 흐름 요약값 (판마다, env_run 과 같음)
@@ -21,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "core/scene/env_art_api.h"
 #include "core/scene/env_render.h"
 #include "tests/scene/env_lockstep.h"
 #include "tests/scene/native_ctrl.h"
@@ -96,6 +100,9 @@ int main(int argc, char** argv) {
   int envs = 1, threads = 1, renderEvery = 1;
   long long maxSteps = -1;
   std::string ctrlDir;
+  bool freeRun = false;
+  for (int i = 4; i < argc; ++i)
+    if (!strcmp(argv[i], "--free")) freeRun = true;
   for (int i = 4; i + 1 < argc; ++i) {
     if (!strcmp(argv[i], "--envs")) envs = atoi(argv[i + 1]);
     if (!strcmp(argv[i], "--threads")) threads = atoi(argv[i + 1]);
@@ -164,6 +171,7 @@ int main(int argc, char** argv) {
   if (doRender) nr = nrender::create(H, envs, rigsFromFrames(frames, int(A)), frames[0].vis);
   // ---- 판 N 개 발맞춰
   std::vector<EnvResult> R(static_cast<size_t>(envs));
+  R[0].show = 5;
   Pool pool(threads);
   std::vector<Env> V(static_cast<size_t>(envs));
   pool.parallelFor(envs, [&](int e) { V[size_t(e)].load(f, *sh, R[size_t(e)]); });
@@ -195,6 +203,61 @@ int main(int argc, char** argv) {
     printf("  제어기: 로봇 관절체 %u, dof %d, 행동 %u 스텝, 에피소드 시작 simulate %llu\n", CS.art, CS.n_dof, actT, (unsigned long long)CS.episode_start);
   }
   std::vector<sc2::EnvWindow> wctl(static_cast<size_t>(envs));
+  if (freeRun && !CS.bound) {
+    fprintf(stderr, "--free 는 --ctrl 과 함께\n");
+    return 1;
+  }
+  std::vector<std::unique_ptr<sc2::EnvArtApi>> artApi(static_cast<size_t>(envs));
+  for (int e = 0; e < envs; ++e) artApi[size_t(e)].reset(new sc2::EnvArtApi(V[size_t(e)].o->E, *V[size_t(e)].S));
+  std::vector<uint64_t> freeOther(static_cast<size_t>(envs), 0);
+  // 흐름 없는 창: 로봇 호출만 엔진 API 로
+  auto applyFree = [&](int e, const sc2::EnvWindow& W, const sc2::EnvWindow& Wc) {
+    sc2::EnvWindow Wf;
+    Wf.sim = W.sim;
+    V[size_t(e)].apply(Wf, R[size_t(e)]);
+    sc2::EnvArtApi& api = *artApi[size_t(e)];
+    eng::art::Articulation& Ar = V[size_t(e)].S->arts[CS.art];
+    const uint32_t node = api.nodeOf(int32_t(CS.art));
+    for (const sc2::EnvArtOp& op : Wc.artOps) {
+      if (op.art != CS.art) {
+        ++freeOther[size_t(e)];
+        continue;
+      }
+      if (op.type == 2) api.wakeUp(int32_t(op.art));
+      else if (op.type == 3) api.putToSleep(int32_t(op.art));
+      else {
+        if (Ar.wakeCounter < sc2::kWakeReset) api.wakeUpInternal(Ar, node, false);  // autoWakeInternal
+        if (op.type == 0) eng::art::jointSetDriveTarget(Ar, op.link, op.axis, op.v, false);
+        else eng::art::jointSetDriveVelocity(Ar, op.link, op.axis, op.v, false);
+      }
+    }
+    // 진단 (NL_FREE_DIAG=n): 흐름이 적은 창 뒤 깸 카운터·활성 값과 우리 API 결과가 다른 칸 (앞 n 창)
+    static int diag = getenv("NL_FREE_DIAG") ? atoi(getenv("NL_FREE_DIAG")) : 0;
+    if (e == 0 && diag > 0) {
+      --diag;
+      sc2::EnvStep& E = V[0].o->E;
+      int shown = 0;
+      for (const sc2::HostBodyWake& w : W.wakeBodies) {
+        const sc2::HostBodyWake* q = E.wake.body(w.node);
+        if (q && !memcmp(q, &w, sizeof(w))) continue;
+        if (shown++ < 6)
+          printf("    [free 진단 sim %llu] 몸체/링크 노드 %llx 흐름 wc %.9g solverWc %.9g solveWc %.9g / 우리 %.9g %.9g %.9g\n", (unsigned long long)W.sim,
+                 (unsigned long long)w.node, w.wc, w.solverWc, w.solveWc, q ? q->wc : -1.f, q ? q->solverWc : -1.f, q ? q->solveWc : -1.f);
+      }
+      for (const sc2::HostArtWake& w : W.wakeArts) {
+        const sc2::HostArtWake* q = E.wake.art(w.node);
+        if (q && q->wc == w.wc) continue;
+        if (shown++ < 12) printf("    [free 진단 sim %llu] 관절체 노드 %u 흐름 wc %.9g / 우리 %.9g\n", (unsigned long long)W.sim, w.node, w.wc, q ? q->wc : -1.f);
+      }
+      for (const auto& x : W.active) {
+        if (x.first < E.active.size() && E.active[x.first] == x.second) continue;
+        if (shown++ < 18) printf("    [free 진단 sim %llu] 행위자 %u 활성 흐름 %u / 우리 %d\n", (unsigned long long)W.sim, x.first, x.second,
+                                 x.first < E.active.size() ? int(E.active[x.first]) : -1);
+      }
+      printf("    [free 진단 sim %llu] 흐름 차이 칸 몸체 %zu 관절체 %zu 활성 %zu, 그중 우리와 다른 칸 %d\n", (unsigned long long)W.sim, W.wakeBodies.size(),
+             W.wakeArts.size(), W.active.size(), shown);
+    }
+  };
   std::vector<rnd::Aff> anch(size_t(envs) * A);
   // 기준 prim 대조: 프레임마다 가장 가까운 simulate (판 0, 움직이는 기준 prim = 몸체·링크)
   std::vector<double> bestDiff(frames.size(), 1e30);
@@ -224,10 +287,11 @@ int main(int argc, char** argv) {
     const sc2::EnvWindow& W = wins[w];
     auto t0 = now();
     pool.parallelFor(envs, [&](int e) {
-      if (CS.bound && ctl[size_t(e)].apply(CS, *V[size_t(e)].S, W, acts.data(), actT, wctl[size_t(e)]))
-        V[size_t(e)].apply(wctl[size_t(e)], R[size_t(e)]);
+      const bool c = CS.bound && ctl[size_t(e)].apply(CS, *V[size_t(e)].S, W, acts.data(), actT, wctl[size_t(e)]);
+      if (freeRun && !W.first)
+        applyFree(e, W, c ? wctl[size_t(e)] : W);
       else
-        V[size_t(e)].apply(W, R[size_t(e)]);
+        V[size_t(e)].apply(c ? wctl[size_t(e)] : W, R[size_t(e)]);
       sc2::envStepBegin(V[size_t(e)].o->E);
     });
     auto t1 = now();
@@ -263,9 +327,11 @@ int main(int argc, char** argv) {
   for (const EnvResult& r : R)
     if (r.badB || r.badA || r.badW || r.st.mismatch || r.n != wins.size()) ++badEnvs;
   printf("  물리: 판 %d × 스텝 %zu 요약값 다른 판 %" PRIu64 "\n", envs, wins.size(), badEnvs);
+  for (const std::string& sh0 : R[0].shown) printf("    판 0 %s\n", sh0.c_str());
   if (CS.bound)
     printf("  제어기 (판 0): 행동 스텝 %" PRIu64 ", 드라이브 목표 흐름과 비교 %" PRIu64 " 다름 %" PRIu64 "%s\n", ctl[0].steps, ctl[0].cmpN, ctl[0].cmpBad,
            ctl[0].firstBad >= 0 ? (" 첫 다름 simulate " + std::to_string(ctl[0].firstBad)).c_str() : "");
+  if (freeRun) printf("  --free: 흐름 입력 없이 (판 0 로봇 아닌 관절체 호출 빠뜨림 %" PRIu64 ", EnvArtApi 깨움 요청 %" PRIu64 ")\n", freeOther[0], artApi[0]->reqActivate);
   if (doRender) printf("  기준 prim 대조 (판 0, 몸체·링크 %u 개, 렌더 캡처 프레임별 가장 가까운 simulate):\n", map.n[1] + map.n[2]);
   for (size_t fi = 0; fi < frames.size() && doRender; ++fi)
     printf("    프레임 스텝 %4" PRId64 ": simulate %lld 에서 최대 차 %.3g\n", frames[fi].step, bestSim[fi], bestDiff[fi]);

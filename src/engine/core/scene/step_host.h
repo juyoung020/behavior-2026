@@ -389,6 +389,7 @@ inline void hostAfterIntegration(ig::IslandManager& M, ss::ScPairs& P, LiveIslan
         if (!b || !q || b->kinematic) continue;
         const float before = b->solveWc, after = q->solverWc;
         b->wc = after;
+        b->solverWc = after;  // PxsBodyCore::solverWakeCounter = 풀이가 쓴 값 (Sc 가 그 값을 깸 카운터로 옮김 — 두 칸이 같아짐)
         if (before == 0.0f && after > 0.0f) act.push_back(nodes[i]);
         else if (after == 0.0f) deact.push_back(nodes[i]);
       }

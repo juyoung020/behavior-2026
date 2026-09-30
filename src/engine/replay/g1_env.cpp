@@ -635,12 +635,12 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
       const sc2::HostBodyWake* q = px.body(w.node);
       if (!q) continue;
       ++EC.cmpWake;
-      if (q->wc != w.wc) {
+      if (q->wc != w.wc || (getenv("G1_ENV_WAKE_SOLVER") && q->solverWc != w.solverWc)) {  // G1_ENV_WAKE_SOLVER: solverWakeCounter 도
         envBad("깸 카운터 표", sim, EC.badWake);
         if (EC.show > 0) {
           --EC.show;
-          fprintf(stderr, "[g1 env] sim %llu 깸 카운터 노드 %llx (링크 %d): 우리 %.9g / PhysX %.9g\n", (unsigned long long)sim, (unsigned long long)w.node, int(w.link),
-                  w.wc, q->wc);
+          fprintf(stderr, "[g1 env] sim %llu 깸 카운터 노드 %llx (링크 %d): 우리 %.9g (풀이 %.9g) / PhysX %.9g (풀이 %.9g)\n", (unsigned long long)sim,
+                  (unsigned long long)w.node, int(w.link), w.wc, w.solverWc, q->wc, q->solverWc);
         }
       }
     }
