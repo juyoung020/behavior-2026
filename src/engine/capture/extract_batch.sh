@@ -2,7 +2,7 @@
 # 장면 추출물 일괄 생성 (인스턴스 불러오기 B안): 과제 번호 범위 × 공개 인스턴스 번호 범위를 차례로 뜬다. 다시 부르면 끝난 판은 건너뛴다(재개).
 #   bash /mnt/c/behavior-2026/src/engine/capture/extract_batch.sh [과제 시작=0] [과제 끝=49] [인스턴스 끝=9] [모드=public_test]
 # 과제 번호 = data/2026-challenge-demos/meta/tasks.jsonl 의 task_index. 결과 ~/engine-data/scenes/<과제>/<모드>_<번호>/
-# 판마다 디스크 사용량과 C: 남은 공간(WSL 디스크 파일이 C: 에 있음)을 찍고, C: 여유가 5 GB 밑이면 멈춘다.
+# 판마다 디스크 사용량과 C: 남은 공간(WSL 디스크 파일이 C: 에 있음)을 찍고, C: 여유가 10 GB 밑이면 멈춘다.
 set -uo pipefail
 T0=${1:-0}
 T1=${2:-49}
@@ -24,7 +24,7 @@ for TASK in $TASKS; do
     D=~/engine-data/scenes/$TASK/${MODE}_$IDX
     if [ -f "$D/extract_ok" ]; then continue; fi
     FREE=$(df -BG --output=avail /mnt/c | tail -1 | tr -dc 0-9)
-    if [ "$FREE" -lt 5 ]; then echo "$(date +%T) C: 여유 ${FREE}G < 5G -> 멈춤" | tee -a "$LOG"; exit 2; fi
+    if [ "$FREE" -lt 10 ]; then echo "$(date +%T) C: 여유 ${FREE}G < 10G -> 멈춤" | tee -a "$LOG"; exit 2; fi
     T=$(date +%s)
     bash /mnt/c/behavior-2026/src/engine/capture/extract_instance.sh "$MODE" "$IDX" "$TASK" > "$D.log" 2>&1
     OK=$([ -f "$D/extract_ok" ] && echo ok || echo 실패)

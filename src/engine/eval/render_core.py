@@ -32,7 +32,9 @@ class RenderCore:
         if not self.h:
             raise RuntimeError(f"렌더 장면을 못 엶: {rsc_dir}")
         self.engine = engine
-        paths = json.load(open(meta_json, encoding="utf-8"))["anchor_paths"]
+        mj = json.load(open(meta_json, encoding="utf-8"))
+        # export/meta.json(anchor_paths) 또는 렌더 덤프 scene.json(anchors[].path) 둘 다 받는다
+        paths = mj["anchor_paths"] if "anchor_paths" in mj else [a["path"] if isinstance(a, dict) else a for a in mj["anchors"]]
         n = L.rr_n_anchor(self.h)
         # 기준 prim 중 엔진(PhysX) 몸체인 것만 매 스텝 바꾼다. 나머지(조명 칸 포함)는 기준 프레임 값
         self.bound = []

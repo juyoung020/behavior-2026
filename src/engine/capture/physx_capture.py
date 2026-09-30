@@ -885,6 +885,16 @@ def install(cap: Capture):
         if getattr(cap, "no_render", False):
             import sys as _sys
 
+            # og.shutdown 의 정리(og.tempdir 지우기)도 건너뛰게 되므로 여기서 지운다: 풀린(복호화된) 장면 USD 약 577 MB 가 판마다 /tmp 에 남았다(09-30 12 GB)
+            try:
+                import shutil
+
+                td = getattr(og, "tempdir", None)
+                if td and os.path.isdir(td) and os.path.basename(td).startswith("tmp"):
+                    shutil.rmtree(td, ignore_errors=True)
+                    print(f"[capture] 임시 장면 폴더 지움: {td}", flush=True)
+            except Exception as e:
+                print(f"[capture] 임시 폴더 지우기 실패: {e!r}", flush=True)
             print("[capture] 결과 저장 끝 — Kit 종료를 건너뛰고 끝냄 (segfault 덤프 방지)", flush=True)
             _sys.stdout.flush()
             _sys.stderr.flush()
