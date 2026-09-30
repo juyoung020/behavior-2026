@@ -17,11 +17,19 @@ mkdir -p ~/engine-data/particles
 source /mnt/c/behavior-2026/src/engine/scripts/gpu_lock.sh
 gpu_lock_acquire engine-particles "틀 수확 $TASK $MODE $IDX" 30 6 || exit 3
 set +e
-TASK_NAME=$TASK EVAL_MODE=$MODE INSTANCE_IDX=$IDX bash /mnt/c/behavior-2026/src/engine/capture/run_capture_linux.sh "$ZA" "harvest_${TASK}_${MODE}_${IDX}" "$MAXSTEPS" \
+# 새 이름(.tmp)에 뜬 뒤 끝나면 옮긴다 — 다른 작업자가 읽고 있을 수 있는 기록을 제자리에서 덮어쓰지 않음 (09-30 조정자 규칙)
+TAG=harvest_${TASK}_${MODE}_${IDX}
+TASK_NAME=$TASK EVAL_MODE=$MODE INSTANCE_IDX=$IDX bash /mnt/c/behavior-2026/src/engine/capture/run_capture_linux.sh "$ZA" "${TAG}.tmp" "$MAXSTEPS" \
   --script /mnt/c/behavior-2026/src/engine/tests/particles/harvest_spawn.py
 CODE=$?
 set -e
 gpu_lock_release engine-particles
-OUT=~/engine-data/linux_official/harvest_${TASK}_${MODE}_${IDX}
+OUT=~/engine-data/linux_official/$TAG
+if [ "$CODE" = 0 ]; then
+  [ -d "$OUT" ] && mv "$OUT" "$OUT.old.$$"
+  mv "$OUT.tmp" "$OUT" && rm -rf "$OUT.old.$$"
+else
+  echo "기록 실패 — $OUT.tmp 를 남김 (옛 기록은 그대로)"
+fi
 grep -E "^\[harvest\]" "$OUT/eval.log" | tail -30
 echo "=== 끝 (exit $CODE): $OUT  $(du -sh $OUT | cut -f1)"
