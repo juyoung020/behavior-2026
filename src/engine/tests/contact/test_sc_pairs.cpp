@@ -97,6 +97,7 @@ struct Capture {
   }
 } G;
 static std::map<const PxsShapeCore*, int32_t> gCoreToElem;
+static std::map<int32_t, Sc::ElementSim*> gElemSim;
 static Sc::Scene* gSc = nullptr;
 
 static uint32_t fbits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
@@ -360,7 +361,8 @@ struct Hooks : public ss::IslandHooks {
 int main(int argc, char** argv) {
   int nb = 150, steps = 300, seed = 1, threads = 2;
   bool sleep = false;
-  int removeEvery = 0;  // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
+  int removeEvery = 0;
+  int refilterEvery = 0;  // --refilter N: N 스텝마다 모양 거르기 자료 바꾸기 + 몸체 운동학 전환 (재거르기·convert 경로)  // --remove N: N 스텝마다 동적 행위자 하나 빼고 다음 스텝에 하나 넣기  // --sleep: 잠 켬 (몸체가 잠들고, 가끔 깨우고, 운동학 일부는 멈춤)
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--bodies") && i + 1 < argc) nb = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--steps") && i + 1 < argc) steps = atoi(argv[++i]);
@@ -368,6 +370,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--threads") && i + 1 < argc) threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--sleep")) sleep = true;
     else if (!strcmp(argv[i], "--remove") && i + 1 < argc) removeEvery = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--refilter") && i + 1 < argc) refilterEvery = atoi(argv[++i]);
   }
   PxFoundation* fnd = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
   PxTolerancesScale tol(1.0f, 10.0f);
@@ -555,6 +558,7 @@ int main(int argc, char** argv) {
         S.minTorsionalPatchRadius = sim->getMinTorsionalPatchRadius();
         S.transformCacheId = sim->getTransformCacheID();
         gCoreToElem[&core.getCore()] = e;
+        gElemSim[e] = sim;
       }
     }
     for (auto& jp : jointed) {
@@ -609,7 +613,7 @@ int main(int argc, char** argv) {
     ++bad;
   };
   const float dt = 1.0f / 60.0f;
-  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0, nRemovedActors = 0;
+  uint64_t nCreated = 0, nRemoved = 0, nTouch = 0, nTrig = 0, nAct = 0, nDeact = 0, nRemovedActors = 0, nRefilterApi = 0, nKinToggle = 0;
   for (int step = 0; step < steps; ++step) {
     for (size_t k = 0; k < kinematics.size(); ++k) {  // 운동학 몸체 옮기기 (잠 켬이면 절반은 150 스텝 뒤 멈춤)
       if (sleep && (k & 1) && step > 150) continue;
@@ -626,6 +630,41 @@ int main(int argc, char** argv) {
     }
     syncScene();
     G.clearStep();
+    // API: 거르기 자료 바꾸기·운동학 전환 (우리 층에는 같은 순서로 더러움 표시를 넣는다)
+    struct ApiOp { int kind; int32_t elem; Sc::ActorSim* actor; bool toKinematic; std::vector<int32_t> oldElems; };
+    std::vector<ApiOp> apiOps;
+    if (refilterEvery > 0 && step % refilterEvery == 1) {
+      G.on = true;  // API 때 PhysX 가 하는 섬 호출(모양 다시 넣기 -> removeConnection 등)도 이 스텝 기록에
+      PxRigidActor* a = actorsPx[size_t(P(rng) * float(actorsPx.size())) % actorsPx.size()];
+      std::vector<PxShape*> sh(a->getNbShapes());
+      a->getShapes(sh.data(), PxU32(sh.size()));
+      PxShape* s0 = sh[0];
+      if (!(s0->getFlags() & PxShapeFlag::eTRIGGER_SHAPE)) {
+        s0->setSimulationFilterData(randFD());
+        apiOps.push_back(ApiOp{0, int32_t(static_cast<NpShape*>(s0)->getCore().getExclusiveSim()->getElementID()), nullptr, false, {}});
+        nRefilterApi++;
+      }
+      for (int tries = 0; tries < 10; ++tries) {
+        PxRigidDynamic* d = dyns[size_t(P(rng) * float(dyns.size())) % dyns.size()];
+        bool joined = false;
+        for (auto& jp : jointed) joined |= jp.first == d || jp.second == d;
+        if (joined) continue;
+        const bool toKin = !(d->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC);
+        if (!toKin && std::find(kinematics.begin(), kinematics.end(), d) != kinematics.end()) continue;  // 처음부터 운동학인 것은 그대로
+        std::vector<int32_t> oldElems;  // 운동학 전환은 모양을 넓은 단계에 다시 넣는다(새 요소 번호, ScShapeSimBase.cpp:336 updateBPGroup)
+        {
+          std::vector<PxShape*> dsh(d->getNbShapes());
+          d->getShapes(dsh.data(), PxU32(dsh.size()));
+          for (PxShape* x : dsh) oldElems.push_back(int32_t(static_cast<NpShape*>(x)->getCore().getExclusiveSim()->getElementID()));
+        }
+        d->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, toKin);
+        if (!toKin) PxRigidBodyExt::updateMassAndInertia(*d, 300.0f);
+        apiOps.push_back(ApiOp{1, -1, static_cast<NpRigidDynamic*>(d)->getCore().getSim(), toKin, oldElems});
+        nKinToggle++;
+        break;
+      }
+      G.on = false;
+    }
     // 가끔 행위자 빼기(API) — 그때 PhysX 가 하는 섬 호출도 이 스텝 기록에 넣고, 우리 층도 스텝 재생 앞에서 같은 모양 순서로 뺀다
     std::vector<int32_t> removedElems;
     if (removeEvery > 0 && step % removeEvery == removeEvery / 2) {
@@ -659,6 +698,7 @@ int main(int argc, char** argv) {
       dyns.push_back(n);
       syncScene();
     }
+    if (!apiOps.empty()) syncScene();  // API 로 바뀐 거르기 자료·운동학 플래그를 우리 입력에 (재거르기가 새 값으로 돈다)
     // 새 겹침 때 쓸 노드 활성 상태 = simulate 직전 추측 섬 (API 깨움·새 행위자 반영 뒤)
     {
       const IG::IslandSim& is = gSc->getSimpleIslandManager()->getSpeculativeIslandSim();
@@ -686,6 +726,14 @@ int main(int argc, char** argv) {
     for (auto& c : G.createdShapeChunks) created.insert(created.end(), c.pairs.begin(), c.pairs.end());
     nCreated += created.size() / 2;
     nTrig += G.createdTrigger.size() / 2;
+    for (const ApiOp& op : apiOps) {
+      if (op.kind == 0) M.setElementInteractionsDirty(op.elem, ss::DirtyFlag::eFILTER_STATE, ss::IFlag::eFILTERABLE);
+      else {
+        M.setActorsInteractionsDirty(actorOf(op.actor), ss::DirtyFlag::eBODY_KINEMATIC, -1,
+                                     op.toKinematic ? ss::IFlag::eFILTERABLE : uint8_t(ss::IFlag::eFILTERABLE | ss::IFlag::eCONSTRAINT));
+        for (int32_t e : op.oldElems) M.onVolumeRemoved(e, true);  // updateBPGroup -> reinsertBroadPhase
+      }
+    }
     for (int32_t e : removedElems) M.onVolumeRemoved(e, true);
     M.updateDirtyInteractions();
     M.finishBroadPhase(G.createdTrigger.data(), uint32_t(G.createdTrigger.size() / 2), created.data(), uint32_t(created.size() / 2));
@@ -734,6 +782,31 @@ int main(int argc, char** argv) {
           for (uint32_t i = 0; i < M.npMain.size() && i < 40; ++i)
             printf(" %d(%d,%d)", M.npMain.cms[i], M.cmsData[size_t(M.npMain.cms[i])].shape0, M.cmsData[size_t(M.npMain.cms[i])].shape1);
           printf("\n");
+          std::set<std::pair<int, int>> px, ours;
+          for (size_t i = 0; i < G.npCms.size(); ++i) px.insert({int(G.npShape0[i]), int(G.npShape1[i])});
+          for (uint32_t i = 0; i < M.npMain.size(); ++i) ours.insert({M.cmsData[size_t(M.npMain.cms[i])].shape0, M.cmsData[size_t(M.npMain.cms[i])].shape1});
+          for (auto& p : ours)
+            if (!px.count(p)) {
+              const ss::Actor& a0 = M.actors[size_t(M.shapes[size_t(p.first)].actor)];
+              const ss::Actor& a1 = M.actors[size_t(M.shapes[size_t(p.second)].actor)];
+              printf("      우리만: (%d,%d) 행위자 종류 %d/%d 운동학 %d/%d 노드활성 %d/%d\n", p.first, p.second, a0.type, a1.type, a0.isKinematic(), a1.isKinematic(),
+                     int(hooks.isSpeculativeNodeActive(a0.nodeIndex)), int(hooks.isSpeculativeNodeActive(a1.nodeIndex)));
+              const Sc::ElementSimInteraction* pi = gSc->getNPhaseCore()->findInteraction(gElemSim[p.first], gElemSim[p.second]);
+              const int32_t oi = M.findInteraction(p.first, p.second);
+              if (pi) {
+                const auto pe = siElems(pi);
+                printf("        PhysX 상호작용: 종류 %d 순서 (%d,%d) 활성 %d 관리자 %d | 우리: 종류 %d 순서 (%d,%d) 활성 %d\n", int(pi->getType()), pe.first, pe.second,
+                       int(pi->readInteractionFlag(Sc::InteractionFlag::eIS_ACTIVE) != 0),
+                       pi->getType() == Sc::InteractionType::eOVERLAP ? int(static_cast<const Sc::ShapeInteraction*>(pi)->getContactManager() != nullptr) : -1,
+                       oi >= 0 ? int(M.inters[size_t(oi)].type) : -1, oi >= 0 ? M.inters[size_t(oi)].elem0 : -1, oi >= 0 ? M.inters[size_t(oi)].elem1 : -1,
+                       oi >= 0 ? int((M.inters[size_t(oi)].iflags & ss::IFlag::eIS_ACTIVE) != 0) : -1);
+              } else {
+                printf("        PhysX 상호작용 없음\n");
+              }
+            }
+          for (auto& p : px)
+            if (!ours.count(p)) printf("      PhysX만: (%d,%d)\n", p.first, p.second);
+          for (const auto& a : G.acts) printf("      활성화 기록: %s (%d,%d) -> %d %s\n", a.activate ? "켬" : "끔", a.e0, a.e1, int(a.result), a.afterFill ? "(좁은 단계 뒤)" : "");
         }
         fail(step, "좁은 단계 목록");
       }
@@ -792,7 +865,7 @@ int main(int argc, char** argv) {
       if (!same) {
         if (!bad) {
           printf("    %s: PhysX %zu 번 / 우리 %zu 번\n", kOpName[op], a.size(), b.size());
-          for (size_t i = 0; i < std::max(a.size(), b.size()) && i < 6; ++i)
+          for (size_t i = 0; i < std::max(a.size(), b.size()) && i < 30; ++i)
             printf("      %zu: PhysX (%" PRIx64 ",%" PRIx64 ",%" PRIx64 ",%" PRIx64 ",%" PRIx64 ") 우리 (%" PRIx64 ",%" PRIx64 ",%" PRIx64 ",%" PRIx64 ",%" PRIx64 ")\n",
                    i, i < a.size() ? a[i].a : 0, i < a.size() ? a[i].b : 0, i < a.size() ? a[i].c : 0, i < a.size() ? a[i].d : 0, i < a.size() ? a[i].e : 0,
                    i < b.size() ? b[i].a : 0, i < b.size() ? b[i].b : 0, i < b.size() ? b[i].c : 0, i < b.size() ? b[i].d : 0, i < b.size() ? b[i].e : 0);
@@ -838,8 +911,8 @@ int main(int argc, char** argv) {
     }
     if (bad && step > firstBad + 2) break;
   }
-  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 ", 뺀 행위자 %" PRIu64 "\n", steps, nCreated,
-         nTrig, nRemoved, nTouch, nAct, nDeact, nRemovedActors);
+  printf("스텝 %d: 새 겹침 %" PRIu64 "(트리거 %" PRIu64 "), 사라진 겹침 %" PRIu64 ", 닿음 시작 %" PRIu64 ", 상호작용 활성화 %" PRIu64 " 비활성화 %" PRIu64 ", 뺀 행위자 %" PRIu64 ", 거르기 자료 바꿈 %" PRIu64 ", 운동학 전환 %" PRIu64 "\n", steps, nCreated,
+         nTrig, nRemoved, nTouch, nAct, nDeact, nRemovedActors, nRefilterApi, nKinToggle);
   printf("비교: 좁은 단계 칸 %" PRIu64 ", 닿음 사건 %" PRIu64 ", 섬 호출 %" PRIu64 ", 행위자 상호작용 %" PRIu64 " / 다름 %" PRIu64, cmpList, cmpEvents, cmpCalls, cmpActor,
          bad);
   if (bad) printf(" (첫 다름 스텝 %d)", firstBad);

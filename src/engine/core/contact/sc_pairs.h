@@ -57,7 +57,7 @@ enum PairFilteringMode : int32_t { eKEEP = 0, eSUPPRESS = 1, eKILL = 2 };       
 // (지우면 마지막을 그 자리로 옮기므로 섞인 순서가 요소 상호작용 순서를 정한다) -> 이 층이 자리표로 들고 있는다.
 enum InteractionType : uint8_t { eOVERLAP = 0, eTRIGGER = 1, eMARKER = 2, eCONSTRAINTSHADER = 3, eARTICULATION = 4, eINVALID = 0xff };
 namespace IFlag {  // ScInteractionFlags.h:38
-enum : uint8_t { eRB_ELEMENT = 1 << 0, eFILTERABLE = 1 << 2, eIN_DIRTY_LIST = 1 << 3, eIS_FILTER_PAIR = 1 << 4, eIS_ACTIVE = 1 << 5 };
+enum : uint8_t { eRB_ELEMENT = 1 << 0, eCONSTRAINT = 1 << 1, eFILTERABLE = 1 << 2, eIN_DIRTY_LIST = 1 << 3, eIS_FILTER_PAIR = 1 << 4, eIS_ACTIVE = 1 << 5 };
 }
 namespace DirtyFlag {  // ScInteractionFlags.h:51
 enum : uint8_t { eFILTER_STATE = 1 << 0, eBODY_KINEMATIC = (1 << 1) | eFILTER_STATE, eDOMINANCE = 1 << 2, eREST_OFFSET = 1 << 3, eVISUALIZATION = 1 << 4 };
@@ -329,15 +329,46 @@ class ScPairs {
 
   // ---- ScNPhaseCore.cpp:886 updateDirtyInteractions (지배 그룹·시각화 전체 더러움은 아직 없음 — BEHAVIOR 에서 안 바뀜)
   void updateDirtyInteractions() {
-    for (uint32_t i = 0; i < dirtyList.size(); ++i) {
-      const int32_t it = dirtyList[i];
-      Interaction& I = inters[size_t(it)];
-      if (I.type == eOVERLAP) updateState(it, 0);
-      I.dirty = 0;
-      I.iflags &= uint8_t(~IFlag::eIN_DIRTY_LIST);
+    // 목록 스냅샷을 차례로 (PxCoalescedHashSet::getEntries). 도중에 바뀐(convert) 상호작용의 번호는 끝난 뒤에 돌려준다
+    // (PhysX 는 다른 풀이라 새 상호작용이 옛 것과 같은 주소일 수 없다 -> "interaction == refInt" 비교가 번호 재사용에 속지 않게).
+    deferFree = true;
+    const std::vector<int32_t> entries = dirtyList;
+    for (size_t i = 0; i < entries.size(); ++i) {
+      const int32_t it = entries[i];
+      int32_t refInt = it;
+      Interaction& I0 = inters[size_t(it)];
+      if (I0.type <= eMARKER && (I0.dirty & DirtyFlag::eFILTER_STATE)) refInt = refilterInteraction(it);  // needsRefiltering
+      if (refInt == it) {
+        Interaction& I = inters[size_t(it)];
+        if (I.type == eOVERLAP) updateState(it, 0);
+        // (eCONSTRAINTSHADER 의 updateState 는 joints 몫)
+        I.dirty = 0;  // setClean(false)
+        I.iflags &= uint8_t(~IFlag::eIN_DIRTY_LIST);
+      }
     }
     dirtyList.clear();
     dirtyPos.clear();
+    deferFree = false;
+    for (int32_t f : pendingFree) freeInters.push_back(f);
+    pendingFree.clear();
+  }
+  // ActorSim::setActorsInteractionsDirty (ScActorSim.cpp:157): 운동학 전환(ScBodySim.cpp:249 eBODY_KINEMATIC/eFILTERABLE, :275 +eCONSTRAINT),
+  // 지배 그룹(ScActorCore.cpp:74), 조인트 끊김(ScConstraintBreakage.cpp:101 eFILTER_STATE/eRB_ELEMENT). other < 0 이면 전부.
+  void setActorsInteractionsDirty(int32_t actor, uint8_t flag, int32_t other, uint8_t interactionFlagMask) {
+    const std::vector<int32_t> L = actors[size_t(actor)].interactions;
+    for (int32_t it : L) {
+      const Interaction& I = inters[size_t(it)];
+      if ((other < 0 || other == I.actor0 || other == I.actor1) && (I.iflags & interactionFlagMask)) setDirty(it, flag);
+    }
+  }
+  // ShapeSimBase 의 setElementInteractionsDirty (ScShapeSimBase.cpp:65): 거르기 자료 바뀜(eFILTER_STATE/eFILTERABLE), restOffset(eREST_OFFSET/eRB_ELEMENT)
+  void setElementInteractionsDirty(int32_t elem, uint8_t flag, uint8_t interactionFlagMask) {
+    const std::vector<int32_t> L = actors[size_t(shapes[size_t(elem)].actor)].interactions;
+    for (int32_t it : L) {
+      const Interaction& I = inters[size_t(it)];
+      if (I.type > eMARKER || !(I.elem0 == elem || I.elem1 == elem)) continue;  // ElementInteractionIterator (요소 상호작용만)
+      if (I.iflags & interactionFlagMask) setDirty(it, flag);
+    }
   }
   // Interaction::setDirty + addToDirtyInteractionList (예: 조인트 끊김 -> ScConstraintBreakage.cpp:96 eFILTER_STATE, solver 가 부름)
   void setDirty(int32_t it, uint8_t flags) {
@@ -613,6 +644,7 @@ class ScPairs {
     Interaction& I = inters[size_t(it)];
     I.alive = true;
     I.type = type;
+    I.iflags = type == eCONSTRAINTSHADER ? IFlag::eCONSTRAINT : 0;  // ConstraintInteraction: eCONSTRAINT, ArticulationJointSim: 없음
     I.actor0 = actor0;
     I.actor1 = actor1;
     if (actor0 >= 0) registerInActor(actor0, it, 0);
@@ -635,6 +667,7 @@ class ScPairs {
     Interaction& I = inters[size_t(it)];
     I.alive = true;
     I.type = type;
+    I.iflags = type == eCONSTRAINTSHADER ? IFlag::eCONSTRAINT : 0;
     I.actor0 = actor0;
     I.actor1 = actor1;
     return it;
@@ -776,7 +809,8 @@ class ScPairs {
   }
   void freeInteraction(int32_t it) {
     inters[size_t(it)].alive = false;
-    freeInters.push_back(it);
+    if (deferFree) pendingFree.push_back(it);
+    else freeInters.push_back(it);
   }
   void registerInActor(int32_t actor, int32_t it, int which) {  // ScActorSim.cpp:101
     Actor& A = actors[size_t(actor)];
@@ -922,6 +956,47 @@ class ScPairs {
     if (filterShared<true>(fi, isNonRigid, isKinePair, s0, s1, fa0, fa1)) return;
     filterSecondStage(fi, s0, s1, isKinePair, fa0, fa1, true, isNonRigid);
   }
+
+  // ---- 재거르기 (ScFiltering.cpp:669 refilterInteraction, 사용자 정보 없음 경로) / ScNPhaseCore.cpp:424 convert
+  int32_t refilterInteraction(int32_t it) {
+    Interaction& I = inters[size_t(it)];
+    const int32_t s0 = I.elem0, s1 = I.elem1;
+    if ((I.iflags & IFlag::eIS_FILTER_PAIR) && filterPairLost)
+      filterPairLost(pairID(s0, s1), filterAttrOf(s0, true), shapes[size_t(s0)].fd, filterAttrOf(s1, true), shapes[size_t(s1)].fd, false, filterCallbackData);
+    FilterInfo fi;
+    bool isTriggerPair;
+    filterRbCollisionPair(fi, s0, s1, isTriggerPair, true);
+    if ((I.iflags & IFlag::eIS_FILTER_PAIR) && (fi.filterFlags & FilterFlag::eNOTIFY) != FilterFlag::eNOTIFY) {
+      I.iflags &= uint8_t(~IFlag::eIS_FILTER_PAIR);
+      fi.hasPairID = false;
+    }
+    uint8_t newType;
+    if (fi.filterFlags & FilterFlag::eKILL) newType = eINVALID;
+    else if (fi.filterFlags & FilterFlag::eSUPPRESS) newType = eMARKER;
+    else if (shapes[size_t(s0)].trigger || shapes[size_t(s1)].trigger) newType = eTRIGGER;
+    else newType = eOVERLAP;
+    if (I.type != newType) return convert(it, newType, fi);
+    if (I.type == eOVERLAP) setPairFlags(I, fi.pairFlags);  // 보고 쌍 목록 처리 없음
+    else if (I.type == eTRIGGER) I.siFlags = fi.pairFlags;
+    return it;
+  }
+  int32_t convert(int32_t it, uint8_t newType, FilterInfo& fi) {
+    Interaction& I = inters[size_t(it)];
+    const int32_t eA = I.elem0, eB = I.elem1;
+    const int32_t a0 = I.actor0, a1 = I.actor1;
+    if (actors[size_t(a0)].type == eRIGID_DYNAMIC && !islands->isActorActive(a0)) islands->internalWakeUp(a0);
+    if (actors[size_t(a1)].type == eRIGID_DYNAMIC && !islands->isActorActive(a1)) islands->internalWakeUp(a1);
+    I.iflags &= uint8_t(~IFlag::eIS_FILTER_PAIR);
+    releaseElementPair(it, PairRelease::eWAKE_ON_LOST_TOUCH | PairRelease::eRUN_LOST_TOUCH_LOGIC, -1, /*removeFromDirtyList*/ false);
+    int32_t result = -1;
+    if (newType == eMARKER) result = createMarker(eA, eB, false);
+    else if (newType == eOVERLAP) result = createShapeInteraction(eA, eB, fi.pairFlags, -1, -1);
+    else if (newType == eTRIGGER) result = createTriggerInteraction(eA, eB, fi.pairFlags);
+    if (fi.hasPairID && result >= 0) inters[size_t(result)].iflags |= IFlag::eIS_FILTER_PAIR;
+    return result;
+  }
+  bool deferFree = false;
+  std::vector<int32_t> pendingFree;
 
   // ---- 상호작용 만들기 (ScNPhaseCore.cpp:132, :182, :260, :297)
   bool shouldSwapBodies(int32_t s0, int32_t s1) const {
@@ -1326,16 +1401,18 @@ class ScPairs {
     if (it < 0) return;
     releaseElementPair(it, PairRelease::eWAKE_ON_LOST_TOUCH, -1);
   }
-  void releaseElementPair(int32_t it, uint32_t flags, int32_t removedElement) {
+  void releaseElementPair(int32_t it, uint32_t flags, int32_t removedElement, bool removeFromDirtyList = true) {
     Interaction& I = inters[size_t(it)];
-    // setClean(removeFromDirtyList=true)
+    // setClean(removeFromDirtyList) (ScInteraction.cpp:59)
     if (I.iflags & IFlag::eIN_DIRTY_LIST) {
-      const uint32_t pos = dirtyPos[it];
-      const int32_t last = dirtyList.back();
-      dirtyList[pos] = last;
-      dirtyPos[last] = pos;
-      dirtyList.pop_back();
-      dirtyPos.erase(it);
+      if (removeFromDirtyList) {
+        const uint32_t pos = dirtyPos[it];
+        const int32_t last = dirtyList.back();
+        dirtyList[pos] = last;
+        dirtyPos[last] = pos;
+        dirtyList.pop_back();
+        dirtyPos.erase(it);
+      }
       I.iflags &= uint8_t(~IFlag::eIN_DIRTY_LIST);
     }
     I.dirty = 0;

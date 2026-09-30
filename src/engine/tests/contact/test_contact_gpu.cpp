@@ -167,6 +167,10 @@ int main(int argc, char** argv) {
   for (int p = 0; p < pairs; ++p) {
     int t0, t1;
     do { t0 = types[size_t(P(rng) * 5) % 5]; t1 = types[size_t(P(rng) * 5) % 5]; } while (t0 == 1 && t1 == 1);
+    if (const char* ct = getenv("CX_TYPES")) {  // 진단: 모양 종류 쌍 고정 ("a,b")
+      t0 = atoi(ct);
+      t1 = atoi(strchr(ct, ',') + 1);
+    }
     cxt::makeShape(t0, rng, hulls, sa[p]);
     cxt::makeShape(t1, rng, hulls, sb[p]);
     hostPairs[p].s0 = sa[p].e;
