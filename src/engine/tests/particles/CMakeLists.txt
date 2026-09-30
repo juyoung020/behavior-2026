@@ -36,3 +36,5 @@ target_include_directories(test_p4_gpu PRIVATE ${CMAKE_SOURCE_DIR}/..)
 target_compile_options(test_p4_gpu PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:-O2 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false --expt-relaxed-constexpr -Xcompiler=-ffp-contract=off>)
 target_link_libraries(test_p4_gpu dl)
+engine_test(test_base_state test_base_state.cpp)  # base 창 (상태 뜨기·되돌리기) 호출 열 vs 공식
+target_link_libraries(test_base_state dl)

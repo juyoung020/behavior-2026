@@ -4,11 +4,11 @@
 //      = 새 입자 prim 마다 강체 생성(add_particle → update_handles) → 모든 입자 set_transforms(기존 = 원점→중심 그대로, 새 = 중심·방향)
 //        → 모든 입자 속도(기존 값, 새 것 0)                                                        [runRuleEdits: EDIT_PARTICLES_ADD]
 //   ② execute_transition (transition_rules.py:182) 에 지울 물체가 있으면 removing_objects (simulator.py:1011) = envEditWindow 다섯 자리:
-//      (1) dump_state: 물체 등록부(→ base) 다음 계 등록부(→ 입자 원점 자세·속도)
+//      (1) dump_state: 계 등록부(→ 입자 원점 자세·속도) 다음 물체 등록부(→ base = base_state.h)
 //      (2) 지울 물체마다 무덤 자세로 set_position_orientation (기준 링크 = 행위자 0)                 [EDIT_REMOVE_BEGIN.poses]
 //      (3) step_physics 한 번
 //      (4) 물체마다 삭제 (행위자마다 ScScene::removeActor)                                            [EDIT_REMOVE_OBJECT]
-//      (5) load_state: 물체(→ base) 다음 계 (입자: particle_reload 로 자세, 뜬 속도)                    [EDIT_PARTICLES_RESET]
+//      (5) load_state: 계 (입자: particle_reload 로 자세, 뜬 속도) 다음 물체(→ base)                    [EDIT_PARTICLES_RESET]
 //   ③ 그다음 넣을 물체마다 add_object → set_bbox_center_position_orientation                         [EDIT_ADD_OBJECT, loadState 뒤]
 //   ④ 다음 스텝 처음에 비물리 상태 물려받기                                                            [EDIT_INHERIT_STATES — 물리 아님, 호출자]
 // 물체(강체 여럿)의 전체 상태 뜨기·되돌리기(자세·속도·관절)는 omni/리드 쪽 창(base)이 하고, 여기서는 그 앞뒤에 입자 계를 붙인다(공식 등록부 차례).
@@ -146,8 +146,8 @@ struct TransitionEditWindow : scene::EditWindow {
   }
 
   // ② removing_objects 다섯 자리
+  // 계 등록부가 물체 등록부보다 먼저 (scene_base.py:597) — 입자 계 → 물체(base) 차례
   void dumpState(scene::EnvStep& E) override {
-    if (base) base->dumpState(E);
     for (ParticleSystemRt& S : *systems) {
       const size_t n = S.actors.size();
       S.dumpTfs.resize(7 * n);
@@ -160,6 +160,7 @@ struct TransitionEditWindow : scene::EditWindow {
         body->velocity(S.actors[i], S.dumpLin[i], S.dumpAng[i]);
       }
     }
+    if (base) base->dumpState(E);
   }
   void teleportToGrave(scene::EnvStep& E) override {
     (void)E;
@@ -188,13 +189,13 @@ struct TransitionEditWindow : scene::EditWindow {
     }
   }
   void loadState(scene::EnvStep& E) override {
-    if (base) base->loadState(E);
     for (ParticleSystemRt& S : *systems) {  // 계 등록부: _sync_particles(수 같음) → 자세 set → 크기(같음) → 속도 set
       const size_t n = S.actors.size();
       if (S.dumpTfs.size() != 7 * n) continue;
       for (size_t i = 0; i < n; ++i) body->setActorPose(S.actors[i], pose7_tf(particle_reload(&S.dumpTfs[7 * i], S.off, scenePose, scenePoseInv)));
       for (size_t i = 0; i < n; ++i) body->setVelocity(S.actors[i], S.dumpLin[i], S.dumpAng[i]);
     }
+    if (base) base->loadState(E);  // 물체 등록부 (base_state.h BaseStateWindow)
     addObjects(E);  // ③ 은 load_state 뒤 (execute_transition 이 removing_objects 를 나온 뒤 넣음)
   }
   // ③ 새 물체 넣기 (지울 것이 없는 스텝이면 창 없이 이것만)

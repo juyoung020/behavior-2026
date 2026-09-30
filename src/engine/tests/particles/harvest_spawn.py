@@ -185,7 +185,114 @@ def _install(cap):
         return r
 
     MP._dump_state, MP._load_state, MP.set_particles_position_orientation = ds_wrap, ls_wrap, sp_wrap
+    if os.environ.get("HARVEST_BASE"):
+        _install_base(cap)
     STATE["installed"] = True
+
+
+def _install_base(cap):
+    """base 창 정답 (core/particles/base_state.h, test_base_state): removing_objects 의 og.sim.dump_state / load_state 동안
+    물체마다 뜬 값(잠·뿌리 자세·속도·관절)과 되돌리기 때의 호출 열(읽기·자세·속도·관절 쓰기·sleep/wake)을 공식 호출 자리에서 적는다.
+    물체 표(등록부 차례)도 함께. 결과 harvest_base.json."""
+    import omnigibson as og
+    from omnigibson.prims.entity_prim import EntityPrim
+    from omnigibson.prims.rigid_dynamic_prim import RigidDynamicPrim
+
+    Lt = lambda t: t.detach().cpu().numpy().tolist() if hasattr(t, "detach") else t
+    rec = STATE.setdefault("base", {"objects": None, "windows": []})
+    cur = {"win": None, "phase": None}
+    out = os.path.join(cap.dump_dir, "harvest_base.json")
+
+    def table():
+        scene = og.sim.scenes[0]
+        t = []
+        for o in scene.objects:
+            links = [l.prim_path for l in o.links.values() if isinstance(l, RigidDynamicPrim)]
+            t.append(dict(name=o.name, articulated=bool(o.articulated), n_joints=int(o.n_joints), kinematic_only=bool(o.kinematic_only),
+                          root_link=o.root_link.prim_path, dynamic_links=links))
+        return t
+
+    def log(*a):
+        if cur["win"] is not None and cur["phase"] == "load":
+            cur["win"]["calls"].append(list(a))
+
+    S = type(og.sim)
+    orig_dump, orig_load = S.dump_state, S.load_state
+
+    def dump_wrap(self, serialized=False):
+        cur["win"] = dict(step=STATE.get("step", -1), objects=table(), dump={}, calls=[])
+        cur["phase"] = "dump"
+        try:
+            return orig_dump(self, serialized=serialized)
+        finally:
+            cur["phase"] = None
+
+    def load_wrap(self, state, serialized=False):
+        if cur["win"] is None:
+            return orig_load(self, state, serialized=serialized)
+        cur["phase"] = "load"
+        try:
+            return orig_load(self, state, serialized=serialized)
+        finally:
+            cur["phase"] = None
+            rec["windows"].append(cur["win"])
+            cur["win"] = None
+            with open(out, "w") as f:
+                json.dump(rec, f)
+
+    S.dump_state, S.load_state = dump_wrap, load_wrap
+
+    oed, oel = EntityPrim._dump_state, EntityPrim._load_state
+
+    def ed_wrap(self):
+        st = oed(self)
+        if cur["win"] is not None and cur["phase"] == "dump":
+            rl = st["root_link"]
+            cur["win"]["dump"][self.name] = dict(asleep=bool(st["is_asleep"]), pos=Lt(rl["pos"]), ori=Lt(rl["ori"]), lin=Lt(rl.get("lin_vel")),
+                                                 ang=Lt(rl.get("ang_vel")), jpos=Lt(st.get("joint_pos")), jvel=Lt(st.get("joint_vel")))
+        return st
+
+    def el_wrap(self, state):
+        log("obj", self.name)
+        return oel(self, state)
+
+    EntityPrim._dump_state, EntityPrim._load_state = ed_wrap, el_wrap
+
+    def wrap(cls, name, kind):
+        orig = getattr(cls, name)
+
+        def w(self, *a, **kw):
+            r = orig(self, *a, **kw)
+            if kind == "read":
+                log("read", self.prim_path, Lt(r[0]), Lt(r[1]))
+            elif kind == "set":
+                vals = [Lt(x) for x in a] + [Lt(v) for v in kw.values()]
+                log(name, self.prim_path, *vals)
+            return r
+
+        setattr(cls, name, w)
+
+    wrap(RigidDynamicPrim, "get_position_orientation", "read")
+    for n in ("set_position_orientation", "set_linear_velocity", "set_angular_velocity"):
+        wrap(RigidDynamicPrim, n, "set")
+    for n in ("set_joint_positions", "set_joint_velocities"):
+        wrap(EntityPrim, n, "set")
+    osl, owk = RigidDynamicPrim.sleep, RigidDynamicPrim.wake
+    RigidDynamicPrim.sleep = lambda self: (log("rigid_sleep", self.prim_path), osl(self))[1]
+    RigidDynamicPrim.wake = lambda self: (log("rigid_wake", self.prim_path), owk(self))[1]
+    oes, oew = EntityPrim.sleep, EntityPrim.wake
+
+    def es(self):
+        if self.articulated:
+            log("art_sleep", self.name)
+        return oes(self)
+
+    def ew(self):
+        if self.articulated:
+            log("art_wake", self.name)
+        return oew(self)
+
+    EntityPrim.sleep, EntityPrim.wake = es, ew
 
 
 def _alive(o):

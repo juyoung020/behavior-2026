@@ -77,6 +77,21 @@ def dump_particle_spec(evaluator, out_dir):
 
     import torch as th
 
+    # base 창 물체 표 (core/particles/base_state.h): 등록부 차례 = dump_state/load_state 차례. 계 등록부가 물체 등록부보다 먼저다.
+    from omnigibson.prims.rigid_dynamic_prim import RigidDynamicPrim
+
+    base = []
+    for o in scene.objects:
+        try:
+            links = [l.prim_path for l in o.links.values() if isinstance(l, RigidDynamicPrim)]
+            base.append(dict(name=o.name, articulated=bool(o.articulated), n_joints=int(o.n_joints), kinematic_only=bool(o.kinematic_only),
+                             fixed_base=bool(o.fixed_base), prim_type=int(o.prim_type), root_link=o.root_link.prim_path, dynamic_links=links,
+                             articulation_root=o.articulation_root_path if o.articulated else None,
+                             robot=o in scene.robots))
+        except Exception as e:
+            base.append(dict(name=getattr(o, "name", "?"), error=repr(e)))
+    spec["base_objects"] = base
+    spec["system_registry"] = [s.name for s in scene.system_registry.objects]
     arrays["torch_rng_state"] = th.get_rng_state().numpy()
     st = random.getstate()
     spec["py_random_state"] = [st[0], list(st[1]), st[2]]

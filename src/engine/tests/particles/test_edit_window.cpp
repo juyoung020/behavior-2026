@@ -85,10 +85,12 @@ int main(int argc, char** argv) {
       bad += memcmp(got, w + 7 * (k0 + i), 28) != 0;
       ++total;
     }
-    // 차례: base dump → 무덤(pose n) → rm n → base load → 입자 자세 n 개 → 입자 속도 n 개
-    std::vector<std::string> want = {"base dump", "pose " + std::to_string(n[c]), "rm " + std::to_string(n[c]), "base load"};
+    // 차례: (입자 뜨기) base dump → 무덤(pose n) → rm n → 입자 자세 n 개 → 입자 속도 n 개 → base load
+    // 계 등록부가 물체 등록부보다 먼저: base dump 는 입자 뒤, base load 는 입자 자세·속도 뒤
+    std::vector<std::string> want = {"base dump", "pose " + std::to_string(n[c]), "rm " + std::to_string(n[c])};
     for (int i = 0; i < n[c]; ++i) want.push_back("pose " + std::to_string(i));
     for (int i = 0; i < n[c]; ++i) want.push_back("vel " + std::to_string(i));
+    want.push_back("base load");
     orderOk = orderOk && B.log == want && W.failed == 0;
     k0 += n[c];
   }
