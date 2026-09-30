@@ -9,6 +9,9 @@
 #pragma once
 #include <xmmintrin.h>
 
+#include <cstdio>
+#include <cstdlib>
+
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -36,6 +39,7 @@ struct EnvSolveImpl : public EnvSolve {
   std::vector<jnt::Writeback> wbs;  // Dy 제약 번호별
   std::unordered_map<uint64_t, std::vector<sv::FrictionPatch>> fric;  // (요소0<<32 | 요소1) -> 지난 마찰 패치
   std::vector<uint64_t> cmPair;  // 풀 번호 -> 지난 스텝 모양 쌍 (~0 = 없음)
+  std::vector<uint32_t> cmEpoch;  // 풀 번호 -> 지난 스텝 캐시 지움 세대 (ScPairs ContactManager::cachedStateEpoch: 다르면 마찰 패치 0)
   std::vector<int32_t> bodyOfNode, artOfNode;  // 섬 노드 번호 -> 몸체 / 관절체 (-1)
   // 조인트가 붙은 수 (BodySim::onConstraintAttach -> registerCountedInteraction, ScBodySim.h:159): 몸체별, 관절체 링크별(관절체*kMaxLinks+LL)
   std::vector<uint32_t> jointsOnBody, jointsOnLink;
@@ -66,6 +70,9 @@ struct EnvSolveImpl : public EnvSolve {
   contact::SolverInputOut sin;
   std::vector<uint64_t> cmKey;  // 판 관리자(풀 번호) -> 모양 쌍
   sv::SolverBoard B{};
+  // ---- 진단: 이번 스텝 풀이에 넣은 지난 마찰 패치 (모양 쌍 -> 패치), G1_ENV_FRIC
+  bool keepIn = false;
+  std::unordered_map<uint64_t, std::vector<sv::FrictionPatch>> lastIn;
   // ---- 알림
   uint64_t steps = 0, kinInIsland = 0, unknownEdge = 0, unknownNode = 0, engineErr = 0;
 
@@ -77,6 +84,8 @@ struct EnvSolveImpl : public EnvSolve {
       if (cmPair.size() <= size_t(ci)) cmPair.resize(size_t(ci) + 1, ~0ull);
       const ss::ContactManager& cm = P.cmsData[size_t(ci)];
       cmPair[size_t(ci)] = pairKey(cm.shape0, cm.shape1);
+      if (cmEpoch.size() <= size_t(ci)) cmEpoch.resize(size_t(ci) + 1, 0);
+      cmEpoch[size_t(ci)] = cm.cachedStateEpoch;
     }
   }
 
@@ -222,6 +231,14 @@ struct EnvSolveImpl : public EnvSolve {
     cmKey.assign(cap, ~0ull);
     if (cmPair.size() < cap) cmPair.resize(cap, ~0ull);
     uint32_t nFr = 0;
+    // 이번 스텝 새로 만든 관리자 (섬 호출에 실린 관리자 번호: 추가·미리 받은 추가·강체 관리자 표시) -> 마찰 패치 0 (새 PxsContactManager)
+    std::vector<uint8_t> fresh(cap, 0);
+    for (const IslOp& r : E.live.out) {
+      uint32_t c = ig::INVALID_EDGE;
+      if (r.op == ISL_ADD_CM || r.op == ISL_SET_RIGID_CM) c = r.b;
+      else if (r.op == ISL_ADD_PREALLOC_CM) c = r.c;
+      if (c < cap) fresh[c] = 1;
+    }
     for (uint32_t s = 0; s < P.npMain.size(); ++s) {
       const int32_t ci = P.npMain.cms[s];
       const ss::ContactManager& cm = P.cmsData[size_t(ci)];
@@ -230,13 +247,23 @@ struct EnvSolveImpl : public EnvSolve {
       sv::SolverCM& m = cms[size_t(ci)];
       m.frictionPtr = nFr;
       m.frictionCount = 0;
-      if (cmPair[size_t(ci)] == key) {  // 같은 관리자 (새 관리자는 마찰 패치 0)
+      if (cmEpoch.size() < cap) cmEpoch.resize(cap, 0);
+      const bool sameEpoch = cmEpoch[size_t(ci)] == cm.cachedStateEpoch;
+      if (cmPair[size_t(ci)] == key && !fresh[size_t(ci)] && sameEpoch) {  // 같은 관리자, 캐시 안 지움 (새 관리자·clearCachedState 는 마찰 패치 0)
         auto it = fric.find(key);
         if (it != fric.end())
           for (const sv::FrictionPatch& fp : it->second) {
             if (nFr < fr0.size()) fr0[nFr++] = fp;
             ++m.frictionCount;
           }
+      }
+    }
+    if (keepIn) {
+      lastIn.clear();
+      for (uint32_t s2 = 0; s2 < P.npMain.size(); ++s2) {
+        const int32_t ci = P.npMain.cms[s2];
+        const sv::SolverCM& m = cms[size_t(ci)];
+        lastIn[cmKey[size_t(ci)]].assign(fr0.begin() + m.frictionPtr, fr0.begin() + m.frictionPtr + m.frictionCount);
       }
     }
     // 3. 섬 (정확 섬 시뮬 활성 섬 차례)
@@ -279,13 +306,21 @@ struct EnvSolveImpl : public EnvSolve {
       guard = 0;
       for (uint32_t e = isl.firstEdge[ig::eCONTACT_MANAGER]; e != ig::INVALID_EDGE && e < A.edges.size && guard++ <= A.edges.size; e = A.edges.d[e].nextIslandEdge) {
         const uint32_t ci = M.constraintOrCm[e];
-        if (ci == ig::INVALID_EDGE || ci >= cap || cmKey[ci] == ~0ull) { ++unknownEdge; continue; }
+        if (ci == ig::INVALID_EDGE || ci >= cap || cmKey[ci] == ~0ull) {
+          if (!unknownEdge && getenv("G1_ENV_TRACE")) fprintf(stderr, "[env solve] 스텝 %llu 모르는 접촉 간선 %u 객체 %x (칸 수 %u)\n", (unsigned long long)steps, e, ci, cap);
+          ++unknownEdge;
+          continue;
+        }
         icm.push_back(ci);
       }
       guard = 0;
       for (uint32_t e = isl.firstEdge[ig::eCONSTRAINT]; e != ig::INVALID_EDGE && e < A.edges.size && guard++ <= A.edges.size; e = A.edges.d[e].nextIslandEdge) {
         const uint32_t o = M.constraintOrCm[e];
-        if (o == ig::INVALID_EDGE || !(o & 0x80000000u) || (o & 0x7fffffffu) >= joints.size()) { ++unknownEdge; continue; }
+        if (o == ig::INVALID_EDGE || !(o & 0x80000000u) || (o & 0x7fffffffu) >= joints.size()) {
+          if (!unknownEdge && getenv("G1_ENV_TRACE")) fprintf(stderr, "[env solve] 스텝 %llu 모르는 제약 간선 %u 객체 %x\n", (unsigned long long)steps, e, o);
+          ++unknownEdge;
+          continue;
+        }
         const SceneJoint& j = joints[o & 0x7fffffffu];
         sv::Constraint1DIn x{};
         sceneRef(j.actor0, x.body0, x.artLink0);
@@ -379,7 +414,10 @@ struct EnvSolveImpl : public EnvSolve {
       const sv::SolverCM& m = cms[ci];
       fric[cmKey[ci]].assign(fa.data + m.frictionPtr, fa.data + m.frictionPtr + m.frictionCount);
     }
-    for (uint32_t ci = 0; ci < cap; ++ci) cmPair[ci] = cmKey[ci];
+    for (uint32_t ci = 0; ci < cap; ++ci) {
+      cmPair[ci] = cmKey[ci];
+      if (cmKey[ci] != ~0ull) cmEpoch[ci] = P.cmsData[ci].cachedStateEpoch;
+    }
     for (HostBodyWake& w : post.bodies) {
       if (w.link) continue;
       const int32_t b = bodyOf(uint32_t(w.node & 0xffffffffu));

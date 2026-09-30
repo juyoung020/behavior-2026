@@ -618,6 +618,31 @@ bool __wrap__ZN5physx2Dy32createFinalizeSolverContactsStepERNS_22PxTGSSolverCont
 }
 namespace {
 
+// ---------------- env 진단 (G1_ENV_FRIC): 풀이 직전 PhysX 접촉 관리자별 지난 마찰 패치 (모양 요소 쌍 -> 패치들)
+std::map<uint64_t, std::vector<sv::FrictionPatch>> gEnvFric;
+PxScene* gEnvFricScene = nullptr;
+void envFricCapture() {
+  gEnvFric.clear();
+  if (!gEnvFricScene) return;
+  Sc::Scene& sc = static_cast<NpScene*>(gEnvFricScene)->getScScene();
+  const PxU32 nInter = sc.getNbInteractions(Sc::InteractionType::eOVERLAP);
+  Sc::ElementSimInteraction** inter = sc.getInteractions(Sc::InteractionType::eOVERLAP);
+  for (PxU32 ii = 0; ii < nInter; ++ii) {
+    const PxsContactManager* cm = static_cast<const Sc::ShapeInteraction*>(inter[ii])->getContactManager();
+    if (!cm) continue;
+    const PxcNpWorkUnit& u = cm->getWorkUnit();
+    const Sc::ElementSimInteraction* ei = inter[ii];
+    // 작업 단위 모양 차례 (u 의 모양 0/1) 로 요소 번호를 찾는다
+    const Sc::ShapeSimBase& s0 = static_cast<const Sc::ShapeSimBase&>(ei->getElement0());
+    const Sc::ShapeSimBase& s1 = static_cast<const Sc::ShapeSimBase&>(ei->getElement1());
+    uint32_t e0 = s0.getElementID(), e1 = s1.getElementID();
+    if (u.getShapeCore0() != &s0.getCore().getCore()) std::swap(e0, e1);
+    std::vector<sv::FrictionPatch>& v = gEnvFric[(uint64_t(e0) << 32) | e1];
+    const Dy::FrictionPatch* fp = reinterpret_cast<const Dy::FrictionPatch*>(u.mFrictionDataPtr);
+    for (PxU32 k = 0; k < u.mFrictionPatchCount && fp; ++k) v.push_back(frictionFrom(fp[k]));
+  }
+}
+
 // ---------------- 작업 스레드 하나짜리 디스패처 (UpdateContinuationTask 직전에 스냅샷)
 class HookDispatcher : public PxCpuDispatcher {
  public:
@@ -654,6 +679,7 @@ class HookDispatcher : public PxCpuDispatcher {
       g1_bp_task(t->getName());
       g1_sc_task(t->getName());
       g1_scene_task(t->getName());
+      if (getenv("G1_ENV_FRIC") && !strcmp(t->getName(), "UpdateContinuationTask")) envFricCapture();
       if (getenv("G1_TASKS")) fprintf(stderr, "[task] %s\n", t->getName());
       if (!strcmp(t->getName(), "ScScene.afterIntegration")) takeLateSnapshot();
       if (!strcmp(t->getName(), "UpdateContinuationTask")) {
@@ -684,6 +710,10 @@ PxCpuDispatcher* g1_dispatcher() {
 }
 
 const G1StepInfo& g1_step_info() { return gInfo; }
+// env 진단: 풀이 직전 PhysX 마찰 패치 표 (G1_ENV_FRIC)
+void g1_env_fric_scene(PxScene* s) { gEnvFricScene = s; }
+const std::map<uint64_t, std::vector<sv::FrictionPatch>>& g1_env_px_fric() { return gEnvFric; }
+bool g1_env_same_fric(const sv::FrictionPatch& a, const sv::FrictionPatch& b) { return sameFriction(a, b); }
 
 // 장면 뜨기(g1_dump.cpp): 풀이 매개변수 (takeSnapshot 과 같은 값)
 bool g1_solver_params(PxScene* scene, eng::sv::SolverParams& prm) {

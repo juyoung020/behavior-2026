@@ -2527,7 +2527,7 @@ class Replayer {
         // put_to_sleep 뒤에 같은 물체의 텐서 쓰기(자세·속도·관절 값)가 같은 스텝 사이(after 같음)에 있으면 공식에서는 깨어 있다
         // (추정: 텐서 쓰기는 다음 simulate 직전에 PhysX 에 닿고 그때 깨움 -> psi 재우기가 먼저 되고 쓰기가 덮는다).
         // chop_slice0 상태 되살리기(post 353): 재우면 simulate 338 부터 그 물체들만 갈림. REPLAY_SLEEP_ALWAYS=1 이면 옛 동작.
-        if (m == "put_to_sleep" && !psi_early && !getenv("REPLAY_SLEEP_ALWAYS") && written_same_step(path)) {
+        if (m == "put_to_sleep" && !psi_early && !side_early && !getenv("REPLAY_SLEEP_ALWAYS") && written_same_step(path)) {
           applied["side:put_to_sleep 뒤 텐서 쓰기로 깨어 있음"]++;
           continue;
         }
@@ -2555,10 +2555,13 @@ class Replayer {
   bool psi_early = getenv("REPLAY_PSI_EARLY") != nullptr;
   int64_t trace_sim = getenv("REPLAY_TRACE_SIM") ? atoll(getenv("REPLAY_TRACE_SIM")) : -1;
   std::set<size_t> psi_done;
+  // REPLAY_SIDE_EARLY=1: psi 뿐 아니라 텐서 쓰기까지 곁기록 차례 그대로 창 맨 앞에서 (particles 탐침: 텐서 쓰기도 부른 즉시 PhysX 에 닿음 — B9 가설)
+  bool side_early = getenv("REPLAY_SIDE_EARLY") != nullptr;
   void apply_psi_early(uint64_t after) {
     for (size_t j = scall_next; j < scalls.size() && scalls[j].after <= after; ++j) {
       const engine::SideCall& c = scalls[j];
-      if (c.method != "wake_up" && c.method != "put_to_sleep") continue;
+      if (!side_early && c.method != "wake_up" && c.method != "put_to_sleep") continue;
+      if (psi_done.count(j)) continue;
       if (side_skip.count(j)) continue;
       const engine::SideView& v = sviews[c.view];
       bool found = true;
@@ -2570,7 +2573,7 @@ class Replayer {
       apply_side(c);
       scall_next = keep;
       psi_done.insert(j);
-      applied["side:psi 먼저"]++;
+      applied[side_early ? "side:곁기록 먼저" : "side:psi 먼저"]++;
     }
   }
 
@@ -2913,7 +2916,7 @@ class Replayer {
           if (out_block && e.ctx == out_ctx) {
             out_block = false;
             end_frame();
-            if (psi_early) apply_psi_early(sims + side_offset);
+            if (psi_early || side_early) apply_psi_early(sims + side_offset);
             if (max_frames >= 0 && int64_t(sims) >= max_frames) return;
           }
           break;

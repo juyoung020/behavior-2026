@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,9 @@ void g1_pairs_wake(sc2::HostWake& out);
 // 편집 창 안에서 물리 스텝을 이미 돌렸으면 2 를 더한다(이번 simulate 의 envStep 을 건너뜀). 0 = 평소대로 기록 창.
 int g1_env_edit_hook(uint64_t sim, eng::scene::EnvStep& E, eng::scene::EnvSolveImpl& S, eng::scene::EnvBodyApi& api) __attribute__((weak));
 size_t g1_islands_rec_count();
+void g1_env_fric_scene(physx::PxScene* s);
+const std::map<uint64_t, std::vector<eng::sv::FrictionPatch>>& g1_env_px_fric();
+bool g1_env_same_fric(const eng::sv::FrictionPatch& a, const eng::sv::FrictionPatch& b);
 bool g1_islands_rec(size_t i, sc2::IslOp& o);
 
 namespace {
@@ -224,6 +228,8 @@ void g1_env_before(physx::PxScene* scene, uint64_t sim) {
     EC.solver.seedPairs(o.C.S->pairs);
     o.E.solver = &EC.solver;
     EC.api.reset(new sc2::EnvBodyApi(o.E, EC.solver));
+    EC.solver.keepIn = getenv("G1_ENV_FRIC") != nullptr;
+    g1_env_fric_scene(scene);
     EC.pxArts = g1_env_px_arts(scene);
     EC.running = true;
     EC.first = true;
@@ -335,6 +341,7 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
     x.angVel = eng::V3{b.ang[0], b.ang[1], b.ang[2]};
     x.wakeCounter = b.wc;
     ++EC.resyncBodies;
+    if (getenv("G1_ENV_TRACE") && !EC.first) fprintf(stderr, "[g1 env] sim %llu 다시 맞춤 몸체 노드 %llx\n", (unsigned long long)sim, (unsigned long long)b.node);
     auto it = scByNode.find(b.node);
     if (it != scByNode.end()) {
       eng::px::PxTransform t;
@@ -349,6 +356,7 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
     if (EC.artTouched[k] && EC.artSnap[k]) {
       EC.solver.arts[k] = *EC.artSnap[k];
       ++EC.resyncArts;
+      if (getenv("G1_ENV_TRACE") && !EC.first) fprintf(stderr, "[g1 env] sim %llu 다시 맞춤 관절체 %zu\n", (unsigned long long)sim, k);
       for (const G1BodyState& b : EC.pre) {
         if (!b.link || EC.solver.artOf(uint32_t(b.node & 0xffffffffu)) != int32_t(k)) continue;
         auto it = scByNode.find(b.node);
@@ -374,6 +382,19 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
   if (getenv("G1_ENV_TRACE"))
     fprintf(stderr, "[g1 env] sim %llu 뒤: 판 섬 %zu 몸체 %zu 관리자 %zu 1D %zu 관절체 %zu\n", (unsigned long long)sim, EC.solver.islands.size(), EC.solver.ib.size(),
             EC.solver.icm.size(), EC.solver.c1d.size(), EC.solver.ia.size());
+  if (EC.solver.keepIn) {  // 진단: 풀이에 넣은 지난 마찰 패치 = PhysX 풀이 직전 값
+    const auto& px = g1_env_px_fric();
+    for (const auto& kv : EC.solver.lastIn) {
+      auto it = px.find(kv.first);
+      bool same = it != px.end() && it->second.size() == kv.second.size();
+      for (size_t q = 0; same && q < kv.second.size(); ++q) same = g1_env_same_fric(kv.second[q], it->second[q]);
+      if (!same && EC.show > 0) {
+        --EC.show;
+        fprintf(stderr, "[g1 env] sim %llu 마찰 패치 다름 요소쌍 %llx: 우리 %zu 개 / PhysX %zu 개\n", (unsigned long long)sim, (unsigned long long)kv.first,
+                kv.second.size(), it == px.end() ? size_t(9999) : it->second.size());
+      }
+    }
+  }
   // 6. PhysX 스텝 끝과 비교: 몸체·링크 자세·속도, 관절체 전체, 깸 카운터 표
   std::vector<G1BodyState> now;
   g1_pairs_body_states(now);
@@ -389,8 +410,10 @@ void g1_env_after(physx::PxScene*, uint64_t sim) {
         envBad("몸체 자세·속도", sim, EC.badBody);
         if (EC.show > 0) {
           --EC.show;
-          fprintf(stderr, "[g1 env] sim %llu 몸체 노드 %u: 우리 p %.9g %.9g %.9g / PhysX %.9g %.9g %.9g\n", (unsigned long long)sim, node, x.body2World.p.x,
-                  x.body2World.p.y, x.body2World.p.z, b.b2w[4], b.b2w[5], b.b2w[6]);
+          fprintf(stderr, "[g1 env] sim %llu 몸체 노드 %u: 우리 q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g v %.9g %.9g %.9g w %.9g %.9g %.9g / PhysX q %.9g %.9g %.9g %.9g p %.9g %.9g %.9g v %.9g %.9g %.9g w %.9g %.9g %.9g\n",
+                  (unsigned long long)sim, node, x.body2World.q.x, x.body2World.q.y, x.body2World.q.z, x.body2World.q.w, x.body2World.p.x, x.body2World.p.y,
+                  x.body2World.p.z, x.linVel.x, x.linVel.y, x.linVel.z, x.angVel.x, x.angVel.y, x.angVel.z, b.b2w[0], b.b2w[1], b.b2w[2], b.b2w[3], b.b2w[4], b.b2w[5],
+                  b.b2w[6], b.lin[0], b.lin[1], b.lin[2], b.ang[0], b.ang[1], b.ang[2]);
         }
       }
     }
