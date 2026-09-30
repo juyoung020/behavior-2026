@@ -641,6 +641,35 @@ class Capture:
                    "controller_order": plain(getattr(r, "controller_order", [])),
                    "controller_action_idx": plain(getattr(r, "controller_action_idx", {})),
                    "controller_config": plain(getattr(r, "_controller_config", {}))}
+            # 카메라 자세(관측 cam_rel_poses): fabric 세계 행렬 = 링크까지 올라가는 local 행렬들 × 링크 세계 행렬 (double, Gf 행벡터 규약).
+            # 엔진이 같은 식을 쓰도록 사슬의 local 행렬(16 double)과, 확인용으로 지금 시점의 링크·카메라 세계 행렬과 링크 PhysX 자세를 남긴다.
+            try:
+                import omnigibson as og
+                import omnigibson.lazy as lazy
+
+                link_paths = set(links_of(r).values()) if isinstance(links_of(r), dict) else set()
+                fh = og.sim.fabric_hierarchy
+                cams = {}
+                for n, sn in r.sensors.items():
+                    path = getattr(sn, "prim_path", None)
+                    if not path:
+                        continue
+                    chain, cur = [], path
+                    while cur and cur not in link_paths and cur.count("/") > 1:
+                        chain.append({"path": cur, "local": [float(x) for row in fh.get_local_xform(lazy.usdrt.Sdf.Path(cur)) for x in row]})
+                        cur = cur.rsplit("/", 1)[0]
+                    link = cur
+                    lpos, lquat = None, None
+                    for ln in r.links.values():
+                        if ln.prim_path == link:
+                            lpos, lquat = ln.get_position_orientation()
+                    cams[n] = {"chain": chain, "link": link,
+                               "link_world": [float(x) for row in fh.get_world_xform(lazy.usdrt.Sdf.Path(link)) for x in row],
+                               "cam_world": [float(x) for row in fh.get_world_xform(lazy.usdrt.Sdf.Path(path)) for x in row],
+                               "link_physx": None if lpos is None else [float(x) for x in list(lpos) + list(lquat)]}
+                rob["camera_chain"] = cams
+            except Exception as e:
+                rob["camera_chain_error"] = repr(e)
             out.append({"env_idx": st.env_idx, "instance_id": st.instance_id, "objects": objs, "robot": rob})
         with open(os.path.join(self.dump_dir, "scope.json"), "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=1)

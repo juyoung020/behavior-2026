@@ -53,3 +53,11 @@ add_executable(s1_ctrl s1_ctrl.cpp)
 target_link_libraries(s1_ctrl ovd)
 target_include_directories(s1_ctrl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_options(s1_ctrl PRIVATE -O2 -ffp-contract=off -fno-fast-math)
+
+# S4 v0 (문서 15절): 엔진 파이썬 바인딩의 C 입구 (ctypes). PhysX 정적 라이브러리가 -fPIC 가 아니면 링크가 실패한다 -> 그때는 PhysX 를 PIC 로 다시 빌드
+add_library(engine_capi SHARED engine_capi.cpp px_gpu_stub.cpp)
+target_include_directories(engine_capi PRIVATE ${PHYSX_ROOT}/include ${PHYSX_ROOT}/pvdruntime/include ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(engine_capi PRIVATE ${PX_DEFS})
+target_compile_options(engine_capi PRIVATE ${COMMON_FLAGS})
+set_target_properties(ovd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(engine_capi ovd ${PHYSX_LIBS})

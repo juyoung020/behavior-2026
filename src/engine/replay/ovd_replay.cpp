@@ -407,6 +407,10 @@ class Replayer {
     // (simulator.py:1579 step_all → robot.post_step(AG) → :1587 flush_control, robot.py:2060 _release_grasp update_handles).
     // 제어기 상태는 그대로 나아가고 드라이브 목표만 앞 서브스텝 값이 남는다.
     bool joint_event = false;
+    // --free: 에피소드 시작 뒤로는 OVD 입력(set·create·destroy·목록)을 넣지 않고 제어기(--ctrl) 입력만으로 돈다 (S4 준비:
+    // 엔진이 에피소드 동안 스스로 만들어야 하는 입력이 무엇인지 센다). 출력 비교는 그대로.
+    bool free_run = false;
+    std::map<std::string, uint64_t> free_skipped;
     uint64_t dropped_flush = 0;
   } C;
 
@@ -517,6 +521,7 @@ class Replayer {
     uint64_t n_steps = 0, bad_val = 0, bad_time = 0, bad_goal = 0, n_goal_true = 0;
     int64_t first_bad = -1;
     std::string first_bad_what;
+    std::string last_goal = "[]";
   } S3;
 
   static float hexf(const std::string& h) {
@@ -696,6 +701,7 @@ class Replayer {
         first = false;
       }
     gs += "]";
+    S3.last_goal = gs;
     if (gs != "[]") S3.n_goal_true++;
     S3.n_steps++;
     auto bad = [&](const std::string& w) {
@@ -732,6 +738,7 @@ class Replayer {
            S3.n_steps, S3.n_goal_true, S3.bad_val, S3.bad_time, S3.bad_goal, fb.c_str());
   }
 
+  bool in_free(bool out_block) const { return C.free_run && C.on && !out_block && sims + side_offset >= C.episode_start; }
   bool is_ext_joint_cls(uint32_t cls) {
     const std::string n = cname(cls);
     return n == "PxFixedJoint" || n == "PxD6Joint" || n == "PxSphericalJoint" || n == "PxRevoluteJoint" || n == "PxPrismaticJoint" ||
@@ -2100,12 +2107,19 @@ class Replayer {
   }
 
   // ------------------------------------------------------------------ 본 반복
+  // 이어 돌기(엔진 바인딩 engine_capi.cpp): 사건 번호·묶음 상태를 멤버로 두고 run() 은 max_frames 에서 멈췄다가 다시 부르면 잇는다
+  uint64_t run_open = 0;
+  bool run_out_block = false;
+  uint64_t run_out_ctx = 0;
+  size_t run_i = 0;
+  PxScene* last_scene = nullptr;
+  float last_dt = 1.0f / 120.0f;
   void run() {
-    uint64_t open = 0;         // 만들 때 값을 모으는 중인 객체
-    bool out_block = false;    // simulate 뒤 결과 구간
-    uint64_t out_ctx = 0;
+    uint64_t& open = run_open;         // 만들 때 값을 모으는 중인 객체
+    bool& out_block = run_out_block;   // simulate 뒤 결과 구간
+    uint64_t& out_ctx = run_out_ctx;
     const uint32_t a_elapsed = attr("PxScene", "elapsedTime");
-    for (size_t i = 0; i < F.events.size(); ++i) {
+    for (size_t& i = run_i; i < F.events.size(); ++i) {
       const ovd::Event& e = F.events[i];
       // 만든 순간 값 묶음(cluster): create 바로 뒤, 같은 객체의 set 이 이어지는 동안. 같은 속성이 두 번 나오면
       // 두 번째부터는 API 호출이다 (생성 기록은 속성마다 한 번씩만 쓴다: OmniPvdPxSampler::stream*).
@@ -2115,6 +2129,12 @@ class Replayer {
         continue;
       }
       if (open) { close_cluster(open); open = 0; }
+      if (in_free(out_block) && e.cmd != ovd::kStopFrame && !(e.cmd == ovd::kSet && e.attr == a_elapsed)) {
+        std::string what = e.cmd == ovd::kSet ? std::string("set:") + cname(objs.count(e.obj) ? objs[e.obj].cls : 0) + "." + F.attrs[e.attr].name
+                         : e.cmd == ovd::kCreate ? std::string("create:") + cname(e.cls) : std::string("cmd:") + std::to_string(int(e.cmd));
+        C.free_skipped[what]++;
+        if (e.cmd == ovd::kSet || e.cmd == ovd::kAddToList || e.cmd == ovd::kRemoveFromList) continue;  // 생성·파괴는 넣는다(객체 대응 유지, 개수만 보고)
+      }
       switch (e.cmd) {
         case ovd::kCreate: {
           gen_run[e.obj]++;
@@ -2150,6 +2170,8 @@ class Replayer {
             ctrl_before_simulate();
             so.scene->simulate(dt);
             so.scene->fetchResults(true);
+            last_scene = so.scene;
+            last_dt = dt;
             sims++;
             s3_after_simulate();
             out_block = true;
@@ -2193,6 +2215,25 @@ class Replayer {
           break;
       }
     }
+  }
+
+  // simulate 수가 target 이 될 때까지 (프레임 끝에서 멈춤). OVD 사건이 다 떨어지면 제어기 입력만으로 직접 simulate 한다(자유 실행).
+  void run_until(int64_t target) {
+    max_frames = target;
+    run();
+    while (run_i >= F.events.size() && last_scene && int64_t(sims) < target) {
+      apply_side_until(sims + side_offset);
+      ctrl_before_simulate();
+      last_scene->simulate(last_dt);
+      last_scene->fetchResults(true);
+      sims++;
+      s3_after_simulate();
+    }
+  }
+  // 바깥(파이썬 정책)에서 온 행동 한 스텝을 붙인다 (--ctrl 설정의 기록 행동 대신)
+  void push_action(const float* a) {
+    C.acts.insert(C.acts.end(), a, a + C.A);
+    C.T++;
   }
 
   // 묶음 점검: OVD 조인트마다 묶인 PhysX 조인트의 자식 링크 이름 = OVD 가 말하는 자식 링크 이름인가 (지금 살아 있는 객체만)
@@ -2248,6 +2289,7 @@ class Replayer {
   }
 };
 
+#ifndef OVD_REPLAY_NO_MAIN
 int main(int argc, char** argv) {
   if (argc < 2) {
     fprintf(stderr, "usage: ovd_replay <file.ovd> [--convex f] [--filters f] [--sidelog f] [--threads N] [--csv f] [--max-frames N] [--verbose]\n");
@@ -2278,6 +2320,7 @@ int main(int argc, char** argv) {
     else if (a == "--side-skip" && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t; while (std::getline(ss, t, ',')) R.side_skip.insert(size_t(atoll(t.c_str()))); }
     else if (a == "--gravity-off" && i + 1 < argc) { std::ifstream gf(argv[++i]); std::string ln; while (std::getline(gf, ln)) if (!ln.empty()) R.gravity_off.push_back(ln); }
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
+    else if (a == "--free") R.C.free_run = true;
     else if (a == "--s3" && i + 1 < argc) { if (!R.load_s3(argv[++i])) { fprintf(stderr, "--s3 입력을 못 읽음\n"); return 1; } }
     else if (a == "--dump-art" && i + 2 < argc) { R.dump_art_name = argv[++i]; R.dump_art_file = argv[++i]; }
     else if (a == "--dump-art-at" && i + 1 < argc) R.dump_art_at = atoll(argv[++i]);
@@ -2299,6 +2342,7 @@ int main(int argc, char** argv) {
   R.run();
   if (!R.trace_sub.empty()) R.trace_flush();
   R.s3_report();
+  if (R.C.free_run) { printf("자유 실행(--free): 에피소드 동안 넣지 않은 OVD 입력\n"); for (auto& kv : R.C.free_skipped) printf("  %8" PRIu64 "  %s\n", kv.second, kv.first.c_str()); }
   if (R.C.on && R.C.dropped_flush) printf("닫힌 고리: 잡기 조인트 생성·해제로 목표를 안 쓴 서브스텝 %" PRIu64 "\n", R.C.dropped_flush);
   if (R.C.on) printf("닫힌 고리(--ctrl): 제어기 스텝 %" PRIu64 ", 건너뛴 OVD 드라이브 목표 %" PRIu64 ", 공식 목표와 비교 %" PRIu64 " 다름 %" PRIu64 " 첫 다름 %s\n", R.C.applied_steps, R.C.suppressed, R.C.cmp_n, R.C.cmp_bad, R.C.first_bad.empty() ? "없음" : R.C.first_bad.c_str());
   R.report();
@@ -2311,3 +2355,4 @@ int main(int argc, char** argv) {
   printf("PhysX 오류/경고 %d 건\n", gErr.n);
   return R.first_div_frame < 0 ? 0 : 3;
 }
+#endif  // OVD_REPLAY_NO_MAIN

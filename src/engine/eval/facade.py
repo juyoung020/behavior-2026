@@ -106,12 +106,8 @@ def load_backend(name: str, **kw) -> EngineEnv:
 
         return DummyEnv(**kw)
     if name == "engine":
-        try:
-            import engine_eval  # noqa: F401  (C++/CUDA 바인딩, 아직 없음)
-        except ImportError as e:
-            raise SystemExit(
-                "엔진 바인딩(engine_eval)이 아직 없다. 모듈들이 층 2 로 합쳐지면 src/engine/python 에서 빌드한다. "
-                "지금은 --backend dummy 로 겉껍데기만 시험할 수 있다."
-            ) from e
-        return engine_eval.EngineEnv(**kw)
+        # v0: PhysX 비계 + core/omni (libengine_capi.so, ctypes). 모듈이 층 2 로 합쳐지면 같은 겉모습의 CUDA 바인딩으로 바꾼다.
+        from backend_engine import EngineEnvV0
+
+        return EngineEnvV0(**kw)
     raise SystemExit(f"모르는 backend: {name}")
