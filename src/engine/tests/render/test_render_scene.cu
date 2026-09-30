@@ -108,6 +108,18 @@ static void write_ppm(const std::string& fn, const uint8_t* rgb, int stride, int
   fclose(f);
 }
 
+#ifdef RENDER_PROBE
+// 한 픽셀 shade_gbuf 중간값 (층 2)
+__global__ void kProbeG(SceneView S, gpu::Batch B, const Camera* cams, int ncam, int cam, int e, int px, int py, float* o) {
+  const EnvView E = gpu::env_view(B, e);
+  float d;
+  GPix g;
+  float irr[6];
+  for (int k = 0; k < 240; ++k) o[k] = 0.0f;
+  shade_gbuf(S, E, cams[e * ncam + cam], px, py, pixel_seed(e, cam, px, py, 0), d, g, irr, o);
+}
+#endif
+
 int main(int argc, char** argv) {
   if (argc < 2) { fprintf(stderr, "사용: test_render_scene <폴더> ...\n"); return 2; }
   const std::string dir = argv[1];
@@ -485,7 +497,7 @@ int main(int argc, char** argv) {
     const EnvView ev = HE.view();
     const unsigned old = _mm_getcsr();
     _mm_setcsr(old | 0x8040u);
-    int shown = 0, nbad = 0;
+    int shown = 0, nbad = 0, fpx = -1, fpy = -1;
     for (int py = 0; py < cm.h; ++py)
       for (int px = 0; px < cm.w; ++px) {
         const int i = py * cm.w + px;
@@ -495,6 +507,7 @@ int main(int argc, char** argv) {
         const bool bg = memcmp(&g, &gG[i], sizeof g) != 0, ba = memcmp(a, &gA[6 * size_t(i)], 24) != 0;
         if (bg || ba) {
           ++nbad;
+          if (fpx < 0) { fpx = px; fpy = py; }
           if (shown++ < 4)
             printf("  탐침 1 단계 픽셀 %d (%d,%d): G %s 조도 %s | 층1 a %.9g %.9g %.9g 조도 %.9g %.9g %.9g %.9g %.9g %.9g | 층2 a %.9g %.9g %.9g "
                    "조도 %.9g %.9g %.9g %.9g %.9g %.9g\n", i, px, py, bg ? "다름" : "같음", ba ? "다름" : "같음", g.a[0], g.a[1], g.a[2], a[0], a[1],
@@ -504,6 +517,28 @@ int main(int argc, char** argv) {
       }
     _mm_setcsr(old);
     printf("  탐침: 1 단계 다른 픽셀 %d / %zu (0 이면 다름은 잡음 제거·합치기 단계)\n", nbad, hw);
+#ifdef RENDER_PROBE
+    if (fpx >= 0) {
+      float* dp;
+      RCK(cudaMalloc(&dp, 240 * 4));
+      kProbeG<<<1, 1>>>(DS.view, B, dcams, 3, fc, fe, fpx, fpy, dp);
+      std::vector<float> go(240), ho(240, 0.0f);
+      RCK(cudaMemcpy(go.data(), dp, 240 * 4, cudaMemcpyDeviceToHost));
+      cudaFree(dp);
+      _mm_setcsr(old | 0x8040u);
+      GPix g;
+      float d, a[6];
+      shade_gbuf(SV, ev, cm, fpx, fpy, pixel_seed(fe, fc, fpx, fpy, 0), d, g, a, ho.data());
+      _mm_setcsr(old);
+      for (int k = 0; k < 240; ++k)
+        if (memcmp(&go[k], &ho[k], 4)) {
+          printf("  probe: pixel (%d,%d) first diff slot %d (V3 #%d comp %d): L1 %.9g L2 %.9g\n", fpx, fpy, k, k / 3, k % 3, ho[k], go[k]);
+          for (int q = (k / 3) * 3 - 6 < 0 ? 0 : (k / 3) * 3 - 6; q < (k / 3) * 3 + 3; q += 3)
+            printf("    V3 %d: L1 %.9g %.9g %.9g | L2 %.9g %.9g %.9g\n", q / 3, ho[q], ho[q + 1], ho[q + 2], go[q], go[q + 1], go[q + 2]);
+          break;
+        }
+    }
+#endif
   }
   gpu::free_batch(B);
   for (int c = 0; c < 3; ++c) { cudaFree(ddep[c]); cudaFree(drgb[c]); }

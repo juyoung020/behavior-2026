@@ -47,8 +47,17 @@ EHD V3 oct_dec(uint32_t q) {
 }
 
 // 1) G 버퍼 + 조도. irr[0..2] = 확산 조도(1차 알베도 안 곱함), irr[3..5] = 알베도에 안 곱하는 빛(1차 방출·반사)
+// 진단(-DRENDER_PROBE 빌드에서만 코드가 생김): dbg 에 중간값(V3)을 차례로 적는다. 층1≠층2 첫 갈림 찾기용.
+#ifdef RENDER_PROBE
+#define RPROBE(v) do { if (dbg && dn + 3 <= 240) { dbg[dn] = (v).x; dbg[dn + 1] = (v).y; dbg[dn + 2] = (v).z; dn += 3; } } while (0)
+#else
+#define RPROBE(v) ((void)0)
+#endif
 EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int px, int py, uint32_t seed, float& depth,
-                    GPix& g, float* irr) {
+                    GPix& g, float* irr, float* dbg = nullptr) {
+  int dn = 0;
+  (void)dn;
+  (void)dbg;
   const Ray r0 = camera_ray(cam, float(px) + 0.5f, float(py) + 0.5f);
   Hit h0 = trace(S, E, r0, cam.znear, cam.zfar);
   depth = h0.inst >= 0 ? h0.t : 0.0f;
@@ -94,6 +103,10 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
       if (b > 0) add = add + mulc(thr, s.emissive);
       const V3 po = b == 0 ? po0 : s.p + s.ng * 1e-4f;
       V3 lsum = direct_light(S, E, po, s.ns, rs);
+      RPROBE(s.p);
+      RPROBE(s.ns);
+      RPROBE(s.albedo);
+      RPROBE(lsum);
       if (!ao) lsum = lsum + amb;
       add = add + mulc(thr, mulc(alb, lsum));
       if (b == 0) acc = acc + add; else ind = ind + add;
@@ -106,6 +119,8 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
       V3 esc{0.0f, 0.0f, 0.0f};
       if (ao && (h.inst < 0 || h.t > S.sp.ao_range)) esc = esc + mulc(thr, mulc(alb, amb));
       if (h.inst < 0) esc = esc + mulc(thr, mulc(alb, dome_radiance(S, E, nd, 5.0f)));
+      RPROBE(nd);
+      RPROBE(esc);
       if (b == 0) acc = acc + esc; else ind = ind + esc;
       if (h.inst < 0 || b == S.sp.bounces) break;
       cone = cone + 0.5f * h.t;
@@ -113,6 +128,7 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
     }
     if (cmax > 0.0f) ind = V3{fmn(ind.x, cmax), fmn(ind.y, cmax), fmn(ind.z, cmax)};
     acc = acc + ind;
+    RPROBE(acc);
     // 1차 면 GGX 반사: 반벡터를 GGX 분포로 뽑아 광선 하나 (Walter 2007). 무게 = F G (v·h) / ((n·v)(n·h)).
     // F = f0 + (f90 - f0)(1 - v·h)^5 (재질 반사율, 없으면 sp.spec_f0·1), f0 는 알베도와 금속도로 섞음. 맞은 점은 확산만(직접광 + 주변광/돔).
     const float sf0 = s0.f0 < 0.0f ? S.sp.spec_f0 : s0.f0, sf90 = s0.f0 < 0.0f ? 1.0f : s0.f90;
@@ -158,6 +174,8 @@ EHD void shade_gbuf(const SceneView& S, const EnvView& E, const Camera& cam, int
           }
           V3 sv = mulc(wgt, ls);
           if (cmax > 0.0f) sv = V3{fmn(sv.x, cmax), fmn(sv.y, cmax), fmn(sv.z, cmax)};
+          RPROBE(ls);
+          RPROBE(wgt);
           sacc = sacc + sv;
         }
       }
