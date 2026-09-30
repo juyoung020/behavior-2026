@@ -23,6 +23,7 @@ for TASK in $TASKS; do
   for IDX in $(seq 0 "$I1"); do
     D=~/engine-data/scenes/$TASK/${MODE}_$IDX
     if [ -f "$D/extract_ok" ]; then continue; fi
+    mkdir -p "$(dirname "$D")"
     FREE=$(df -BG --output=avail /mnt/c | tail -1 | tr -dc 0-9)
     if [ "$FREE" -lt 10 ]; then echo "$(date +%T) C: 여유 ${FREE}G < 10G -> 멈춤" | tee -a "$LOG"; exit 2; fi
     T=$(date +%s)
