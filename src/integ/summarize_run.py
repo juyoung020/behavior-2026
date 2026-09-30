@@ -3,7 +3,7 @@
     python C:\\behavior-2026\\src\\integ\\summarize_run.py C:\\behavior-2026\\outputs\\integ\\<이름>
 
 모으는 것: 평가 결과(q_score·스텝), 계획기 결정(decisions.jsonl · trace), 그래프 노드 수(경계마다 · scene_server 시간선),
-지연(관측 → 그래프 반영, 경계 → 결정, 접착부 비용), VRAM(시작 전·meridian 준비 뒤·판 중 최대), 검은 프레임(π0.5 입력 기준).
+지연(관측 → 그래프 반영, 경계 → 결정, 접착부 비용), VRAM(시작 전·WSL 준비 뒤·판 중 최대), 검은 프레임(π0.5 입력 기준).
 """
 import csv
 import glob
@@ -89,13 +89,6 @@ def main():
         if vals:
             S["vram"]["gpu_used_mib_run_max"] = max(vals)
             S["vram"]["gpu_used_mib_run_p50"] = int(st.median(vals))
-    # meridian
-    cr = out / "commit_recorder.log"
-    if cr.exists():
-        S["commit_recorder"] = [l for l in cr.read_text(encoding="utf-8", errors="replace").splitlines() if "[recorder]" in l][-6:]
-    gsum = out / "graph_summary.txt"
-    if gsum.exists():
-        S["graph_summary"] = gsum.read_text(encoding="utf-8", errors="replace").splitlines()[:25]
     (out / "summary.json").write_text(json.dumps(S, ensure_ascii=False, indent=1), encoding="utf-8")
     # 화면
     print(f"== {out.name}")
@@ -120,12 +113,11 @@ def main():
         print(f"link: {json.dumps(le.get('link'), ensure_ascii=False)}")
         sk = dict(le.get("sink") or {})
         tl = sk.pop("nodes_timeline", None)
-        print(f"meridian: {json.dumps(sk, ensure_ascii=False)}")
+        tl = tl or sk.pop("objects_timeline", None)
+        print(f"scenemap: {json.dumps(sk, ensure_ascii=False)}")
         if tl:
-            print(f"노드 수 시간선(s, 노드, 이벤트): {tl[:40]}")
+            print(f"물체 수 시간선(s, 물체): {tl[:40]}")
     print(f"VRAM: {S['vram']}")
-    for l in S.get("commit_recorder", []):
-        print(l)
     for e in S.get("errors", []):
         print("오류:", e)
 

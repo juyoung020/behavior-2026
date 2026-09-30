@@ -25,10 +25,13 @@
 //!   전부(LLM 영상 + 그래프 갱신). 영상은 평가기 텐서 그대로(RGBA u8, 깊이 f32 m) 오고 변환은 받는 쪽이 한다.
 //!
 //! 위치: [`crate::pose::PoseEstimator`] 하나가 계획기(`BoundaryEvent.pose`)와 관측 내보내기(`ObsPacket.base`)에 같은
-//! 값을 준다. 바깥 보정(meridian 깊이 정합)은 [`ObsSink::correction`] 으로 받는다.
+//! 값을 준다. 바깥 추정기(scenemap slam2d)의 자세는 [`ObsSink::external_fix`] 로 받아 보정으로 바꾼다.
 //!
-//! 관측 내보내기는 [`ObsSink`] 뒤에 숨긴다. 이 크레이트는 ROS 를 모른다: WSL 통합 노드(`src/integ/simlink`, r2r)가
-//! ROS 토픽(`/camera/*`, `/base_pose`)으로 내보내는 구현을 넣는다. 시험·단독 실행은 [`NullSink`].
+//! 관측 내보내기는 [`ObsSink`] 뒤에 숨긴다. 이 크레이트는 C/C++ 를 링크하지 않는다: WSL 통합 노드(`src/integ/simlink`)가
+//! scenemap C ABI(같은 프로세스)에 넣는 구현을 넣는다. 시험·단독 실행은 [`NullSink`].
+//!
+//! 시각: 모든 stamp 는 **시뮬 시각**(초, 판 시작 = 0, 스텝 k = k / hz)이다. 경계에서 시뮬이 멈추면 시간도 멈춘다
+//! (docs/scenemap_설계.md 2절 "시간 규칙 = stamp"). 영상 k 의 stamp 는 k-1(렌더가 한 스텝 늦음).
 
 use crate::catalog::{Catalog, TaskCard};
 use crate::image::Rgb;
@@ -257,22 +260,24 @@ pub struct ObsPacket {
     pub step: u64,
     /// link 가 이 스텝을 다 받은 순간
     pub recv: Instant,
-    /// 같은 순간의 벽시계(유닉스 ns) — 이 스텝 **상태**(proprio·자세)의 ROS stamp
-    pub stamp_ns: i128,
+    /// 이 스텝 **상태**(proprio·자세)의 시뮬 시각 [s] = step / hz
+    pub t: f64,
     /// 이 스텝 **영상**의 stamp = 직전 스텝의 stamp. 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면으로 그려지고(렌더가 한 스텝
     /// 늦음, render 에이전트 확인: 깊이 1~2 ulp 일치), proprio 는 스텝 k 뒤 값이다. 그래서 영상은 k-1 의 자세·robot2cam 과
     /// 짝지어야 한다 — 같은 stamp 로 이미 k-1 에 낸 자세와 맞물린다. 판 첫 스텝은 직전이 없어 자기 stamp.
-    pub img_stamp_ns: i128,
-    /// 영상 시각(k-1)의 베이스 자세·카메라 외부 자세(손목 토픽 자세용)
+    pub img_t: f64,
+    /// 영상 시각(k-1)의 베이스 자세·카메라 외부 자세
     pub img_base: Pose,
     pub img_cam_rel: [Option<[f64; 7]>; 3],
     /// 추정 베이스 자세(map)
     pub base: Pose,
-    /// 이 스텝의 base_qvel 원값(로봇 기준 vx, vy, wz) — meridian_odom 입력 `/base_qvel`
+    /// 이 스텝 proprio 원값(61) — scenemap `sm_push_proprio`(순기구학·팔 끝·그리퍼는 scenemap 이 여기서 계산)
+    pub proprio: Vec<f32>,
+    /// 이 스텝의 base_qvel 원값(로봇 기준 vx, vy, wz)
     pub qvel: [f64; 3],
-    /// 이 스텝 팔 끝 자세 [왼, 오른](베이스 기준 xyz + xyzw, proprio 17:24·42:49) — meridian `/robot/eef`
+    /// 이 스텝 팔 끝 자세 [왼, 오른](베이스 기준 xyz + xyzw, proprio 17:24·42:49)
     pub eef: [[f64; 7]; 2],
-    /// 이 스텝 그리퍼 벌어짐 [왼, 오른](두 손가락 합, proprio 24:26·49:51) — meridian `/robot/gripper`
+    /// 이 스텝 그리퍼 벌어짐 [왼, 오른](두 손가락 합, proprio 24:26·49:51)
     pub grip: [f64; 2],
     /// 카메라별(0 머리, 1 왼손목, 2 오른손목) 베이스 기준 자세 xyz + xyzw(= robot2cam, proprio 순기구학). 모르면 None
     pub cam_rel: [Option<[f64; 7]>; 3],
@@ -281,7 +286,7 @@ pub struct ObsPacket {
     pub boundary: bool,
 }
 
-/// 관측 내보내기(ROS 발행 등). `push` 는 막지 않아야 한다(매 스텝 경로).
+/// 관측 내보내기(scenemap 등). `push` 는 막지 않아야 한다(매 스텝 경로).
 pub trait ObsSink: Send {
     fn hello(&mut self, _h: &Hello) {}
     fn reset(&mut self, _episode: u32) {}
@@ -290,9 +295,9 @@ pub trait ObsSink: Send {
     fn settle(&mut self, _env: usize, _step: u64, _timeout: Duration) -> Option<f64> {
         None
     }
-    /// 바깥 위치 추정기(meridian_odom `/base_pose` 등)의 새 절대 자세 (그 stamp, 자세). 새 값이 있을 때만 Some.
-    /// stamp 는 이 link 가 낸 패킷의 `stamp_ns` 와 같은 시계다(같은 스텝이면 같은 값).
-    fn external_fix(&mut self, _env: usize) -> Option<(i128, Pose)> {
+    /// 바깥 위치 추정기(scenemap slam2d)의 새 절대 자세 (그 시뮬 시각, 자세). 새 값이 있을 때만 Some.
+    /// 시각은 패킷의 `t`·`img_t` 와 같은 시계다.
+    fn external_fix(&mut self, _env: usize) -> Option<(f64, Pose)> {
         None
     }
     fn stats(&mut self) -> Value {
@@ -369,7 +374,7 @@ pub struct KeyCfg {
     pub turn_deg: f64,
     /// 손목 RGB-D 간격(0 = 경계 스텝에서만)
     pub wrist_every: u64,
-    /// 머리 깊이를 보낼까(meridian 입력)
+    /// 머리 깊이를 보낼까(scenemap 입력)
     pub head_depth: bool,
     /// 경계 스텝에 모든 카메라 RGB-D
     pub boundary_all: bool,
@@ -739,10 +744,10 @@ struct EnvState {
     head_now: Option<(Mat3, [f64; 3])>,
     steps_seen: u64,
     /// 최근 스텝의 (stamp, 보정 전 자세) — 바깥 추정기 고정점을 그 시점 자세와 맞춘다
-    hist: std::collections::VecDeque<(i128, Pose)>,
+    hist: std::collections::VecDeque<(f64, Pose)>,
     fixes: u64,
     /// 직전 스텝 (stamp, 자세, 카메라 외부 자세) — 영상 시각 맞추기
-    prev: Option<(i128, Pose, [Option<[f64; 7]>; 3])>,
+    prev: Option<(f64, Pose, [Option<[f64; 7]>; 3])>,
 }
 
 /// 스텝마다 잰 시간(µs)
@@ -812,9 +817,11 @@ fn us(d: Duration) -> u32 {
     d.as_micros().min(u32::MAX as u128) as u32
 }
 
-fn unix_ns() -> i128 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i128).unwrap_or(0)
+/// 스텝 k 의 시뮬 시각 [s]
+pub fn st_step_time(step: u64, hz: f64) -> f64 {
+    step as f64 / if hz > 0.0 { hz } else { 30.0 }
 }
+
 
 impl<'a> Server<'a> {
     pub fn new(cfg: &'a LinkCfg, sink: Box<dyn ObsSink + 'a>, tracer: Option<Tracer>) -> Server<'a> {
@@ -966,13 +973,13 @@ impl<'a> Server<'a> {
         let p = |i: usize| proprio.get(i).copied().unwrap_or(0.0) as f64;
         let qvel = [p(BASE_QVEL), p(BASE_QVEL + 1), p(BASE_QVEL + 2)];
         let grips = [p(GRIP_LEFT) + p(GRIP_LEFT + 1), p(GRIP_RIGHT) + p(GRIP_RIGHT + 1)];
-        let stamp_ns = unix_ns();
+        let t_sim = st_step_time(self.envs[e].sess.mon.step, self.hello.hz);
         let fix = self.sink.external_fix(e);
-        // 위치(추정기 하나 → 계획기·meridian 같은 값)
+        // 위치(추정기 하나 → 계획기·scenemap 같은 값)
         let st = &mut self.envs[e];
         st.est.step(qvel);
         st.steps_seen += 1;
-        st.hist.push_back((stamp_ns, st.est.raw_pose()));
+        st.hist.push_back((t_sim, st.est.raw_pose()));
         if st.hist.len() > 1024 {
             st.hist.pop_front();
         }
@@ -1039,18 +1046,19 @@ impl<'a> Server<'a> {
             self.lat.black_frames += black.len() as u64;
             self.trace(e, "link_black_frame", json!({"step": step, "cams": black}));
         }
-        let (img_stamp_ns, img_base, img_cam_rel) = self.envs[e].prev.unwrap_or((stamp_ns, base, cam_rel));
-        self.envs[e].prev = Some((stamp_ns, base, cam_rel));
+        let (img_t, img_base, img_cam_rel) = self.envs[e].prev.unwrap_or((t_sim, base, cam_rel));
+        self.envs[e].prev = Some((t_sim, base, cam_rel));
         self.sink.push(ObsPacket {
             env: e,
             episode: self.episode,
             step,
             recv,
-            stamp_ns,
-            img_stamp_ns,
+            t: t_sim,
+            img_t,
             img_base,
             img_cam_rel,
             base,
+            proprio: proprio.to_vec(),
             qvel,
             eef: eef_grip(proprio).0,
             grip: grips,

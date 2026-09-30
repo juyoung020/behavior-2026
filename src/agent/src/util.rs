@@ -46,7 +46,7 @@ impl Rng {
 /// - BDDL synset: `radio_receiver.n.01_1` → "radio receiver", `can__of__soda.n.01_2` → "can of soda"
 /// - 시연 주석 id: `coffee_table_koagbh_0` → "coffee table", `radio_89` → "radio",
 ///   `half_head_cabbage_212_1` → "half head cabbage"
-/// - 숫자만(meridian 노드 id): "17" → "object 17"
+/// - 숫자만(scenemap 물체 id): "17" → "object 17"
 pub fn display_name(id: &str) -> String {
     let id = id.trim().trim_start_matches('?');
     if id.is_empty() {

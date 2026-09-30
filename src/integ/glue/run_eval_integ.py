@@ -1,5 +1,5 @@
 """통합 한 판 실행기: 공식 평가기(omnigibson.eval.eval, 무수정) --policy local 의 LocalPolicy 에
-네이티브 π0.5(Pi05NativePolicy, 평가기 프로세스 안) + 계획기·meridian 연결(IntegPolicy → simlink, WSL)을 넣는다.
+네이티브 π0.5(Pi05NativePolicy, 평가기 프로세스 안) + 계획기·scenemap 연결(IntegPolicy → simlink, WSL)을 넣는다.
 
     python run_eval_integ.py --weights W.pi05w --link 127.0.0.1:7801 --out <폴더> [--wrapper rgbd|default]
         [--robot-config C:/behavior-2026/src/configs/r1pro_openpi.yaml] [--prompt …] [--replan 16] [--seed 0]

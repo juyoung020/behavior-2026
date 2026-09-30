@@ -1,18 +1,15 @@
 //! 위치 추정기 자리(교체 가능) + 카메라 자세 계산.
 //!
-//! 평가 규칙상 로봇 전역 위치(시뮬레이터 정답)는 쓰지 않는다. 쓸 수 있는 것은 관측(proprio 의 base_qvel,
-//! `cam_rel_poses`)과 영상뿐이다. 추정기는 [`PoseEstimator`] 하나로 감싸서 계획기(`BoundaryEvent.pose`)와
-//! meridian 입력(`/base_pose`, `/camera/pose`)이 **같은 값**을 쓰게 한다(`link.rs`).
+//! 평가 규칙상 로봇 전역 위치(시뮬레이터 정답)는 쓰지 않는다. 쓸 수 있는 것은 관측(proprio)과 영상뿐이다.
+//! 추정기는 [`PoseEstimator`] 하나로 감싸서 계획기(`BoundaryEvent.pose`)와 관측 내보내기가 **같은 값**을 쓰게 한다(`link.rs`).
 //!
-//! - [`QvelIntegrator`]: base_qvel 30 Hz 전진 오일러 적분. [`crate::odom::Odom`] · `src/meridian/demo_player.py`
-//!   `camera_poses()` · obs_player 와 같은 식(프레임 i 는 i-1 의 속도로 갱신).
-//! - [`Corrected`]: 바깥 보정 `T_map_odom` 을 앞에 곱한다. meridian 이 깊이 정합(평면 x·y·yaw)으로 낸 보정을
-//!   받는 자리다. 적분만으로는 10 m 이동에 중앙 1.16 m 틀어진다(원본 HDF5 GT 13판 실측, meridian 에이전트) —
-//!   기록된 각속도가 실제 회전보다 3~12% 크다.
+//! - [`QvelIntegrator`]: base_qvel 30 Hz 전진 오일러 적분. [`crate::odom::Odom`] 과 같은 식(프레임 i 는 i-1 의 속도로 갱신).
+//! - [`Corrected`]: 바깥 보정 `T_map_odom` 을 앞에 곱한다. scenemap slam2d(깊이 가상 스캔 + 2D 격자 매칭)가 낸 자세를
+//!   받는 자리다. 적분만으로는 10 m 이동에 중앙 1.16 m 틀어진다(원본 HDF5 GT 13판 실측) — 기록된 각속도가 실제 회전보다 3~12% 크다.
 //!
 //! 카메라 외부 자세(베이스 기준 xyz + xyzw, 카메라 prim = OpenGL 축)는 proprio 관절값 + 순기구학([`crate::fk`])으로 만든다
 //! (평가기 `cam_rel_poses` 는 쓰지 않음). 광학 프레임 = prim · Rx(π) (OmniGibson `obs_utils.depth_to_pcd` 와 같은 보정).
-//! 바깥 추정기(meridian_odom 의 `/base_pose`)는 [`correction_from_fix`] 로 한 시점의 절대 자세를 보정으로 바꿔 넣는다.
+//! 바깥 추정기(scenemap 의 `pose()`)는 [`correction_from_fix`] 로 한 시점의 절대 자세를 보정으로 바꿔 넣는다.
 
 use crate::odom::{Odom, Pose};
 

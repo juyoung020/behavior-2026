@@ -1,7 +1,7 @@
 //! 씬그래프 조회와 에이전트 쪽 물체 기억.
 //!
-//! meridian(Frontend → DA → Graphcore)의 물체 노드는 Spark-DSG 로 저장되고 id·중심·크기·CLIP 임베딩을 가진다
-//! (`src/meridian/graph_summary.py`). 이름표는 없으므로 그래프 서비스가 CLIP 으로 붙여 준다고 본다(계약은 아래 [`HttpGraph`]).
+//! 물체 지도는 scenemap(2D SLAM + YOLOE 검출 물체 지도, C++/CUDA, 같은 프로세스 C ABI — docs/scenemap_설계.md)이 만든다.
+//! 계획기는 [`SceneQuery`] 로 묻고, [`ScenemapGraph`] 가 그것을 [`SceneGraph`] 자리에 끼운다(옛 meridian TCP 질의는 deprecated/agent/).
 //! 좌표계는 이번 판 출발점 기준 오도메트리("map") — 중계기 [`crate::odom`] 과 같은 식이다.
 //!
 //! 그래프가 아직 없으면 [`StaticGraph`](JSON 파일/가짜 세계)로 대신한다.
@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Node {
     pub id: String,
-    /// 종류 이름(표시용). meridian 은 CLIP 으로 고른 이름표.
+    /// 종류 이름(표시용). scenemap 은 검출기 프롬프트 표 이름.
     pub label: String,
     #[serde(default)]
     pub score: f64,
@@ -31,22 +31,22 @@ pub struct Node {
     pub on: Option<String>,
     #[serde(default)]
     pub num_observations: u32,
-    /// 처음 등록 때 중심(meridian original_position) — "back"
+    /// 처음 등록 때 중심(scenemap first_position) — "back"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original: Option<[f64; 3]>,
-    /// 그래프가 본 다룸 여부(meridian handled = marked_handled || moved) — "the other"
+    /// 그래프가 본 다룸 여부(scenemap: 표시 || 옮겨짐 || 들고 있음) — "the other"
     #[serde(default)]
     pub handled: bool,
-    /// 바닥·벽 같은 구조물(meridian structural)
+    /// 바닥·벽 같은 구조물
     #[serde(default)]
     pub structural: bool,
 }
 
 impl Node {
-    /// meridian scene_server 물체 JSON → Node
-    /// (`meridian_ws/src/meridian_scene/src/scene_server.cpp` objectJson: id, category, category_score, structural,
-    /// position, position_robot, extent, room, handled, marked_handled, moved, displacement_m, original_position, …)
-    pub fn from_meridian(v: &serde_json::Value) -> Option<Node> {
+    /// 물체 JSON → Node. scenemap 질의 결과를 JSON 으로 저장한 파일(`{"objects": [...]}`)과 옛 meridian scene_server 응답 파일을
+    /// 읽는다(필드: id, name|category, score|category_score, structural, position, extent, room, handled, original_position,
+    /// n_obs|num_observations).
+    pub fn from_json(v: &serde_json::Value) -> Option<Node> {
         let arr3 = |k: &str| -> Option<[f64; 3]> {
             let a = v.get(k)?.as_array()?;
             Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?])
@@ -56,18 +56,35 @@ impl Node {
             x => x.to_string(),
         };
         Some(Node {
-            label: v.get("category").and_then(|c| c.as_str()).unwrap_or("object").to_string(),
+            label: v.get("name").or_else(|| v.get("category")).and_then(|c| c.as_str()).unwrap_or("object").to_string(),
             score: v.get("score").or_else(|| v.get("category_score")).and_then(|s| s.as_f64()).unwrap_or(0.0),
             center: arr3("position")?,
             extent: arr3("extent").unwrap_or_default(),
             room: v.get("room").and_then(|r| r.as_str()).map(|s| s.to_string()),
             on: None,
-            num_observations: v.get("num_observations").and_then(|n| n.as_u64()).unwrap_or(0) as u32,
+            num_observations: v.get("n_obs").or_else(|| v.get("num_observations")).and_then(|n| n.as_u64()).unwrap_or(0) as u32,
             original: arr3("original_position"),
             handled: v.get("handled").and_then(|h| h.as_bool()).unwrap_or(false),
             structural: v.get("structural").and_then(|h| h.as_bool()).unwrap_or(false),
             id,
         })
+    }
+
+    /// scenemap 물체 → Node
+    pub fn from_scene(o: &SceneObject) -> Node {
+        Node {
+            id: o.id.to_string(),
+            label: o.name.clone(),
+            score: o.score,
+            center: o.position,
+            extent: o.extent,
+            room: o.room.clone(),
+            on: None,
+            num_observations: o.n_obs,
+            original: Some(o.first_position),
+            handled: o.handled || o.state == ObjState::Moved || o.state == ObjState::Held,
+            structural: o.structural,
+        }
     }
 }
 
@@ -80,7 +97,7 @@ pub trait SceneGraph: Send {
     fn reset(&mut self, _labels: &[String]) -> Result<(), String> {
         Ok(())
     }
-    /// 에이전트가 이 물체를 다뤘다고 알린다(meridian mark_handled)
+    /// 에이전트가 이 물체를 다뤘다고 알린다(scenemap mark_handled)
     fn mark_handled(&mut self, _id: &str) -> Result<(), String> {
         Ok(())
     }
@@ -91,78 +108,151 @@ pub trait SceneGraph: Send {
     fn describe(&self) -> String;
 }
 
-/// meridian scene_server (C++, TCP, JSON 한 줄 요청 → JSON 한 줄 응답, 기본 127.0.0.1:7791).
-/// 연결을 계속 쓰고, 끊기면 한 번 다시 붙는다.
-pub struct MeridianGraph {
-    pub addr: String,
-    pub timeout: std::time::Duration,
-    conn: Option<std::io::BufReader<std::net::TcpStream>>,
-    pub last_envelope: serde_json::Value,
+// ---------------- scenemap(같은 프로세스) ----------------
+
+/// scenemap 물체 상태(docs/scenemap_설계.md 3.2): 보임·사라짐·옮겨짐·들고 있음.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjState {
+    #[default]
+    Seen,
+    Gone,
+    Moved,
+    Held,
 }
 
-impl MeridianGraph {
-    pub fn new(addr: &str, timeout_s: u64) -> MeridianGraph {
-        MeridianGraph { addr: addr.to_string(), timeout: std::time::Duration::from_secs(timeout_s), conn: None, last_envelope: serde_json::Value::Null }
-    }
-
-    pub fn call(&mut self, req: &serde_json::Value) -> Result<serde_json::Value, String> {
-        use std::io::{BufRead, Write};
-        for attempt in 0..2 {
-            if self.conn.is_none() {
-                let s = std::net::TcpStream::connect(&self.addr).map_err(|e| format!("meridian {} 접속 실패: {e}", self.addr))?;
-                let _ = s.set_nodelay(true);
-                s.set_read_timeout(Some(self.timeout)).ok();
-                self.conn = Some(std::io::BufReader::new(s));
-            }
-            let c = self.conn.as_mut().unwrap();
-            let mut line = req.to_string();
-            line.push('\n');
-            let mut out = String::new();
-            let r = c.get_mut().write_all(line.as_bytes()).and_then(|_| c.read_line(&mut out));
-            match r {
-                Ok(n) if n > 0 => {
-                    let v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("meridian 응답 JSON: {e}"))?;
-                    if v.get("ok").and_then(|o| o.as_bool()) != Some(true) {
-                        return Err(format!("meridian: {}", v.get("error").and_then(|e| e.as_str()).unwrap_or("?")));
-                    }
-                    self.last_envelope = serde_json::json!({"graph_epoch": v["graph_epoch"], "graph_version": v["graph_version"], "synced": v["synced"], "server_ms": v["server_ms"]});
-                    return Ok(v);
-                }
-                _ => {
-                    self.conn = None;
-                    if attempt == 1 {
-                        return Err(format!("meridian {} 응답 없음", self.addr));
-                    }
-                }
-            }
-        }
-        Err("meridian 호출 실패".into())
-    }
-
-    fn objects(v: &serde_json::Value) -> Vec<Node> {
-        v.get("objects").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(Node::from_meridian).collect()).unwrap_or_default()
-    }
+/// scenemap 물체 한 개(3.3 `objects` 표). 좌표는 map(판 시작 = 원점).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SceneObject {
+    pub id: u32,
+    /// 프롬프트 표 이름(BDDL 이름을 정규화한 것)
+    pub name: String,
+    pub score: f64,
+    pub position: [f64; 3],
+    pub extent: [f64; 3],
+    /// 처음 자리("back")
+    pub first_position: [f64; 3],
+    pub n_obs: u32,
+    /// 마지막으로 본 시뮬 시각 [s]
+    pub last_seen: f64,
+    pub state: ObjState,
+    /// 계획기가 다뤘다고 표시(mark_handled)
+    pub handled: bool,
+    pub structural: bool,
+    pub room: Option<String>,
 }
 
-impl SceneGraph for MeridianGraph {
+/// 2D 점유 격자(3.1 출력). cells: 행 우선, -1 모름, 0~100 점유 확률.
+#[derive(Debug, Clone, Default)]
+pub struct Grid2 {
+    pub resolution: f64,
+    pub origin: [f64; 2],
+    pub width: u32,
+    pub height: u32,
+    pub cells: Vec<i8>,
+}
+
+/// 계획기 ↔ scenemap 질의(docs/scenemap_설계.md 3.3·4.3). 같은 프로세스에서 부른다(스냅숏이라 계획기 스레드가 안 막힘).
+/// 구현: simlink 의 C ABI 래퍼(libscenemap 또는 가짜 구현), 시험용 [`MemScene`].
+pub trait SceneQuery: Send + Sync {
+    fn objects(&self) -> Result<Vec<SceneObject>, String>;
+    fn object(&self, id: u32) -> Result<Option<SceneObject>, String> {
+        Ok(self.objects()?.into_iter().find(|o| o.id == id))
+    }
+    /// 한 점(map) 둘레 r 안, 가까운 순
+    fn near(&self, p: [f64; 3], r: f64) -> Result<Vec<SceneObject>, String>;
+    /// 이름으로(점수 높은 순)
+    fn find(&self, name: &str) -> Result<Vec<SceneObject>, String>;
+    fn map(&self) -> Result<Grid2, String>;
+    /// 격자 위 최단 경로 길이 [m], 못 가면 None
+    fn reachable(&self, from: [f64; 2], to: [f64; 2]) -> Result<Option<f64>, String>;
+    /// 지금 로봇 자세(map)와 그 시뮬 시각 [s]
+    fn pose(&self) -> Result<(f64, crate::odom::Pose), String>;
+    fn mark_handled(&self, id: u32) -> Result<(), String>;
+    /// 새 판의 이름표(프롬프트 표) — 검출기·scenemap 이 같은 순서를 쓴다
+    fn set_labels(&self, labels: &[String]) -> Result<(), String>;
+    fn describe(&self) -> String;
+}
+
+/// 계획기 [`SceneGraph`] 자리를 scenemap 질의로 채운다(계획기 코드는 그대로).
+pub struct ScenemapGraph {
+    pub q: std::sync::Arc<dyn SceneQuery>,
+}
+
+fn nodes_of(v: Vec<SceneObject>) -> Vec<Node> {
+    v.iter().map(Node::from_scene).collect()
+}
+
+impl SceneGraph for ScenemapGraph {
     fn query(&mut self, text: &str, top_k: usize) -> Result<Vec<Node>, String> {
-        let v = self.call(&serde_json::json!({"op": "query", "text": text, "top_k": top_k, "min_score": -1, "include_structural": false}))?;
-        Ok(Self::objects(&v))
+        let mut v = nodes_of(self.q.find(text)?);
+        v.retain(|n| !n.structural);
+        if top_k > 0 {
+            v.truncate(top_k);
+        }
+        Ok(v)
     }
     fn all(&mut self) -> Result<Vec<Node>, String> {
-        let v = self.call(&serde_json::json!({"op": "objects", "include_structural": true}))?;
-        Ok(Self::objects(&v))
+        Ok(nodes_of(self.q.objects()?))
+    }
+    fn reset(&mut self, labels: &[String]) -> Result<(), String> {
+        self.q.set_labels(labels)
     }
     fn mark_handled(&mut self, id: &str) -> Result<(), String> {
-        let n: u64 = id.parse().map_err(|_| format!("meridian id 는 숫자: {id}"))?;
-        self.call(&serde_json::json!({"op": "mark_handled", "id": n, "handled": true})).map(|_| ())
+        let n: u32 = id.parse().map_err(|_| format!("scenemap id 는 숫자: {id}"))?;
+        self.q.mark_handled(n)
     }
     fn near(&mut self, p: [f64; 3], radius: f64) -> Result<Vec<Node>, String> {
-        let v = self.call(&serde_json::json!({"op": "near", "position": p, "radius": radius, "frame": "map"}))?;
-        Ok(Self::objects(&v))
+        Ok(nodes_of(self.q.near(p, radius)?))
     }
     fn describe(&self) -> String {
-        format!("meridian:{}", self.addr)
+        format!("scenemap:{}", self.q.describe())
+    }
+}
+
+/// 메모리 안 scenemap 흉내(시험). 이름 찾기는 [`text_score`].
+#[derive(Default)]
+pub struct MemScene {
+    /// (물체, 로봇 자세, 이름표)
+    pub inner: std::sync::Mutex<(Vec<SceneObject>, crate::odom::Pose, Vec<String>)>,
+}
+
+impl SceneQuery for MemScene {
+    fn objects(&self) -> Result<Vec<SceneObject>, String> {
+        Ok(self.inner.lock().unwrap().0.clone())
+    }
+    fn near(&self, p: [f64; 3], r: f64) -> Result<Vec<SceneObject>, String> {
+        let d = |o: &SceneObject| (0..3).map(|i| (o.position[i] - p[i]).powi(2)).sum::<f64>().sqrt();
+        let mut v: Vec<SceneObject> = self.objects()?.into_iter().filter(|o| d(o) <= r).collect();
+        v.sort_by(|a, b| d(a).partial_cmp(&d(b)).unwrap());
+        Ok(v)
+    }
+    fn find(&self, name: &str) -> Result<Vec<SceneObject>, String> {
+        let mut v: Vec<(f64, SceneObject)> =
+            self.objects()?.into_iter().map(|o| (text_score(name, &o.name), o)).filter(|x| x.0 > 0.0).collect();
+        v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.id.cmp(&b.1.id)));
+        Ok(v.into_iter().map(|(s, o)| SceneObject { score: s, ..o }).collect())
+    }
+    fn map(&self) -> Result<Grid2, String> {
+        Ok(Grid2::default())
+    }
+    fn reachable(&self, from: [f64; 2], to: [f64; 2]) -> Result<Option<f64>, String> {
+        Ok(Some((from[0] - to[0]).hypot(from[1] - to[1])))
+    }
+    fn pose(&self) -> Result<(f64, crate::odom::Pose), String> {
+        Ok((0.0, self.inner.lock().unwrap().1))
+    }
+    fn mark_handled(&self, id: u32) -> Result<(), String> {
+        let mut g = self.inner.lock().unwrap();
+        g.0.iter_mut().filter(|o| o.id == id).for_each(|o| o.handled = true);
+        Ok(())
+    }
+    fn set_labels(&self, labels: &[String]) -> Result<(), String> {
+        self.inner.lock().unwrap().2 = labels.to_vec();
+        Ok(())
+    }
+    fn describe(&self) -> String {
+        "mem".into()
     }
 }
 
@@ -198,9 +288,9 @@ impl StaticGraph {
     pub fn load(path: &str) -> Result<StaticGraph, String> {
         let t = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(&t).map_err(|e| format!("{path}: {e}"))?;
-        // meridian scene_server 응답({"objects": [...]}) 을 저장한 파일도 그대로 읽는다
+        // 물체 표 JSON({"objects": [...]}: scenemap 질의 저장·옛 meridian 응답)도 그대로 읽는다
         if let Some(objs) = v.get("objects").and_then(|o| o.as_array()) {
-            return Ok(StaticGraph { nodes: objs.iter().filter_map(Node::from_meridian).collect(), name: format!("file:{path}") });
+            return Ok(StaticGraph { nodes: objs.iter().filter_map(Node::from_json).collect(), name: format!("file:{path}") });
         }
         let nodes: Vec<Node> = serde_json::from_value(v.get("nodes").cloned().unwrap_or(v)).map_err(|e| format!("{path}: {e}"))?;
         Ok(StaticGraph { nodes, name: format!("file:{path}") })
@@ -263,7 +353,7 @@ impl SceneGraph for NullGraph {
     }
 }
 
-/// meridian 그래프 서비스(HTTP JSON) 계약:
+/// 바깥 그래프 서비스(HTTP JSON) 계약(도구·시험용):
 /// - `POST {base}/reset`  `{"labels": ["radio", "coffee table", ...]}` → 200. 새 판, CLIP 이름표 후보.
 /// - `POST {base}/query`  `{"text": "radio", "top_k": 5}` → `{"nodes": [Node...]}` (score = CLIP cosine)
 /// - `GET  {base}/objects` → `{"nodes": [Node...]}` (label = 후보 중 CLIP 최고점)
@@ -321,7 +411,7 @@ pub struct Known {
     pub room: Option<String>,
     /// 이 물체를 대상으로 한 단계가 성공한 횟수(→ the other 에서 뺌)
     pub handled: u32,
-    /// 그래프가 본 다룸 여부(meridian: marked_handled || 처음 자리에서 0.15 m 넘게 이동)
+    /// 그래프가 본 다룸 여부(scenemap: 표시·옮겨짐·들고 있음)
     #[serde(default)]
     pub graph_handled: bool,
     #[serde(default)]
@@ -367,7 +457,7 @@ impl ObjectMemory {
                 last_skill: None,
             });
             e.last_center = n.center;
-            // meridian 은 처음 등록 때 중심을 따로 준다(original_position) → 그것이 "처음 자리"
+            // scenemap 은 처음 등록 때 중심을 따로 준다(first_position) → 그것이 "처음 자리"
             if let Some(o) = n.original {
                 e.first_center = o;
             }
@@ -522,7 +612,7 @@ mod tests {
         // 방금 다가간 것(prefer)이 안 다룬 같은 종류면 그것
         m.observe(&[n("c3", "can of soda", 9.0, 0.0, None)], 1);
         assert_eq!(m.resolve_other("can of soda", &["c1".into()], &p, Some("c3")).unwrap().id, "c3");
-        // meridian 이 다뤘다고 본 것(handled)은 뺀다
+        // 그래프가 다뤘다고 본 것(handled)은 뺀다
         let mut moved = n("c2", "can of soda", 3.0, 0.0, None);
         moved.handled = true;
         m.observe(&[moved], 2);
@@ -538,5 +628,43 @@ mod tests {
         let mut g = StaticGraph { nodes: vec![n("a", "radio", 0.0, 0.0, None), n("b", "coffee table", 0.0, 0.0, None)], name: String::new() };
         assert_eq!(g.query("the radio", 3).unwrap()[0].id, "a");
         assert_eq!(g.query("table", 3).unwrap()[0].id, "b");
+    }
+}
+
+#[cfg(test)]
+mod scenemap_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn scenemap_graph_adapts_queries() {
+        let m = Arc::new(MemScene::default());
+        {
+            let mut g = m.inner.lock().unwrap();
+            g.0 = vec![
+                SceneObject { id: 3, name: "radio receiver".into(), position: [1.0, 0.5, 0.6], first_position: [1.0, 0.5, 0.6], n_obs: 4, ..Default::default() },
+                SceneObject { id: 7, name: "coffee table".into(), position: [1.2, 0.4, 0.3], first_position: [1.0, 0.0, 0.3], state: ObjState::Moved, ..Default::default() },
+                SceneObject { id: 9, name: "wall".into(), position: [3.0, 0.0, 1.0], structural: true, ..Default::default() },
+            ];
+        }
+        let mut g = ScenemapGraph { q: m.clone() };
+        let r = g.query("radio", 5).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!((r[0].id.as_str(), r[0].label.as_str()), ("3", "radio receiver"));
+        assert_eq!(r[0].original, Some([1.0, 0.5, 0.6]));
+        let all = g.all().unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().find(|n| n.id == "7").unwrap().handled, "옮겨짐 = 다룸");
+        assert!(all.iter().find(|n| n.id == "9").unwrap().structural);
+        let near = g.near([1.0, 0.5, 0.5], 0.5).unwrap();
+        assert_eq!(near.iter().map(|n| n.id.clone()).collect::<Vec<_>>(), vec!["3", "7"]);
+        g.mark_handled("3").unwrap();
+        assert!(g.all().unwrap().iter().find(|n| n.id == "3").unwrap().handled);
+        g.reset(&["radio".into(), "table".into()]).unwrap();
+        assert_eq!(m.inner.lock().unwrap().2.len(), 2);
+        // 저장한 물체 표 JSON 도 같은 뜻으로 읽힌다
+        let v = serde_json::json!({"id": 3, "name": "radio receiver", "position": [1.0, 0.5, 0.6], "original_position": [1.0, 0.5, 0.6], "n_obs": 4});
+        let n = Node::from_json(&v).unwrap();
+        assert_eq!((n.id.as_str(), n.label.as_str(), n.num_observations), ("3", "radio receiver", 4));
     }
 }

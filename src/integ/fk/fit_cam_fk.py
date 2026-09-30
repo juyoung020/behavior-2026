@@ -1,7 +1,7 @@
 """카메라 외부 자세(robot2cam)를 proprio 관절값 + R1Pro 순기구학(URDF)으로 만들 수 있는지 확인하고, 링크 → 카메라 prim
 고정 변환을 시연 데이터로 뽑는다(일회성 도구, 학습 데이터만 씀 — 평가 때는 뽑은 상수만 쓴다).
 
-    (WSL) ~/meridian_venv/bin/python /mnt/c/behavior-2026/src/integ/fk/fit_cam_fk.py [--episodes 0 200] [--out …json]
+    (WSL) python3 /mnt/c/behavior-2026/src/integ/fk/fit_cam_fk.py [--episodes 0 200] [--out …json]   (numpy·pyarrow 가 있는 파이썬)
     Windows conda behavior 의 numpy 는 3x3 행렬곱에서 BLAS 지연 로드 오류(0xc06d007f)로 죽어서 WSL 에서 돌린다.
 
 이유: 평가기 관측의 `cam_rel_poses` 는 평가기가 시뮬레이터 카메라 자세·로봇 전역 자세 API 로 계산한 값이라, 규칙 해석상

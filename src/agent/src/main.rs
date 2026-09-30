@@ -32,7 +32,7 @@ const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평�
   bench        가짜 평가기로 왕복 시간 재기. --target 127.0.0.1:8000 [--n 300] [--rgbd] [--batch 1]
   bench-local  한 프로세스 안에서 직접 연결 vs 중계기 비교. [--n 300] [--rgbd] [--mode passthrough|fixed|agent]
   llm-check    같은 계획 요청을 여러 번 보내 지연·결정론 확인. [--llm kau] [--n 3] [--scenario radio]
-  link         평가기 연결(평가기 안 π0.5 ↔ 계획기, 관측은 세기만 — ROS 로 내보내는 판은 src/integ/simlink).
+  link         평가기 연결(평가기 안 π0.5 ↔ 계획기, 관측은 세기만 — scenemap 에 넣는 판은 src/integ/simlink).
                --listen 0.0.0.0:7801 [--no-planner] [--prompt-mode task|subtask] [--stage external|vote|off]
                [--pose integrate|corrected] [--head-gap 6] [--wrist-every 0] [--settle-ms 400] [--once]
                + relay 와 같은 계획기 인자(--llm --graph --decider --format --task --max-steps --trace-dir)

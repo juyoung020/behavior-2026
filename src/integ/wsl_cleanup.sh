@@ -5,8 +5,6 @@ OUT=${1:?출력 폴더}
 [ -f "$OUT/wsl_pids" ] || { echo "[cleanup] $OUT/wsl_pids 없음"; exit 0; }
 . "$OUT/wsl_pids"
 [ -n "$SL" ] && kill -TERM $SL 2>/dev/null
-sleep 5   # wsl_stack 이 그래프 저장·meridian 정리를 하게 둔다
-for p in $REC $LAUNCH; do kill -TERM $p 2>/dev/null; done
-sleep 10
-for p in $SL $REC $LAUNCH $STACK; do kill -0 $p 2>/dev/null && kill -KILL $p 2>/dev/null; done
+sleep 5
+for p in $SL $STACK; do kill -0 $p 2>/dev/null && kill -KILL $p 2>/dev/null; done
 echo "[cleanup] 끝"

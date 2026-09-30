@@ -3,7 +3,7 @@
 
 use crate::catalog::{Catalog, TaskCard};
 use crate::fakes;
-use crate::graph::{HttpGraph, MeridianGraph, NullGraph, SceneGraph, StaticGraph};
+use crate::graph::{HttpGraph, NullGraph, SceneGraph, SceneQuery, ScenemapGraph, StaticGraph};
 use crate::instruction::Format;
 use crate::llm::{HttpLlm, Llm, ManagedLlm};
 use crate::planner::{Agent, Core, Decider, LlmDecider, PlannerCfg, PriorDecider};
@@ -64,13 +64,30 @@ pub fn build_llm(a: &Args) -> Result<Box<dyn Llm>, String> {
     Ok(inner)
 }
 
+/// 같은 프로세스 scenemap 질의(simlink 가 C ABI 래퍼를 시작 때 등록한다). `--graph scenemap` 이 이것을 쓴다.
+static SCENE: std::sync::OnceLock<Arc<dyn SceneQuery>> = std::sync::OnceLock::new();
+
+pub fn register_scene(q: Arc<dyn SceneQuery>) -> Result<(), String> {
+    SCENE.set(q).map_err(|_| "scenemap 질의가 이미 등록됨".to_string())
+}
+
+pub fn scene() -> Option<Arc<dyn SceneQuery>> {
+    SCENE.get().cloned()
+}
+
 pub fn build_graph(a: &Args) -> Box<dyn SceneGraph> {
     match a.str_or("graph", "none").as_str() {
         "none" => Box::new(NullGraph),
+        "scenemap" => match scene() {
+            Some(q) => Box::new(ScenemapGraph { q }),
+            None => {
+                eprintln!("--graph scenemap: 등록된 scenemap 이 없다(simlink 안에서만 된다) — 그래프 없이");
+                Box::new(NullGraph)
+            }
+        },
         m if m.starts_with("meridian") => {
-            // meridian | meridian:127.0.0.1:7791
-            let addr = m.strip_prefix("meridian:").unwrap_or("127.0.0.1:7791");
-            Box::new(MeridianGraph::new(addr, a.num("graph-timeout-s", 5)))
+            eprintln!("--graph meridian 은 폐기(2026-09-30, deprecated/) — --graph scenemap 을 쓴다. 그래프 없이");
+            Box::new(NullGraph)
         }
         u if u.starts_with("http") => Box::new(HttpGraph::new(u, a.num("graph-timeout-s", 5))),
         path => match StaticGraph::load(path) {

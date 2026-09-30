@@ -2,9 +2,9 @@
 //! 물체 몇 개와 두 손 로봇 하나를 2차원으로 흉내 내고, 지시(구조체)를 받아 스텝마다 진행한다.
 //! - 이동하면 base 속도가 나오고(→ 오도메트리·이동 멈춤 경계), 집으면 그리퍼가 닫힌다(→ 그리퍼 경계).
 //! - 가까이 가지 않고 집으려 하면 아무 일도 안 일어나 예산이 끝난다(→ 재시도·재계획 경로 시험).
-//! - 물체는 로봇 4 m 안에 들어와야 그래프에 나타난다(meridian 이 점점 지도를 채우는 것 흉내).
+//! - 물체는 로봇 4 m 안에 들어와야 그래프에 나타난다(scenemap 이 점점 지도를 채우는 것 흉내).
 //! - "move to <이름>" 은 이름이 맞는 가장 가까운 물체로 간다(π0.5 가 문장만 보고 찾아가는 것 흉내).
-//! - 그래프 노드는 meridian scene_server 형식의 뜻(original_position, handled = 0.15 m 넘게 움직임)을 따른다.
+//! - 그래프 노드는 scenemap 물체 표의 뜻(처음 자리 first_position, handled = 옮겨짐)을 따른다.
 
 use crate::graph::{Node, SharedGraph, StaticGraph};
 use crate::instruction::Instruction;
@@ -21,7 +21,7 @@ pub struct WObj {
     pub id: String,
     pub label: String,
     pub pos: [f64; 3],
-    /// 처음 자리(meridian original_position 흉내)
+    /// 처음 자리(scenemap first_position 흉내)
     pub orig: [f64; 3],
     pub on: Option<String>,
     pub inside: Option<String>,

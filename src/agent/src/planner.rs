@@ -525,7 +525,7 @@ impl Core {
                         let ins = &cur.instruction;
                         if let Some(o) = ins.objects.first() {
                             // "다룸" 은 조작 단계만(이동은 아님): the other 가 방금 다가간 물체를 빼지 않게.
-                            // 그래프에도 알린다(meridian mark_handled).
+                            // 그래프에도 알린다(scenemap mark_handled).
                             if ins.skill != "move to" {
                                 self.objects.mark_handled(o, &ins.skill);
                                 if self.objects.known.contains_key(o) {
