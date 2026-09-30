@@ -1,5 +1,5 @@
 # harvest_dice.json (harvest_spawn.py 의 다지기 기록) → test_dice_capture 가 읽는 npy + scipy Delaunay (메시 점에서, 공식과 같은 scipy)
-#   python3 dice_events_to_npy.py <수확 기록 폴더>
+#   python3 dice_events_to_npy.py <수확 기록 폴더> [출력 폴더 = <수확 기록 폴더>/dice_npy] (공유 기록 폴더에 쓰지 않으려면 출력 폴더를 준다)
 import json
 import os
 import sys
@@ -9,7 +9,7 @@ from scipy.spatial import Delaunay
 
 d = sys.argv[1]
 ev = json.load(open(os.path.join(d, "harvest_dice.json")))
-o = os.path.join(d, "dice_npy")
+o = sys.argv[2] if len(sys.argv) > 2 else os.path.join(d, "dice_npy")
 os.makedirs(o, exist_ok=True)
 n = 0
 for i, e in enumerate(ev):

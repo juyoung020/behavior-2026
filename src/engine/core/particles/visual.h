@@ -73,6 +73,32 @@ PEHD void quat2mat_batched(const float q[4], float r[9]) {
   r[7] = 2.0f * (yz + xw);
   r[8] = 1.0f - 2.0f * (xx + yy);
 }
+// T.mat2quat 배치 (transform_utils.py:410, (n,3,3) 입력): 갈래별 식은 agframe mat2quat 과 같고, 마지막 norm 합만 순차 ((a+b)+c)+d
+// (재적재 왕복 16,437 방향: 순차 0 다름, 나비 1,793, fma 1,742 — 16 변형 중 유일)
+PEHD void mat2quat_batched(const float m[9], float q[4]) {
+  const float m00 = m[0], m01 = m[1], m02 = m[2], m10 = m[3], m11 = m[4], m12 = m[5], m20 = m[6], m21 = m[7], m22 = m[8];
+  const float trace = (m00 + m11) + m22;
+  const bool tp = trace > 0.0f;
+  const bool c1 = (m00 > m11) && (m00 > m22) && !tp;
+  const bool c2 = (m11 > m22) && !(tp || c1);
+  const bool c3 = !(tp || c1 || c2);
+  float sq = tp ? sqrt_rn(trace + 1.0f) * 2.0f : 0.0f;
+  float qw = tp ? 0.25f * sq : 0.0f, qx = tp ? div_rn(m21 - m12, sq) : 0.0f, qy = tp ? div_rn(m02 - m20, sq) : 0.0f, qz = tp ? div_rn(m10 - m01, sq) : 0.0f;
+  if (c1) {
+    sq = sqrt_rn(((1.0f + m00) - m11) - m22) * 2.0f;
+    qw = div_rn(m21 - m12, sq), qx = 0.25f * sq, qy = div_rn(m01 + m10, sq), qz = div_rn(m02 + m20, sq);
+  }
+  if (c2) {
+    sq = sqrt_rn(((1.0f + m11) - m00) - m22) * 2.0f;
+    qw = div_rn(m02 - m20, sq), qx = div_rn(m01 + m10, sq), qy = 0.25f * sq, qz = div_rn(m12 + m21, sq);
+  }
+  if (c3) {
+    sq = sqrt_rn(((1.0f + m22) - m00) - m11) * 2.0f;
+    qw = div_rn(m10 - m01, sq), qx = div_rn(m02 + m20, sq), qy = div_rn(m12 + m21, sq), qz = 0.25f * sq;
+  }
+  const float n = sqrt_rn(((qx * qx + qy * qy) + qz * qz) + qw * qw);
+  q[0] = div_rn(qx, n), q[1] = div_rn(qy, n), q[2] = div_rn(qz, n), q[3] = div_rn(qw, n);
+}
 // 국소 4x4 (행 우선)
 PEHD void local_mat(const float p[3], const float q[4], float m[16]) {
   float r[9];

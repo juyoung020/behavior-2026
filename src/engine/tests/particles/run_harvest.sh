@@ -18,7 +18,7 @@ source /mnt/c/behavior-2026/src/engine/scripts/gpu_lock.sh
 gpu_lock_acquire engine-particles "틀 수확 $TASK $MODE $IDX" 30 6 || exit 3
 set +e
 # 새 이름(.tmp)에 뜬 뒤 끝나면 옮긴다 — 다른 작업자가 읽고 있을 수 있는 기록을 제자리에서 덮어쓰지 않음 (09-30 조정자 규칙)
-TAG=harvest_${TASK}_${MODE}_${IDX}
+TAG=${HARVEST_TAG:-harvest_${TASK}_${MODE}_${IDX}}  # HARVEST_TAG: 기존 기록(리드 틀이 붙은 폴더)을 건드리지 않고 따로 뜰 때
 TASK_NAME=$TASK EVAL_MODE=$MODE INSTANCE_IDX=$IDX bash /mnt/c/behavior-2026/src/engine/capture/run_capture_linux.sh "$ZA" "${TAG}.tmp" "$MAXSTEPS" \
   --script /mnt/c/behavior-2026/src/engine/tests/particles/harvest_spawn.py
 CODE=$?

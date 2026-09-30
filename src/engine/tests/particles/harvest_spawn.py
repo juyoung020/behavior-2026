@@ -156,6 +156,35 @@ def _install(cap):
         return res
 
     TR.DicingRule.transition = dice_wrap
+
+    # 재적재 왕복 검증 자료 (test_reload): removing_objects 의 dump_state 순간 입자 원점 자세(뷰) → load_state 가 set 에 준 값
+    rl_rec = STATE.setdefault("reload", [])
+    MP = MPS.MacroPhysicalParticleSystem
+    orig_ds, orig_ls, orig_sp = MP._dump_state, MP._load_state, MP.set_particles_position_orientation
+
+    def ds_wrap(self):
+        if self.n_particles > 0:
+            rl_rec.append(dict(step=STATE.get("step", -1), system=self.name, offset=Lt(self._particle_offset), dump_tfs=Lt(self.particles_view.get_transforms()),
+                               pose=Lt(self.scene.pose), pose_inv=Lt(self.scene.pose_inv)))
+        return orig_ds(self)
+
+    def ls_wrap(self, state):
+        STATE["loading"] = self.name
+        try:
+            return orig_ls(self, state)
+        finally:
+            STATE["loading"] = None
+            with open(os.path.join(cap.dump_dir, "harvest_reload.json"), "w") as f:
+                json.dump(rl_rec, f)
+
+    def sp_wrap(self, positions=None, orientations=None):
+        r = orig_sp(self, positions=positions, orientations=orientations)
+        if STATE.get("loading") == self.name and rl_rec and rl_rec[-1]["system"] == self.name and "load_set" not in rl_rec[-1]:
+            rl_rec[-1]["load_set"] = Lt(th.cat([positions, orientations], dim=1))
+            rl_rec[-1]["load_step"] = STATE.get("step", -1)
+        return r
+
+    MP._dump_state, MP._load_state, MP.set_particles_position_orientation = ds_wrap, ls_wrap, sp_wrap
     STATE["installed"] = True
 
 

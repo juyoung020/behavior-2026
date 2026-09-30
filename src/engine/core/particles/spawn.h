@@ -8,8 +8,11 @@
 //       → 물체마다 삭제 → 뷰 갱신 → 규칙 가지치기 → 전체 상태 재적재 (지운 물체는 빼고)
 //     그다음 넣을 물체마다 scene.add_object → set_bbox_center_position_orientation (slicing.h bbox_center_to_base 자세)
 //   MacroPhysicalParticleSystem.generate_particles (macro_particle_system.py:269,1420): 새 입자 prim 을 만들고, **기존 입자까지 전부**
-//     set_particles_position_orientation(중심 → 원점: p - quat2mat(q) @ offset) 과 속도(기존 값 + 새 것 0)를 다시 넣는다.
-//     기존 입자의 중심은 get(원점 → 중심: contain.h physical_center) 에서 오므로 원점이 중심을 거쳐 한 번 왕복한다(끝비트가 바뀔 수 있음 — 공식 그대로).
+//     set_particles_position_orientation(positions, orientations) 과 속도(기존 값 + 새 것 0)를 다시 넣는다.
+//     공식 동작 주의 (macro_particle_system.py:1325): 위치·방향을 둘 다 주면 "중심 - quat2mat(q) @ offset" 갈래를 건너뛰어 **중심이 그대로 원점**이 된다.
+//     기존 입자의 중심은 get(원점 → 중심: contain.h physical_center) 에서 오므로 기존 입자는 R@offset 만큼 옮겨진다 (offset 0 인 계는 그대로).
+//   상태 재적재 (system_base.py:358/381, _store_local_poses=False): 중심 → 장면 좌표(_transform_poses pose_inv) → 세계(pose) → 같은 set → 원점 = 중심,
+//     방향은 mat2quat(rot @ quat2mat(q)) 를 두 번 거친다 (particle_reload).
 // 리드가 확인할 것(요청 중): 무덤 순간이동·step_physics 창과 상태 재적재가 기록(chop_slice0)의 어느 simulate 인지.
 #pragma once
 #include <cstdint>
@@ -33,7 +36,7 @@ namespace particles {
 enum EditKind : int32_t {
   EDIT_INHERIT_STATES = 0,   // 지난 스텝에 넣은 물체(object)가 원본(src)의 비물리 상태를 물려받음 (온도·익음 등; 늦은 묶임: 한 전이의 반쪽 모두 마지막 원본)
   EDIT_PARTICLES_ADD = 1,    // 입자 계(tmpl = 계 틀)에 강체 n 개: 원점 자세 poses[n](방향은 정규화 전 — 몸체 만들 때 PhysX 처럼 getNormalized, 위치는 정규화 전 방향으로 계산됨), 속도 0. 기존 입자 전부 다시 놓기(EDIT_PARTICLES_RESET)가 뒤따름
-  EDIT_PARTICLES_RESET = 2,  // 입자 계의 기존 입자 전부를 왕복한 원점 자세로 다시 놓고 속도 유지
+  EDIT_PARTICLES_RESET = 2,  // 입자 계의 기존 입자 전부를 다시 놓기 (생성: 원점 = 중심·방향 그대로, 재적재: particle_reload), 속도 유지
   EDIT_REMOVE_BEGIN = 3,     // 전체 상태 저장 + 무덤 순간이동(objects, 자세 poses) + 물리 1 스텝
   EDIT_REMOVE_OBJECT = 4,    // 물체 삭제 (행위자·모양)
   EDIT_REMOVE_END = 5,       // 뷰 갱신 + 규칙 가지치기 + 전체 상태 재적재
@@ -81,13 +84,34 @@ inline void graveyard_poses(const float* aabb_extents /*[n][3]*/, int n, std::ve
   }
 }
 
-// 다진 입자 원점 자세: 중심 c 와 방향 q (random_quaternion) → 원점 = c - quat2mat(q) @ offset (배치 quat2mat, 순차 곱)
+// 입자 원점 자세 (generate_particles 의 set): 공식은 위치·방향을 둘 다 주므로 offset 을 빼지 않는다 → 원점 = 중심 c, 방향 q 그대로.
+// (off 는 받기만 한다: 공식이 빼는 갈래를 안 타는 것까지 같게. offset 0 인 onion 에서는 옛 "c - R@off" 와 비트가 같아 구분 안 됐다)
 inline Pose7 particle_frame_from_center(const float c[3], const float q[4], const float off[3]) {
-  float R[9];
-  quat2mat_batched(q, R);
+  (void)off;
   Pose7 r;
-  for (int i = 0; i < 3; ++i) r.p[i] = c[i] - ((R[3 * i] * off[0] + R[3 * i + 1] * off[1]) + R[3 * i + 2] * off[2]);
+  for (int i = 0; i < 3; ++i) r.p[i] = c[i];
   for (int k = 0; k < 4; ++k) r.q[k] = q[k];
+  return r;
+}
+
+// 장면 자세 행렬(4x4 행 우선 float)로 입자 자세 옮기기 (system_base.py:339 _transform_poses):
+//   위치 = p @ rot.T + t (eager mm 순차 곱·합, 뒤에 더하기), 방향 = mat2quat(rot @ quat2mat(q)) (bmm 순차, 배치 quat2mat·mat2quat — visual.h)
+inline void transform_particle_pose(const float M[16], const float p[3], const float q[4], float po[3], float qo[4]) {
+  for (int j = 0; j < 3; ++j) po[j] = ((p[0] * M[4 * j] + p[1] * M[4 * j + 1]) + p[2] * M[4 * j + 2]) + M[4 * j + 3];
+  float R[9], C[9];
+  quat2mat_batched(q, R);
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) C[3 * i + j] = (M[4 * i] * R[j] + M[4 * i + 1] * R[3 + j]) + M[4 * i + 2] * R[6 + j];
+  mat2quat_batched(C, qo);
+}
+// 상태 재적재 한 번 (removing_objects 의 dump_state → load_state): 입자 원점 자세 tf7 (PhysX 뷰) → 새 원점 자세.
+//   dump: 중심 = physical_center → 장면 좌표 (pose_inv) / load: 세계 (pose) → set (원점 = 중심). pose·pose_inv 는 공식 scene._pose_info 값 (float 4x4)
+inline Pose7 particle_reload(const float tf7[7], const float off[3], const float pose[16], const float pose_inv[16]) {
+  float c[3], ps[3], qs[4];
+  physical_center(tf7, off, c);
+  transform_particle_pose(pose_inv, c, tf7 + 3, ps, qs);
+  Pose7 r;
+  transform_particle_pose(pose, ps, qs, r.p, r.q);
   return r;
 }
 
