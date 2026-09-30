@@ -20,6 +20,7 @@
 #include "../tests/solver/px_internal.h"
 #include "DyFeatherstoneArticulation.h"
 #include "g1_hooks.h"
+#include "g1_px.h"
 #if defined(G1_SOLVER_IO)
 #include G1_SOLVER_IO  // solver_host.cpp 와 같은 뿌리의 판 정의 (CMake G1_CORE_ROOT)
 #else
@@ -37,41 +38,9 @@ struct FtzScope {  // PhysX PxSIMDGuard 와 같은 MXCSR (FTZ + DAZ)
   FtzScope() { old = _mm_getcsr(); _mm_setcsr(_MM_MASK_MASK | _MM_FLUSH_ZERO_ON | (1 << 6)); }
   ~FtzScope() { _mm_setcsr(old & ~unsigned(_MM_EXCEPT_MASK)); }
 };
-eng::V3 toV(const PxVec3& v) { return eng::V3{v.x, v.y, v.z}; }
-eng::Tf toE(const PxTransform& t) { return eng::Tf{{t.q.x, t.q.y, t.q.z, t.q.w}, {t.p.x, t.p.y, t.p.z}}; }
-
-eng::Body bodyFrom(const PxsRigidBody& rb) {
-  const PxsBodyCore& c = rb.getCore();
-  eng::Body b{};
-  b.body2World = toE(c.body2World);
-  b.body2Actor = toE(c.getBody2Actor());
-  b.linVel = toV(c.linearVelocity);
-  b.angVel = toV(c.angularVelocity);
-  b.maxAngVelSq = c.maxAngularVelocitySq;
-  b.maxLinVelSq = c.maxLinearVelocitySq;
-  b.linDamping = c.linearDamping;
-  b.angDamping = c.angularDamping;
-  b.invInertia = toV(c.inverseInertia);
-  b.invMass = c.inverseMass;
-  b.maxContactImpulse = c.maxContactImpulse;
-  b.maxPenBias = c.maxPenBias;
-  b.sleepThreshold = c.sleepThreshold;
-  b.freezeThreshold = c.freezeThreshold;
-  b.wakeCounter = c.wakeCounter;
-  b.solverWakeCounter = c.solverWakeCounter;
-  b.numCountedInteractions = c.numCountedInteractions;
-  b.lockFlags = uint16_t(PxU8(c.lockFlags));
-  b.disableGravity = c.disableGravity;
-  b.gyroscopic = (c.mFlags & PxRigidBodyFlag::eENABLE_GYROSCOPIC_FORCES) ? 1 : 0;
-  b.solverIterationCounts = c.solverIterationCounts;
-  b.freezeCount = rb.mFreezeCount;
-  b.accelScale = rb.mAccelScale;
-  b.sleepLinVelAcc = toV(rb.mSleepLinVelAcc);
-  b.sleepAngVelAcc = toV(rb.mSleepAngVelAcc);
-  b.lastTransform = toE(rb.mLastTransform);
-  b.internalFlags = rb.mInternalFlags;
-  return b;
-}
+using g1px::toV;
+using g1px::toE;
+using g1px::bodyFrom;
 
 sv::FrictionPatch frictionFrom(const Dy::FrictionPatch& p) {
   sv::FrictionPatch f;

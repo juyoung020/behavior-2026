@@ -132,6 +132,7 @@ struct Shadow {
 void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_solver_before(scene);
   g1_art_before(scene);
+  g1_dump_before(scene, sim);
   if (!G.on) G.on = getenv("G1_CONTACT") != nullptr;
   if (!G.on) return;
   (void)sim;

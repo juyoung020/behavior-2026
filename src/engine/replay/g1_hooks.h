@@ -25,3 +25,4 @@ void g1_solver_report();
 void g1_art_before(physx::PxScene* scene);
 void g1_art_after(physx::PxScene* scene, uint64_t sim);
 void g1_art_report();
+void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)
