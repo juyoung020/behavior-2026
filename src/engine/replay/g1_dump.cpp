@@ -121,12 +121,11 @@ struct Dumper {
   void chkBits(const A& a, const B& b, size_t bytes, const std::string& what) { chk(!memcmp(&a, &b, bytes), what); }
 } D;
 
-void dumpScene(PxScene* scene, uint64_t sim) {
-  sc::SceneFile F;
+// 머리·재질 (장면 파일·새 행위자 틀 파일 공용)
+void fillHeader(sc::SceneFile& F, PxScene* scene, uint64_t sim) {
   PxPhysics& phys = scene->getPhysics();
   Sc::Scene& scs = static_cast<NpScene*>(scene)->getScScene();
   Dy::Context* dy = static_cast<Dy::Context*>(scs.getDynamicsContext());
-  // 머리
   const PxVec3 g = scene->getGravity();
   F.h.gravity[0] = g.x; F.h.gravity[1] = g.y; F.h.gravity[2] = g.z;
   F.h.dt = dy->getDt();
@@ -137,29 +136,31 @@ void dumpScene(PxScene* scene, uint64_t sim) {
   F.h.sim = sim;
   if (const char* t = getenv("G1_DUMP_TASK")) strncpy(F.h.task, t, sizeof(F.h.task) - 1);
   if (const char* t = getenv("G1_DUMP_INSTANCE")) strncpy(F.h.instance, t, sizeof(F.h.instance) - 1);
-  // 재질 (PhysX 재질 번호 칸)
-  {
-    const PxU32 n = phys.getNbMaterials();
-    std::vector<PxMaterial*> m(n);
-    phys.getMaterials(m.data(), n);
-    for (PxMaterial* x : m) {
-      const PxU16 idx = static_cast<NpMaterial*>(x)->mMaterial.mMaterialIndex;
-      if (idx >= F.materials.size()) F.materials.resize(idx + 1);
-      ec::MaterialData& md = F.materials[idx];
-      md.dynamicFriction = x->getDynamicFriction();
-      md.staticFriction = x->getStaticFriction();
-      md.restitution = x->getRestitution();
-      md.damping = x->getDamping();
-      md.flags = uint16_t(PxU16(x->getFlags()));
-      md.fricCombineMode = uint8_t(x->getFrictionCombineMode());
-      md.restCombineMode = uint8_t(x->getRestitutionCombineMode());
-      md.dampingCombineMode = uint8_t(x->getDampingCombineMode());
-    }
+  const PxU32 n = phys.getNbMaterials();
+  std::vector<PxMaterial*> m(n);
+  phys.getMaterials(m.data(), n);
+  for (PxMaterial* x : m) {
+    const PxU16 idx = static_cast<NpMaterial*>(x)->mMaterial.mMaterialIndex;
+    if (idx >= F.materials.size()) F.materials.resize(idx + 1);
+    ec::MaterialData& md = F.materials[idx];
+    md.dynamicFriction = x->getDynamicFriction();
+    md.staticFriction = x->getStaticFriction();
+    md.restitution = x->getRestitution();
+    md.damping = x->getDamping();
+    md.flags = uint16_t(PxU16(x->getFlags()));
+    md.fricCombineMode = uint8_t(x->getFrictionCombineMode());
+    md.restCombineMode = uint8_t(x->getRestitutionCombineMode());
+    md.dampingCombineMode = uint8_t(x->getDampingCombineMode());
   }
+}
+
+// 모양 담기 (행위자별 PxRigidActor::getShapes 순서; 볼록 덩어리는 파일 안에 한 번씩)
+struct ShapeAdder {
+  sc::SceneFile& F;
   std::unordered_map<const void*, uint32_t> hullIdx;       // Gu::ConvexMesh* -> 덩어리 번호
   std::unordered_map<const PxsShapeCore*, uint32_t> shapeOfCore;  // 좁은 단계 모양 -> SceneShape 번호
-  std::unordered_map<const PxsRigidBody*, uint32_t> actorOfLL;  // 조인트 몸체 -> 행위자
-  auto addShapes = [&](PxRigidActor* a, sc::SceneActor& sa, uint32_t actorIdx) {
+  explicit ShapeAdder(sc::SceneFile& f) : F(f) {}
+  void add(PxRigidActor* a, sc::SceneActor& sa, uint32_t actorIdx) {
     sa.shapeStart = uint32_t(F.shapes.size());
     const PxU32 ns = a->getNbShapes();
     std::vector<PxShape*> shs(ns);
@@ -200,34 +201,49 @@ void dumpScene(PxScene* scene, uint64_t sim) {
       F.shapes.push_back(o);
     }
     sa.shapeCount = uint32_t(F.shapes.size()) - sa.shapeStart;
-  };
+  }
+};
+
+// 강체 행위자 하나 (정적·동적)
+uint32_t addRigid(sc::SceneFile& F, ShapeAdder& SA, PxActor* a, std::unordered_map<const PxsRigidBody*, uint32_t>* actorOfLL) {
+  sc::SceneActor sa{};
+  const uint32_t ai = uint32_t(F.actors.size());
+  sa.name = F.addName(a->getName());
+  sa.actorFlags = uint32_t(PxU8(a->getActorFlags()));
+  sa.dominance = a->getDominanceGroup();
+  sa.body = sc::kNone;
+  sa.link = sc::kNone;
+  if (a->getType() == PxActorType::eRIGID_STATIC) {
+    sa.kind = sc::kStatic;
+    sa.staticPose = g1px::toE(static_cast<PxRigidStatic*>(a)->getGlobalPose());
+  } else {
+    sa.kind = sc::kDynamic;
+    auto* rd = static_cast<PxRigidDynamic*>(a);
+    sa.rigidFlags = uint32_t(PxU16(rd->getRigidBodyFlags()));
+    const PxsRigidBody& ll = static_cast<NpRigidDynamic*>(rd)->getCore().getSim()->getLowLevelBody();
+    sa.body = uint32_t(F.bodies.size());
+    F.bodies.push_back(g1px::bodyFrom(ll));
+    if (actorOfLL) (*actorOfLL)[&ll] = ai;
+  }
+  SA.add(static_cast<PxRigidActor*>(a), sa, ai);
+  F.actors.push_back(sa);
+  return ai;
+}
+
+void dumpScene(PxScene* scene, uint64_t sim) {
+  sc::SceneFile F;
+  Sc::Scene& scs = static_cast<NpScene*>(scene)->getScScene();
+  Dy::Context* dy = static_cast<Dy::Context*>(scs.getDynamicsContext());
+  fillHeader(F, scene, sim);
+  ShapeAdder SA(F);
+  std::unordered_map<const PxsShapeCore*, uint32_t>& shapeOfCore = SA.shapeOfCore;
+  std::unordered_map<const PxsRigidBody*, uint32_t> actorOfLL;  // 조인트 몸체 -> 행위자
+  auto addShapes = [&](PxRigidActor* a, sc::SceneActor& sa, uint32_t actorIdx) { SA.add(a, sa, actorIdx); };
   // 강체 행위자 (장면 순서)
   const PxU32 na = scene->getNbActors(PxActorTypeFlag::eRIGID_STATIC | PxActorTypeFlag::eRIGID_DYNAMIC);
   std::vector<PxActor*> acts(na);
   scene->getActors(PxActorTypeFlag::eRIGID_STATIC | PxActorTypeFlag::eRIGID_DYNAMIC, acts.data(), na);
-  for (PxActor* a : acts) {
-    sc::SceneActor sa{};
-    const uint32_t ai = uint32_t(F.actors.size());
-    sa.name = F.addName(a->getName());
-    sa.actorFlags = uint32_t(PxU8(a->getActorFlags()));
-    sa.dominance = a->getDominanceGroup();
-    sa.body = sc::kNone;
-    sa.link = sc::kNone;
-    if (a->getType() == PxActorType::eRIGID_STATIC) {
-      sa.kind = sc::kStatic;
-      sa.staticPose = g1px::toE(static_cast<PxRigidStatic*>(a)->getGlobalPose());
-    } else {
-      sa.kind = sc::kDynamic;
-      auto* rd = static_cast<PxRigidDynamic*>(a);
-      sa.rigidFlags = uint32_t(PxU16(rd->getRigidBodyFlags()));
-      const PxsRigidBody& ll = static_cast<NpRigidDynamic*>(rd)->getCore().getSim()->getLowLevelBody();
-      sa.body = uint32_t(F.bodies.size());
-      F.bodies.push_back(g1px::bodyFrom(ll));
-      actorOfLL[&ll] = ai;
-    }
-    addShapes(static_cast<PxRigidActor*>(a), sa, ai);
-    F.actors.push_back(sa);
-  }
+  for (PxActor* a : acts) addRigid(F, SA, a, &actorOfLL);
   // 관절체 (장면 순서) + 링크 행위자 (생성 순서)
   const PxU32 nArt = scene->getNbArticulations();
   std::vector<PxArticulationReducedCoordinate*> arts(nArt);
@@ -511,6 +527,16 @@ void dumpScene(PxScene* scene, uint64_t sim) {
 }  // namespace
 
 // 장면 파일 모양 순서 = 정적·동적 행위자(PxScene::getActors) 순서, 그다음 관절체(getArticulations)의 링크(getLinks) 순서, 행위자 안은 getShapes 순서
+// 새 행위자 틀 파일 (문서 20.4, particles 수확): 판 도중 넣은 강체들만 장면 파일 형식으로 (머리·재질 + 행위자·모양·볼록·몸체·거르개).
+// 상태 쪽(접촉 관리자·섬·넓은 단계·쌍 기록)은 비움. g1_sc.cpp 가 편집 창 끝에 부른다.
+bool g1_dump_actors(PxScene* scene, const std::vector<PxActor*>& actors, uint64_t sim, const char* path) {
+  sc::SceneFile F;
+  fillHeader(F, scene, sim);
+  ShapeAdder SA(F);
+  for (PxActor* a : actors) addRigid(F, SA, a, nullptr);
+  return sc::writeScene(path, F);
+}
+
 std::vector<const void*> g1_shape_cores(PxScene* scene) {
   std::vector<const void*> out;
   auto add = [&](PxRigidActor* a) {

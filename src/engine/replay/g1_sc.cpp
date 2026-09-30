@@ -351,6 +351,11 @@ struct EditShadow {
   long long firstBad = -1;
   int show = 5;
   std::map<uint64_t, std::map<std::string, int>> bySim;  // 진단: simulate 별 사건 수
+  // 새 행위자 틀 (G1_SC_TEMPLATES=<폴더>): 편집 창에서 넣은 강체들을 창 끝(다음 simulate 앞)에 장면 파일 형식으로 쓴다
+  std::string tmplDir;
+  std::vector<PxActor*> addedWin;
+  std::vector<std::string> removedWin;
+  uint64_t tmplFiles = 0;
 } ES;
 void edNote(const char* what) { ES.bySim[SS.sim][what]++; }
 
@@ -607,6 +612,7 @@ void W(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3
     edBegin();
   }
   R(_ZN5physx2Sc5Scene7addBodyERNS0_8BodyCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3Eb)(self, body, shapes, n, off, ob, compound);
+  if (!ES.tmplDir.empty() && SS.inited && body.getSim()) ES.addedWin.push_back(body.getSim()->getPxActor());
   if (!track) return;
   ES.capturing = false;
   if (!ok || compound) { ++ES.unsup; return; }
@@ -639,6 +645,7 @@ void W(_ZN5physx2Sc5Scene9addStaticERNS0_10StaticCoreEPKPNS_7NpShapeEjmPNS_9PxBo
     edBegin();
   }
   R(_ZN5physx2Sc5Scene9addStaticERNS0_10StaticCoreEPKPNS_7NpShapeEjmPNS_9PxBounds3E)(self, st, shapes, n, off, ob);
+  if (!ES.tmplDir.empty() && SS.inited && st.getSim()) ES.addedWin.push_back(st.getSim()->getPxActor());
   if (!track) return;
   ES.capturing = false;
   if (!ok) { ++ES.unsup; return; }
@@ -658,6 +665,10 @@ void W(_ZN5physx2Sc5Scene10removeBodyERNS0_8BodyCoreERNS_13PxInlineArrayIPKNS0_9
     Sc::Scene* self, Sc::BodyCore& body, PxInlineArray<const Sc::ShapeCore*, 64>& rs, bool wake) {
   int32_t h = -1;
   const void* key = body.getSim();
+  if (!ES.tmplDir.empty() && SS.inited && body.getSim()) {
+    const char* nm = body.getSim()->getPxActor()->getName();
+    ES.removedWin.push_back(nm ? nm : "?");
+  }
   if (ES.on && ES.inited && key) {
     auto it = ES.handle.find(key);
     if (it != ES.handle.end()) h = it->second;
@@ -820,6 +831,7 @@ void g1_sc_before(PxScene* scene, uint64_t sim) {
     SS.on = getenv("G1_SC") != nullptr;
     SS.show = getenv("G1_SC_SHOW") ? atoi(getenv("G1_SC_SHOW")) : 0;
     ES.on = SS.on && getenv("G1_SC_EDIT") != nullptr;
+    if (const char* d = getenv("G1_SC_TEMPLATES")) ES.tmplDir = d;
     if (getenv("G1_SC_TRACE")) SS.trace = atoll(getenv("G1_SC_TRACE"));
     if (getenv("G1_SC_TRACE_SIM")) sscanf(getenv("G1_SC_TRACE_SIM"), "%lld:%lld", &SS.traceFrom, &SS.traceTo);
   }
@@ -828,6 +840,25 @@ void g1_sc_before(PxScene* scene, uint64_t sim) {
   SS.sim = sim;
   SS.inSim = true;
   traceElem("(simulate 시작)");
+  if (!ES.tmplDir.empty() && (!ES.addedWin.empty() || !ES.removedWin.empty())) {
+    // 창 끝: 이름이 붙은 뒤라 여기서 쓴다. 목록 파일 한 줄 = simulate, 뺀 행위자들, 넣은 틀 파일과 행위자들
+    std::string path;
+    if (!ES.addedWin.empty()) {
+      path = ES.tmplDir + "/add_sim" + std::to_string(sim) + ".scene";
+      if (!g1_dump_actors(scene, ES.addedWin, sim, path.c_str())) fprintf(stderr, "[g1 sc] 틀 파일 쓰기 실패: %s\n", path.c_str());
+      else ++ES.tmplFiles;
+    }
+    if (FILE* f = fopen((ES.tmplDir + "/templates.txt").c_str(), "a")) {
+      fprintf(f, "simulate %llu 뺌 %zu", (unsigned long long)sim, ES.removedWin.size());
+      for (const std::string& n : ES.removedWin) fprintf(f, " %s", n.c_str());
+      fprintf(f, " | 넣음 %zu %s", ES.addedWin.size(), path.empty() ? "-" : path.c_str());
+      for (PxActor* a : ES.addedWin) fprintf(f, " %s", a->getName() ? a->getName() : "?");
+      fprintf(f, "\n");
+      fclose(f);
+    }
+    ES.addedWin.clear();
+    ES.removedWin.clear();
+  }
   if (getenv("G1_SC_IDS")) idsCheck();
   if (ES.on) {
     Sc::Scene& sc = static_cast<NpScene*>(scene)->getScScene();

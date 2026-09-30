@@ -76,4 +76,5 @@ float g1_contact_tol();                                          // g1_shadow: �
 void g1_pairs_filters(eng::contact::sc::ScPairs& M);             // g1_pairs: omni 거르개·pair-found
 const eng::scene::PairsStep* g1_pairs_step();                    // g1_pairs: 이번 스텝 입력(뒤 부분까지 채운 것)
 physx::Sc::ShapeSim* g1_elem_sim(int32_t e);                     // g1_pairs: 요소 번호 -> ShapeSim
-void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)
+void g1_dump_before(physx::PxScene* scene, uint64_t sim);
+bool g1_dump_actors(physx::PxScene* scene, const std::vector<physx::PxActor*>& actors, uint64_t sim, const char* path);  // g1_dump.cpp: 새 행위자 틀 파일  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)
