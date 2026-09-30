@@ -64,11 +64,41 @@ def main():
     TR.SlicingRule.transition = tr_wrap
 
     orig_dice = TR.DicingRule.transition
+    import omnigibson.systems.macro_particle_system as MPS
+    import omnigibson.systems.system_base as SB
+
+    gen_rec = []
+    orig_gfl = SB.PhysicalParticleSystem.generate_particles_from_link
+
+    def gfl_wrap(self, obj, link, use_visual_meshes=True, **kw):
+        lo, hi = link.visual_aabb
+        meshes = link.visual_meshes if use_visual_meshes else link.collision_meshes
+        gen_rec.append(dict(system=self.name, radius=float(self.particle_radius), lo=L(lo), hi=L(hi), offset=L(self._particle_offset),
+                            meshes=[dict(type=m._mesh_type, points=L(m.points) if m._mesh_type == "Mesh" else None, tf=L(m.scaled_transform))
+                                    for m in meshes.values()],
+                            rng=th.get_rng_state().numpy().tolist(), n_before=self.n_particles))
+        return orig_gfl(self, obj, link, use_visual_meshes=use_visual_meshes, **kw)
+
+    SB.PhysicalParticleSystem.generate_particles_from_link = gfl_wrap
+    orig_gp = MPS.MacroPhysicalParticleSystem.generate_particles
+
+    def gp_wrap(self, positions, orientations=None, **kw):
+        if gen_rec and "centers" not in gen_rec[-1]:
+            gen_rec[-1]["centers"] = L(positions)
+        r = orig_gp(self, positions, orientations=orientations, **kw)
+        if gen_rec and "frames" not in gen_rec[-1]:
+            tfs = self.particles_view.get_transforms()
+            gen_rec[-1]["frames"] = L(tfs)
+            gen_rec[-1]["rng_after"] = th.get_rng_state().numpy().tolist()
+        return r
+
+    MPS.MacroPhysicalParticleSystem.generate_particles = gp_wrap
 
     def dice_wrap(self, object_candidates):
         names = [o.name for o in object_candidates["diceable"]]
+        n0 = len(gen_rec)
         res = orig_dice(self, object_candidates)
-        rec["dice"].append(dict(step=cur_step[0], diced=names))
+        rec["dice"].append(dict(step=cur_step[0], diced=names, gens=gen_rec[n0:]))
         return res
 
     TR.DicingRule.transition = dice_wrap
