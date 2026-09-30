@@ -16,6 +16,7 @@ ZA=~/engine-data/scenes/zero_actions_1.npz
 source /mnt/c/behavior-2026/src/engine/scripts/gpu_lock.sh
 gpu_lock_acquire "engine-lead" "장면 추출 $TASK $TAG (약 2분)" 10 6 || exit 3
 set +e
+export ENGINE_CAPTURE_PY=/mnt/c/behavior-2026/src/engine/tests/particles/extract_particles.py  # particles 입력(제거기·시각 입자·레시피·난수 상태)도 같은 Kit 실행에서 — physx_capture 를 그대로 감쌈, 기록 불변 확인(20.5)
 TASK_NAME=$TASK EVAL_MODE=$MODE INSTANCE_IDX=$IDX bash /mnt/c/behavior-2026/src/engine/capture/run_capture_linux.sh "$ZA" "scene_${TASK}_${TAG}" 1 --record-toggle
 CODE=$?
 set -e
