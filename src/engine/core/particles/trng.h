@@ -74,6 +74,14 @@ PEHD int64_t torch_randint64(TorchMT& m, int64_t low, int64_t high) {
   return (int64_t)(torch_mt_u64(m) % range + (uint64_t)low);
 }
 
+// th.rand (eager, float32) 한 원소: uniform_real_distribution<float> — 32비트 하나의 하위 24비트 × 2^-24 (double 로 계산 후 float)
+// (ATen/core/TransformationHelper.h uniform_real, cpu uniform_kernel 은 원소 순서대로 cpu_serial_kernel)
+PEHD float torch_rand_float(TorchMT& m) {
+  const uint32_t v = torch_mt_u32(m);
+  const double x = (double)(v & 0xFFFFFFu) * (1.0 / 16777216.0);
+  return (float)(x * (1.0 - 0.0) + 0.0);
+}
+
 // ---- Philox4_32 (첫 출력만) ----
 PEHD uint32_t philox_first(uint64_t seed, uint64_t offset) {
   uint32_t c[4] = {(uint32_t)offset, (uint32_t)(offset >> 32), 0u, 0u};

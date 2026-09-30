@@ -35,6 +35,20 @@ int main(int argc, char** argv) {
     bad_s += m.left != m2.left || m.next != m2.next || memcmp(m.state, m2.state, sizeof m.state) != 0;
     bad_r += torch_randint64(m, INT64_MIN, INT64_MAX) != ri.as<int64_t>()[i];
   }
+  Npy rs, rv, rl;
+  long bad_rand = 0, n_rand = 0;
+  if (npy_load(d + "rand_state.npy", rs) && npy_load(d + "rand_vals.npy", rv) && npy_load(d + "rand_len.npy", rl)) {
+    for (int i = 0; i < (int)rs.shape[0]; ++i) {
+      TorchMT m;
+      torch_mt_from_bytes(rs.as<uint8_t>() + (size_t)i * B, B, m);
+      for (int k = 0; k < rl.as<int32_t>()[i]; ++k, ++n_rand) {
+        const float v = torch_rand_float(m), w = rv.as<float>()[(size_t)i * rv.shape[1] + k];
+        bad_rand += memcmp(&v, &w, 4) != 0;
+      }
+    }
+  }
+  printf("  th.rand (eager) 원소 %ld 다름 %ld\n", n_rand, bad_rand);
+  bad_r += bad_rand;
   printf("torch 난수 층 1 vs 공식: 사례 %d (상태 %d 바이트)  random_quaternion 원소 %ld 다름 %ld  뒤 상태 다름 %ld  다음 randint 다름 %ld\n", N, B, n_q,
          bad_q, bad_s, bad_r);
   const bool ok = !(bad_q || bad_s || bad_r);

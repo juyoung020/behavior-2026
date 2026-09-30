@@ -20,6 +20,7 @@ def main():
     for k in (1, 3, 7, 50):
         T.random_quaternion(k)
     states, ns, quats, after, rint = [], [], [], [], []
+    rstates, rvals, rlens = [], [], []
     maxn = 64
     for i in range(a.n):
         th.manual_seed(int(rng.integers(0, 2**63)))
@@ -36,11 +37,21 @@ def main():
         ns.append(n)
         quats.append(qq)
         rint.append(int(th.randint(-(2**63), 2**63 - 1, [1])[0]))
+        # eager th.rand (뿌리기 표본 th.rand(n, 2) 와 같은 꼴)
+        st2 = th.get_rng_state().numpy().copy()
+        k = int(rng.integers(1, 3000))
+        rr = th.rand(k, 2).numpy().ravel()
+        rstates.append(st2)
+        rvals.append(np.pad(rr, (0, 6000 - len(rr))))
+        rlens.append(len(rr))
     np.save(os.path.join(a.out, "state.npy"), np.stack(states))
     np.save(os.path.join(a.out, "after.npy"), np.stack(after))
     np.save(os.path.join(a.out, "n.npy"), np.array(ns, np.int32))
     np.save(os.path.join(a.out, "quat.npy"), np.stack(quats))
     np.save(os.path.join(a.out, "randint_next.npy"), np.array(rint, np.int64))
+    np.save(os.path.join(a.out, "rand_state.npy"), np.stack(rstates))
+    np.save(os.path.join(a.out, "rand_vals.npy"), np.stack(rvals).astype(np.float32))
+    np.save(os.path.join(a.out, "rand_len.npy"), np.array(rlens, np.int32))
     print("done", a.n, "state bytes", states[0].shape)
 
 
