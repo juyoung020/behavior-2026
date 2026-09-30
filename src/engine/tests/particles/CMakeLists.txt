@@ -12,3 +12,5 @@ target_compile_options(test_visual_gpu PRIVATE
 engine_test(test_trng test_trng.cpp)
 engine_test(test_dice test_dice.cpp)
 engine_test(test_contain test_contain.cpp)
+engine_test(test_fitplane test_fitplane.cpp)
+target_link_libraries(test_fitplane dl)  # MKL dlopen (ENGINE_MKL_LIB)
