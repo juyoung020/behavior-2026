@@ -52,7 +52,16 @@ class Capture:
         self.meta = {"started": time.strftime("%Y-%m-%d %H:%M:%S")}
         self._subs = []
         self.convex_done = False
-        self.dump_at_pre = 0
+        self.dump_at_pre = set()  # 여러 번호 가능 (쉼표)
+        self.dump_at_post = set()
+        # 상태 보정(09-30 S0 로봇): 곁기록에 안 잡히는 경로로 관절 상태가 바뀐다(post 43→pre 44 속도 0, post 44→pre 45 바닥 관절 6 개).
+        # simulate 직후와 다음 simulate 직전의 관절 위치·속도를 새 뷰로 읽어, 달라졌거나 그 사이 위치·속도 쓰기가 있었으면
+        # 직전 값을 곁기록 끝에 set_dof_positions/velocities(eff=3) 로 덧붙인다 -> 재생은 마지막 쓰기로 공식 상태가 된다
+        self.state_patch = True
+        self.patch_debug = set()  # --patch-debug 44,45 : 이 직전 번호에서 기대/지금 값을 찍는다
+        self._patch_watch = set()   # 늘 보는 관절체 prim 경로 튜플 (로봇)
+        self._patch_touched = set() # 이번 사이에 위치·속도 쓰기가 있던 관절체
+        self._patch_expect = {}     # 관절체 -> {쓰기 이름: simulate 직후 값 또는 마지막 쓰기 값, None = 모름}
         self.dump_prim = ""
 
     # ------------------------------------------------------------------ 앱이 뜬 직후
@@ -75,7 +84,13 @@ class Capture:
 
         def pre(_dt):
             self.n_pre += 1
-            if self.dump_at_pre and self.n_pre == self.dump_at_pre:
+            if self.sidelog and self.state_patch:
+                try:
+                    self._patch_pre()
+                except Exception as e:
+                    import traceback
+                    print(f"[capture] 상태 보정 실패(_patch_pre, post {self.n_post} pre {self.n_pre}): {e!r} | " + traceback.format_exc(limit=6).replace(chr(10), " | "), flush=True)
+            if self.n_pre in self.dump_at_pre:
                 try:
                     self.dump_prim_state()
                 except Exception as e:  # 진단 실패가 평가를 바꾸면 안 된다
@@ -83,6 +98,17 @@ class Capture:
 
         def post(_dt):
             self.n_post += 1
+            if self.sidelog and self.state_patch:
+                try:
+                    self._patch_post()
+                except Exception as e:
+                    import traceback
+                    print(f"[capture] 상태 보정 실패(_patch_post, post {self.n_post} pre {self.n_pre}): {e!r} | " + traceback.format_exc(limit=6).replace(chr(10), " | "), flush=True)
+            if self.n_post in self.dump_at_post:  # simulate 직후(OmniGibson 쓰기 전) 상태 — OVD 기록값과 텐서 읽기값 비교용
+                try:
+                    self.dump_prim_state(tag=f"post{self.n_post}")
+                except Exception as e:
+                    print(f"[capture] 상태 덤프 실패: {e!r}", flush=True)
 
         # order 0 = 가장 먼저. OmniGibson 의 콜백(order 0)보다 먼저 구독하므로 같은 단계에서 앞에 불린다.
         self._subs.append(iface.subscribe_physics_on_step_events(pre, pre_step=True, order=0))
@@ -101,6 +127,63 @@ class Capture:
             except Exception:
                 k = f"{id(view)}_{zlib.crc32('|'.join(paths).encode()):08x}"
         return k
+
+    def _patch_read(self, paths):
+        # 시뮬 뷰가 새로 만들어지는 중이면 캐시한 확인용 뷰가 무효일 수 있다 -> 한 번 버리고 다시 만든다
+        for attempt in range(2):
+            fv = self._fresh_view("art", list(paths))
+            if fv is None:
+                return None
+            try:
+                pos = np.asarray(fv.get_dof_positions(), np.float32).copy()
+                vel = np.asarray(fv.get_dof_velocities(), np.float32).copy()
+                return pos, vel, fv
+            except Exception:
+                if attempt:
+                    raise
+                self._fresh = None
+
+    def _patch_post(self):
+        if not self._patch_watch:
+            self._patch_watch.add((self.dump_prim,))
+        self._patch_expect = {}
+        for paths in self._patch_watch:
+            r = self._patch_read(paths)
+            if r is not None:
+                self._patch_expect[paths] = {"set_dof_positions": r[0].reshape(-1), "set_dof_velocities": r[1].reshape(-1)}
+        self._patch_touched = set()
+
+    def _patch_pre(self):
+        # 다음 simulate 직전 실제 관절 상태가 "simulate 직후 값 + 곁기록 쓰기" 로 기대한 값과 다를 때만 보정을 남긴다.
+        # 같은 값을 괜히 다시 쓰면 재생에서 applyCache 부수효과(깨움 등)가 생겨 오히려 갈린다(09-30 radio500_e 시험: simulate 2)
+        if self.n_post == 0:
+            return
+        for paths in set(self._patch_watch) | set(self._patch_touched):
+            exp = self._patch_expect.get(paths)
+            if self.n_pre in self.patch_debug:
+                print(f"[capture] 보정 점검 pre {self.n_pre} {paths} 기대 항목 {list(exp or {})}", flush=True)
+            if not exp:
+                continue
+            r = self._patch_read(paths)
+            if r is None:
+                continue
+            pos, vel, fv = r
+            idx = np.arange(int(getattr(fv, "count", 1)), dtype=np.uint32)
+            for name, now in (("set_dof_positions", pos.reshape(-1)), ("set_dof_velocities", vel.reshape(-1))):
+                if name not in exp:
+                    continue
+                e = exp[name]
+                if self.n_pre in self.patch_debug:
+                    print(f"[capture] 보정 점검 pre {self.n_pre} {paths[0][-30:]} {name}: 기대 {None if e is None else e[:3]} 지금 {now[:3]}", flush=True)
+                if e is not None and e.size == now.size and np.array_equal(e.view(np.uint32), now.view(np.uint32)):
+                    continue
+                vid = f"patch_{zlib.crc32('|'.join(paths).encode()):08x}"
+                if vid not in self.views:
+                    self.views[vid] = ("art", list(paths))
+                    self.view_extra[vid] = self.view_meta(fv) or {}
+                    self.view_extra[vid]["max_dofs"] = int(getattr(fv, "max_dofs", 0))
+                self.log.append((self.n_post, self.n_pre, "art", name, vid, idx, now.copy(), 3))
+                self.n_patch = getattr(self, "n_patch", 0) + 1
 
     def _fresh_view(self, kind, paths):
         # og.sim 의 지금 시뮬 뷰에서 같은 prim 으로 만든 확인용 뷰 (읽기 전용). 시뮬 뷰가 바뀌면 새로 만든다.
@@ -130,7 +213,9 @@ class Capture:
                 x = x.detach().cpu().numpy()
             elif hasattr(x, "numpy") and not isinstance(x, np.ndarray):
                 x = x.numpy()
-            return np.ascontiguousarray(np.asarray(x), dtype=dt)
+            # 반드시 복사한다: 넘겨받은 배열은 OmniGibson 이 다음 쓰기 때 다시 쓰는 버퍼다(09-30 원인 — 복사 없이 적으면
+            # 곁기록 값이 나중 값으로 바뀌어 "효과 없는 쓰기"·"판마다 다른 복원 값"처럼 보였다)
+            return np.array(np.asarray(x), dtype=dt, order="C", copy=True)
 
         FRESH_CHECK = {"art": ("set_dof_positions", "set_dof_velocities", "set_root_transforms", "set_root_velocities"),
                        "rb": ("set_transforms", "set_velocities")}
@@ -168,6 +253,19 @@ class Capture:
                         self.view_extra[vid] = self.view_meta(view) or {}
                         self.view_extra[vid]["max_dofs"] = int(getattr(view, "max_dofs", 0))
                 ret = orig(view, data, indices, *a, **kw)
+                if kind == "art" and name in ("set_dof_positions", "set_dof_velocities") and paths:
+                    # 이 쓰기 뒤 기대 상태: 뷰 전체를 덮는 쓰기면 그 값, 일부만이면 모름(None -> 다음 직전에 보정 기록)
+                    key = tuple(paths)
+                    self._patch_touched.add(key)
+                    try:
+                        w = to_np(data, np.float32).reshape(-1)
+                        n_idx = to_np(indices, np.int64).size
+                        full = n_idx == int(getattr(view, "count", -1)) and w.size == n_idx * int(getattr(view, "max_dofs", -1))
+                    except Exception:
+                        full = False
+                    self._patch_expect.setdefault(key, {})[name] = w.copy() if full else None
+                    if self.n_post + 1 in self.patch_debug:
+                        print(f"[capture] 보정 점검 쓰기 post {self.n_post} {key[0][-30:]} {name} full={full} {w[:3]}", flush=True)
                 # 쓴 값이 실제로 들어갔는지 같은 뷰의 get_* 로 다시 읽어 본다 (읽기만). 곁기록에는 효과 없는 쓰기가 섞인다
                 # (옛 PhysX 인스턴스의 뷰, post 43 에 새로 만든 로봇 뷰 등 — 문서 15절 S0 ②). 1 = 들어감, 0 = 안 들어감, -1 = 확인 못함
                 eff = -1
@@ -380,7 +478,7 @@ class Capture:
         print(f"[capture] 볼록 메시 {len(verts)} 개 (충돌 prim {n_prims}) -> {out}", flush=True)
 
     # ------------------------------------------------------------------ 진단: 지정 simulate 직전 관절체의 PhysX 쪽 실제 값 (읽기만)
-    def dump_prim_state(self):
+    def dump_prim_state(self, tag=None):
         """--dump-at-pre N --dump-prim PATH: N 번째 simulate 직전(전체 번호, meta 의 post 번호와 같은 셈)에 관절체 텐서 뷰의 get_* 를 전부 읽어
         state_pre<N>.npz 로. 재생기 쪽 같은 덤프(ovd_replay --dump-art)와 비교해 OVD 밖에서 달라진 값을 찾는다 (문서 15절 S0 로봇)."""
         import omni.physics.tensors as T
@@ -413,7 +511,7 @@ class Capture:
             out["meta_dof_names"] = np.asarray(mt.dof_names, dtype=object)
         except Exception:
             pass
-        path = os.path.join(self.dump_dir, f"state_pre{self.n_pre}.npz")
+        path = os.path.join(self.dump_dir, f"state_{tag or 'pre' + str(self.n_pre)}.npz")
         np.savez(path, **out)
         print(f"[capture] 상태 덤프 {len(out)} 항목 -> {path}", flush=True)
 
@@ -503,6 +601,7 @@ class Capture:
 
         self.meta["post_step_count"] = self.n_post
         self.meta["pre_step_count"] = self.n_pre
+        self.meta["state_patches"] = getattr(self, "n_patch", 0)
         if self.sidelog:
             kinds = np.array([e[2] for e in self.log])
             np.savez_compressed(
@@ -669,7 +768,9 @@ def main():
     cap = Capture(dump_dir, ovd="--no-ovd" not in ours, convex="--no-convex" not in ours,
                   sidelog="--no-sidelog" not in ours)
     cap.no_render = "--no-render" in ours
-    cap.dump_at_pre = int(ours[ours.index("--dump-at-pre") + 1]) if "--dump-at-pre" in ours else 0
+    cap.dump_at_pre = {int(x) for x in ours[ours.index("--dump-at-pre") + 1].split(",")} if "--dump-at-pre" in ours else set()
+    cap.dump_at_post = {int(x) for x in ours[ours.index("--dump-at-post") + 1].split(",")} if "--dump-at-post" in ours else set()
+    cap.patch_debug = {int(x) for x in ours[ours.index("--patch-debug") + 1].split(",")} if "--patch-debug" in ours else set()
     cap.dump_prim = ours[ours.index("--dump-prim") + 1] if "--dump-prim" in ours else "/World/scene_0/controllable__r1pro__robot"
     cap.meta["no_render"] = cap.no_render
     install(cap)
