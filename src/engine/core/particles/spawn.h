@@ -114,10 +114,12 @@ inline px::PxTransform tf_px(const Tf& t) {
 // 틀 행위자 a → (ScActorIn, 몸체). 반환 false = 동적 강체가 아님(지원 밖)
 // 새 prim 의 자세가 USD(Fabric) 세계 행렬을 거쳐 PhysX 로 들어가는 왕복 (omni.physx 가 행렬에서 방향을 다시 뽑음):
 //   M = diag(scale)·R(q)·T(p) (double) → pxr RemoveScaleShear → ExtractRotationQuat → float → PxQuat::getNormalized
-//   다진 입자(척도 1): 공식 기록 25/25 비트 동일. 반쪽(부모 척도 경로)은 대조 중.
-inline Q usd_roundtrip_quat(const Tf& pose, const float scale[3]) {
+//   행렬에 쓰는 q: raw_q = 넣은 값 그대로(정규화 전 — 다진 입자, 텐서 뷰 set_transforms), 아니면 정규화한 값(반쪽).
+//   대조(test_spawn_exec): 다진 입자 25/25, 반쪽 9/10 (남은 1 개 = 미해결 B10).
+inline Q usd_roundtrip_quat(const Pose7& raw, const Tf& pose, const float scale[3], bool raw_q) {
   namespace gf = eng::omni::gf;
-  const float pq[4] = {pose.q.x, pose.q.y, pose.q.z, pose.q.w}, pp[3] = {pose.p.x, pose.p.y, pose.p.z};
+  const float pq[4] = {raw_q ? raw.q[0] : pose.q.x, raw_q ? raw.q[1] : pose.q.y, raw_q ? raw.q[2] : pose.q.z, raw_q ? raw.q[3] : pose.q.w};
+  const float pp[3] = {pose.p.x, pose.p.y, pose.p.z};
   gf::M4 M = gf::from_physx_pose(pp, pq);
   for (int r = 0; r < 3; ++r)
     for (int c = 0; c < 3; ++c) M.m[r][c] *= (double)scale[r];
@@ -125,14 +127,15 @@ inline Q usd_roundtrip_quat(const Tf& pose, const float scale[3]) {
   gf::extract_rotation_quat(gf::remove_scale_shear(M), q);
   return normalized(Q{(float)q[0], (float)q[1], (float)q[2], (float)q[3]});
 }
-// usd_scale: USD 왕복을 거치면 그 척도(다진 입자 = 1,1,1), nullptr 이면 자세 그대로(정규화만)
+// usd_scale: USD 왕복을 거치면 그 척도(반쪽 = 물체 척도, 다진 입자 = 입자 prim 척도), nullptr 이면 자세 그대로(정규화만)
+// raw_q: 왕복 행렬을 정규화 전 쿼터니언으로 (다진 입자 true)
 inline bool actor_from_template(const SpawnTemplate& T, uint32_t a, const Pose7& actorPose, scene::ScActorIn& in, Body& body,
-                                const float* usd_scale = nullptr) {
+                                const float* usd_scale = nullptr, bool raw_q = false) {
   const scene::SceneActor& A = T.shared->actors[a];
   if (A.kind != scene::kDynamic) return false;
   body = T.f.bodies[A.body];
   Tf ap = normalized(pose7_tf(actorPose));
-  if (usd_scale) ap.q = usd_roundtrip_quat(ap, usd_scale);
+  if (usd_scale) ap.q = usd_roundtrip_quat(actorPose, ap, usd_scale, raw_q);
   body.body2World = ap * body.body2Actor;
   in.shapes.clear();
   in.kind = scene::kDynamic;
@@ -159,9 +162,9 @@ inline bool actor_from_template(const SpawnTemplate& T, uint32_t a, const Pose7&
 }
 // 넣기 (ScScene 번호·모듈 호출은 리드 API 가 PhysX 순서대로). 반환 = 손잡이
 inline int32_t spawn_add(scene::ScScene& sc, scene::ScModules& m, const SpawnTemplate& T, uint32_t a, const Pose7& actorPose, Body& bodyOut,
-                         const float* usd_scale = nullptr) {
+                         const float* usd_scale = nullptr, bool raw_q = false) {
   scene::ScActorIn in;
-  if (!actor_from_template(T, a, actorPose, in, bodyOut, usd_scale)) return -1;
+  if (!actor_from_template(T, a, actorPose, in, bodyOut, usd_scale, raw_q)) return -1;
   return sc.addActor(in, m);
 }
 

@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
       if (getenv("SHOW_SCALE")) printf("    척도 %s %u: %.9g %.9g %.9g  (회전 %.9g %.9g %.9g %.9g) 종류 %d\n", kind, a, usc[0], usc[1], usc[2], g.convex.scale.rotation.x,
                                        g.convex.scale.rotation.y, g.convex.scale.rotation.z, g.convex.scale.rotation.w, g.type);
     }
-    if (!actor_from_template(tp, a, pose, in, b, usc)) {
+    if (!actor_from_template(tp, a, pose, in, b, usc, kind[0] == 'D')) {
       ++bad_add;
       continue;
     }
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
              b.body2World.q.x, b.body2World.q.y, b.body2World.q.z, b.body2World.q.w, b.body2World.p.x, b.body2World.p.y, b.body2World.p.z, want.body2World.q.x,
              want.body2World.q.y, want.body2World.q.z, want.body2World.q.w, want.body2World.p.x, want.body2World.p.y, want.body2World.p.z);
     bad_pose += !okp;
-    if (getenv("GF_VARIANTS") && kind[0] == 'S') {  // 반쪽: USD 왕복 방식 후보
+    if (getenv("GF_VARIANTS") && !okp) {  // 틀린 것만: USD 왕복 방식 후보  // 반쪽: USD 왕복 방식 후보
       namespace gf = eng::omni::gf;
       const Tf ap0 = normalized(pose7_tf(pose));
       for (int v = 0; v < 8; ++v) {
@@ -102,15 +102,17 @@ int main(int argc, char** argv) {
           const float R[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (z * x - y * w), 2 * (x * y - z * w), 1 - 2 * (z * z + x * x),
                               2 * (y * z + x * w), 2 * (z * x + y * w), 2 * (y * z - x * w), 1 - 2 * (y * y + x * x)};
           for (int r = 0; r < 3; ++r)
-            for (int c = 0; c < 3; ++c) M.m[r][c] = (double)(R[3 * r + c] * sc_half[r]);
+            for (int c = 0; c < 3; ++c) M.m[r][c] = (double)(R[3 * r + c] * usc[r]);
         } else {
           for (int r = 0; r < 3; ++r)
-            for (int c = 0; c < 3; ++c) M.m[r][c] *= (double)sc_half[r];
+            for (int c = 0; c < 3; ++c) M.m[r][c] *= (double)usc[r];
         }
         double q[4];
         gf::extract_rotation_quat(rt ? gf::rt_remove_scale_shear(M) : gf::remove_scale_shear(M), q);
         const Tf g = Tf{normalized(Q{(float)q[0], (float)q[1], (float)q[2], (float)q[3]}), ap0.p} * b.body2Actor;
-        variant_ok[v] += memcmp(&g, &want.body2World, sizeof(Tf)) == 0;
+        const bool hit = memcmp(&g, &want.body2World, sizeof(Tf)) == 0;
+        variant_ok[v] += hit;
+        if (hit) printf("    %s %u: 후보 [%d%d%d] 맞음\n", kind, a, v & 1, (v >> 1) & 1, (v >> 2) & 1);
       }
       ++variant_n;
     }
