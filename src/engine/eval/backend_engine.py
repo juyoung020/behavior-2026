@@ -145,6 +145,17 @@ class EngineEnvV0(EngineEnv):
             self.core.close()
         self.core = EngineCore(rec)
         self._bind_static(rec)
+        # 관측 영상: 렌더 모듈(층 1 CPU) — ENGINE_RENDER_RSC(scene.rsc 폴더)·ENGINE_RENDER_FRAME(정적 기준 프레임 .rfr)·
+        # ENGINE_RENDER_META(export/meta.json 의 anchor_paths) 가 있으면 그린다. 없으면 0 영상(v0).
+        self.rc = None
+        rsc = os.environ.get("ENGINE_RENDER_RSC")
+        if rsc:
+            from render_core import RenderCore
+
+            self.rc = RenderCore(rsc, os.environ["ENGINE_RENDER_FRAME"], os.environ["ENGINE_RENDER_META"], self.core,
+                                 spp=int(os.environ.get("ENGINE_RENDER_SPP", "-1")))
+            log.info("렌더 연결: 기준 prim %d 중 물리 몸체 %d", self.rc.n_anchor, len(self.rc.bound))
+        self.images = None
         self.task.success = th.zeros(1, dtype=th.bool)
         self.steps = 0
 
@@ -153,17 +164,38 @@ class EngineEnvV0(EngineEnv):
         g = self.core.goal() if self.core is not None else "[]"
         return json.loads(g)
 
+    def _render(self, frame):
+        """지금 물리 상태로 카메라 영상 (관측 시점 규칙 10.1: 스텝 k 영상 = 스텝 k-1 끝 상태 -> 물리 스텝 전에 부른다)."""
+        if self.rc is None:
+            return None
+        from render_core import ROLES
+
+        self.rc.set_poses()
+        out = {}
+        for sname in self.rv.sensors:
+            role = self.role_of.get(sname, "")
+            if role not in ROLES:
+                continue
+            h, w = self.res.get(role, (224, 224))
+            pos, quat = camera_world_gf(self.core, self.cams[sname], self.Gf)
+            rgb = self.rc.render(ROLES.index(role), pos.numpy(), quat.numpy(), w, h, frame)
+            rgba = np.concatenate([rgb, np.full((h, w, 1), 255, np.uint8)], axis=-1)
+            out[sname] = th.from_numpy(rgba)
+        return out
+
     def _obs(self):
         T = _transform_utils()
         pr, _ = proprio(self.core, self.rv, T)
         o = {"proprio": pr}
         for sname in self.rv.sensors:
             h, w = self.res.get(self.role_of.get(sname, ""), (224, 224))
-            o[sname] = {"rgb": th.zeros((h, w, 4), dtype=th.uint8)}
+            img = self.images.get(sname) if self.images else None
+            o[sname] = {"rgb": img if img is not None else th.zeros((h, w, 4), dtype=th.uint8)}
         return {self.rv.name: o}
 
     def reset(self, env_indices=None):
         self.steps = 0
+        self.images = self._render(0)
         return [self._obs()], [{}]
 
     def get_obs(self, env_indices=None):
@@ -172,6 +204,7 @@ class EngineEnvV0(EngineEnv):
     def step(self, actions, n_render_iterations=1):
         a = actions[0] if hasattr(actions, "__len__") and len(actions) == 1 else actions
         a = a.detach().cpu().numpy() if hasattr(a, "detach") else np.asarray(a)
+        self.images = self._render(self.steps + 1)  # 이 스텝의 관측 영상 = 물리 스텝 전 자세
         self.core.step(np.asarray(a, np.float32).reshape(-1))
         # Timeout(termination_conditions/timeout.py:23): episode_steps >= max_steps, episode_steps 는 이 스텝 전 값
         # (공식은 max_steps=500 에서 501 스텝을 돈다)

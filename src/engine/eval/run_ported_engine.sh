@@ -19,6 +19,9 @@ PYL=$(dirname "$(find ~/.local/share/uv/python -name 'libpython3.11.so.1.0' | he
 export LD_LIBRARY_PATH=$PYL:$U/bin:$D/bin:${LD_LIBRARY_PATH:-}
 export ENGINE_REC_DIR=$REC
 export ENGINE_CAM_CHAIN=${ENGINE_CAM_CHAIN:-$REC/scope.json}
+# 관측 영상(렌더 모듈 층 1): ENGINE_RENDER_RSC 를 주면 그린다 (없으면 0 영상). 예) radio 인스턴스 301:
+#   ENGINE_RENDER_RSC=/mnt/c/behavior-2026/src/engine/dumps/render_radio_rgbd/rsc ENGINE_RENDER_FRAME=$ENGINE_RENDER_RSC/frame_0000.rfr
+#   ENGINE_RENDER_META=/mnt/c/behavior-2026/src/engine/dumps/render_radio_rgbd/export/meta.json
 export OMNIGIBSON_DATA_PATH=/mnt/c/behavior-2026/BEHAVIOR-1K/datasets
 export OMNI_KIT_ACCEPT_EULA=YES
 export PYTHONUTF8=1
