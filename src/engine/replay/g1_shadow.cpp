@@ -137,6 +137,7 @@ void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_bp_before(scene, sim);
   g1_pairs_before(scene, sim);
   g1_sc_before(scene, sim);
+  g1_scene_before(scene, sim);
   if (!G.on) G.on = getenv("G1_CONTACT") != nullptr;
   if (!G.on) return;
   (void)sim;
@@ -239,6 +240,7 @@ void g1_after_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
   g1_islands_after(scene, sim);
   g1_pairs_after(scene, sim);
   g1_sc_after(scene, sim);
+  g1_scene_after(scene, sim);
   if (!G.on) return;
   (void)phys;
   G.lastSim = (long long)sim;
@@ -352,6 +354,7 @@ void g1_report() {
   g1_bp_report();
   g1_pairs_report();
   g1_sc_report();
+  g1_scene_report();
   if (!G.on) return;
   printf("G1 contact 그림자: 관리자·simulate %" PRIu64 " (좁은 단계 돈 것 %" PRIu64 ", 건너뜀 %" PRIu64 ", 못 옮긴 모양 %" PRIu64 ", 넘침 %" PRIu64 ", 뒤에도 새 표시 %" PRIu64 ", 다시 등록 %" PRIu64 ")\n",
          G.nCM, G.nRun, G.nSkip, G.nUnsup, G.nOverflow, G.nNewAfter, G.nRefresh);
@@ -359,3 +362,13 @@ void g1_report() {
     printf("  %-20s 비교 %12" PRIu64 "  비트 다름 %10" PRIu64 "%s\n", t->name, t->cmp, t->bad,
            t->bad ? ("  첫 다름 simulate " + std::to_string(t->first)).c_str() : "");
 }
+
+const physx::PxsCachedTransform* g1_contact_cache(size_t* n) {
+  *n = G.cacheBefore.size();
+  return G.cacheBefore.data();
+}
+const eng::contact::MaterialData* g1_contact_mats(size_t* n) {
+  *n = G.mats.size();
+  return G.mats.data();
+}
+float g1_contact_tol() { return G.tolLength; }

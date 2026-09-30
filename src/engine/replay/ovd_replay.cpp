@@ -2745,7 +2745,15 @@ class Replayer {
       const ovd::Event& e = F.events[i];
       if (trace_sim >= 0 && int64_t(sims) == trace_sim && !out_block) {  // 진단: 한 프레임의 입력 사건 순서 (REPLAY_TRACE_SIM=simulate 번호-1)
         const std::string on = objs.count(e.obj) ? objs[e.obj].name : std::string("?");
-        if (e.cmd == ovd::kSet) fprintf(stderr, "[프레임] %zu set %s.%s %s\n", i, cname(objs.count(e.obj) ? objs[e.obj].cls : 0), F.attrs[e.attr].name.c_str(), on.c_str());
+        if (e.cmd == ovd::kSet) {
+          fprintf(stderr, "[프레임] %zu set %s.%s %s", i, cname(objs.count(e.obj) ? objs[e.obj].cls : 0), F.attrs[e.attr].name.c_str(), on.c_str());
+          if (e.data_len == 28 || e.data_len == 12) {  // 자세·벡터 값
+            float v[7];
+            memcpy(v, F.data(e), e.data_len);
+            for (uint32_t k = 0; k < e.data_len / 4; ++k) fprintf(stderr, " %.9g", v[k]);
+          }
+          fprintf(stderr, "\n");
+        }
         else fprintf(stderr, "[프레임] %zu cmd %d cls %s %s\n", i, int(e.cmd), cname(e.cls), on.c_str());
       }
       // 만든 순간 값 묶음(cluster): create 바로 뒤, 같은 객체의 set 이 이어지는 동안. 같은 속성이 두 번 나오면

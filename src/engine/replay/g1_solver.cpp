@@ -578,6 +578,7 @@ class HookDispatcher : public PxCpuDispatcher {
       g1_islands_task(t->getName());
       g1_bp_task(t->getName());
       g1_sc_task(t->getName());
+      g1_scene_task(t->getName());
       if (getenv("G1_TASKS")) fprintf(stderr, "[task] %s\n", t->getName());
       if (!strcmp(t->getName(), "ScScene.afterIntegration")) takeLateSnapshot();
       if (!strcmp(t->getName(), "UpdateContinuationTask")) {
@@ -598,7 +599,7 @@ class HookDispatcher : public PxCpuDispatcher {
 }  // namespace
 
 PxCpuDispatcher* g1_dispatcher() {
-  if (!getenv("G1_SOLVER") && !getenv("G1_ART") && !getenv("G1_ISLANDS") && !getenv("G1_BP") && !getenv("G1_SC")) return nullptr;
+  if (!getenv("G1_SOLVER") && !getenv("G1_ART") && !getenv("G1_ISLANDS") && !getenv("G1_BP") && !getenv("G1_SC") && !getenv("G1_SCENE")) return nullptr;
   static HookDispatcher* d = new HookDispatcher();  // 프로세스 끝까지 (PxPhysics 여러 개가 같이 씀)
   GS.on = true;
   GS.cmpOn = getenv("G1_SOLVER") != nullptr;

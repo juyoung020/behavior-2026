@@ -60,4 +60,20 @@ void g1_sc_after(physx::PxScene* scene, uint64_t sim);
 // Sc 편집 그림자(G1_SC_EDIT)가 PhysX 의 넓은 단계·섬 호출을 받는다 (g1_bp.cpp·g1_islands.cpp 가로채기에서 넘김)
 void g1_sc_note_bp(uint32_t type, uint32_t index, uint32_t group, uint32_t agg, uint32_t vt, uint32_t env, float cd, uint32_t result);
 void g1_sc_note_island(int op, uint64_t node, int a, int b);
+// contact 장면 단위 그림자 (g1_scene.cpp, G1_SCENE)
+namespace eng { namespace scene { struct BpOp; struct PairsStep; } namespace contact { struct MaterialData; namespace sc { struct ScPairs; } } }
+namespace physx { struct PxsCachedTransform; namespace Sc { class ShapeSim; } }
+void g1_scene_bp_created(const eng::scene::BpLog& hdr);
+void g1_scene_note_bpop(const eng::scene::BpOp& o);
+void g1_scene_task(const char* name);
+void g1_scene_before(physx::PxScene* scene, uint64_t sim);
+void g1_scene_after(physx::PxScene* scene, uint64_t sim);
+void g1_scene_report();
+// 다른 그림자가 내주는 것
+const physx::PxsCachedTransform* g1_contact_cache(size_t* n);   // g1_shadow: fetchCollision 뒤 변환 캐시
+const eng::contact::MaterialData* g1_contact_mats(size_t* n);    // g1_shadow: 재질 표
+float g1_contact_tol();                                          // g1_shadow: 길이 눈금
+void g1_pairs_filters(eng::contact::sc::ScPairs& M);             // g1_pairs: omni 거르개·pair-found
+const eng::scene::PairsStep* g1_pairs_step();                    // g1_pairs: 이번 스텝 입력(뒤 부분까지 채운 것)
+physx::Sc::ShapeSim* g1_elem_sim(int32_t e);                     // g1_pairs: 요소 번호 -> ShapeSim
 void g1_dump_before(physx::PxScene* scene, uint64_t sim);  // g1_dump.cpp (G1_DUMP_AT·G1_DUMP_OUT)

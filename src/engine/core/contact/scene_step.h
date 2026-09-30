@@ -45,7 +45,7 @@ struct NpSlotCaches : public sc::CacheHooks {
 struct ContactScene {
   sc::ScPairs pairs;              // 행위자·모양·거르개·섬 갈고리(pairs.islands)는 호출자가 채운다
   NpSlotCaches caches;
-  px::Bp::AABBManager* aabb = nullptr;  // 모양 = 경계 번호 = ElementSim 번호, 사용자 자료 = (void*)(uintptr_t)(번호 + 1)
+  px::Bp::AABBManager* aabb = nullptr;  // 모양 = 경계 번호 = ElementSim 번호, 사용자 자료 = userOfElem(번호) (아래 2 비트는 AABB 관리자가 부피 종류로 씀)
   px::Cm::FlushPool pool;
   px::PxcScratchAllocator scratch;
   // 좁은 단계 입력 (ElementSim 번호 = 변환 캐시 번호로 찾음)
@@ -58,7 +58,10 @@ struct ContactScene {
   ContactScene() { pairs.caches = &caches; }
 };
 
-inline int32_t elemOfUser(void* ud) { return int32_t(reinterpret_cast<uintptr_t>(ud)) - 1; }
+// 사용자 자료 <-> 요소 번호. AABB 관리자 VolumeData 가 사용자 자료의 아래 2 비트에 부피 종류를 넣으므로(BpAABBManager.h VolumeData::setVolumeType)
+// 4 의 배수여야 한다 (09-30 리드: 번호+1 로 두면 이웃 번호가 같은 값으로 뭉개져 겹침 목록이 틀어졌다).
+inline void* userOfElem(uint32_t e) { return reinterpret_cast<void*>((uintptr_t(e) + 1) << 2); }
+inline int32_t elemOfUser(void* ud) { return int32_t(reinterpret_cast<uintptr_t>(ud) >> 2) - 1; }
 
 // ---- 1. 넓은 단계 (Sc::Scene::broadPhase -> postBroadPhase): 입력 배열은 AABB 관리자가 가리키는 BoundsArray·접촉 거리·바뀜 비트맵에 호출자가 넣어 둔다.
 //      hasContactDistanceChanged = Sc 의 접촉 거리 바뀜 표시. 결과는 S.created*/destroyed* 에 (다음 contactBroadPhaseEnd 까지 유효).

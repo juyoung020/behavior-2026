@@ -73,6 +73,7 @@ struct BpShadow {
 } BS;
 bool logging() { return BS.logUntil >= 0 && (long long)BS.curSim < BS.logUntil; }
 void logOp(const eng::scene::BpOp& o) {
+  g1_scene_note_bpop(o);
   if (!logging()) return;
   eng::scene::BpOp x = o;
   x.frame = uint32_t(BS.log.frames.size());
@@ -235,6 +236,7 @@ void __wrap__ZN5physx2Bp11AABBManagerC1ERNS0_10BroadPhaseERNS0_11BoundsArrayERNS
   BS.log.abpMaxOverlaps = a.maxOverlaps; BS.log.abpMaxStatic = a.maxStatic; BS.log.abpMaxDynamic = a.maxDynamic; BS.log.abpMT = a.mt; BS.log.ctx = a.ctx;
   BS.log.maxAggregates = maxAgg; BS.log.maxShapes = maxShapes; BS.log.kineKine = uint32_t(kk); BS.log.staticKine = uint32_t(sk);
   BS.log.valid = true;
+  g1_scene_bp_created(BS.log);
   if (BS.from.empty()) {
     M->rt.reset(new eng::scene::BpRuntime);
     M->rt->create(a.maxOverlaps, a.maxStatic, a.maxDynamic, a.ctx, a.mt, maxAgg, maxShapes, uint32_t(kk), uint32_t(sk));

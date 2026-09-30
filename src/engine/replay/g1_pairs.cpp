@@ -779,3 +779,11 @@ void g1_pairs_report() {
          PS.cmpEvents, PS.cmpCalls, PS.cmpActor, PS.cmpPool, PS.bad,
          PS.bad ? ("  첫 다름 simulate " + std::to_string(PS.firstBad) + " " + PS.firstWhat).c_str() : "");
 }
+
+// contact 장면 단위 그림자(g1_scene.cpp)에 내주는 것
+void g1_pairs_filters(eng::contact::sc::ScPairs& M) { setFilters(M); }
+const eng::scene::PairsStep* g1_pairs_step() { return PS.on && PS.started ? &PS.step : nullptr; }
+physx::Sc::ShapeSim* g1_elem_sim(int32_t e) {
+  auto it = gElemSim.find(e);
+  return it == gElemSim.end() ? nullptr : static_cast<physx::Sc::ShapeSim*>(it->second);
+}
