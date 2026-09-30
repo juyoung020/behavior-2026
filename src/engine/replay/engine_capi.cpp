@@ -52,6 +52,11 @@ void* ee_open(const char* rec_dir, const char* ovd_path, uint64_t side_offset, i
     if (!R.load_s3(d)) fprintf(stderr, "ee_open: s3 입력 없음 (판정 끔)\n");
     else R.S3.own = true;  // S3 v1: 판정 접촉 행렬을 우리 PhysX 접촉 보고로 (기록의 접촉 행렬은 비교용)
   }
+  // AG 단계 B: ag_setup.txt(export_ag.py) 가 있으면 엔진이 잡기를 판단한다 (없으면 기록의 AG 관절을 그대로 — v0)
+  if (R.load_ag(d)) {
+    if (!R.S3.own) fprintf(stderr, "ee_open: AG 는 접촉 보고가 필요 -> s3 입력(export_s3.py)도 있어야 한다
+");
+  }
   if (!R.init(threads)) {
     delete E;
     return nullptr;

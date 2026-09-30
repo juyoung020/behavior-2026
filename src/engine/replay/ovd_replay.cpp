@@ -38,6 +38,7 @@
 #include "core/omni/states.h"
 #include "core/omni/bddl.h"
 #include "core/omni/agframe.h"
+#include "core/omni/assisted_grasp.h"
 
 using namespace physx;
 
@@ -805,6 +806,10 @@ class Replayer {
     if (!S3.on) return;
     const uint64_t g = sims + side_offset;  // 방금 끝난 simulate 의 전체 번호 = post 번호
     if (S3.own && S3.init && g > S3.episode_start) s3_collect_substep();
+    if (AG.on && RC.init && g > S3.episode_start) {
+      rca_collect();
+      if ((g - S3.episode_start) % S3.substeps == 0) rca_update();
+    }
     if (S3.own) s3_cb.clear();
     if (g < S3.episode_start || (g - S3.episode_start) % S3.substeps != 0) return;
     const int SO = S3.S * S3.O;
@@ -832,6 +837,17 @@ class Replayer {
     if (S3.own) {
       s3_update_contact();
       cm_in = S3.cm.data();
+      if (AG.on && RC.init && RC.rows.size() == size_t(S3.nr)) {  // 교차 확인: AG 용 접촉 행렬(모든 열)의 판정 열 부분 = S3 v1 값
+        for (int r = 0; r < S3.nr; ++r)
+          for (int c = 0; c < S3.nc; ++c) {
+            auto ia = actor_by_name.find(S3.colpath[c]);
+            if (ia == actor_by_name.end()) continue;
+            auto ic = RC.col_of.find(ia->second);
+            if (ic == RC.col_of.end()) continue;
+            if (RC.cm[size_t(r) * RC.cols.size() + ic->second] != S3.cm[size_t(r) * S3.nc + c]) RC_bad++;
+          }
+        RC_checked++;
+      }
       S3.cm_steps++;
       if (off->has_cm && memcmp(S3.cm.data(), off->cm.data(), S3.cm.size())) {
         S3.cm_bad++;
@@ -901,6 +917,8 @@ class Replayer {
     }
   }
   void s3_report() {
+    if (AG.on) printf("AG 접촉 행렬 교차 확인: 스텝 %" PRIu64 ", S3 v1 과 다른 칸 %" PRIu64 "\n", RC_checked, RC_bad);
+    if (AG.on) printf("AG(--ag): 시도 %" PRIu64 ", 잡음 %" PRIu64 ", 놓음 %" PRIu64 ", 무거워서 안 잡음 %" PRIu64 ", 접촉점 없어 안 잡음 %" PRIu64 "\n", AG.n_try, AG.n_grasp, AG.n_release, AG.n_skip_type, AG.n_skip_contact);
     if (!S3.on) return;
     if (S3.own) printf("S3 접촉 행렬(--s3-own-contact, 우리 PhysX 접촉 보고): 평가 스텝 %" PRIu64 ", 공식과 다른 스텝 %" PRIu64 ", 첫 다름 %lld\n", S3.cm_steps, S3.cm_bad, (long long)S3.cm_first_bad);
     const std::string fb = S3.first_bad < 0 ? std::string("없음") : "스텝 " + std::to_string(S3.first_bad) + " " + S3.first_bad_what;
@@ -961,6 +979,299 @@ class Replayer {
             (long long)(sims + side_offset), AGF.lp0.q.x, AGF.lp0.q.y, AGF.lp0.q.z, AGF.lp0.q.w, AGF.lp0.p.x, AGF.lp0.p.y, AGF.lp0.p.z,
             AGF.lp1.q.x, AGF.lp1.q.y, AGF.lp1.q.z, AGF.lp1.q.w, AGF.lp1.p.x, AGF.lp1.p.y, AGF.lp1.p.z);
   }
+  // ------------------------------------------------------------------ AG 단계 B: 언제·무엇을 잡나 (--ag <폴더>, ag_setup.txt)
+  // robot.py:835 _handle_assisted_grasping 을 서브스텝마다 (제어기 step 뒤, flush 전). 판단은 core/omni/assisted_grasp.h.
+  // 입력: 손가락 접촉 = RigidContactAPI 접촉 행렬(손가락 행 × 장면 모든 몸체 열, 렌더 스텝 끝마다 갱신 — 아래 RCA),
+  //       광선 = PhysX 장면 질의 raycast 가장 가까운 것(omni psqi.raycast_closest), 링크 자세 = PhysX.
+  struct AGArm {
+    std::string name, eef;
+    std::string finger[2];
+    std::vector<int> grip_dof;
+    std::vector<float> grip_hi;
+    std::vector<std::pair<std::string, std::array<float, 3>>> start, end;
+    eng::omni::ag::ArmState st;
+    PxJoint* joint = nullptr;
+  };
+  struct AGLink { std::string obj, name, path; float mass = 0.0f; bool has_mass = false; bool dynamic = false; bool nonfixed = false; };
+  struct AGObj { bool fixed_base = false; std::string root; };
+  struct AGSetup {
+    bool on = false;
+    std::string robot;
+    std::set<std::string> robot_links;
+    std::vector<AGArm> arms;
+    std::map<std::string, AGObj> objs;
+    std::map<std::string, AGLink> links;  // 링크 경로 -> 정보
+    uint64_t n_try = 0, n_grasp = 0, n_release = 0, n_skip_type = 0, n_skip_contact = 0;
+  } AG;
+  // RigidContactAPI 흉내 (손가락 행 × 모든 몸체 열). usd_utils.py:189 _update_contact_matrices_kernel 과 같은 규칙.
+  struct RCA {
+    bool init = false;
+    std::vector<const PxRigidActor*> rows;     // 손가락 (팔 순서, 손가락 순서)
+    std::vector<const PxRigidActor*> cols;     // 장면 몸체 (/World/scene_0/<물체>/<링크>)
+    std::vector<std::string> col_name;
+    std::vector<int32_t> col_to_rigid;         // 동적이면 몸체 번호, 아니면 -1
+    std::vector<const PxRigidActor*> bodies;   // 동적 몸체 (자세·알짜 충격을 서브스텝마다)
+    std::vector<int32_t> row_to_rigid, b2r;
+    std::vector<float> pend_tf, pend_net, pend_imp, prev_tf;
+    int n_pend = 0;
+    std::vector<uint8_t> cm, ccm;
+    std::unordered_map<const void*, int> col_of;
+  } RC;
+  uint64_t RC_bad = 0, RC_checked = 0;
+  bool load_ag(const std::string& dir) {
+    std::ifstream f(dir + "/ag_setup.txt");
+    if (!f) return false;
+    std::string line;
+    auto arm_of = [&](const std::string& n) -> AGArm& {
+      for (auto& a : AG.arms) if (a.name == n) return a;
+      AG.arms.push_back(AGArm());
+      AG.arms.back().name = n;
+      return AG.arms.back();
+    };
+    while (std::getline(f, line)) {
+      std::istringstream is(line);
+      std::string k;
+      is >> k;
+      if (k == "robot") is >> AG.robot;
+      else if (k == "robotlink") { std::string p; is >> p; AG.robot_links.insert(p); }
+      else if (k == "arm") { std::string n; is >> n; AGArm& a = arm_of(n); is >> a.eef >> a.finger[0] >> a.finger[1]; }
+      else if (k == "grip") { std::string n, hi; int d; is >> n >> d >> hi; AGArm& a = arm_of(n); a.grip_dof.push_back(d); a.grip_hi.push_back(strtof(hi.c_str(), nullptr)); }
+      else if (k == "start" || k == "end") {
+        std::string n, lp, x, y, z;
+        is >> n >> lp >> x >> y >> z;
+        AGArm& a = arm_of(n);
+        std::array<float, 3> v = {hexf(x), hexf(y), hexf(z)};
+        (k == "start" ? a.start : a.end).push_back({lp, v});
+      } else if (k == "obj") { std::string op, root; int fb; is >> op >> fb >> root; AG.objs[op] = AGObj{fb != 0, root}; }
+      else if (k == "link") {
+        AGLink l;
+        std::string m;
+        int dyn, nf;
+        is >> l.obj >> l.name >> l.path >> m >> dyn >> nf;
+        l.has_mass = m != "-";
+        if (l.has_mass) l.mass = hexf(m);
+        l.dynamic = dyn != 0;
+        l.nonfixed = nf != 0;
+        AG.links[l.path] = l;
+      }
+    }
+    AG.on = !AG.arms.empty();
+    return AG.on;
+  }
+  bool rca_init() {
+    if (RC.init) return true;
+    for (auto& a : AG.arms)
+      for (auto& fp : a.finger) {
+        auto it = actor_by_name.find(fp);
+        if (it == actor_by_name.end()) return false;
+        RC.rows.push_back(it->second);
+      }
+    std::vector<std::pair<std::string, const PxRigidActor*>> all;
+    for (auto& kv : actor_by_name) {
+      const std::string& n = kv.first;
+      if (n.rfind("/World/scene_0/", 0) != 0) continue;
+      if (std::count(n.begin(), n.end(), '/') != 4) continue;  // /World/scene_0/<물체>/<링크>
+      all.push_back({n, kv.second});
+    }
+    std::sort(all.begin(), all.end());
+    for (auto& nb : all) {
+      const PxRigidActor* a = nb.second;
+      const PxRigidDynamic* d = a->is<PxRigidDynamic>();
+      const bool dyn = a->is<PxArticulationLink>() || (d && !(d->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC));
+      RC.col_of[a] = int(RC.cols.size());
+      RC.cols.push_back(a);
+      RC.col_name.push_back(nb.first);
+      if (dyn) { RC.col_to_rigid.push_back(int(RC.bodies.size())); RC.bodies.push_back(a); }
+      else RC.col_to_rigid.push_back(-1);
+    }
+    for (auto* r : RC.rows) {
+      int b = -1;
+      for (size_t k = 0; k < RC.bodies.size(); ++k) if (RC.bodies[k] == r) b = int(k);
+      if (b < 0) { b = int(RC.bodies.size()); RC.bodies.push_back(r); }
+      RC.row_to_rigid.push_back(b);
+    }
+    RC.b2r.resize(RC.bodies.size());
+    for (size_t b = 0; b < RC.bodies.size(); ++b) RC.b2r[b] = int32_t(b);  // 동적 몸체는 모두 행 (알짜 충격 번호 = 몸체 번호)
+    RC.cm.assign(RC.rows.size() * RC.cols.size(), 0);
+    RC.ccm = RC.cm;
+    for (auto* a : RC.bodies) {
+      const PxTransform t = a->getGlobalPose();
+      const float v[7] = {t.p.x, t.p.y, t.p.z, t.q.x, t.q.y, t.q.z, t.q.w};
+      RC.prev_tf.insert(RC.prev_tf.end(), v, v + 7);
+    }
+    RC.init = true;
+    return true;
+  }
+  void rca_collect() {  // 서브스텝 끝 (read_from_physx)
+    const size_t B = RC.bodies.size(), R = RC.rows.size(), Cn = RC.cols.size();
+    const float dt = last_dt;
+    for (auto* a : RC.bodies) {
+      const PxTransform t = a->getGlobalPose();
+      const float v[7] = {t.p.x, t.p.y, t.p.z, t.q.x, t.q.y, t.q.z, t.q.w};
+      RC.pend_tf.insert(RC.pend_tf.end(), v, v + 7);
+    }
+    const size_t n0 = RC.pend_net.size();
+    RC.pend_net.resize(n0 + B * 3, 0.0f);
+    for (size_t b = 0; b < B; ++b) {
+      auto it = s3_cb.net.find(RC.bodies[b]);
+      if (it != s3_cb.net.end()) { RC.pend_net[n0 + b * 3] = it->second.x / dt; RC.pend_net[n0 + b * 3 + 1] = it->second.y / dt; RC.pend_net[n0 + b * 3 + 2] = it->second.z / dt; }
+    }
+    // 충격 행렬은 손가락 행만 (N, R, C, 3)
+    const size_t i0 = RC.pend_imp.size();
+    RC.pend_imp.resize(i0 + R * Cn * 3, 0.0f);
+    for (size_t r = 0; r < R; ++r) {
+      const void* a = RC.rows[r];
+      const size_t rb = r;
+      for (auto& kv : s3_cb.pair_imp) {
+        const void* other = kv.first.first == a ? kv.first.second : (kv.first.second == a ? kv.first.first : nullptr);
+        if (!other) continue;
+        auto ic = RC.col_of.find(other);
+        if (ic == RC.col_of.end()) continue;
+        float* v = &RC.pend_imp[i0 + (rb * Cn + size_t(ic->second)) * 3];
+        v[0] = kv.second.x / dt; v[1] = kv.second.y / dt; v[2] = kv.second.z / dt;
+      }
+    }
+    RC.n_pend++;
+  }
+  void rca_update() {  // 렌더 스텝 끝 (RigidContactAPI.update, usd_utils.py:189 와 같은 규칙을 손가락 행만)
+    namespace st = eng::omni::st;
+    const int B = int(RC.bodies.size()), Cn = int(RC.cols.size());
+    st::ContactIn in{RC.pend_tf.data(), RC.prev_tf.data(), RC.pend_net.data(), RC.b2r.data(), B, B, 1e-6f, 1e-4f};
+    for (size_t r = 0; r < RC.rows.size(); ++r) {
+      const int rb = RC.row_to_rigid[r];
+      for (int c = 0; c < Cn; ++c) {
+        const size_t k = r * Cn + c;
+        const int cb = RC.col_to_rigid[c];
+        int last_awake = -1;
+        uint8_t any_contact = 0;
+        for (int i = 0; i < RC.n_pend; ++i) {
+          const bool ra = st::body_awake_at_step(in, i, rb);
+          const bool ca = cb >= 0 ? st::body_awake_at_step(in, i, cb) : false;
+          if (ra || ca) {
+            last_awake = i;
+            const float* v = &RC.pend_imp[((size_t(i) * RC.rows.size() + r) * Cn + c) * 3];
+            if (v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f) any_contact = 1;
+          }
+        }
+        if (last_awake >= 0) {
+          const float* v = &RC.pend_imp[((size_t(last_awake) * RC.rows.size() + r) * Cn + c) * 3];
+          RC.ccm[k] = (v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f) ? 1 : 0;
+          RC.cm[k] = any_contact;
+        } else {
+          RC.cm[k] = RC.ccm[k];
+        }
+      }
+    }
+    std::vector<float> nt = RC.prev_tf;
+    for (int b = 0; b < B; ++b) st::body_transform_update(in, RC.n_pend, b, nt.data());
+    RC.prev_tf = nt;
+    RC.pend_tf.clear(); RC.pend_net.clear(); RC.pend_imp.clear(); RC.n_pend = 0;
+  }
+  // 광선: 링크 틀 점 -> 세계 (link_pos + quat2mat(q) @ p, torch float32 추정), 시작 x 끝 모든 쌍, 끝점 + 1e-8
+  std::set<std::string> ag_raycast(const AGArm& a) {
+    std::set<std::string> hits;
+    std::vector<PxVec3> S, E;
+    auto world = [&](const std::string& lp, const std::array<float, 3>& p, PxVec3& out) {
+      auto it = actor_by_name.find(lp);
+      if (it == actor_by_name.end()) return false;
+      const PxTransform t = it->second->getGlobalPose();
+      float R[9];
+      const float q[4] = {t.q.x, t.q.y, t.q.z, t.q.w};
+      eng::omni::agf::quat2mat(q, R);
+      out = PxVec3(t.p.x + (R[0] * p[0] + R[1] * p[1] + R[2] * p[2]), t.p.y + (R[3] * p[0] + R[4] * p[1] + R[5] * p[2]),
+                   t.p.z + (R[6] * p[0] + R[7] * p[1] + R[8] * p[2]));
+      return true;
+    };
+    for (auto& sp : a.start) { PxVec3 w; if (world(sp.first, sp.second, w)) S.push_back(w); }
+    for (auto& ep : a.end) { PxVec3 w; if (world(ep.first, ep.second, w)) E.push_back(w + PxVec3(1e-8f)); }
+    PxScene* sc = last_scene;
+    if (!sc) return hits;
+    for (auto& e : E)
+      for (auto& st0 : S) {
+        PxVec3 d = e - st0;
+        const float dist = eng::omni::ag::torch_norm3(d.x, d.y, d.z);
+        if (!(dist > 0.0f)) continue;
+        d = PxVec3(d.x / dist, d.y / dist, d.z / dist);
+        PxRaycastBuffer buf;
+        if (sc->raycast(st0, d, dist, buf) && buf.hasBlock && buf.block.actor) {
+          const char* n = buf.block.actor->getName();
+          if (n && std::string(n).find(AG.robot) == std::string::npos) hits.insert(n);
+        }
+      }
+    return hits;
+  }
+  void ag_decide(const eng::omni::ctrl::DriveTargets& out) {
+    namespace ag = eng::omni::ag;
+    if (!AG.on || !rca_init()) return;
+    ag::Params P;
+    for (size_t ai = 0; ai < AG.arms.size(); ++ai) {
+      AGArm& a = AG.arms[ai];
+      bool applying = false;
+      for (size_t k = 0; k < a.grip_dof.size(); ++k)
+        if (out.set_pos[a.grip_dof[k]] && out.pos[a.grip_dof[k]] < a.grip_hi[k]) applying = true;
+      int in_hand = -1;
+      ag::CandidateIn cin{};
+      std::vector<std::string> cand_path;
+      if (a.st.obj_in_hand < 0 && applying) {
+        // 손가락 접촉 (current_only=False 접촉 행렬), 로봇 링크 제외
+        std::map<std::string, int> fingers_of;
+        for (int f = 0; f < 2; ++f) {
+          const size_t r = ai * 2 + f;
+          for (size_t c = 0; c < RC.cols.size(); ++c)
+            if (RC.cm[r * RC.cols.size() + c] && !AG.robot_links.count(RC.col_name[c])) fingers_of[RC.col_name[c]]++;
+        }
+        const std::set<std::string> rays = ag_raycast(a);
+        auto ie = actor_by_name.find(a.eef);
+        if (ie != actor_by_name.end()) {
+          const PxTransform te = ie->second->getGlobalPose();
+          const float eef[3] = {te.p.x, te.p.y, te.p.z};
+          for (auto& kv : fingers_of) {
+            if (cin.n >= ag::kMaxCand) break;
+            auto il = AG.links.find(kv.first);
+            auto ia = actor_by_name.find(kv.first);
+            const int i = cin.n++;
+            cin.link[i] = i;
+            cin.fingers[i] = uint8_t(kv.second);
+            cin.ray_hit[i] = rays.count(kv.first) ? 1 : 0;
+            cin.obj[i] = il != AG.links.end() ? 0 : -1;
+            cin.dynamic[i] = il != AG.links.end() && il->second.dynamic ? 1 : 0;
+            if (ia != actor_by_name.end()) {
+              const PxTransform tl = ia->second->getGlobalPose();
+              cin.pos[i][0] = tl.p.x; cin.pos[i][1] = tl.p.y; cin.pos[i][2] = tl.p.z;
+            }
+            cand_path.push_back(kv.first);
+          }
+          const int best = ag::calculate_in_hand(cin, eef);
+          in_hand = best;
+        }
+      }
+      int target = -1;
+      const ag::Event ev = ag::step_arm(P, a.st, applying, in_hand, &target);
+      if (ev == ag::EV_RELEASE) {
+        if (a.joint) { a.joint->release(); a.joint = nullptr; }
+        C.joint_event = true;  // _release_grasp -> update_handles
+        AG.n_release++;
+      } else if (ev == ag::EV_TRY_GRASP && target >= 0) {
+        AG.n_try++;
+        const std::string& lp = cand_path[size_t(target)];
+        const AGLink& L = AG.links[lp];
+        const AGObj& O = AG.objs[L.obj];
+        const int jt = ag::joint_type(P, L.mass, O.fixed_base, L.name == O.root, L.nonfixed);
+        if (jt == 0) { AG.n_skip_type++; continue; }
+        auto ie = actor_by_name.find(a.eef), it = actor_by_name.find(lp);
+        PxVec3 cp;
+        AGF.fingers = {a.finger[0], a.finger[1]};
+        AGF.eef = a.eef;
+        if (ie == actor_by_name.end() || it == actor_by_name.end() || !ag_contact_point(it->second, cp)) { AG.n_skip_contact++; continue; }
+        if (jt == 2) fprintf(stderr, "[AG] 구 관절(SphericalJoint) 은 아직 고정 관절로 만든다 — 공식 생성 순서 확인 필요\n");
+        ag_create(ie->second, it->second, cp);
+        a.joint = AGF.joint;
+        ag::grasp_established(a.st, 0, 0);
+        AG.n_grasp++;
+        fprintf(stderr, "[AG] 잡음 post %llu 팔 %s 대상 %s\n", (unsigned long long)(sims + side_offset), a.name.c_str(), lp.c_str());
+      }
+    }
+  }
   void ag_before_simulate() {  // 제어기 step 다음, 목표 쓰기 전 (simulator.py:1579~1587 순서)
     if (AGF.post < 0 || AGF.done) return;
     if (int64_t(sims + side_offset) != AGF.post) return;
@@ -1000,6 +1311,7 @@ class Replayer {
     ct::DriveTargets out{};
     ct::step(C.cfg, C.st, q, out);
     ag_before_simulate();
+    ag_decide(out);
     if (C.joint_event) {  // 이 서브스텝은 flush 가 비었다 (위 설명)
       C.joint_event = false;
       C.dropped_flush++;
@@ -2370,7 +2682,7 @@ class Replayer {
                          : e.cmd == ovd::kCreate ? std::string("create:") + cname(e.cls) : std::string("cmd:") + std::to_string(int(e.cmd));
         C.free_skipped[what]++;
         if (e.cmd == ovd::kSet || e.cmd == ovd::kAddToList || e.cmd == ovd::kRemoveFromList) continue;  // 생성·파괴는 넣는다(객체 대응 유지, 개수만 보고)
-        if (AGF.post >= 0 && e.cmd == ovd::kCreate && is_ext_joint_cls(e.cls)) { C.free_skipped["AG 관절 생성(엔진이 만듦)"]++; skip_objs.insert(e.obj); continue; }
+        if ((AGF.post >= 0 || AG.on) && e.cmd == ovd::kCreate && is_ext_joint_cls(e.cls)) { C.free_skipped["AG 관절 생성(엔진이 만듦)"]++; skip_objs.insert(e.obj); continue; }
         if (e.cmd == ovd::kDestroy && skip_objs.count(e.obj)) continue;
       }
       switch (e.cmd) {
@@ -2560,6 +2872,7 @@ int main(int argc, char** argv) {
     else if (a == "--ctrl" && i + 1 < argc) { if (!R.load_ctrl(argv[++i])) { fprintf(stderr, "--ctrl 입력을 못 읽음\n"); return 1; } }
     else if (a == "--free") R.C.free_run = true;
     else if (a == "--s3-own-contact") R.S3.own = true;
+    else if (a == "--ag" && i + 1 < argc) { if (!R.load_ag(argv[++i])) { fprintf(stderr, "--ag 입력을 못 읽음 (export_ag.py)\n"); return 1; } }
     else if (a == "--ag-force" && i + 4 < argc) {
       R.AGF.post = atoll(argv[++i]); R.AGF.eef = argv[++i]; R.AGF.target = argv[++i];
       std::stringstream ss(argv[++i]); std::string t; while (std::getline(ss, t, ',')) R.AGF.fingers.push_back(t);
