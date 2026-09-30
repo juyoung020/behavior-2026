@@ -29,3 +29,4 @@ engine_test(test_slice_capture test_slice_capture.cpp)
 engine_test(test_dice_capture test_dice_capture.cpp)
 engine_test(test_spawn_exec test_spawn_exec.cpp)
 engine_test(test_reload test_reload.cpp)  # 재적재 왕복 (removing_objects dump→load), 정답 gen_reload_ref.py / reload_events_to_npy.py
+engine_test(test_edit_window test_edit_window.cpp)  # 편집 창 (env_step.h 12.3) 입자 뜨기·되돌리기·차례
