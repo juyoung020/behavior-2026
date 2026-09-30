@@ -210,8 +210,8 @@ void g1_before_simulate(PxScene* scene, PxPhysics* phys, uint64_t sim) {
              (unsigned long long)sim, fromFile.cms.size(), got, noMani, miss);
     }
   }
+  G.initMaterials(*phys);  // 스텝마다 (판 도중 새 물체가 재질을 더하거나 바꾼다 — 양파 658 "재질 번호가 표 밖")
   if (!G.inited) {
-    G.initMaterials(*phys);
     if (dbg) fprintf(stderr, "[g1] 재질 %zu\n", G.mats.size());
     G.tolLength = phys->getTolerancesScale().length;
     G.inited = true;

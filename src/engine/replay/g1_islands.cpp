@@ -30,9 +30,9 @@ enum Op : uint32_t {
   OP_ADD_NODE, OP_REMOVE_NODE, OP_ADD_CM, OP_PREALLOC_CMS, OP_ADD_PREALLOC_CM, OP_ADD_CONSTRAINT, OP_ACTIVATE, OP_DEACTIVATE, OP_SLEEP,
   OP_REMOVE_CONN, OP_FIRST_PASS, OP_ADD_SPEC_ACT, OP_SECOND1, OP_SECOND2, OP_THIRD, OP_SET_CONNECTED, OP_SET_DISCONNECTED, OP_DEACT_EDGE,
   OP_SET_RIGID_CM, OP_CLEAR_RIGID_CM, OP_SET_KINEMATIC, OP_SET_DYNAMIC, OP_DELAYED_DIRTY, OP_SIM_REMOVE_DESTROYED, OP_SIM_PROCESS_LOST,
-  OP_POST_THIRD, OP_SECOND,
+  OP_POST_THIRD, OP_SECOND, OP_FLUSH,
 };
-static_assert(OP_SECOND == eng::scene::ISL_SECOND && OP_THIRD == eng::scene::ISL_THIRD, "기록 번호 = 순서기 번호");
+static_assert(OP_FLUSH == eng::scene::ISL_FLUSH && OP_THIRD == eng::scene::ISL_THIRD, "기록 번호 = 순서기 번호");
 struct Rec {
   uint32_t op;
   uint32_t sim;  // 0 = 관리자, 1 = 정확, 2 = 추측
@@ -57,8 +57,8 @@ static void rec(Rec r) {
   if (tr) {
     static const char* nm[] = {"addNode", "removeNode", "addCM", "preallocCMs", "addPreallocCM", "addConstraint", "activateNode", "deactivateNode", "putNodeToSleep",
                                "removeConnection", "firstPass", "addSpecAct", "second1", "second2", "third", "setConnected", "setDisconnected", "deactEdge",
-                               "setRigidCM", "clearRigidCM", "setKinematic", "setDynamic", "delayedDirty", "simRemoveDestroyed", "simProcessLost", "postThird", "second"};
-    fprintf(stderr, "[isl] %s sim%u a=%u b=%u n=%zu\n", r.op < 27 ? nm[r.op] : "?", r.sim, r.a, r.b, r.list.size());
+                               "setRigidCM", "clearRigidCM", "setKinematic", "setDynamic", "delayedDirty", "simRemoveDestroyed", "simProcessLost", "postThird", "second", "flush"};
+    fprintf(stderr, "[isl] %s sim%u a=%u b=%u n=%zu\n", r.op < 28 ? nm[r.op] : "?", r.sim, r.a, r.b, r.list.size());
   }
   std::lock_guard<std::mutex> l(gRecM);
   gRecs.push_back(std::move(r));
@@ -229,6 +229,12 @@ void W(_ZN5physx2IG9IslandSim16processLostEdgesERKNS_7PxArrayINS_11PxNodeIndexEN
     rec(Rec{OP_SIM_PROCESS_LOST, simId(s), allow, permit, lim, 0, 0, 0, 0, l, 0});
   }
   R(_ZN5physx2IG9IslandSim16processLostEdgesERKNS_7PxArrayINS_11PxNodeIndexENS_21PxReflectionAllocatorIS3_EEEEbbj)(s, nodes, allow, permit, lim);
+}
+// PxScene::flushSimulation -> Sc::Scene::flush (ScScene.cpp:1598): 창에서 지난 스텝 잃은 닿음 쌍을 처리한다(processLostTouchPairs) -> 순서기가 여기서 같은 일을
+void R(_ZN5physx2Sc5Scene5flushEb)(Sc::Scene*, bool);
+void W(_ZN5physx2Sc5Scene5flushEb)(Sc::Scene* s, bool send) {
+  rec(Rec{OP_FLUSH, 0, send ? 1u : 0u, 0, 0, 0, 0, 0, 0, {}, 0});
+  R(_ZN5physx2Sc5Scene5flushEb)(s, send);
 }
 }  // extern "C"
 

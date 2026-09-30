@@ -28,6 +28,7 @@ void g1_islands_compare_store(const sc2::IslandStore& O, uint64_t* n, uint64_t* 
 ss::ScPairs* g1_pairs_M();
 void g1_pairs_actor_active(std::vector<int8_t>& out);
 void g1_pairs_wake(sc2::HostWake& out);
+void g1_pairs_lost_touch_px(std::vector<int64_t>& out);
 bool g1_scene_ours(uint64_t sim, std::vector<int32_t>& created, std::vector<int32_t>& createdTrigger, std::vector<int32_t>& removed,
                    std::vector<uint8_t>& npStatus, std::vector<uint8_t>& npPatches);
 
@@ -59,8 +60,9 @@ struct Host {
   bool ours = false;  // G1_HOST_OURS: 넓은·좁은 단계 결과도 우리 것 (contact 장면 그림자 G1_SCENE 에서)
   uint64_t oursSteps = 0, oursMissing = 0;
   Stat bpnp;
+  bool dump = false;  // 이번 simulate 진단 출력 (G1_HOST_DUMP)
   int neg = 0;  // G1_HOST_NEG: 1 = 활성화 몰이 빼기, 2 = 재우기 몰이 빼기, 3 = 풀이 뒤 깸/잠 요청 빼기 (비교가 살아 있나)
-  uint64_t nWakeOps = 0, winActMatched = 0, extInSim = 0;
+  uint64_t flushes = 0, nWakeOps = 0, winActMatched = 0, extInSim = 0;
   uint64_t wakeReq = 0, woken = 0, slept = 0, nActs = 0, winChanged = 0;
 } H;
 
@@ -154,6 +156,13 @@ void g1_host_before(physx::PxScene* scene, uint64_t sim) {
     return;
   }
   H.boundary = g1_islands_rec_count();
+  if (getenv("G1_HOST_DUMP") && (long long)sim == atoll(getenv("G1_HOST_DUMP"))) {
+    std::vector<int64_t> lt;
+    g1_pairs_lost_touch_px(lt);
+    for (size_t k = 0; k + 3 < lt.size(); k += 4)
+      printf("  [PhysX 잃은 닿음] 행위자 %lld(번호 %lld 지움 %lld) - %lld(번호 %lld 지움 %lld)\n", (long long)lt[k], (long long)(lt[k + 2] & 0xffffffffff),
+             (long long)(lt[k + 2] >> 40), (long long)lt[k + 1], (long long)(lt[k + 3] & 0xffffffffff), (long long)(lt[k + 3] >> 40));
+  }
   refreshActive(true);
   g1_pairs_wake(H.wake);  // 창의 API 깨우기·재우기가 바꾼 값 (바깥)
 }
@@ -199,6 +208,7 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   }
   H.cursor = end;
   L.clearStep();
+  H.dump = getenv("G1_HOST_DUMP") && (long long)H.curSim == atoll(getenv("G1_HOST_DUMP"));
   std::vector<sc2::PairsAct> acts;
   size_t gi = 0;  // 다음에 맞출 우리 호출
   // 우리 마디 (simulate 안): PhysX 기록의 섬 마디가 허락한 것까지만 앞당겨 돈다
@@ -227,8 +237,19 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
     }
   };
   auto run = [](Ctx& c) {
+    if (getenv("G1_HOST_LTLOG")) printf("  [잃은 닿음 목록] sim %llu 마디 %d 앞: %zu 쌍\n", (unsigned long long)H.curSim, c.next, c.L->lostTouch.size());
     switch (c.next) {
-      case PH_BP: sc2::hostPairsBP(*c.P, *c.S, c.L); break;
+      case PH_BP:
+        if (H.dump) {
+          for (const auto& pr : c.L->lostTouch) {
+            const ss::Actor& A0 = c.P->actors[size_t(pr.a0)];
+            const ss::Actor& A1 = c.P->actors[size_t(pr.a1)];
+            printf("  [잃은 닿음] 행위자 %d(번호 %u/%u 노드 %llx 활성 %d) - %d(번호 %u/%u 노드 %llx 활성 %d)\n", pr.a0, pr.id0, A0.actorID, (unsigned long long)A0.nodeIndex,
+                   int(c.L->isActorActive(pr.a0)), pr.a1, pr.id1, A1.actorID, (unsigned long long)A1.nodeIndex, int(c.L->isActorActive(pr.a1)));
+          }
+        }
+        sc2::hostPairsBP(*c.P, *c.S, c.L);
+        break;
       case PH_NP: sc2::hostPairsNP(*c.P, *c.S); break;
       case PH_LOST: sc2::hostPairsLost(*c.P, *c.S); break;
       case PH_LOST3: sc2::hostPairsLost3(*c.P); break;
@@ -240,6 +261,12 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
         break;
       }
       case PH_AFTER: {
+        if (H.dump)
+          for (const sc2::HostBodyWake& b : H.wake.bodies) {
+            const sc2::HostBodyWake* q = const_cast<sc2::HostWake*>(c.postW)->body(b.node);
+            if (q && (b.solveWc != q->solverWc || b.solveWc == 0.0f))
+              printf("  [깸] 노드 %llx 풀이앞 %.9g 풀이뒤 %.9g 스텝끝 %.9g 운동학 %d 링크 %d\n", (unsigned long long)b.node, b.solveWc, q->solverWc, q->wc, b.kinematic, b.link);
+          }
         const size_t n0 = c.L->out.size();
         if (H.neg != 3) sc2::hostAfterIntegration(*c.M, *c.P, *c.L, H.wake, *c.postW);  // 음성 대조 3: 풀이 뒤 깸/잠 요청 빼기
         H.nWakeOps += c.L->out.size() - n0;
@@ -271,13 +298,26 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   };
   // ---- 창 (simulate 밖): 쌍 관리층 앞 연산은 모아 두고 PhysX 차례대로 넣는다
   if (!H.skipPre) {
+    const size_t lt0 = L.lostTouch.size();
     L.defer = true;
     sc2::pairsPreOps(P, S);
     L.defer = false;
+    if (getenv("G1_HOST_LTLOG") && L.lostTouch.size() != lt0) {
+      printf("  [잃은 닿음 목록] sim %llu 창 앞 연산이 %zu 쌍 더함 (연산 %zu:", (unsigned long long)H.curSim, L.lostTouch.size() - lt0, S.ops.size());
+      for (const sc2::PairsPreOp& o : S.ops) printf(" %d(%d,%d)", o.type, o.a, o.b);
+      printf(")\n");
+    }
   }
   H.skipPre = false;
   if (H.active.size() < P.actors.size()) H.active.resize(P.actors.size(), 0);
   for (const sc2::IslOp& r : win) {
+    if (r.op == sc2::ISL_FLUSH) {  // PxScene::flushSimulation: 잃은 닿음 쌍을 창에서 처리 (깨움은 모아 두고 뒤따르는 기록과 맞춘다)
+      ++H.flushes;
+      L.defer = true;
+      sc2::hostProcessLostTouchPairs(P, L);
+      L.defer = false;
+      continue;
+    }
     if (r.op == sc2::ISL_ACTIVATE && gi < L.out.size() && L.out[gi].op == sc2::ISL_ACTIVATE && L.out[gi].a == r.a) {
       ++H.winActMatched;
       matchOne(r, false);
@@ -413,8 +453,8 @@ void g1_host_report() {
   if (H.ours)
     printf("  넓은·좁은 단계 결과 = 우리 contact 장면 단위: %" PRIu64 " 스텝 (없어 PhysX 기록 쓴 스텝 %" PRIu64 "), 참고 PhysX 기록과 비교 %" PRIu64 " 다름 %" PRIu64 " %s\n", H.oursSteps,
            H.oursMissing, H.bpnp.n, H.bpnp.bad, H.bpnp.first.c_str());
-  printf("  깨움/잠 요청: afterIntegration %" PRIu64 ", 창에서 우리 것과 맞춘 activateNode %" PRIu64 ", simulate 안 바깥 호출 %" PRIu64 "\n", H.nWakeOps,
-         H.winActMatched, H.extInSim);
+  printf("  깨움/잠 요청: afterIntegration %" PRIu64 ", 창에서 우리 것과 맞춘 activateNode %" PRIu64 " (flushSimulation %" PRIu64 " 번), simulate 안 바깥 호출 %" PRIu64 "\n",
+         H.nWakeOps, H.winActMatched, H.flushes, H.extInSim);
   printf("  몰이 횟수: 활성화 호출 %" PRIu64 ", 깨움 노드 %" PRIu64 ", 재운 노드 %" PRIu64 ", internalWakeUp %" PRIu64 ", 창에서 바뀐 활성 표시 %" PRIu64 "\n", H.nActs,
          H.woken, H.slept, H.wakeReq, H.winChanged);
 }

@@ -805,6 +805,20 @@ void g1_pairs_actor_active(std::vector<int8_t>& out) {
     }
   }
 }
+// 진단 (순서기 그림자): PhysX 의 잃은 닿음 쌍 목록 (행위자 번호, 쌍 행위자 번호, 지워짐 표시)
+void g1_pairs_lost_touch_px(std::vector<int64_t>& out) {
+  out.clear();
+  if (!PS.sc) return;
+  const auto& L = PS.sc->mLostTouchPairs;
+  for (PxU32 i = 0; i < L.size(); ++i) {
+    const auto a = PS.actorIndex.find(L[i].body1);
+    const auto b = PS.actorIndex.find(L[i].body2);
+    out.push_back(a == PS.actorIndex.end() ? -1 : a->second);
+    out.push_back(b == PS.actorIndex.end() ? -1 : b->second);
+    out.push_back(int64_t(L[i].body1ID) | (int64_t(PS.sc->mLostTouchPairsDeletedBodyIDs.boundedTest(L[i].body1ID) ? 1 : 0) << 40));
+    out.push_back(int64_t(L[i].body2ID) | (int64_t(PS.sc->mLostTouchPairsDeletedBodyIDs.boundedTest(L[i].body2ID) ? 1 : 0) << 40));
+  }
+}
 // 순서기 그림자: 몸체·관절체 깸 카운터 (Sc 층 값). 노드 원값 순으로
 void g1_pairs_wake(eng::scene::HostWake& out) {
   out.bodies.clear();

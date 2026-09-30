@@ -29,12 +29,12 @@ enum IslOpCode : uint32_t {
   ISL_ADD_NODE, ISL_REMOVE_NODE, ISL_ADD_CM, ISL_PREALLOC_CMS, ISL_ADD_PREALLOC_CM, ISL_ADD_CONSTRAINT, ISL_ACTIVATE, ISL_DEACTIVATE, ISL_SLEEP,
   ISL_REMOVE_CONN, ISL_FIRST_PASS, ISL_ADD_SPEC_ACT, ISL_SECOND1, ISL_SECOND2, ISL_THIRD, ISL_SET_CONNECTED, ISL_SET_DISCONNECTED, ISL_DEACT_EDGE,
   ISL_SET_RIGID_CM, ISL_CLEAR_RIGID_CM, ISL_SET_KINEMATIC, ISL_SET_DYNAMIC, ISL_DELAYED_DIRTY, ISL_SIM_REMOVE_DESTROYED, ISL_SIM_PROCESS_LOST,
-  ISL_POST_THIRD, ISL_SECOND, ISL_OP_COUNT
+  ISL_POST_THIRD, ISL_SECOND, ISL_FLUSH, ISL_OP_COUNT  // FLUSH = Sc::Scene::flush (PxScene::flushSimulation, 창)
 };
 inline const char* islOpName(uint32_t op) {
   static const char* nm[] = {"addNode", "removeNode", "addCM", "preallocCMs", "addPreallocCM", "addConstraint", "activateNode", "deactivateNode", "putNodeToSleep",
                              "removeConnection", "firstPass", "addSpecAct", "second1", "second2", "third", "setConnected", "setDisconnected", "deactEdge",
-                             "setRigidCM", "clearRigidCM", "setKinematic", "setDynamic", "delayedDirty", "simRemoveDestroyed", "simProcessLost", "postThird", "second"};
+                             "setRigidCM", "clearRigidCM", "setKinematic", "setDynamic", "delayedDirty", "simRemoveDestroyed", "simProcessLost", "postThird", "second", "flush"};
   return op < ISL_OP_COUNT ? nm[op] : "?";
 }
 // 한 호출. 칸 뜻은 기록과 같다: sim(0 관리자 1 정확 2 추측), a/b/c = 번호·종류, p/q = 노드(PxNodeIndex 원값), list, result = 돌려준 값.
@@ -136,7 +136,9 @@ struct LiveIslands : public ss::IslandHooks {
   std::vector<uint8_t> applied;            // out 과 같은 길이: 섬 관리에 넣었나 (defer 때는 부르는 쪽이 차례에 맞춰 넣는다)
   uint32_t deferBad = 0;                   // defer 중 돌려받을 값이 있는 호출 (창에서는 없어야)
   std::vector<int32_t> wakeReq;            // internalWakeUp 받은 행위자 (섬 activateNode 는 아직 바깥 기록)
-  std::vector<std::pair<int32_t, int32_t>> lostTouch;  // Scene::mLostTouchPairs (다음 스텝 넓은 단계 뒤에 처리)
+  struct LostTouch { int32_t a0, a1; uint32_t id0, id1; };  // Sc::SimpleBodyPair (행위자 + 그때의 행위자 번호)
+  std::vector<LostTouch> lostTouch;       // Scene::mLostTouchPairs (다음 스텝 넓은 단계 뒤에 처리)
+  std::vector<uint32_t> releasedIds;      // Scene::markReleasedBodyIDForLostTouch (창에서 지운 몸체의 행위자 번호, 엔진 편집 API 가 채움)
 
   void applyOp(IslOp& r) {
     switch (r.op) {
@@ -249,7 +251,7 @@ struct LiveIslands : public ss::IslandHooks {
       wakeBody(A.nodeIndex, A.isKinematic());
     }
   }
-  void addToLostTouchList(int32_t a0, int32_t a1) override { lostTouch.push_back({a0, a1}); }
+  void addToLostTouchList(int32_t a0, int32_t a1) override { lostTouch.push_back({a0, a1, P->actors[size_t(a0)].actorID, P->actors[size_t(a1)].actorID}); }
 };
 
 // ---- Sc 활성 몰이
@@ -319,31 +321,37 @@ inline void hostDeactivateEdges(ig::IslandManager& M, ss::ScPairs& P, std::vecto
 }
 
 // ---- ScPipeline.cpp:853 processLostTouchPairs (postBroadPhaseStage2, 다음 simulate 의 넓은 단계 뒤): 지난 스텝 잃은 닿음 쌍 중
-//      한쪽만 자고 있으면 둘 다 깨운다(둘 다 자면 그대로). 지워진 행위자가 끼면 남은 쪽을 깨운다 — 지워짐 = 모양이 하나도 안 남음 (추정: PhysX 는 행위자 번호 표)
+//      한쪽만 자고 있으면 둘 다 깨운다(둘 다 자면 그대로). 지워진 몸체가 끼면 남은 쪽만 깨운다.
+//      지워짐 = 그 쌍을 적을 때의 행위자 번호가 풀린 번호 표(ScScene.cpp:1687 removeBody)에 있음. 표를 모르는 호출자(그림자)를 위해
+//      행위자 칸의 번호가 바뀌었거나 모양이 하나도 안 남은 경우도 지워짐으로 본다.
 inline uint32_t hostProcessLostTouchPairs(ss::ScPairs& P, LiveIslands& L) {
   uint32_t deleted = 0;
-  const std::vector<std::pair<int32_t, int32_t>> pairs = L.lostTouch;
+  const std::vector<LiveIslands::LostTouch> pairs = L.lostTouch;
   L.lostTouch.clear();
-  auto alive = [&](int32_t a) {
+  auto released = [&](int32_t a, uint32_t id) {
+    for (uint32_t r : L.releasedIds)
+      if (r == id) return true;
+    if (P.actors[size_t(a)].actorID != id) return true;
     for (uint32_t e = 0; e < P.shapes.size(); ++e)
-      if (P.shapes[e].valid && P.shapes[e].actor == a) return true;
-    return false;
+      if (P.shapes[e].valid && P.shapes[e].actor == a) return false;
+    return true;
   };
-  for (const auto& pr : pairs) {
-    const bool d1 = !alive(pr.first), d2 = !alive(pr.second);
+  for (const LiveIslands::LostTouch& pr : pairs) {
+    const bool d1 = released(pr.a0, pr.id0), d2 = released(pr.a1, pr.id1);
     if (d1 || d2) {
       ++deleted;
-      if (!d1) L.internalWakeUp(pr.first);
-      if (!d2) L.internalWakeUp(pr.second);
+      if (!d1) L.internalWakeUp(pr.a0);
+      if (!d2) L.internalWakeUp(pr.a1);
       continue;
     }
-    const bool a1 = L.isActorActive(pr.first), a2 = L.isActorActive(pr.second);
+    const bool a1 = L.isActorActive(pr.a0), a2 = L.isActorActive(pr.a1);
     if (!a1 && !a2) continue;
     if (!a1 || !a2) {
-      L.internalWakeUp(pr.first);
-      L.internalWakeUp(pr.second);
+      L.internalWakeUp(pr.a0);
+      L.internalWakeUp(pr.a1);
     }
   }
+  L.releasedIds.clear();
   return deleted;
 }
 

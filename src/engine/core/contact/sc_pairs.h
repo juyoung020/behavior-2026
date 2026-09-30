@@ -1391,7 +1391,10 @@ class ScPairs {
   SCHD void lostTouchReportsOne(int32_t it, bool wakeOnLostTouch, int32_t removedElement) {
     const Interaction& I = inters[size_t(it)];
     const bool hasTouch = (I.siFlags & SiFlag::HAS_TOUCH) != 0;
-    const bool touchKnown = (I.siFlags & SiFlag::TOUCH_KNOWN) != 0;
+    // ShapeInteraction::hasKnownTouchState (ScShapeInteraction.h:329): 관리자가 있으면 관리자 작업 단위의 닿음 상태(좁은 단계가 한 번이라도 돌았나),
+    // 없을 때만 상호작용 표시 (09-30 리드: 표시만 봐서 아직 한 번도 안 닿은 쌍을 "모름"으로 보고 깨우기 목록에 더 넣었다 — 양파 961)
+    const bool touchKnown = I.cm >= 0 ? (cmsData[size_t(I.cm)].statusFlags & (WuStatus::eHAS_TOUCH | WuStatus::eHAS_NO_TOUCH)) != 0
+                                      : (I.siFlags & SiFlag::TOUCH_KNOWN) != 0;
     if (hasTouch || !touchKnown) {
       if (wakeOnLostTouch) {
         const Actor& b1 = actors[size_t(I.actor1)];
