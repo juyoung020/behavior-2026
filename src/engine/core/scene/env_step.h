@@ -1,0 +1,186 @@
+// env 한 스텝 함수 + 편집 창 약속 (문서 12.3, 리드): step_host.h 의 조각(섬↔쌍 관리층 직접 연결, Sc 활성 몰이, 깸/잠 요청)과
+// contact 장면 단위(scene_step.h: 우리 넓은 단계·쌍 관리·좁은 단계), Sc 입력 조각(sc_scene.h)을 PhysX Sc::Scene::simulate 차례로 한 함수에 묶는다.
+// 기록 없이 돈다. 모듈이 아직 안 붙은 자리는 호출자 갈고리(EnvSolve)다:
+//   풀이·관절체: EnvSolve::solve — 활성 섬(isl.M.accurate)·접촉 입력(C.S 좁은 단계 칸 + contactSolverInput)을 받아 풀고,
+//                풀이 뒤 깸 카운터(post: 강체 solverWc, 링크 wc, 관절체 wc)를 채우고 ScScene::updateActorCached 로 자세를 적는다.
+// 차례 (G1_ISL_TRACE 로 확인한 PhysX 차례, 순서기 그림자 replay/g1_host.cpp 에서 다섯 기록 전 구간 다름 0):
+//   넓은 단계(입력 = ScScene 경계 상자·접촉 거리·바뀜 비트) -> 잃은 닿음 쌍 -> dirty·새 겹침(섬 넣기) -> 섬 1차 -> 추측 추가 활성 + 간선 활성
+//   -> 좁은 단계·새 닿음·연결 -> 섬 2차 ①② + 풀이 앞 깸 카운터 + 깨우기 -> 풀이(EnvSolve) -> 사라진 겹침·잃은 닿음 -> 섬 3차
+//   -> destroyManagers·processLostContacts3 -> 번호 돌려주기 -> 재우기·상호작용 재우기 -> afterIntegration 깸/잠 요청 -> 스텝 끝
+// 호스트 전용. 판 N 개면 판마다 하나씩 (G2 는 같은 차례를 GPU 커널로).
+#pragma once
+#include <cstring>
+#include <vector>
+
+#include "core/scene/env_runtime.h"
+#include "core/scene/island_state.h"
+#include "core/scene/sc_scene.h"
+#include "core/scene/step_host.h"
+
+namespace eng {
+namespace scene {
+
+struct EnvStep;
+
+// 풀이·관절체 자리
+struct EnvSolve {
+  virtual ~EnvSolve() {}
+  virtual void solve(EnvStep& E, HostWake& post) = 0;
+};
+
+// Sc 편집(sc_scene.h)이 넓은 단계·섬·쌍 관리층으로 퍼지는 길 — PhysX 가 편집 API 안에서 부르는 차례 그대로 (sc_scene.h 가 차례를 정함)
+struct EnvModules : public ScModules {
+  EnvStep* E = nullptr;
+  bool bpAdd(const BpOp& o) override;
+  bool bpRemove(uint32_t index) override;
+  uint64_t islandAddNode(bool awake, bool kine) override;
+  void islandDeactivateNode(uint64_t node) override;
+  void islandRemoveNode(uint64_t node) override;
+  void pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) override;
+  void bodyReleased(uint32_t actorID) override;
+};
+
+struct EnvStep {
+  EnvContact* C = nullptr;     // 넓은 단계(C->bp) + 쌍 관리층·좁은 단계(C->S)
+  IslandStore* isl = nullptr;  // 섬 관리 (정확·추측)
+  ScScene* sc = nullptr;       // Sc 입력 조각 (경계 상자·변환 캐시·접촉 거리·바뀜 비트, 편집 API)
+  EnvSolve* solver = nullptr;
+  LiveIslands live;
+  HostWake wake;               // 깸 카운터 표 (풀이 모듈과 주고받음)
+  std::vector<uint8_t> active; // 쌍 관리층 행위자별 ActorSim::isActive
+  EnvModules mods;
+  bool contactDistChanged = false;  // Sc mHasContactDistanceChanged (편집 API 가 켬)
+  uint64_t steps = 0;
+  // 묶기 (적재 뒤 한 번)
+  void bind() {
+    live.M = &isl->M;
+    live.P = &C->S->pairs;
+    live.active = &active;
+    live.wake = &wake;
+    C->S->pairs.islands = &live;
+    mods.E = this;
+    if (active.size() < C->S->pairs.actors.size()) active.resize(C->S->pairs.actors.size(), 0);
+  }
+  ScModules& modules() { return mods; }
+};
+
+inline bool EnvModules::bpAdd(const BpOp& o) {
+  BpRuntime& bp = *E->C->bp;
+  bp.bounds->initEntry(o.index);
+  px::Bp::AggregateHandle ea = EPX_INVALID_U32;  // 관절체 링크 모양은 집합체 안 (BpRuntime::apply 와 같은 표)
+  if (o.agg != 0xffffffffu) {
+    auto it = bp.aggMap.find(o.agg);
+    ea = it == bp.aggMap.end() ? EPX_INVALID_U32 : it->second;
+  }
+  return bp.m->addBounds(o.index, o.contactDistance, px::Bp::FilterGroup::Enum(o.group), contact::userOfElem(o.index), ea,
+                         px::Bp::ElementType::Enum(o.volumeType), o.env);
+}
+inline bool EnvModules::bpRemove(uint32_t index) { return E->C->bp->m->removeBounds(index); }
+inline uint64_t EnvModules::islandAddNode(bool awake, bool kine) { return ig::addNode(E->isl->M, awake, kine, ig::eRIGID_BODY_TYPE, 0); }
+inline void EnvModules::islandDeactivateNode(uint64_t node) { ig::deactivateNode(E->isl->M, uint32_t(node & 0xffffffffu)); }
+inline void EnvModules::islandRemoveNode(uint64_t node) { ig::removeNode(E->isl->M, uint32_t(node & 0xffffffffu)); }
+inline void EnvModules::pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) { E->C->S->pairs.onVolumeRemoved(int32_t(elem), wakeOnLostTouch); }
+inline void EnvModules::bodyReleased(uint32_t actorID) { E->live.releasedIds.push_back(actorID); }
+
+// 넓은 단계 결과를 요소 번호 쌍으로 (scene_step.h contactBroadPhase 의 grab 과 같음)
+inline void envGrabOverlaps(contact::ContactScene& S) {
+  auto grab = [&](bool created, px::Bp::ElementType::Enum type, std::vector<int32_t>& out) {
+    out.clear();
+    px::PxU32 n = 0;
+    const px::Bp::AABBOverlap* o = created ? S.aabb->getCreatedOverlaps(type, n) : S.aabb->getDestroyedOverlaps(type, n);
+    for (px::PxU32 i = 0; i < n; ++i) {
+      out.push_back(contact::elemOfUser(o[i].mUserData0));
+      out.push_back(contact::elemOfUser(o[i].mUserData1));
+    }
+  };
+  grab(true, px::Bp::ElementType::eSHAPE, S.createdShape);
+  grab(true, px::Bp::ElementType::eTRIGGER, S.createdTrigger);
+  grab(false, px::Bp::ElementType::eSHAPE, S.destroyedShape);
+  grab(false, px::Bp::ElementType::eTRIGGER, S.destroyedTrigger);
+}
+
+// 한 스텝. 넓은 단계 입력 = Sc 칸(모양) + 집합체 칸은 AABB 관리자가 든 값 그대로 (집합체 칸은 입력이 아님 — 문서 3단 ①), 좁은 단계 변환 캐시·접촉 거리 = Sc 칸
+struct EnvPhases {
+  EnvStep& E;
+  contact::ContactScene& S;
+  void bp() {
+    ScScene& sc = *E.sc;
+    BpRuntime& bpr = *E.C->bp;
+    const uint32_t nb = uint32_t(bpr.bounds->size() > sc.bounds.size() ? bpr.bounds->size() : sc.bounds.size());
+    std::vector<px::PxBounds3> b(nb);
+    for (uint32_t e = 0; e < nb; ++e) {
+      const bool isShape = e < sc.shapes.size() && sc.shapes[e].alive;
+      if (isShape) b[e] = sc.bounds[e];
+      else if (e < bpr.bounds->size()) b[e] = bpr.bounds->begin()[e];
+    }
+    bool changed = false;
+    for (uint32_t w : sc.changed) changed = changed || w != 0;
+    bpr.step(b.data(), nb, changed, sc.contactDist.data(), uint32_t(sc.contactDist.size()), sc.changed.data(), uint32_t(sc.changed.size()),
+             E.contactDistChanged);
+    E.contactDistChanged = false;
+    envGrabOverlaps(S);
+    contact::contactPairs(S);
+  }
+  void np() {
+    ScScene& sc = *E.sc;
+    std::vector<contact::CachedTransform> tc(sc.cache.size());
+    for (size_t k = 0; k < tc.size(); ++k) {
+      tc[k].transform = px::PxTransform32(sc.cache[k]);
+      tc[k].flags = sc.cacheFlags[k];
+    }
+    contact::contactNarrowPhase(S, tc.data(), sc.contactDist.data());
+  }
+  void solve(HostWake& post) {
+    if (E.solver) E.solver->solve(E, post);
+  }
+  void lost() {
+    ss::ScPairs& M = S.pairs;
+    M.processLostContacts(S.destroyedShape.data(), uint32_t(S.destroyedShape.size() / 2), S.destroyedTrigger.data(), uint32_t(S.destroyedTrigger.size() / 2));
+    M.processNarrowPhaseLostTouchEventsIslands();
+    M.processNarrowPhaseLostTouchEvents();
+    M.processLostContacts2();
+    M.lostTouchReports();
+    M.unregisterInteractions();
+  }
+  void lost3() {
+    S.pairs.destroyManagers();
+    S.pairs.processLostContacts3();
+  }
+  std::vector<PairsAct>* acts() { return nullptr; }
+};
+inline void envStep(EnvStep& E) {
+  contact::ContactScene& S = *E.C->S;
+  E.live.clearStep();
+  if (E.active.size() < S.pairs.actors.size()) E.active.resize(S.pairs.actors.size(), 0);
+  EnvPhases ph{E, S};
+  hostSimulateOrder(E.isl->M, S.pairs, E.live, E.active, E.wake, ph);
+  contact::contactBroadPhaseEnd(S);
+  E.C->bp->endStep();
+  E.sc->endStep();
+  std::fill(E.sc->changed.begin(), E.sc->changed.end(), 0u);
+  ++E.steps;
+}
+
+// ---- 편집 창 (스텝 사이) — 공식 OmniGibson 물체 지우기(removing_objects) 차례. particles·omni 가 이 자리에 얹는다.
+//   (1) 상태 뜨기(dump_state) -> (2) 지울 물체를 무덤 자리(100,100,100)로 순간이동 -> (3) 물리 한 스텝 더(og.sim.step_physics, 제어·렌더 없음)
+//   -> (4) 떼기·지우기·새 물체 넣기·거르기 다시 -> (5) 상태 되돌리기(load_state)
+// 모양·몸체 편집은 ScScene API(removeActor / detachShape / addActor / attachShape / resetFiltering)를 E.modules() 와 함께 부른다:
+// ScScene 이 PhysX 차례(모양마다 넓은 단계 빼기 -> 쌍 관리층 onVolumeRemoved, 몸체 번호 풀기 -> 섬 노드 빼기)로 모듈을 부른다.
+struct EditWindow {
+  virtual ~EditWindow() {}
+  virtual void dumpState(EnvStep& E) { (void)E; }        // (1)
+  virtual void teleportToGrave(EnvStep& E) { (void)E; }  // (2) 강체 API 자세 쓰기 (core/joints/rigid_api.h setGlobalPose, autowake)
+  virtual bool extraPhysicsStep() const { return false; } // (3) true 면 envEditWindow 가 envStep 한 번
+  virtual void edit(EnvStep& E) { (void)E; }             // (4)
+  virtual void loadState(EnvStep& E) { (void)E; }        // (5) 자세·속도·관절 쓰기
+};
+inline void envEditWindow(EnvStep& E, EditWindow& w) {
+  w.dumpState(E);
+  w.teleportToGrave(E);
+  if (w.extraPhysicsStep()) envStep(E);
+  w.edit(E);
+  w.loadState(E);
+}
+
+}  // namespace scene
+}  // namespace eng

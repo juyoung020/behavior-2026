@@ -44,6 +44,7 @@
 #include "core/scene/pairs_log.h"
 #include "core/scene/omni_filter.h"
 #include "core/scene/env_runtime.h"
+#include "core/scene/env_step.h"  // 한 env 스텝 함수 (G1_ENV)
 #include "core/scene/sc_scene.h"
 #include "omni_filter.h"
 #include "g1_hooks.h"

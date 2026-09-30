@@ -57,6 +57,10 @@ struct ScModules {
   virtual uint64_t islandAddNode(bool awake, bool kine) = 0;  // SimpleIslandManager::addNode(.., eRIGID_BODY_TYPE, ..) -> PxNodeIndex
   virtual void islandDeactivateNode(uint64_t node) = 0;
   virtual void islandRemoveNode(uint64_t node) = 0;
+  // 쌍 관리층 (편집 창의 떼기·지우기): 모양이 넓은 단계에서 빠진 바로 뒤 NPhaseCore::onVolumeRemoved (ScShapeSimBase.cpp:173 internalRemoveFromBroadPhase)
+  virtual void pairsVolumeRemoved(uint32_t elem, bool wakeOnLostTouch) { (void)elem; (void)wakeOnLostTouch; }
+  // 몸체 지움: Scene::markReleasedBodyIDForLostTouch (ScScene.cpp:1687) — 잃은 닿음 쌍의 "지워짐" 판정 (step_host.h LiveIslands::releasedIds)
+  virtual void bodyReleased(uint32_t actorID) { (void)actorID; }
 };
 
 struct ScShapeRec {
@@ -222,9 +226,12 @@ struct ScScene {
     return e;
   }
   // 모양 떼기 (RigidCore::removeShapeFromScene -> Scene::removeShape_, ScScene.cpp:2422): 넓은 단계 빼기 -> ShapeSim 소멸(번호 풀기, 표에서 끝 것과 바꿔 빼기)
-  void detachShape(uint32_t e, ScModules& m) {
+  void detachShape(uint32_t e, ScModules& m, bool wakeOnLostTouch = true) {
     ScShapeRec& s = shapes[e];
-    if (s.inBp) m.bpRemove(e);
+    if (s.inBp) {
+      m.bpRemove(e);
+      m.pairsVolumeRemoved(e, wakeOnLostTouch);
+    }
     s.inBp = 0;
     std::vector<uint32_t>& el = actors[size_t(s.actor)].elements;
     for (size_t i = 0; i < el.size(); ++i)
@@ -248,17 +255,23 @@ struct ScScene {
   }
 
   // 삭제 (ShapeSim 소멸 -> BodySim 소멸 순)
-  void removeActor(int32_t h, ScModules& m) {
+  void removeActor(int32_t h, ScModules& m, bool wakeOnLostTouch = true) {
     ScActorRec& a = actors[size_t(h)];
     for (uint32_t e : a.elements) {
       ScShapeRec& s = shapes[e];
-      if (s.inBp) m.bpRemove(e);
+      if (s.inBp) {
+        m.bpRemove(e);
+        m.pairsVolumeRemoved(e, wakeOnLostTouch);
+      }
       s.inBp = 0;
       s.alive = 0;
       s.actor = -1;
       elementIds.release(e);
     }
-    if (a.kind != 0) m.islandRemoveNode(a.node);
+    if (a.kind != 0) {
+      m.bodyReleased(a.actorID);
+      m.islandRemoveNode(a.node);
+    }
     actorIds.release(a.actorID);
     a.alive = 0;
     a.elements.clear();

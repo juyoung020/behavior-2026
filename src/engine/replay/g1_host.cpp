@@ -61,6 +61,8 @@ struct Host {
   uint64_t oursSteps = 0, oursMissing = 0;
   Stat bpnp;
   bool dump = false;  // 이번 simulate 진단 출력 (G1_HOST_DUMP)
+  bool strict = false;  // G1_HOST_STRICT: 고정 차례 (env 스텝 함수와 같은 hostSimulateOrder)
+  uint64_t strictSteps = 0;
   int neg = 0;  // G1_HOST_NEG: 1 = 활성화 몰이 빼기, 2 = 재우기 몰이 빼기, 3 = 풀이 뒤 깸/잠 요청 빼기 (비교가 살아 있나)
   uint64_t flushes = 0, nWakeOps = 0, winActMatched = 0, extInSim = 0;
   uint64_t wakeReq = 0, woken = 0, slept = 0, nActs = 0, winChanged = 0;
@@ -120,6 +122,7 @@ void g1_host_before(physx::PxScene* scene, uint64_t sim) {
     H.show = getenv("G1_HOST_SHOW") != nullptr;
     if (const char* n = getenv("G1_HOST_NEG")) H.neg = atoi(n);
     H.ours = getenv("G1_HOST_OURS") != nullptr;
+    H.strict = getenv("G1_HOST_STRICT") != nullptr;
     if (const char* a = getenv("G1_ISLANDS_AT")) H.at = atoll(a);
     if (H.on && (H.at < 0 || !getenv("G1_ISLANDS") || !getenv("G1_PAIRS"))) {
       printf("G1 순서기: G1_ISLANDS=1 G1_ISLANDS_AT=<sim> G1_PAIRS=1 이 함께 있어야 한다 — 끔\n");
@@ -334,8 +337,38 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
   }
   H.win.chk(L.deferBad == 0, at("창에서 돌려받을 값이 있는 호출"));
   L.deferBad = 0;
-  // ---- simulate: PhysX 기록의 마디에 맞춰 우리 마디를 돈다
-  for (const sc2::IslOp& r : simr) {
+  // ---- simulate (고정 차례 모드 G1_HOST_STRICT): env 스텝 함수와 같은 hostSimulateOrder 로 한 번에 돌리고, 우리가 낸 호출 전부를 PhysX 기록(마디 뺀 것)과 차례대로 맞춘다
+  if (H.strict) {
+    struct HostPh {
+      ss::ScPairs& P;
+      const sc2::PairsStep& S;
+      const sc2::HostWake& post;
+      std::vector<sc2::PairsAct>& a;
+      void bp() { sc2::hostPairsBP(P, S); }
+      void np() { sc2::hostPairsNP(P, S); }
+      void solve(sc2::HostWake& p) { p = post; }
+      void lost() { sc2::hostPairsLost(P, S); }
+      void lost3() { sc2::hostPairsLost3(P); }
+      std::vector<sc2::PairsAct>* acts() { return &a; }
+    } ph{P, S, post, acts};
+    sc2::hostSimulateOrder(M, P, L, H.active, H.wake, ph);
+    for (const sc2::IslOp& r : simr) {
+      if (sc2::islPairsOp(r) || r.op == sc2::ISL_ACTIVATE || r.op == sc2::ISL_DEACTIVATE) {
+        if (gi >= L.out.size()) {
+          H.ops.chk(false, at(("PhysX 만 부름: " + opStr(r)).c_str()));
+          continue;
+        }
+        H.ops.chk(sc2::islSame(L.out[gi], r), at(("우리 " + opStr(L.out[gi]) + " / PhysX " + opStr(r)).c_str()));
+        ++gi;
+      } else if (sc2::islExternalOp(r)) {
+        ++H.extInSim;
+        H.ext.chk(sc2::islApplyExternal(M, r), at(("바깥 호출 결과(고정 차례, 스텝 끝에 넣음) " + opStr(r)).c_str()));
+      }
+    }
+    for (; gi < L.out.size(); ++gi) H.ops.chk(false, at(("우리만 부름: " + opStr(L.out[gi])).c_str()));
+    ++H.strictSteps;
+  }
+  for (const sc2::IslOp& r : (H.strict ? std::vector<sc2::IslOp>() : simr)) {
     if (sc2::islPairsOp(r) || r.op == sc2::ISL_ACTIVATE || r.op == sc2::ISL_DEACTIVATE) {
       matchOne(r, true);
       continue;
@@ -380,8 +413,10 @@ void g1_host_after(physx::PxScene*, uint64_t sim) {
       default: H.win.chk(false, at(("모르는 마디 " + opStr(r)).c_str()));
     }
   }
-  C.spec = C.second2 = C.third = C.post = true;
-  force(PH_AFTER);
+  if (!H.strict) {
+    C.spec = C.second2 = C.third = C.post = true;
+    force(PH_AFTER);
+  }
   for (; gi < L.out.size(); ++gi) {
     H.ops.chk(false, at(("우리만 부름: " + opStr(L.out[gi])).c_str()));
     L.apply(gi);
@@ -450,6 +485,7 @@ void g1_host_report() {
   line("쌍 관리층 상태 (g1_pairs 와)", H.pairs);
   line("순서 점검 (창·마디)", H.win);
   line("깸 카운터 표 (스텝 끝)", H.wk);
+  if (H.strict) printf("  고정 차례(hostSimulateOrder = env 스텝 함수 차례)로 돈 스텝 %" PRIu64 "\n", H.strictSteps);
   if (H.ours)
     printf("  넓은·좁은 단계 결과 = 우리 contact 장면 단위: %" PRIu64 " 스텝 (없어 PhysX 기록 쓴 스텝 %" PRIu64 "), 참고 PhysX 기록과 비교 %" PRIu64 " 다름 %" PRIu64 " %s\n", H.oursSteps,
            H.oursMissing, H.bpnp.n, H.bpnp.bad, H.bpnp.first.c_str());

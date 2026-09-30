@@ -497,5 +497,33 @@ inline void hostPostThird(ig::IslandManager& M) {
   M.destroyedEdges.size = 0;
 }
 
+// ---- 한 simulate 의 고정 차례 (env 스텝 함수와 순서기 그림자의 "고정 차례" 모드가 같이 쓴다)
+// Ph 가 채우는 마디: bp() = 넓은 단계 + 새 겹침을 쌍 관리층에(dirty·finishBroadPhase), np() = 좁은 단계·새 닿음·연결,
+//                   solve(post) = 풀이(post 에 풀이 뒤 깸 카운터), lost() = 사라진 겹침..unregisterInteractions, lost3() = destroyManagers·processLostContacts3
+template <class Ph>
+inline void hostSimulateOrder(ig::IslandManager& M, ss::ScPairs& P, LiveIslands& L, std::vector<uint8_t>& active, HostWake& W, Ph& ph) {
+  hostProcessLostTouchPairs(P, L);  // postBroadPhaseStage2 (새 상호작용 만들기와 섬 넣기 사이 — 섬 호출이 서로 안 걸려 앞에 둠)
+  ph.bp();
+  ig::firstPassIslandGen(M);
+  ig::additionalSpeculativeActivation(M);
+  hostActivateEdges(M, P, ph.acts());
+  ph.np();
+  ig::secondPassIslandGenPart1(M);
+  ig::secondPassIslandGenPart2(M);
+  hostSnapshotSolveWake(W);
+  hostSetActiveFromIslands(M, P, active, true, nullptr);
+  HostWake post = W;
+  ph.solve(post);
+  ph.lost();
+  hostThirdBegin(M);
+  hostThirdSim(M, M.speculative);
+  hostThirdSim(M, M.accurate);
+  ph.lost3();
+  hostPostThird(M);
+  hostSetActiveFromIslands(M, P, active, false, nullptr);
+  hostDeactivateEdges(M, P, ph.acts());
+  hostAfterIntegration(M, P, L, W, post);
+}
+
 }  // namespace scene
 }  // namespace eng
