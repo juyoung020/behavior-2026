@@ -69,6 +69,10 @@ void g1_scene_task(const char* name);
 void g1_scene_before(physx::PxScene* scene, uint64_t sim);
 void g1_scene_after(physx::PxScene* scene, uint64_t sim);
 void g1_scene_report();
+// 닫힌 고리 (2a) API 창 (g1_loop.cpp, G1_LOOP)
+void g1_loop_before(physx::PxScene* scene, uint64_t sim);
+void g1_loop_after(physx::PxScene* scene, uint64_t sim);
+void g1_loop_report();
 // 다른 그림자가 내주는 것
 const physx::PxsCachedTransform* g1_contact_cache(size_t* n);   // g1_shadow: fetchCollision 뒤 변환 캐시
 const eng::contact::MaterialData* g1_contact_mats(size_t* n);    // g1_shadow: 재질 표
