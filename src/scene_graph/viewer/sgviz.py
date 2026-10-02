@@ -16,6 +16,7 @@ and metadata panel are done here on top of the renderer's server.
 from __future__ import annotations
 
 import argparse
+import json
 import hashlib
 import math
 import os
@@ -1051,7 +1052,7 @@ class SgViewer(ViserRenderer):
             n_moved = sum(o.state == "moved" for o in new.objects.values())
             self.g_status.content = (
                 f"`{self.dir}`  \nstamp **{new.stamp:.1f} s** | objects {len(new.objects)} "
-                f"(moved {n_moved}) | edges {len(new.edges)}")
+                f"(moved {n_moved}) | edges {len(new.edges)}" + (f"  \n{self._explore_line}" if getattr(self, "_explore_line", None) else ""))
             if not self._camera_set and new.robot_pose is not None:
                 x, y, _ = new.robot_pose
                 self.server.initial_camera.position = (x - 3.0, y - 3.0, 4.0)
@@ -1076,10 +1077,55 @@ class SgViewer(ViserRenderer):
         self._scene_mtime = key
         return self.apply(new)
 
+    def _update_explore(self):
+        """explore.json (skill explore, run_explore.py): trail (grey), planned path (blue), goal (magenta), frontier ids"""
+        path = os.path.join(self.dir, "explore.json")
+        try:
+            st = os.stat(path)
+        except OSError:
+            return
+        key = (st.st_mtime_ns, st.st_size)
+        if key == getattr(self, "_explore_key", None):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                ex = json.load(f)
+        except Exception:
+            return
+        self._explore_key = key
+        sc = self.server.scene
+        for h in getattr(self, "_explore_handles", []):
+            try:
+                h.remove()
+            except Exception:
+                pass
+        hs = []
+
+        def polyline(name, pts, color, z):
+            if len(pts) < 2:
+                return
+            a = np.array(pts, float)
+            seg = np.stack([np.c_[a[:-1], np.full(len(a) - 1, z)], np.c_[a[1:], np.full(len(a) - 1, z)]], axis=1)
+            hs.append(sc.add_line_segments(name, seg, colors=color, line_width=3.0))
+
+        polyline("/explore/trail", ex.get("trail") or [], (120, 120, 120), 0.03)
+        polyline("/explore/plan", ex.get("plan") or [], (30, 90, 230), 0.05)
+        g = ex.get("goal")
+        if g and g.get("xy"):
+            hs.append(sc.add_icosphere("/explore/goal", radius=0.12, color=(220, 40, 200), position=(g["xy"][0], g["xy"][1], 0.15)))
+        for t in ex.get("targets") or []:
+            x, y = t["xy"]
+            hs.append(sc.add_label(f"/explore/t_{t['id']}", f"{t['id']} {t.get('path_m', '')}m", position=(x, y, 0.3)))
+        self._explore_handles = hs
+        cov = ex.get("gt_cov")
+        self._explore_line = f"explore: odo {ex.get('odo_m')} m, contacts {ex.get('contacts')}" + (f", GT cover {cov:.1%}" if cov else "")
+
     def run(self):
         print(f"[sgviz] watching {self.dir}; open http://localhost:{self.server.get_port()}", flush=True)
         while True:
             try:
+                with self.lock:
+                    self._update_explore()
                 self.poll_once()
                 with self.lock:
                     self._refresh_points()
