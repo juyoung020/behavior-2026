@@ -95,13 +95,46 @@ double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const doub
 
 #endif /* SM_API_H */
 
+/* ---- 물체별 RGB-D best view(추가 ABI, 위 함수·구조체는 그대로) ----
+ * objmap 이 물체에 붙인 검출마다 품질 = 유효 마스크 넓이 × 점수 가 가장 큰(같으면 최근) 모습 하나를 물체마다 둔다.
+ * RGB 자르기: 상자 + 변마다 10 % 여유, 긴 변 최대 256 px(넓이 평균으로 줄임). scenemap 은 자를 영역과 출력 버퍼만
+ * 정하고, 실제 자르기는 호출자 함수가 한다(sgrt: 장치 메모리에서 CUDA 로 자르고 자른 것만 내려받음). 깊이는 호스트에서. */
+typedef struct {
+  int32_t x0, y0, x1, y1;      /* 원(검출 입력) 영상 화소, [x0, x1) × [y0, y1) */
+  int32_t out_w, out_h;        /* 출력 크기(줄였으면 넓이 평균) */
+  uint8_t* dst;                /* out_w × out_h × 3 RGB8, scenemap 이 준 호스트 버퍼 */
+} sm_crop_req;
+/* reqs 를 다 채우면 0. 실패하면 그 keyframe 의 새 모습은 버린다. scenemap 잠금 밖에서 불린다. */
+typedef int (*sm_crop_fn)(void* user, const sm_crop_req* reqs, int32_t n);
+
+/* sm_push_image 와 같고, best view 를 고칠 검출이 있으면 crop(user, ..) 으로 RGB 를 자른다.
+ * crop == NULL 이면 im->rgba(호스트, w×h×4)에서 자르고, 그것도 없으면 best view 는 건너뛴다. */
+int sm_push_image_ex(sm_ctx*, const sm_image*, const sm_detections*, sm_crop_fn crop, void* user);
+/* 마지막 영상의 검출 k → 물체 id(0 = 안 붙음). 검출 수를 돌려주고 ids 에 min(n, cap) 개. */
+int sm_last_assoc(sm_ctx*, uint32_t* ids, int cap);
+
+typedef struct {
+  uint32_t id, version;        /* version: 모습이 바뀔 때마다 +1 */
+  double stamp;
+  int32_t box_px[4];           /* 자른 영역 x0, y0, x1, y1(원 영상 화소, 여유 포함) */
+  int32_t det_box_px[4];       /* 검출 상자 */
+  float mask_area;             /* 유효 마스크 넓이(깊이 화소) */
+  float depth_m;               /* 마스크 안 깊이 중앙값 */
+  float score;
+  double cam_T[12];            /* map ← 카메라 광학, 행 우선 3×4 */
+  int32_t w, h;                /* 자른 그림 크기 */
+  const uint8_t* rgb;          /* w×h×3(NULL = RGB 없음), 스냅숏 수명 동안 */
+  const uint16_t* depth_mm;    /* w×h, 0 = 깊이 없음 */
+} sm_view;
+/* 스냅숏 안 물체 id 의 best view. 1 = 있음, 0 = 없음, < 0 = 오류. */
+int sm_snap_view(const sm_snapshot_t*, uint32_t id, sm_view* out);
+
 /* 저장(로봇 기억). dir 에 세 파일을 원자적으로(임시 파일 → rename) 바꿔 쓴다:
  *   scene.json — Spark-DSG DynamicSceneGraph(OBJECTS 층: 확정 물체 노드, 이름·위치 xyz·상자·상태 메타데이터)
  *   view.json  — 계획기·뷰어용 요약(자세, 물체 표, 최근 사건)
  *   map.pgm    — 2D 점유 격자(+ map.yaml: 해상도·원점)
  * Spark-DSG 없이 빌드하면(SM_HAVE_SPARK_DSG 미정의) scene.json 은 건너뛴다. 0 = 성공. */
 int sm_save_dsg(sm_ctx*, const char* dir);
-
 #ifdef __cplusplus
 }
 #endif

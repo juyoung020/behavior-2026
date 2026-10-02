@@ -7,8 +7,10 @@
 #include <string>
 #include <vector>
 
+#include "crop.hpp"
 #include "ovdet.h"
 #include "scenemap.h"
+#include "scenemap/bestview.hpp"
 
 struct sgrt {
   sgrt_config cfg{};
@@ -19,6 +21,9 @@ struct sgrt {
   double last_save = -1e9;
   int32_t n_kf = 0, n_det = 0;
   float det_ms = 0, save_ms = 0;
+  float kf_ms = 0, crop_ms = 0;   // 마지막 keyframe: scenemap 갱신 전체(자르기 포함), best view 자르기(장치 → 호스트)
+  int32_t n_crops = 0;
+  sgrt_crop::Gpu* crop = nullptr; // 처음 장치 영상이 올 때 만듦
 };
 
 namespace {
@@ -27,6 +32,28 @@ void put(char* err, size_t n, const char* msg) {
 }
 double msSince(std::chrono::steady_clock::time_point t) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
+// sm_crop_fn: 이 keyframe 의 머리 RGB(장치 또는 호스트)에서 best view 상자만 자름
+struct CropSrc {
+  sgrt* s;
+  const uint8_t* rgb;
+  int64_t rs;
+  int ps;
+  int on_device;
+};
+int cropCb(void* user, const sm_crop_req* reqs, int32_t n) {
+  auto* c = static_cast<CropSrc*>(user);
+  const auto t0 = std::chrono::steady_clock::now();
+  int rc = 0;
+  if (c->on_device) {
+    if (!c->s->crop) c->s->crop = sgrt_crop::create();
+    rc = c->s->crop ? sgrt_crop::run(c->s->crop, c->rgb, c->rs, c->ps, reqs, n) : -1;
+  } else {
+    for (int k = 0; k < n; ++k) scenemap::cropRgbHost(c->rgb, c->rs, c->ps, reqs[k]);
+  }
+  c->s->crop_ms += float(msSince(t0));
+  c->s->n_crops += n;
+  return rc;
 }
 }  // namespace
 
@@ -67,6 +94,7 @@ void sgrt_destroy(sgrt* s) {
   if (!s) return;
   if (s->det) ovd_destroy(s->det);
   if (s->sm) sm_destroy(s->sm);
+  sgrt_crop::destroy(s->crop);
   delete s;
 }
 
@@ -109,7 +137,12 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     si.h = h;
     si.depth_m = depth_m;
     si.fx = fx; si.fy = fy; si.cx = cx; si.cy = cy;
-    rc = sm_push_image(s->sm, &si, d);
+    const auto t1 = std::chrono::steady_clock::now();
+    s->crop_ms = 0;
+    s->n_crops = 0;
+    CropSrc cs{s, rgb, row_stride, pix_stride, rgb_on_device};
+    rc = d ? sm_push_image_ex(s->sm, &si, d, &cropCb, &cs) : sm_push_image(s->sm, &si, nullptr);
+    s->kf_ms = float(msSince(t1));
     s->n_kf++;
     s->n_det = d ? d->n : 0;
   }
@@ -137,6 +170,16 @@ void sgrt_stats(const sgrt* s, int32_t* n_kf, int32_t* n_det, int32_t* n_obj, fl
   }
   if (det_ms) *det_ms = s->det_ms;
   if (save_ms) *save_ms = s->save_ms;
+}
+
+void sgrt_get_timing(const sgrt* s, sgrt_timing* t) {
+  if (!s || !t) return;
+  *t = sgrt_timing{};
+  t->det_ms = s->det_ms;
+  t->kf_ms = s->kf_ms;
+  t->crop_ms = s->crop_ms;
+  t->save_ms = s->save_ms;
+  t->n_crops = s->n_crops;
 }
 
 }  // extern "C"

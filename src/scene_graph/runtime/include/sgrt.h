@@ -43,6 +43,15 @@ int    sgrt_save(sgrt*);    /* 지금 저장 */
 /* 통계: keyframe 수, 마지막 검출 수, 확정 물체 수, 마지막 검출 ms, 마지막 저장 ms */
 void   sgrt_stats(const sgrt*, int32_t* n_kf, int32_t* n_det, int32_t* n_obj, float* det_ms, float* save_ms);
 
+/* 마지막 keyframe·저장 시간(ms). kf_ms = scenemap 갱신 전체(자르기 포함), crop_ms = best view RGB 자르기(장치 커널 +
+ * 자른 것만 내려받기), n_crops = 그때 자른 물체 수. */
+typedef struct {
+  float det_ms, kf_ms, crop_ms, save_ms;
+  int32_t n_crops;
+  int32_t n_png;            /* 마지막 저장에서 새로 쓴 PNG 수 */
+} sgrt_timing;
+void   sgrt_get_timing(const sgrt*, sgrt_timing* out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,9 +10,12 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "scenemap.h"
+#include "scenemap/bestview.hpp"
 #include "scenemap/dsg_save.hpp"
 #include "scenemap/fk.hpp"
 #include "scenemap/objmap.hpp"
@@ -25,6 +28,12 @@ struct Prop {
   double stamp;
   float q[kProprioDim];
 };
+struct ViewSlot {
+  BestViewPtr v;
+  double q = 0;                 // 비교에 쓰는 품질(옮겨짐·놓기 때 0 으로)
+};
+constexpr float kCropMargin = 0.10f;
+constexpr int kCropMaxSide = 256;
 }  // namespace
 
 struct sm_ctx {
@@ -39,6 +48,12 @@ struct sm_ctx {
   Prop last_used{};             // 가장 최근에 적분한 proprio
   bool have_used = false;
   sm_status st{};
+  // best view
+  std::unordered_map<uint32_t, ViewSlot> views;
+  std::vector<uint32_t> last_assoc;   // 마지막 영상의 검출 → 물체 id
+  size_t ev_seen = 0;                 // 처리한 objmap 사건 수(옮겨짐·놓기 → 품질 0)
+  uint32_t view_ver = 0;
+  uint64_t epoch = 0;                 // sm_reset 마다 +1(잠금 밖 자르기 중 reset 이면 버림)
   explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {}
 };
 
@@ -51,6 +66,7 @@ struct sm_snapshot_t {
   std::vector<int8_t> cells;
   std::vector<sm_object> objs;
   std::vector<std::string> names;   // objs[i].name 이 가리키는 문자열(스냅숏 수명 동안)
+  std::vector<BestViewPtr> views;   // objs[i] 의 best view(없으면 null)
   // reachable 용 부풀린 장애물(처음 부를 때 만듦)
   mutable std::once_flag inflate_once;
   mutable std::vector<uint8_t> blocked;
@@ -135,6 +151,11 @@ int sm_reset(sm_ctx* c) {
   c->pending.clear();
   c->have_used = false;
   c->st = sm_status{};
+  c->views.clear();
+  c->last_assoc.clear();
+  c->ev_seen = 0;
+  c->epoch++;
+
   return 0;
 }
 
@@ -155,8 +176,23 @@ int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
   return 0;
 }
 
-int sm_push_image(sm_ctx* c, const sm_image* im, const sm_detections* dets) {
+int sm_push_image(sm_ctx* c, const sm_image* im, const sm_detections* dets) { return sm_push_image_ex(c, im, dets, nullptr, nullptr); }
+
+namespace {
+// best view 를 바꿀 검출 하나(잠금 안에서 정하고, 잠금 밖에서 자름)
+struct ViewCand {
+  uint32_t id;
+  double q;
+  sm_crop_req req;
+  std::shared_ptr<BestView> v;
+};
+}  // namespace
+
+int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, sm_crop_fn crop, void* user) {
   if (!c || !im || im->w <= 0 || im->h <= 0) return -1;
+  std::vector<ViewCand> cand;
+  uint64_t epoch = 0;
+  {
   std::lock_guard<std::mutex> g(c->mu);
   c->st.last_image_stamp = im->stamp;
   c->st.n_images++;
@@ -181,7 +217,7 @@ int sm_push_image(sm_ctx* c, const sm_image* im, const sm_detections* dets) {
   dv.fx = float(im->fx); dv.fy = float(im->fy); dv.cx = float(im->cx); dv.cy = float(im->cy);
   std::memcpy(dv.T_bc, fk.T_head, sizeof(dv.T_bc));
   c->slam.keyframe(dv, body);
-  if (!dets) return 0;                          // 검출 없음: 지도(slam2d)만
+  if (!dets) { c->last_assoc.clear(); return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
   const Pose2 P = c->slam.pose();
   const double cs = std::cos(P.th), sn = std::sin(P.th);
@@ -206,7 +242,82 @@ int sm_push_image(sm_ctx* c, const sm_image* im, const sm_detections* dets) {
   F.grip[1] = grip[1];
   F.base_yaw = P.th;
   c->om.update(F);
+  // 검출 → 물체 id
+  const std::vector<DetAssoc>& as = c->om.lastAssoc();
+  c->last_assoc.resize(as.size());
+  for (size_t k = 0; k < as.size(); ++k) c->last_assoc[k] = as[k].obj_id;
+  // 옮겨짐·놓기: 지금 모습은 옛 자리 — 품질을 내려 다음 관측이 바꾸게
+  const auto& ev = c->om.events();
+  for (; c->ev_seen < ev.size(); ++c->ev_seen)
+    if (ev[c->ev_seen].kind == 2 || ev[c->ev_seen].kind == 5) {
+      auto it = c->views.find(ev[c->ev_seen].id);
+      if (it != c->views.end()) it->second.q = 0;
+    }
+  // 없어진 물체(버린 후보)의 모습 버리기
+  if (!c->views.empty()) {
+    std::unordered_set<uint32_t> live;
+    for (const MapObject& o : c->om.objects()) live.insert(o.id);
+    for (auto it = c->views.begin(); it != c->views.end();) it = live.count(it->first) ? std::next(it) : c->views.erase(it);
+  }
+  // 새 모습 후보: 품질 = 유효 마스크 넓이 × 점수, 지금 것 이상(같으면 최근)
+  const bool host_rgb = !crop && im->rgba && dets->img_w == im->w && dets->img_h == im->h;
+  if (!crop && !host_rgb) return 0;
+  for (size_t k = 0; k < as.size(); ++k) {
+    if (!as[k].obj_id) continue;
+    const float sc = dets->score ? dets->score[k] : 1.f;
+    const double q = double(as[k].area_px) * sc;
+    auto it = c->views.find(as[k].obj_id);
+    if (it != c->views.end() && q < it->second.q) continue;
+    ViewCand vc{};
+    vc.id = as[k].obj_id;
+    vc.q = q;
+    auto v = std::make_shared<BestView>();
+    const float* b = dets->box + 4 * k;
+    if (!cropGeometry(b, dets->img_w, dets->img_h, kCropMargin, kCropMaxSide, v->box, &v->w, &v->h)) continue;
+    v->id = vc.id;
+    v->q = q;
+    v->stamp = im->stamp;
+    for (int i = 0; i < 4; ++i) v->det_box[i] = int32_t(std::lround(b[i]));
+    v->mask_area = as[k].area_px;
+    v->depth_m = as[k].depth_med;
+    v->score = sc;
+    std::memcpy(v->cam_T, F.T_mc, sizeof(v->cam_T));
+    v->rgb.resize(size_t(v->w) * v->h * 3);
+    v->depth.resize(size_t(v->w) * v->h);
+    vc.req = sm_crop_req{v->box[0], v->box[1], v->box[2], v->box[3], v->w, v->h, v->rgb.data()};
+    vc.v = std::move(v);
+    cand.push_back(std::move(vc));
+  }
+  epoch = c->epoch;
+  }  // 잠금 끝: 자르기(장치 → 호스트 복사)는 잠금 밖에서
+  if (cand.empty()) return 0;
+  std::vector<sm_crop_req> reqs(cand.size());
+  for (size_t i = 0; i < cand.size(); ++i) reqs[i] = cand[i].req;
+  if (crop) {
+    if (crop(user, reqs.data(), int32_t(reqs.size())) != 0) return 0;   // 자르기 실패: 이번 모습은 버림
+  } else {
+    for (const sm_crop_req& r : reqs) cropRgbHost(im->rgba, int64_t(im->w) * 4, 4, r);
+  }
+  for (ViewCand& vc : cand)
+    cropDepthMm(im->depth_m, im->w, im->h, dets->img_w, dets->img_h, vc.v->box, vc.v->w, vc.v->h, vc.v->depth.data());
+  std::lock_guard<std::mutex> g(c->mu);
+  if (c->epoch != epoch) return 0;
+  for (ViewCand& vc : cand) {
+    ViewSlot& sl = c->views[vc.id];
+    if (sl.v && vc.q < sl.q) continue;
+    vc.v->version = ++c->view_ver;
+    sl.v = std::move(vc.v);
+    sl.q = vc.q;
+  }
   return 0;
+}
+
+int sm_last_assoc(sm_ctx* c, uint32_t* ids, int cap) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  const int n = int(c->last_assoc.size());
+  for (int k = 0; k < std::min(n, cap) && ids; ++k) ids[k] = c->last_assoc[k];
+  return n;
 }
 
 int sm_mark_handled(sm_ctx* c, uint32_t id) {
@@ -245,6 +356,8 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
       e.handled = std::find(c->handled.begin(), c->handled.end(), o.id) != c->handled.end();
       e.structural = std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
       s->objs.push_back(e);
+      auto it = c->views.find(o.id);
+      s->views.push_back(it != c->views.end() ? it->second.v : nullptr);
     }
   }
   for (size_t i = 0; i < s->objs.size(); ++i) s->objs[i].name = s->names[i].c_str();
@@ -301,6 +414,32 @@ int sm_snap_near(const sm_snapshot_t* s, const double p[3], double r, uint32_t* 
   const int m = std::min<int>(cap, int(hit.size()));
   for (int i = 0; i < m && ids; ++i) ids[i] = hit[i].second;
   return m;
+}
+
+int sm_snap_view(const sm_snapshot_t* s, uint32_t id, sm_view* out) {
+  if (!s || !out) return -1;
+  for (size_t i = 0; i < s->objs.size(); ++i) {
+    if (s->objs[i].id != id) continue;
+    const BestView* v = s->views[i].get();
+    if (!v) return 0;
+    sm_view& o = *out;
+    o = sm_view{};
+    o.id = v->id;
+    o.version = v->version;
+    o.stamp = v->stamp;
+    std::memcpy(o.box_px, v->box, sizeof(o.box_px));
+    std::memcpy(o.det_box_px, v->det_box, sizeof(o.det_box_px));
+    o.mask_area = v->mask_area;
+    o.depth_m = v->depth_m;
+    o.score = v->score;
+    std::memcpy(o.cam_T, v->cam_T, sizeof(o.cam_T));
+    o.w = v->w;
+    o.h = v->h;
+    o.rgb = v->rgb.empty() ? nullptr : v->rgb.data();
+    o.depth_mm = v->depth.empty() ? nullptr : v->depth.data();
+    return 1;
+  }
+  return 0;
 }
 
 int sm_snap_map(const sm_snapshot_t* s, sm_grid* out) {

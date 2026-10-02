@@ -64,6 +64,14 @@ struct MapObject {
   double last_kf = -1;
 };
 
+// 한 keyframe 의 검출 k → 물체(update 가 채움, lastAssoc()). obj_id 0 = 물체에 안 붙음(점 부족·손에 든 것 등)
+struct DetAssoc {
+  uint32_t obj_id = 0;
+  int n_valid = 0;                // 마스크 안 유효 깊이 점(step 간격 표본)
+  float area_px = 0;              // 유효 마스크 넓이(깊이 화소) = n_valid·step²
+  float depth_med = 0;            // 마스크 안 깊이 중앙값 m(카메라 z)
+};
+
 // 한 keyframe 입력
 struct ObjFrame {
   double stamp = 0;
@@ -86,12 +94,15 @@ class ObjectMap {
   void updateHands(double stamp, const double eef[2][3], const float grip[2], double base_yaw);
   const std::vector<MapObject>& objects() const { return objs_; }
   const std::vector<ObjEvent>& events() const { return ev_; }
+  // 마지막 update 의 검출별 짝(크기 = dets->n, 검출 순서)
+  const std::vector<DetAssoc>& lastAssoc() const { return assoc_; }
 
  private:
   void event(double t, const MapObject& o, int kind);
   ObjParams p_;
   std::vector<MapObject> objs_;
   std::vector<ObjEvent> ev_;
+  std::vector<DetAssoc> assoc_;
   uint32_t next_id_ = 1;
   bool closed_[2] = {false, false};
 };

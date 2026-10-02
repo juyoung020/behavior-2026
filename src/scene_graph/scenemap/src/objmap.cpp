@@ -25,6 +25,8 @@ double dist3(const double* a, const double* b) {
 }
 
 struct Obs {
+  int det;                        // 검출 번호
+  double zmed;                    // 카메라 깊이 중앙값
   int cls;
   float score;
   double pos[3], ext[3], lo[3], hi[3];
@@ -126,13 +128,14 @@ void ObjectMap::update(const ObjFrame& f) {
   // 1. 검출 → 관측
   std::vector<Obs> obs;
   const sm_detections* D = f.dets;
+  assoc_.assign(D && D->n > 0 ? D->n : 0, DetAssoc{});
   const int st = std::max(1, p_.step);
   if (D && D->n > 0) {
     const float sxu = D->img_w > 0 ? float(f.w) / D->img_w : 1.f;   // 검출 영상 화소 ↔ 깊이 화소(크기가 다르면)
     const float syv = D->img_h > 0 ? float(f.h) / D->img_h : 1.f;
-    std::vector<double> X, Y, Z;
+    std::vector<double> X, Y, Z, ZC;
     for (int k = 0; k < D->n; ++k) {
-      X.clear(); Y.clear(); Z.clear();
+      X.clear(); Y.clear(); Z.clear(); ZC.clear();
       // 상자 안만 훑는다(검출 영상 화소 → 깊이 화소)
       const float* b = D->box + 4 * k;
       const int u0 = std::max(0, int(b[0] * sxu) - 1), u1 = std::min(f.w - 1, int(b[2] * sxu) + 1);
@@ -154,12 +157,14 @@ void ObjectMap::update(const ObjFrame& f) {
           const double pz = T[8] * xc + T[9] * yc + T[10] * z + T[11];
           const double pp[3] = {px, py, pz};
           if (dist3(pp, f.eef[0]) < p_.hand_r || dist3(pp, f.eef[1]) < p_.hand_r) ++near_hand;
-          X.push_back(px); Y.push_back(py); Z.push_back(pz);
+          X.push_back(px); Y.push_back(py); Z.push_back(pz); ZC.push_back(z);
         }
       const int np = int(X.size());
       if (np < p_.min_points) continue;
       if (near_hand >= p_.hand_frac * np) continue;   // 손에 든 것
       Obs o;
+      o.det = k;
+      o.zmed = pct(ZC, 0.5);
       o.cls = D->cls[k];
       o.score = D->score ? D->score[k] : 1.f;
       o.n = np;
@@ -201,8 +206,13 @@ void ObjectMap::update(const ObjFrame& f) {
   // 3. 갱신
   for (int a = 0; a < int(obs.size()); ++a) {
     const Obs& o = obs[a];
+    DetAssoc& as = assoc_[o.det];
+    as.n_valid = o.n;
+    as.area_px = float(o.n) * st * st;
+    as.depth_med = float(o.zmed);
     if (obs_to[a] >= 0) {
       MapObject& m = objs_[obs_to[a]];
+      as.obj_id = m.id;
       if (m.parent && dist3(m.pos, o.pos) > 0.3) m.parent = 0;
       if (m.last_kf != f.stamp) ++m.n_obs;
       m.last_kf = f.stamp;
@@ -245,6 +255,7 @@ void ObjectMap::update(const ObjFrame& f) {
     }
     if (moved_from) {
       MapObject& m = *moved_from;
+      as.obj_id = m.id;
       for (int k = 0; k < 3; ++k) { m.pos[k] = o.pos[k]; m.ext[k] = o.ext[k]; m.lo[k] = o.lo[k]; m.hi[k] = o.hi[k]; }
       m.moved = true;
       m.state = SM_MOVED;
@@ -264,6 +275,7 @@ void ObjectMap::update(const ObjFrame& f) {
     m.first_seen = m.last_seen = m.last_kf = f.stamp;
     m.score = o.score;
     m.confirmed = p_.confirm <= 1;
+    as.obj_id = m.id;
     objs_.push_back(m);
     obj_hit.push_back(1);
     event(f.stamp, objs_.back(), 0);
