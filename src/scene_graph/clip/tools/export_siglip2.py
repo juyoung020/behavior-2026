@@ -70,11 +70,14 @@ def tome_merge(x, w, s, metric, r):
     src_idx, unm_idx = order[:, :r], order[:, r:]
     dst_idx = node_idx[..., None].gather(1, src_idx)
 
-    def merge(t, d):   # t (B,N,d): size-weighted
+    nb = b.shape[1]
+    onehot = (dst_idx == torch.arange(nb, device=x.device).view(1, 1, nb)).to(x.dtype)   # (B,r,nb): opset 13 has no scatter-add
+
+    def merge(t, d):   # t (B,N,d): size-weighted sums
         ta, tb = t[:, ::2], t[:, 1::2]
         unm = ta.gather(1, unm_idx.expand(B, -1, d))
         src = ta.gather(1, src_idx.expand(B, -1, d))
-        tb = tb.scatter_add(1, dst_idx.expand(B, -1, d), src)
+        tb = tb + onehot.transpose(1, 2) @ src
         return torch.cat([unm, tb], 1)
 
     sw = s[..., None]

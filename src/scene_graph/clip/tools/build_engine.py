@@ -17,6 +17,7 @@ TensorRT 8.2 (JetPack 4.6) differences handled here: set_memory_pool_limit vs ma
 EXPLICIT_BATCH, OBEY_PRECISION_CONSTRAINTS vs STRICT_TYPES, build_serialized_network (8.0+).
 """
 import argparse
+import re
 import sys
 
 import numpy as np
@@ -65,7 +66,7 @@ def main():
     ap.add_argument("onnx")
     ap.add_argument("plan")
     ap.add_argument("--profiles", default="1-8")
-    ap.add_argument("--pin", default="norm", help="comma list of layer-name substrings pinned FP32 (norm, attn_pool, blocks.11 ...), softmax = every softmax, all-fp32, none")
+    ap.add_argument("--pin", default="norm", help="comma list of regexes on lower-case layer names pinned FP32 (norm, attn_pool, blocks.11 ...), softmax = every softmax, all-fp32, none")
     ap.add_argument("--half-input", action="store_true")
     ap.add_argument("--int8", default="")
     ap.add_argument("--keep-fp16", default="", help="INT8: comma list of layer-name substrings kept FP16")
@@ -123,7 +124,7 @@ def main():
         nm = L.name.lower()
         if L.type in skip or any(L.get_output(j).dtype not in (trt.float32, trt.float16) for j in range(L.num_outputs)):
             continue   # shape / index arithmetic
-        pin = any(k in nm for k in pins if k not in ("softmax", "all-fp32")) or ("softmax" in pins and L.type == trt.LayerType.SOFTMAX)
+        pin = any(re.search(k, nm) for k in pins if k not in ("softmax", "all-fp32")) or ("softmax" in pins and L.type == trt.LayerType.SOFTMAX)
         if pin:
             L.precision = trt.float32
             for j in range(L.num_outputs):

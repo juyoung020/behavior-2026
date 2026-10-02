@@ -127,6 +127,9 @@ typedef int (*sm_crop_fn)(void* user, const sm_crop_req* reqs, int32_t n);
 int sm_push_image_ex(sm_ctx*, const sm_image*, const sm_detections*, sm_crop_fn crop, void* user);
 /* 마지막 영상의 검출 k → 물체 id(0 = 안 붙음). 검출 수를 돌려주고 ids 에 min(n, cap) 개. */
 int sm_last_assoc(sm_ctx*, uint32_t* ids, int cap);
+/* 마지막 영상의 검출 k 가 그 물체의 best view 를 바꿨는가(updated[k] = 1) 와 모습 품질(quality[k] = 유효 마스크 넓이 × 점수,
+ * 안 붙은 검출 0). best view 가 바뀐 물체만 영상 임베딩(CLIP)을 다시 하는 신호. 검출 수를 돌려주고 min(n, cap) 개(NULL 가능) */
+int sm_last_views(sm_ctx*, uint8_t* updated, float* quality, int cap);
 
 typedef struct {
   uint32_t id, version;        /* version: 모습이 바뀔 때마다 +1 */
