@@ -2,7 +2,7 @@
 
 **Idea: a dynamic 2D scene graph + an AI agent (or RL planner) + a VLA, combined.**
 
-- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every object found by an open-vocabulary YOLOE detector at an xyz position: the detector's segmentation mask gives the object's centroid, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
+- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every detected object at an xyz position (today the open-vocabulary YOLOE detector `ovdet`; moving to FastSAM-s masks + SigLIP 2 embeddings, `scene_graph/clip`): the segmentation mask gives the object's centroid, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
 - The agent uses that graph for long-horizon planning, step tracking and failure recovery.
 - The VLA (π0.5) turns the current step instruction plus the three cameras into actions.
 
@@ -69,12 +69,15 @@ plan.md               plan and decisions
 
 ## Environments
 
-**Linux PC (`ad17-MS-7E01`, `~/behavior-2026`)** — the only work machine
-- Ubuntu 22.04.5, RTX 4090 24 GB (sm_89), NVIDIA driver 580.178.04-open (535 failed), build baseline CUDA 12.8 (see Decisions). Details: [docs/Linux_설치.md](docs/Linux_설치.md).
-- conda env `behavior`: Isaac Sim 5.1, OmniGibson (eval), torch 2.7.0+cu128, warp-lang 1.12.0.
+**Linux PC (`jy-desktop`, `~/robot-agent/src/behavior-2026`)** — the work machine
+- Ubuntu 22.04, RTX 5070 Ti 16 GB (sm_120), NVIDIA driver 580.178.04-open (595 segfaults Isaac Sim 5.1), CUDA 12.8 (see Decisions). Details: [docs/Linux_설치.md](docs/Linux_설치.md).
+- conda env `behavior`: Isaac Sim 5.1, OmniGibson 3.9.3 (eval), warp-lang 1.12.0.
 - Official evaluator: `conda activate behavior` → `python -m omnigibson.eval.eval ...`.
+- Windows/WSL scripts were replaced by Linux ones: mapping table in [tools/README.md](tools/README.md).
+
+**Earlier PC (`ad17-MS-7E01`, RTX 4090 24 GB, 10-02)** — record only
 - First check (`tools/setup/linux_first_check.sh`): 5 zero-action runs + 2 replays, 0 black frames.
-- Not here yet: `~/openpi`, secrets in `~/.config/behavior-2026/` (see .env.example). The π0.5 radio checkpoint is being downloaded to `~/checkpoints/zips/pi05_turning_on_radio`.
+- At that time `~/openpi` and secrets in `~/.config/behavior-2026/` (see .env.example) were not set up yet.
 
 ## Setup notes
 
