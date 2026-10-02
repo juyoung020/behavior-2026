@@ -101,6 +101,20 @@ class Pi05NativePolicy:
             task = t.reshape(-1).astype(np.int64)
         if self.eng is None:
             self._create(self.weights(int(task[0])))
+        if self.prop_key not in obs:
+            # weights carry the training robot name (2025 1st place: robot_r1); the evaluator's robot config may name it
+            # differently (src/configs/r1pro_openpi.yaml: robot). Re-prefix proprio and camera keys to the obs' name.
+            found = [k for k in obs if k.endswith("::proprio")]
+            if len(found) != 1:
+                raise KeyError(f"{self.prop_key} not in obs and no unique '*::proprio' key: {sorted(obs)}")
+            old, new = self.prop_key.split("::")[0], found[0].split("::")[0]
+            self.prop_key = found[0]
+            # camera keys hold the name twice, e.g. robot_r1::robot_r1:zed_link:Camera:0::rgb
+            self.cams = [k.replace(old + ":", new + ":") for k in self.cams]
+            missing = [k for k in self.cams if k not in obs]
+            if missing:
+                raise KeyError(f"camera keys {missing} not in obs: {sorted(obs)}")
+            print(f"[pi05_native] obs robot name '{new}' (weights '{old}'): keys re-prefixed", flush=True)
         prop = obs[self.prop_key]
         batched = prop.ndim == 2
         n_env = prop.shape[0] if batched else 1
