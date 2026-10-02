@@ -52,7 +52,12 @@ def load_gt(gt_dir: pathlib.Path, task: str):
     import numpy as np
     for j in gt_dir.glob(f"*__{task}.json"):
         meta = json.loads(j.read_text())
-        b = j.with_suffix(".pgm").read_bytes()
+        # 기본 분모 = 닿을 수 있는 바닥(.reach.pgm, 닫힌 문 뒤 방 뺌). EXPLORE_GT_REF=all 이면 방 안 바닥 전부
+        pg = j.with_suffix(".reach.pgm")
+        if not pg.exists() or os.environ.get("EXPLORE_GT_REF") == "all":
+            pg = j.with_suffix(".pgm")
+        print(f"[explore] reference {pg.name}", flush=True)
+        b = pg.read_bytes()
         parts = b.split(b"\n", 3)
         w, h = map(int, parts[1].split())
         a = np.frombuffer(parts[3], np.uint8)[: w * h].reshape(h, w) > 127

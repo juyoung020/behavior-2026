@@ -16,18 +16,21 @@ task = json.loads((d / "summary.json").read_text())["task"] if (d / "summary.jso
 gt_dir = pathlib.Path(__file__).resolve().parent / "gt"
 g = next(gt_dir.glob(f"*__{task or '*'}.json")) if task else None
 if g:
-    meta = json.loads(g.read_text()); b = g.with_suffix(".pgm").read_bytes().split(b"\n", 3)
+    meta = json.loads(g.read_text())
+    ref = g.with_suffix(".reach.pgm") if (len(sys.argv) <= 3 or sys.argv[3] != "all") and g.with_suffix(".reach.pgm").exists() else g.with_suffix(".pgm")
+    b = ref.read_bytes().split(b"\n", 3)
     gw, gh = map(int, b[1].split()); f = np.frombuffer(b[3], np.uint8)[: gw * gh].reshape(gh, gw) > 127
     ys, xs = np.nonzero(f); wx = meta["origin"][0] + (xs + .5) * meta["res"]; wy = meta["origin"][1] + (ys + .5) * meta["res"]
     mx, my = c * wx - s * wy + tx, s * wx + c * wy + ty
     ix = ((mx - ox) / res).astype(int); iy = H - 1 - ((my - oy) / res).astype(int)
     ok = (ix >= 0) & (iy >= 0) & (ix < W) & (iy < H)
-    print('gt cells', ok.sum(), 'outside map', (~ok).sum())
+    print(ref.name, 'cells', len(ix), 'outside map', int((~ok).sum()))
     # 정답 바닥 중 지도가 빈칸으로 덮은 곳 = 연두, 못 덮은 곳 = 파랑
     iy2, ix2 = iy[ok], ix[ok]
     cov = m[iy2, ix2] > 250
     img[iy2[cov], ix2[cov]] = (170, 230, 150)
     img[iy2[~cov], ix2[~cov]] = (60, 90, 230)
+    print('coverage', round(float(cov.sum()) / len(ix), 3))
 im = Image.fromarray(img).resize((W * 2, H * 2), Image.NEAREST); dr = ImageDraw.Draw(im)
 P = lambda x, yy: (2 * (x - ox) / res, 2 * (H - 1 - (yy - oy) / res))
 ex = d / "memory/explore.json"

@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--out", default=str(HERE / "gt"))
     ap.add_argument("--res", type=float, default=0.05)
     ap.add_argument("--exclude", default="garden_0", help="comma list of loaded rooms left out of the house reference")
+    ap.add_argument("--robot-r", type=float, default=0.37, help="body radius for the reachable reference")
     ap.add_argument("--instance", type=int, default=301, help="public_test instance id for the start pose (robot_poses)")
     a = ap.parse_args()
     scene = scene_of(a.task)
@@ -103,6 +104,27 @@ def main():
         yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
         start = [rp["position"][0], rp["position"][1], yaw]
     meta["start_pose_world"] = start
+    # 닿을 수 있는 기준(.reach.pgm): 닫힌 문을 막힌 것으로 본 바닥(floor_trav_no_door_0) 중, 시작 자리에서 몸통 반지름
+    # a.robot_r 이상 떨어진 칸으로 이어진 곳 + 그 둘레 0.6 m(서서 볼 수 있는 바닥). 덮음 지표의 분모.
+    if start is not None:
+        from scipy import ndimage
+        nd = np.array(Image.open(sd / "floor_trav_no_door_0.png")) > 0
+        okd = nd & inroom
+        gd = okd[: n * k, : n * k].reshape(n, k, n, k).mean(axis=(1, 3)) >= 0.5
+        gd = gd[y0:y1, x0:x1] & g
+        dist = ndimage.distance_transform_edt(gd) * a.res
+        sx = int((start[0] - ox) / a.res); sy = int((start[1] - oy) / a.res)
+        core = dist >= a.robot_r
+        yy, xx = np.ogrid[: core.shape[0], : core.shape[1]]
+        core |= ((yy - sy) ** 2 + (xx - sx) ** 2 <= (0.4 / a.res) ** 2) & gd
+        lab, _ = ndimage.label(core)
+        reach = lab == lab[sy, sx] if lab[sy, sx] > 0 else np.zeros_like(core)
+        band = ndimage.binary_dilation(reach, iterations=int(0.6 / a.res)) & gd
+        with open(f"{stem}.reach.pgm", "wb") as f:
+            f.write(f"P5\n{w} {h}\n255\n".encode())
+            f.write((band.astype(np.uint8) * 255).tobytes())
+        meta["reach_m2"] = float(band.sum() * a.res * a.res)
+        meta["reach_robot_r"] = a.robot_r
     meta["instance"] = a.instance
     meta["excluded"] = sorted(ex)
     pathlib.Path(f"{stem}.json").write_text(json.dumps(meta, indent=1))
