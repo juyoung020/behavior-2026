@@ -115,4 +115,7 @@ Secure Boot 상태는 권한 문제로 못 읽었다 — 켜져 있으면 드라
 - ① 0 행동 radio 1 판(151 스텝): 검은 프레임 카메라 3 대 모두 **0/151**. 판 정상 종료(success 0/1, 0 행동이라 당연).
 - ② Windows nf_a 행동열 재생(501 스텝): 검은 프레임 **0/501**. 판정(success False·q_score 0.0·steps 501) Windows 와 같음,
   물리는 robot_qpos 최대 1.75e-4·qvel 0.17 차이, JSON 의 agent_distance.left/right 가 소수 넷째 자리에서 다름(`compare_vs_windows.txt`) — plan.md 3 절의 "Windows 공식 ≠ Linux 공식" 측정과 같은 크기.
-- 판정: 리눅스 2 판 연속 검은 프레임 0. 기준(5 판 연속 0)까지 3 판 남음 — 아직 "(B) 없음" 확정 아님.
+- 같은 날 두 번째 실행(`outputs/linux_first_20261002_145840/`): 0 행동 3 판 모두 카메라 3 대 **0/151**, nf_a 재생 **0/501**,
+  `black_frame_check.py --max-ratio 0` 통과(가장 높은 검은 비율 0.0%). 재생 비교는 첫 실행과 같은 값(판정 같음, qpos 최대 1.75e-4).
+- **판정: 0 행동 5 판 연속 + 재생 2 판 모두 검은 프레임 0 → 이 리눅스 PC(RTX 4090, 드라이버 580)에서는 (B) 가 나지 않는다.**
+  (B) 는 Windows 쪽(Windows PC 의 Isaac Sim 렌더 경로) 문제로 본다. 제출용·비트 기준 평가는 이 PC 에서 한다.

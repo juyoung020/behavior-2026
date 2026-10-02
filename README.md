@@ -54,7 +54,7 @@ plan.md               plan and decisions
 
 **Linux (`ad17-MS-7E01`, RTX 4090, Ubuntu 22.04.5)**
 - Official evaluator on Linux: conda env `behavior` (Isaac Sim 5.1, torch 2.7.0+cu128, warp-lang 1.12.0), NVIDIA driver 580.178.04-open (535 failed — see [docs/Linux_설치.md](docs/Linux_설치.md)).
-- First check (`tools/setup/linux_first_check.sh`): no black frames in 2 runs so far.
+- First check (`tools/setup/linux_first_check.sh`): 5 zero-action runs + 2 replays, 0 black frames — black-frame issue (B) does not occur on Linux, so submission runs use this PC.
 
 ## Setup notes
 
