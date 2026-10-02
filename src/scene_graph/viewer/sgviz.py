@@ -650,6 +650,8 @@ class SgViewer(ViserRenderer):
         self.picker = PickIndex()
         self._suppress_dropdown = False
         self._build_gui()
+        from sglayers import LayerView  # Hydra-style stacked graph layers (view.json "graph")
+        self.layers = LayerView(self.server, self.dir)
 
     # ---------------- GUI ----------------
     def _build_gui(self):
@@ -1081,6 +1083,8 @@ class SgViewer(ViserRenderer):
                 self.poll_once()
                 with self.lock:
                     self._refresh_points()
+                    if self.layers.poll() and self.scene is not None:
+                        self.g_status.content = self.g_status.content.split("  \ngraph:")[0] + "  \n" + self.layers.status()
             except Exception as ex:
                 print(f"[sgviz] update error: {ex!r}", file=sys.stderr)
             time.sleep(self.poll)
