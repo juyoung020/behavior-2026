@@ -2,6 +2,8 @@
 
 `ovdet` is the detector of the scenemap perception stack (`docs/scenemap_설계.md`).
 
+> ovdet (YOLOE) is what the code uses today, but object recognition is moving to FastSAM-s 416 + SigLIP 2 B/32 (`src/scene_graph/clip/`, in progress).
+
 - **In:** one camera image and a prompt, the task's BDDL object names.
 - **Out:** a list of objects. Each object has a prompt index, a score, a box and a mask.
 
@@ -67,13 +69,13 @@ cd ~/ovdet_models/onnx416 && ~/ovdet_export_venv/bin/python -c "from ultralytics
 ~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx416/yolo26s-seg-416.onnx --names config/coco80.txt --workspace-gb 1
 ```
 
-## Build (Linux / WSL; CUDA 12.8, TensorRT 10)
+## Build (Linux; CUDA 12.8, TensorRT 10)
 
 ```
 bash scripts/build_linux.sh        # -> ~/ovdet_build/libovdet.so, ovdet_smoke
 ```
 
-The Windows host has no TensorRT SDK installed, so the library is built and run on Linux, which is also the submission Docker's OS.
+The library is built and run on Linux, which is also the submission Docker's OS.
 
 ## Detector comparison
 

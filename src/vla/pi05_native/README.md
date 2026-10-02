@@ -26,7 +26,7 @@ JAX-CPU vs JAX-GPU" at every point. Details and numbers (Korean): `docs/π05_네
 
 ## Build
 
-- Linux / WSL: `bash build_linux.sh [build_dir]` (CUDA 12.8+, g++). Produces `libpi05.a`, `pi05_verify`, `pi05_server`.
+- Linux: `bash build_linux.sh [build_dir]` (CUDA 12.8+, g++). Produces `libpi05.a`, `pi05_verify`, `pi05_server`.
 - Windows (no longer used; Linux is the only work machine): `archive/src/vla/pi05_native/build_windows.bat`.
 
 Only sm_120 (RTX 50xx) is compiled by default; set `PI05_ARCH` (Linux) for other GPUs.
@@ -34,7 +34,7 @@ Only sm_120 (RTX 50xx) is compiled by default; set `PI05_ARCH` (Linux) for other
 ## Use
 
 ```
-# weights (once, WSL openpi venv)
+# weights (once, openpi venv)
 tools/wsl_py.sh tools/export_weights.py --ckpt <ckpt dir> --asset turning_on_radio --out data/pi05_native/pi05_radio.pi05w
 # check against JAX dumps
 pi05_verify --weights W.pi05w --ref data/pi05_native/ref --tag gpu --floor cpu --floor-single cpu_planted --check

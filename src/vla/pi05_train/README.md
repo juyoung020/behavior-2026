@@ -16,11 +16,11 @@ Status: ported and verified; no real training run has been started (porting and 
   Python in between. At full size (batch 32, optimizer state in pinned host memory) the expert mode needs 3.0 s per
   step and 10.7 GiB of GPU memory.
 
-Korean write-up with the tables: [`docs/π05_네이티브엔진.md`](../../docs/π05_네이티브엔진.md), section 12.
+Korean write-up with the tables: [`docs/π05_네이티브엔진.md`](../../../docs/π05_네이티브엔진.md), section 12.
 
 ## What is reproduced
 
-| openpi (WSL `~/openpi`, `behavior` branch) | here |
+| openpi (`~/openpi`, `behavior` branch) | here |
 |---|---|
 | `models/pi0.py:189-214` `compute_loss` (flow matching, joint prefix+suffix pass) | `src/trainer.cu` (expert), `src/lora.cu` (lora); one sample at a time, gradients summed in f32 |
 | `scripts/train.py:85-180` (frozen params in bf16, trainable f32 masters, `value_and_grad`, EMA 0.99) | `accumulate / finalize_grads / opt_step` |
@@ -46,7 +46,7 @@ Korean write-up with the tables: [`docs/π05_네이티브엔진.md`](../../docs/
 | `tools/make_state.py`, `tools/state_to_orbax.py` | full-size initial state from an orbax checkpoint; trained state back to an openpi params checkpoint |
 | `tools/train_bench.cpp`, `tools/tgemm_test.cu`, `tools/session.sh` | memory/time measurement, GEMM check, GPU-lock sessions |
 
-## Build and check (Linux / WSL)
+## Build and check (Linux)
 
 ```bash
 bash src/vla/pi05_native/build_linux.sh            # inference engine library (frozen prefix in expert mode)
@@ -60,7 +60,7 @@ bash src/vla/pi05_train/tools/session.sh aug
 ## Train (not run yet)
 
 ```bash
-python tools/make_state.py --ckpt <openpi checkpoint> --mode expert|lora --out state.pi05d   # WSL openpi venv
+python tools/make_state.py --ckpt <openpi checkpoint> --mode expert|lora --out state.pi05d   # openpi venv
 pi05_train --state state.pi05d --model pi05.pi05w --table <fasttrain table dir> --lut <lut_w720.bin> \
            --steps 30000 --offload 2 --save-every 1000 --out <dir>
 python tools/state_to_orbax.py --state <dir>/state_stepN.pi05d --base <openpi checkpoint> --out <new ckpt> --ema
@@ -70,6 +70,12 @@ python tools/state_to_orbax.py --state <dir>/state_stepN.pi05d --base <openpi ch
 
 Everything is in `tools/setup/train_4090.sh` (repo root). It has **not been run on a 4090 yet**; the numbers below
 are estimated from the RTX 5070 Ti measurements.
+
+> The work PC is now an RTX 5070 Ti (16 GB, sm_120); the 4090 PC is no longer used. The script was written for the
+> 4090 and must be re-checked before it is used on the current PC:
+> - it builds for sm_89 only (`FT_CUDA_ARCH=89`, `PI05_ARCH`), not sm_120;
+> - its default `OFFLOAD=0` and the 24 GB memory/speed estimates below do not carry over to 16 GB. The only
+>   full-size measurement on the 5070 Ti is the expert mode with `--offload 2`: 3.0 s per step, 10.7 GiB (see Status above).
 
 - **Requirements:** Ubuntu 22.04/24.04, NVIDIA driver ≥ 570, CUDA toolkit 12.8, g++, cmake, Rust, uv, ffmpeg, and
   about 60 GB of disk. The script builds for sm_89 (`PI05_ARCH`, `FT_CUDA_ARCH=89`).
