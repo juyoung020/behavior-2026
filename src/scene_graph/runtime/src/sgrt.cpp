@@ -1,7 +1,10 @@
 // sgrt 구현(include/sgrt.h): ovdet + scenemap + 주기 저장을 한 C ABI 로.
 #include "sgrt.h"
 
+#include <cuda_runtime.h>
+
 #include <chrono>
+#include <mutex>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -13,6 +16,7 @@
 #include "ovdet.h"
 #include "scenemap.h"
 #include "scenemap/bestview.hpp"
+#include "scenemap/timing.hpp"
 
 constexpr int kClosedVocabMax = 200;   // 이 이하 어휘 = 닫힌 어휘 엔진(COCO-80), 기본으로 어휘 전부
 
@@ -35,6 +39,14 @@ struct sgrt {
   sgrt_crop::Gpu* crop = nullptr; // 처음 장치 영상이 올 때 만듦
   sm_snapshot_t* map_snap = nullptr; // sgrt_map 이 넘긴 포인터의 주인
   std::vector<float> movable;         // sgrt_map: 옮길 수 있는 물체 x, y, r
+  // 영상 stamp = 직전 스텝 stamp(SGRT_IMAGE_LAG)
+  int image_lag = 1;
+  double prev_stamp = -1;
+  // 기록(SGRT_RECORD)
+  FILE* rec = nullptr;
+  std::vector<uint8_t> rec_rgb;
+  // sgrt 단계 시간: det, step, map, record
+  scenemap::Timings tm;
 };
 
 namespace {
@@ -43,6 +55,58 @@ void put(char* err, size_t n, const char* msg) {
 }
 double msSince(std::chrono::steady_clock::time_point t) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
+enum { kSgDet = 0, kSgStep, kSgMap, kSgRecord, kSgCount };
+const char* const kSgNames[kSgCount] = {"det", "step", "map", "record"};
+
+// 기록 파일: 머리 "SGRC" u32 판 1, 그 뒤 레코드(꼬리표 1 바이트):
+//   'P' f64 stamp, i32 n, f32[n] proprio
+//   'G' f64 stamp, f64 x, y, yaw                                   (외부 자세)
+//   'I' f64 stamp(스텝 시각, 늦춤 전), i32 w, h, f64 fx, fy, cx, cy, f32[w·h] 깊이 m, u8 has_rgb, [u8[w·h·3] RGB],
+//       i32 n, img_w, img_h, mask_w, mask_h, f32 sx, sy, ox, oy, i32[n] cls, f32[n] score, f32[4n] box, u32[n·words] mask
+template <class T>
+void wr(FILE* f, const T& v) { std::fwrite(&v, sizeof(T), 1, f); }
+void recImage(sgrt* s, double stamp, const uint8_t* rgb, int on_dev, int64_t rs, int ps, int w, int h, const float* depth,
+              double fx, double fy, double cx, double cy, const sm_detections* d) {
+  FILE* f = s->rec;
+  std::fputc('I', f);
+  wr(f, stamp); wr(f, int32_t(w)); wr(f, int32_t(h)); wr(f, fx); wr(f, fy); wr(f, cx); wr(f, cy);
+  std::fwrite(depth, sizeof(float), size_t(w) * h, f);
+  s->rec_rgb.resize(size_t(w) * h * 3);
+  bool ok = false;
+  if (rgb && ps >= 3) {
+    if (on_dev) {
+      ok = cudaMemcpy2D(s->rec_rgb.data(), size_t(w) * 3, rgb, size_t(rs), size_t(w) * 3, size_t(h), cudaMemcpyDeviceToHost) == cudaSuccess;
+      if (ok && ps != 3) ok = false;   // 장치 RGBA 는 아래에서 한 번 더
+      if (!ok && ps == 4) {
+        std::vector<uint8_t> tmp(size_t(w) * h * 4);
+        ok = cudaMemcpy2D(tmp.data(), size_t(w) * 4, rgb, size_t(rs), size_t(w) * 4, size_t(h), cudaMemcpyDeviceToHost) == cudaSuccess;
+        for (size_t i = 0; ok && i < size_t(w) * h; ++i)
+          for (int k = 0; k < 3; ++k) s->rec_rgb[3 * i + k] = tmp[4 * i + k];
+      }
+    } else {
+      for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+          for (int k = 0; k < 3; ++k) s->rec_rgb[(size_t(y) * w + x) * 3 + k] = rgb[y * rs + int64_t(x) * ps + k];
+      ok = true;
+    }
+  }
+  std::fputc(ok ? 1 : 0, f);
+  if (ok) std::fwrite(s->rec_rgb.data(), 1, s->rec_rgb.size(), f);
+  const int n = d ? d->n : 0;
+  wr(f, int32_t(n));
+  wr(f, int32_t(d ? d->img_w : 0)); wr(f, int32_t(d ? d->img_h : 0));
+  wr(f, int32_t(d ? d->mask_w : 0)); wr(f, int32_t(d ? d->mask_h : 0));
+  wr(f, d ? d->mask_sx : 0.f); wr(f, d ? d->mask_sy : 0.f); wr(f, d ? d->mask_ox : 0.f); wr(f, d ? d->mask_oy : 0.f);
+  if (n) {
+    const size_t words = (size_t(d->mask_w) * d->mask_h + 31) / 32;
+    std::fwrite(d->cls, 4, n, f);
+    std::vector<float> sc(n, 1.f);
+    if (d->score) std::copy(d->score, d->score + n, sc.begin());
+    std::fwrite(sc.data(), 4, n, f);
+    std::fwrite(d->box, 4, size_t(4) * n, f);
+    std::fwrite(d->mask_bits, 4, words * n, f);
+  }
 }
 // sm_crop_fn: 이 keyframe 의 머리 RGB(장치 또는 호스트)에서 best view 상자만 자름
 struct CropSrc {
@@ -114,6 +178,21 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     return nullptr;
   }
   s->sm = sm_create(nullptr);
+  if (const char* pm = std::getenv("SGRT_POSE")) {
+    const std::string m = pm;
+    sm_set_pose_mode(s->sm, m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
+  }
+  if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
+  if (const char* lg = std::getenv("SGRT_IMAGE_LAG")) s->image_lag = std::atoi(lg) ? 1 : 0;
+  if (const char* rp = std::getenv("SGRT_RECORD")) {
+    s->rec = std::fopen(rp, "wb");
+    if (s->rec) {
+      std::fwrite("SGRC", 1, 4, s->rec);
+      wr(s->rec, uint32_t(1));
+      std::fprintf(stderr, "[sgrt] recording inputs to %s\n", rp);
+    }
+  }
+  std::fprintf(stderr, "[sgrt] pose mode %d (0 slam, 1 odom, 2 gt), image lag %d\n", sm_get_pose_mode(s->sm), s->image_lag);
   return s;
 }
 
@@ -123,6 +202,7 @@ void sgrt_destroy(sgrt* s) {
   if (s->sm) sm_destroy(s->sm);
   sgrt_crop::destroy(s->crop);
   sm_snapshot_release(s->map_snap);
+  if (s->rec) std::fclose(s->rec);
   delete s;
 }
 
@@ -149,6 +229,7 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
   std::fprintf(stderr, "[sgrt] prompt %s: %d labels (task names in vocabulary %d/%d, engine vocabulary %d)\n", all ? "all" : "task",
                int(lp.size()), found, n, V);
   s->step = 0;
+  s->prev_stamp = -1;
   s->last_save = -1e9;
   s->n_kf = s->n_det = 0;
   return 0;
@@ -164,8 +245,18 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
               int64_t row_stride, int32_t pix_stride, int32_t w, int32_t h, const float* depth_m, double fx, double fy, double cx,
               double cy) {
   if (!s || !proprio) return -1;
+  const auto t_step = std::chrono::steady_clock::now();
+  if (s->rec) {
+    std::fputc('P', s->rec);
+    wr(s->rec, stamp);
+    wr(s->rec, int32_t(n_proprio));
+    std::fwrite(proprio, 4, size_t(std::max(0, n_proprio)), s->rec);
+  }
   sm_proprio p{stamp, proprio, n_proprio};
   int rc = sm_push_proprio(s->sm, &p);
+  // 영상 k = 장면 k-1: 직전 스텝 시각(첫 스텝은 자기 시각)
+  const double im_stamp = s->image_lag && s->prev_stamp >= 0 && s->prev_stamp < stamp ? s->prev_stamp : stamp;
+  s->prev_stamp = stamp;
   if (rc == 0 && rgb && depth_m && w > 0 && h > 0) {
     const auto t0 = std::chrono::steady_clock::now();
     OvdImage im{};
@@ -179,8 +270,14 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     im.on_device = rgb_on_device;
     const sm_detections* d = ovd_detect(s->det, &im, nullptr);
     s->det_ms = float(msSince(t0));
+    s->tm.h[kSgDet].add(s->det_ms * 1e3);
+    if (s->rec) {
+      const auto tr = std::chrono::steady_clock::now();
+      recImage(s, stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, depth_m, fx, fy, cx, cy, d);
+      s->tm.h[kSgRecord].add(msSince(tr) * 1e3);
+    }
     sm_image si{};
-    si.stamp = stamp;
+    si.stamp = im_stamp;
     si.cam = 0;
     si.w = w;
     si.h = h;
@@ -198,6 +295,7 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
   }
   s->step++;
   if (stamp - s->last_save >= s->cfg.save_s) sgrt_save(s), s->last_save = stamp;
+  s->tm.h[kSgStep].add(msSince(t_step) * 1e3);
   return rc;
 }
 
@@ -241,6 +339,7 @@ void sgrt_get_timing(const sgrt* s, sgrt_timing* t) {
 
 int sgrt_map(sgrt* s, sgrt_map_view* out) {
   if (!s || !out) return -1;
+  scenemap::ScopedStage tmap(&s->tm, kSgMap);
   int32_t dbox[4] = {0, 0, 0, 0};
   uint64_t ver = 0;
   const int dirty = sm_take_dirty(s->sm, dbox, &ver);   // 스냅숏 앞: 그 사이 insert 는 다음 부름의 상자에 들어감
@@ -290,6 +389,52 @@ int sgrt_map(sgrt* s, sgrt_map_view* out) {
   out->n_movable = int32_t(s->movable.size() / 3);
   out->movable_xyr = s->movable.empty() ? nullptr : s->movable.data();
   return 0;
+}
+
+int sgrt_set_pose_mode(sgrt* s, int32_t mode) { return s ? sm_set_pose_mode(s->sm, mode) : -1; }
+
+int sgrt_push_pose(sgrt* s, double stamp, double x, double y, double yaw) {
+  if (!s) return -1;
+  if (s->rec) {
+    std::fputc('G', s->rec);
+    wr(s->rec, stamp); wr(s->rec, x); wr(s->rec, y); wr(s->rec, yaw);
+  }
+  const sm_pose2 p{stamp, x, y, yaw};
+  return sm_push_pose(s->sm, &p);
+}
+
+int sgrt_get_pose_diag(const sgrt* s, sgrt_pose_diag* out) {
+  static_assert(sizeof(sgrt_pose_diag) == sizeof(sm_pose_diag), "same layout");
+  if (!s || !out) return -1;
+  return sm_get_pose_diag(s->sm, reinterpret_cast<sm_pose_diag*>(out));
+}
+
+int sgrt_get_stage_timing(const sgrt* s, sgrt_stage_timing* out, int32_t cap) {
+  static_assert(sizeof(sgrt_stage_timing) == sizeof(sm_stage_timing), "same layout");
+  if (!s) return -1;
+  const int n = sm_get_timing(s->sm, reinterpret_cast<sm_stage_timing*>(out), cap);
+  if (n < 0) return n;
+  for (int k = 0; k < kSgCount; ++k) {
+    if (out && n + k < cap) {
+      const scenemap::StageHist& h = s->tm.h[k];
+      sgrt_stage_timing& o = out[n + k];
+      o.name = kSgNames[k];
+      o.n = int64_t(h.n);
+      o.total_us = h.sum;
+      o.mean_us = h.n ? h.sum / double(h.n) : 0;
+      o.p50_us = h.quantile(0.5);
+      o.p99_us = h.quantile(0.99);
+      o.max_us = h.max;
+      o.last_us = h.last;
+    }
+  }
+  return n + kSgCount;
+}
+
+int sgrt_reset_stage_timing(sgrt* s) {
+  if (!s) return -1;
+  s->tm.clear();
+  return sm_reset_timing(s->sm);
 }
 
 }  // extern "C"

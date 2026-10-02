@@ -95,6 +95,36 @@ typedef struct {
 } sgrt_map_view;
 int    sgrt_map(sgrt*, sgrt_map_view* out);
 
+/* ---- 자세 원천·단계 시간·기록(추가 ABI, 10-03) ----
+ * 자세 원천: 0 slam(기본, 적분 + 스캔 맞추기), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화용, 대회 제출 금지).
+ *   환경 변수 SGRT_POSE=slam|odom|gt 가 sgrt_create 때 기본값을 정한다. gt 면 map = 시뮬 world 프레임.
+ * sgrt_push_pose: 이번 스텝의 외부 베이스 자세(map/world: x, y, yaw rad). 같은 stamp 의 sgrt_step 앞에 부른다.
+ *   gt 가 아닌 모드에서도 넣으면 떠밀림 진단(sgrt_get_pose_diag)과 기록에 쓴다.
+ * 영상 시각: 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면이다(docs/통합_실시간.md 2.7). sgrt 는 영상 stamp 를 직전 sgrt_step 의
+ *   stamp 로 넣는다(SGRT_IMAGE_LAG=1 기본, 실제 로봇처럼 영상과 proprio 가 같은 순간이면 0).
+ * 격자 넣기 정책: SGRT_MAP_POLICY=1(기본, 사건 기반 — 서 있어도 바뀐 장애물을 넣고 지움) | 0(옛 움직임 거르기).
+ * 기록: SGRT_RECORD=<파일> 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 이진 파일로 쓴다 —
+ *   scenemap/tools/sm_bench 가 다시 재생한다(자세 모드 비교·단계 시간). */
+int    sgrt_set_pose_mode(sgrt*, int32_t mode);
+int    sgrt_push_pose(sgrt*, double stamp, double x, double y, double yaw);
+typedef struct {
+  int32_t n;
+  double stamp;
+  double last_xy, last_yaw;
+  double max_xy, max_yaw, rms_xy, rms_yaw;
+  double est[3], ref[3];
+} sgrt_pose_diag;              /* scenemap sm_pose_diag 와 같은 배치 */
+int    sgrt_get_pose_diag(const sgrt*, sgrt_pose_diag* out);
+typedef struct {
+  const char* name;
+  int64_t n;
+  double mean_us, p50_us, p99_us, max_us, last_us, total_us;
+} sgrt_stage_timing;           /* scenemap sm_stage_timing 와 같은 배치 */
+/* 단계별 µs: scenemap 단계(sm_get_timing) 뒤에 sgrt 단계(det = ovdet 검출, step = sgrt_step 전체, map = sgrt_map,
+ * record = 기록 쓰기). 전체 단계 수를 돌려줌 */
+int    sgrt_get_stage_timing(const sgrt*, sgrt_stage_timing* out, int32_t cap);
+int    sgrt_reset_stage_timing(sgrt*);
+
 #ifdef __cplusplus
 }
 #endif
