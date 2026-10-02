@@ -30,6 +30,14 @@ if ! grep -q 'ENGINE_LOCAL_ARCH' "$GPU_CMAKE"; then
 fi
 grep -n 'ENGINE_LOCAL_ARCH' "$GPU_CMAKE"
 
+# CUDA 13: cuCtxCreate 가 cuCtxCreate_v4(ctx, params, flags, dev) 로 바뀜 — params 는 NULL(기본, 이전 동작과 같음). CPU 물리 결과와는 무관(GPU 문맥 생성만).
+CCM=source/cudamanager/src/CudaContextManager.cpp
+if ! grep -q 'ENGINE_CUDA13' "$CCM"; then
+  cp -n "$CCM" "$CCM.orig"
+  sed -i 's/status = cuCtxCreate(&mCtx, (unsigned int)flags, mDevHandle);/status = cuCtxCreate(\&mCtx, NULL, (unsigned int)flags, mDevHandle); \/\/ ENGINE_CUDA13/' "$CCM"
+fi
+grep -n 'ENGINE_CUDA13' "$CCM"
+
 ./generate_projects.sh "$PRESET"
 cd "compiler/$PRESET-$CONFIG"
 time make -j"$(nproc)"

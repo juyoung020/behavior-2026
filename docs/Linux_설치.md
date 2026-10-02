@@ -39,6 +39,15 @@
    위 2 의 오류들은 535 드라이버 탓으로 본다(warp 오류가 드라이버에 따라 갈린 이유는 확인 못 함 — 추정).
 4. 10-02 π0.5 radio 체크포인트(Google Drive, [베이스라인.md](베이스라인.md))를 이 PC 로 받는 중 — Drive 속도 약 1 MB/s, DNS 일시 실패로 끊긴 적 있음(`logs/linux_dl/gdrive_pi05.log`).
 
+### 3.1 두 번째 PC (`jy-desktop`, RTX 5070 Ti 16 GB sm_120, 저장소 `~/robot-agent/src/behavior-2026`, 10-03)
+
+- 저장소는 `robot-agent` 의 서브모듈. 옛 경로를 쓰는 스크립트를 위해 심볼릭 링크 `~/behavior-2026`, `/mnt/c/behavior-2026` → 서브모듈.
+- CUDA 는 **13.2 하나**(빌드 스크립트의 12.8 경로를 13.2 로 바꿈). clang 14 + `libstdc++-12-dev` 가 있어야 clang 링크가 된다.
+- PhysX 5.6.1 (`build_physx.sh`): CUDA 13 의 `cuCtxCreate_v4` 때문에 패치 한 줄(스크립트가 넣음). CPU 정적 라이브러리(정답지) 전부 빌드됨.
+  `libPhysXGpu_64.so` 만 cudart 중복 정의로 링크 실패 — 엔진 시험은 `px_gpu_stub` 이라 안 씀.
+- **드라이버 595.91.07 에서 Isaac Sim 5.1 이 시작 때 `librtx.scenedb.plugin.so` 세그폴트**(맨 SimulationApp 도, iGPU 막아도 같음 — 595 계열 알려진 문제) → `nvidia-driver-580-open` 580.178.04 로 내림.
+- `import omnigibson` 은 `warp-lang==1.12.0` 이 있어야 된다(위 3 의 1 과 같음). HF 토큰은 `hf auth login`(저장소 밖).
+
 ## 4. 첫 확인 (`tools/setup/linux_first_check.sh N`)
 
 radio 인스턴스 0, **0 행동 150 스텝 × N 판**(영상 저장), 판마다 검은 프레임 수(`black_frames.json`) + `tools/black_frame_check.py --max-ratio 0`, 이어서 기준 행동열 재생 비교.
