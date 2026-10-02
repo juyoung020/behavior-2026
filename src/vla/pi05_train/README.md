@@ -71,11 +71,10 @@ python tools/state_to_orbax.py --state <dir>/state_stepN.pi05d --base <openpi ch
 Everything is in `tools/setup/train_4090.sh` (repo root). It has **not been run on a 4090 yet**; the numbers below
 are estimated from the RTX 5070 Ti measurements.
 
-> The work PC is now an RTX 5070 Ti (16 GB, sm_120); the 4090 PC is no longer used. The script was written for the
-> 4090 and must be re-checked before it is used on the current PC:
-> - it builds for sm_89 only (`FT_CUDA_ARCH=89`, `PI05_ARCH`), not sm_120;
-> - its default `OFFLOAD=0` and the 24 GB memory/speed estimates below do not carry over to 16 GB. The only
->   full-size measurement on the 5070 Ti is the expert mode with `--offload 2`: 3.0 s per step, 10.7 GiB (see Status above).
+> This section is for the school RTX 4090 (24 GB), where LoRA training is done. The work PC is an RTX 5070 Ti
+> (16 GB, sm_120): inference and evaluation run fine there, but LoRA training goes to the 4090. The script builds
+> for sm_89 only (`FT_CUDA_ARCH=89`, `PI05_ARCH`), i.e. for the 4090. The only full-size measurement on the 5070 Ti
+> is the expert mode with `--offload 2`: 3.0 s per step, 10.7 GiB (see Status above).
 
 - **Requirements:** Ubuntu 22.04/24.04, NVIDIA driver ≥ 570, CUDA toolkit 12.8, g++, cmake, Rust, uv, ffmpeg, and
   about 60 GB of disk. The script builds for sm_89 (`PI05_ARCH`, `FT_CUDA_ARCH=89`).
