@@ -133,14 +133,14 @@ void ObjectMap::update(const ObjFrame& f) {
   if (D && D->n > 0) {
     const float sxu = D->img_w > 0 ? float(f.w) / D->img_w : 1.f;   // 검출 영상 화소 ↔ 깊이 화소(크기가 다르면)
     const float syv = D->img_h > 0 ? float(f.h) / D->img_h : 1.f;
-    std::vector<double> X, Y, Z, ZC;
+    std::vector<double> X, Y, Z, ZC, ZS;
     for (int k = 0; k < D->n; ++k) {
+      if (kindOf(D->cls[k]) == kKindStructure) continue;   // 벽·바닥·문 등: 격자만(물체 아님)
       X.clear(); Y.clear(); Z.clear(); ZC.clear();
       // 상자 안만 훑는다(검출 영상 화소 → 깊이 화소)
       const float* b = D->box + 4 * k;
       const int u0 = std::max(0, int(b[0] * sxu) - 1), u1 = std::min(f.w - 1, int(b[2] * sxu) + 1);
       const int v0 = std::max(0, int(b[1] * syv) - 1), v1 = std::min(f.h - 1, int(b[3] * syv) + 1);
-      int near_hand = 0;
       for (int v = v0; v <= v1; v += st)
         for (int u = u0; u <= u1; u += st) {
           // 깊이 화소 중심 → 검출 영상 화소 → 마스크 칸, 1 칸 깎기(네 이웃도 마스크)
@@ -155,16 +155,30 @@ void ObjectMap::update(const ObjFrame& f) {
           const double px = T[0] * xc + T[1] * yc + T[2] * z + T[3];
           const double py = T[4] * xc + T[5] * yc + T[6] * z + T[7];
           const double pz = T[8] * xc + T[9] * yc + T[10] * z + T[11];
-          const double pp[3] = {px, py, pz};
-          if (dist3(pp, f.eef[0]) < p_.hand_r || dist3(pp, f.eef[1]) < p_.hand_r) ++near_hand;
           X.push_back(px); Y.push_back(py); Z.push_back(pz); ZC.push_back(z);
         }
-      const int np = int(X.size());
+      if (int(X.size()) < p_.min_points) continue;
+      // 깊이 이상값(마스크 가장자리로 뒤 벽·바닥이 비침): 카메라 깊이 중앙값 ± max(k·1.4826·MAD, floor) 밖 점 버림
+      ZS = ZC;
+      const double zmed = pct(ZS, 0.5);
+      for (double& z : ZS) z = std::fabs(z - zmed);
+      const double band = std::max(p_.mad_k * 1.4826 * pct(ZS, 0.5), p_.mad_floor);
+      int near_hand = 0;
+      size_t w = 0;
+      for (size_t i = 0; i < X.size(); ++i) {
+        if (std::fabs(ZC[i] - zmed) > band) continue;
+        const double pp[3] = {X[i], Y[i], Z[i]};
+        if (dist3(pp, f.eef[0]) < p_.hand_r || dist3(pp, f.eef[1]) < p_.hand_r) ++near_hand;
+        X[w] = X[i]; Y[w] = Y[i]; Z[w] = Z[i];
+        ++w;
+      }
+      X.resize(w); Y.resize(w); Z.resize(w);
+      const int np = int(w);
       if (np < p_.min_points) continue;
       if (near_hand >= p_.hand_frac * np) continue;   // 손에 든 것
       Obs o;
       o.det = k;
-      o.zmed = pct(ZC, 0.5);
+      o.zmed = zmed;
       o.cls = D->cls[k];
       o.score = D->score ? D->score[k] : 1.f;
       o.n = np;
@@ -217,11 +231,16 @@ void ObjectMap::update(const ObjFrame& f) {
       if (m.last_kf != f.stamp) ++m.n_obs;
       m.last_kf = f.stamp;
       const double w = std::min<double>(m.n_obs, 20);
-      const bool big = std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], o.ext[0], o.ext[1]}) > p_.big;
+      const bool big = kindOf(m.cls) == kKindStatic || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], o.ext[0], o.ext[1]}) > p_.big;
       for (int k = 0; k < 3; ++k) {
         if (big) {
-          m.lo[k] = std::min(m.lo[k], o.lo[k]);
-          m.hi[k] = std::max(m.hi[k], o.hi[k]);
+          // 합집합, 단 keyframe 마다 면마다 grow_max 까지·한 변 max_ext 까지(이상값·잘못 붙은 관측이 끝없이 키우지 않게)
+          const double lo = std::max(std::min(m.lo[k], o.lo[k]), m.lo[k] - p_.grow_max);
+          const double hi = std::min(std::max(m.hi[k], o.hi[k]), m.hi[k] + p_.grow_max);
+          if (hi - lo <= p_.max_ext) {
+            m.lo[k] = lo;
+            m.hi[k] = hi;
+          }
           m.pos[k] = 0.5 * (m.lo[k] + m.hi[k]);
           m.ext[k] = m.hi[k] - m.lo[k];
         } else {
@@ -286,6 +305,7 @@ void ObjectMap::update(const ObjFrame& f) {
       MapObject& m = objs_[b];
       if (!m.confirmed || m.held_by >= 0 || obj_hit[b] || m.state == SM_GONE) continue;
       if (m.parent) continue;   // 통 안에 넣은 것은 안 보여도 그대로 있다고 본다
+      if (kindOf(m.cls) == kKindStatic) continue;   // 가구·가전·붙박이는 사라지지 않음
       // 큰 가구(한 변 > big)는 사라짐 판정을 하지 않는다: 부분만 보이고 중심 한 점으로 가림을 판단하기 어렵고, 과제 중 없어지지 않는다
       if (std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]}) > p_.big) continue;
       // 손 가까이는 판단하지 않는다: 손에 든 관측은 거르므로(위) 잡으러 다가가는 동안 '안 보임'으로 셈하면 안 됨
@@ -310,7 +330,8 @@ void ObjectMap::update(const ObjFrame& f) {
       if (nd < 5) continue;
       std::nth_element(ds, ds + nd / 2, ds + nd);
       if (ds[nd / 2] < zc - p_.occl) continue;
-      if (++m.misses >= p_.gone_misses) {
+      if (m.misses++ == 0) m.first_miss = f.stamp;
+      if (m.misses >= p_.gone_misses && f.stamp - m.first_miss >= p_.gone_min_s - 1e-9) {
         m.state = SM_GONE;
         event(f.stamp, m, 3);
       }

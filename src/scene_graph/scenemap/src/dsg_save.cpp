@@ -77,7 +77,8 @@ std::string viewJson(const SaveInput& in, const std::vector<uint8_t>& ok) {
     o << (i ? "," : "") << "{\"id\":" << b.id << ",\"name\":\"" << esc(b.name ? b.name : "") << "\",\"state\":\"" << stateName(b.state)
       << "\",\"pos\":[" << b.pos[0] << "," << b.pos[1] << "," << b.pos[2] << "],\"extent\":[" << b.extent[0] << "," << b.extent[1] << ","
       << b.extent[2] << "],\"first_pos\":[" << b.first_pos[0] << "," << b.first_pos[1] << "," << b.first_pos[2] << "],\"n_obs\":" << b.n_obs
-      << ",\"last_seen\":" << b.last_seen << ",\"score\":" << b.score << ",\"structural\":" << (b.structural ? "true" : "false");
+      << ",\"last_seen\":" << b.last_seen << ",\"score\":" << b.score << ",\"structural\":" << (b.structural ? "true" : "false")
+      << ",\"movable\":" << (i >= int(in.movable.size()) || in.movable[i] ? "true" : "false");
     if (hasView(in, ok, i)) o << ",\"rgbd\":{\"rgb\":\"" << objPath(b.id, "rgb") << "\",\"depth\":\"" << objPath(b.id, "depth") << "\"}";
     o << "}";
   }
@@ -127,7 +128,8 @@ bool sceneDsg(const SaveInput& in, const std::vector<uint8_t>& ok, const fs::pat
                      {"score", b.score},
                      {"first_pos", {b.first_pos[0], b.first_pos[1], b.first_pos[2]}},
                      {"structural", bool(b.structural)},
-                     {"handled", bool(b.handled)}});
+                     {"handled", bool(b.handled)},
+                     {"movable", i >= int(in.movable.size()) || in.movable[i] != 0}});
     if (hasView(in, ok, i)) {
       const BestView& v = *in.views[i];
       std::vector<double> T(v.cam_T, v.cam_T + 12);

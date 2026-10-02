@@ -29,6 +29,7 @@ struct SaveInput {
   // 물체별(objs 와 같은 순서, 비어 있어도 됨)
   std::vector<BestViewPtr> views;  // best view(없으면 null)
   std::vector<uint8_t> png_dirty;  // 1: 지난 저장 뒤 모습이 바뀜
+  std::vector<uint8_t> movable;    // 1: 옮길 수 있는 물체, 0: 가구·가전·붙박이(비어 있으면 모두 1)
   bool clean_objects = false;      // objects/ 에서 지금 물체가 아닌 O<id>_*.png 지우기(새 판·새 디렉터리)
 };
 

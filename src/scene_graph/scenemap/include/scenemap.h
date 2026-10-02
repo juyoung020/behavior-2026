@@ -95,6 +95,21 @@ double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const doub
 
 #endif /* SM_API_H */
 
+/* ---- 이름 종류(추가 ABI) ----
+ * 구조물(SM_KIND_STRUCTURE): 물체 노드가 안 되고 2D 격자만(기본: wall, floor, ceiling, door, doorway, door frame, window,
+ *   pillar, column, partition, staircase, stairs, stair, railing, baseboard).
+ * 고정(SM_KIND_STATIC): 가구·가전·붙박이 — 물체 노드지만 movable = false, 사라짐 판정 안 함, 상자는 한도 있는 합집합
+ *   (기본: table, desk, counter, sofa, shelf, cabinet, bed, refrigerator, oven, sink, lamp, plant, picture frame, rug,
+ *   curtain, radiator, light switch, electric outlet ... — capi.cpp kStaticNames).
+ * 나머지는 옮길 수 있는 물체(SM_KIND_OBJECT). 이름 비교는 정규화(".n.NN" 버림, '_'→' ', 소문자) 뒤 머리 명사:
+ *   이름 == 항목 이거나 " 항목" 으로 끝남("glass door" → door, "floor lamp" → lamp). 구조물 표가 먼저.
+ * sm_set_kind_names 는 그 종류의 표를 통째로 바꾼다(names == NULL: 기본 표로). 지금 labels 에 바로 적용되고,
+ * 이미 만들어진 물체는 그대로 둔다(sm_reset 뒤부터 깨끗). */
+enum { SM_KIND_OBJECT = 0, SM_KIND_STRUCTURE = 1, SM_KIND_STATIC = 2 };
+int sm_set_kind_names(sm_ctx*, int32_t kind, const char* const* names, int32_t n);
+/* 스냅숏 물체 id 가 옮길 수 있는 것인가: 1 / 0(고정), -1 = 없음 */
+int sm_snap_movable(const sm_snapshot_t*, uint32_t id);
+
 /* ---- 물체별 RGB-D best view(추가 ABI, 위 함수·구조체는 그대로) ----
  * objmap 이 물체에 붙인 검출마다 품질 = 유효 마스크 넓이 × 점수 가 가장 큰(같으면 최근) 모습 하나를 물체마다 둔다.
  * RGB 자르기: 상자 + 변마다 10 % 여유, 긴 변 최대 256 px(넓이 평균으로 줄임). scenemap 은 자를 영역과 출력 버퍼만

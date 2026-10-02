@@ -33,6 +33,37 @@ struct ViewSlot {
   BestViewPtr v;
   double q = 0;                 // 비교에 쓰는 품질(옮겨짐·놓기 때 0 으로)
 };
+// 이름 종류 기본 표(팀 벤치마크 dynamic-object-mapping-benchmark 의 정답 정의: 배경 구조물은 instance 0 — 물체 아님,
+// 가구·가전·붙박이는 정답 물체지만 movable 0). 비교는 머리 명사: 정규화한 이름 == 항목 이거나 " 항목" 으로 끝남
+// ("glass door" → door, "floor lamp" → lamp, "coffee table" → table). 끝 's' 하나는 무시.
+const char* const kStructureNames[] = {"wall", "floor", "ceiling", "door", "doorway", "door frame", "window", "pillar", "column",
+                                       "partition", "staircase", "stairs", "stair", "railing", "baseboard"};
+const char* const kStaticNames[] = {
+    "table", "desk", "counter", "countertop", "sofa", "couch", "shelf", "shelving unit", "bookshelf", "bookcase", "cabinet",
+    "wardrobe", "dresser", "chest of drawers", "nightstand", "sideboard", "bed", "bench", "island", "refrigerator", "fridge",
+    "freezer", "oven", "stove", "range", "cooktop", "microwave", "dishwasher", "washer", "dryer", "washing machine", "sink",
+    "toilet", "bathtub", "bath", "shower", "fireplace", "piano", "television", "tv", "lamp", "chandelier", "plant",
+    "picture frame", "picture", "painting", "mirror", "rug", "carpet", "curtain", "blind", "radiator", "heater",
+    "light switch", "electric outlet", "outlet", "socket", "vent", "fixture", "appliance"};
+
+std::string normName(std::string t) {
+  // ".n.01" 같은 WordNet 꼬리 버림, '_' → ' ', 소문자, 앞뒤 공백 정리
+  const size_t p = t.find(".n.");
+  if (p != std::string::npos) t.resize(p);
+  for (char& ch : t) ch = ch == '_' ? ' ' : char(std::tolower(static_cast<unsigned char>(ch)));
+  while (!t.empty() && t.back() == ' ') t.pop_back();
+  while (!t.empty() && t.front() == ' ') t.erase(t.begin());
+  return t;
+}
+
+bool headMatch(const std::string& name, const std::string& e) {
+  auto ends = [](const std::string& a, const std::string& b) {
+    return a == b || (a.size() > b.size() && a.compare(a.size() - b.size(), b.size(), b) == 0 && a[a.size() - b.size() - 1] == ' ');
+  };
+  if (e.empty()) return false;
+  return ends(name, e) || (name.size() > 1 && name.back() == 's' && ends(name.substr(0, name.size() - 1), e));
+}
+
 constexpr float kCropMargin = 0.10f;
 constexpr int kCropMaxSide = 256;
 }  // namespace
@@ -44,6 +75,8 @@ struct sm_ctx {
   ObjParams oparams;
   ObjectMap om;
   std::vector<std::string> labels;
+  std::vector<std::string> kind_names[3];   // [1] 구조물, [2] 고정(정규화한 이름)
+  std::vector<uint8_t> kinds;               // labels[i] 의 종류
   std::vector<uint32_t> handled;
   std::deque<Prop> pending;     // 아직 적분하지 않은 proprio(영상 stamp 를 기다림)
   Prop last_used{};             // 가장 최근에 적분한 proprio
@@ -59,7 +92,21 @@ struct sm_ctx {
   std::unordered_map<uint32_t, uint32_t> saved_ver;
   std::string saved_dir;
   bool clean_objects = true;
-  explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {}
+  explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {
+    for (const char* n : kStructureNames) kind_names[SM_KIND_STRUCTURE].push_back(n);
+    for (const char* n : kStaticNames) kind_names[SM_KIND_STATIC].push_back(n);
+  }
+  // labels × 표 → 종류(구조물이 먼저: "floor lamp" 는 lamp 로 끝나 고정, "floor" 는 구조물)
+  void applyKinds() {
+    kinds.assign(labels.size(), SM_KIND_OBJECT);
+    for (size_t i = 0; i < labels.size(); ++i) {
+      const std::string n = normName(labels[i]);
+      for (int k : {SM_KIND_STRUCTURE, SM_KIND_STATIC})
+        for (const std::string& e : kind_names[k])
+          if (kinds[i] == SM_KIND_OBJECT && headMatch(n, e)) kinds[i] = uint8_t(k);
+    }
+    om.setClassKinds(kinds);
+  }
 };
 
 struct sm_snapshot_t {
@@ -72,6 +119,7 @@ struct sm_snapshot_t {
   std::vector<sm_object> objs;
   std::vector<std::string> names;   // objs[i].name 이 가리키는 문자열(스냅숏 수명 동안)
   std::vector<BestViewPtr> views;   // objs[i] 의 best view(없으면 null)
+  std::vector<uint8_t> movable;     // objs[i]: 1 = 옮길 수 있는 물체, 0 = 가구·가전·붙박이
   // reachable 용 부풀린 장애물(처음 부를 때 만듦)
   mutable std::once_flag inflate_once;
   mutable std::vector<uint8_t> blocked;
@@ -144,6 +192,25 @@ int sm_set_labels(sm_ctx* c, const char* const* names, int n) {
   std::lock_guard<std::mutex> g(c->mu);
   c->labels.clear();
   for (int i = 0; i < n; ++i) c->labels.emplace_back(names && names[i] ? names[i] : "");
+  c->applyKinds();
+  return 0;
+}
+
+int sm_set_kind_names(sm_ctx* c, int32_t kind, const char* const* names, int32_t n) {
+  if (!c || (kind != SM_KIND_STRUCTURE && kind != SM_KIND_STATIC)) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  std::vector<std::string>& v = c->kind_names[kind];
+  v.clear();
+  if (!names) {   // 기본 표로
+    if (kind == SM_KIND_STRUCTURE)
+      for (const char* e : kStructureNames) v.push_back(e);
+    else
+      for (const char* e : kStaticNames) v.push_back(e);
+  } else {
+    for (int i = 0; i < n; ++i)
+      if (names[i]) v.push_back(normName(names[i]));
+  }
+  c->applyKinds();
   return 0;
 }
 
@@ -152,6 +219,7 @@ int sm_reset(sm_ctx* c) {
   std::lock_guard<std::mutex> g(c->mu);
   c->slam = Slam2D(c->params);
   c->om = ObjectMap(c->oparams);
+  c->om.setClassKinds(c->kinds);
   c->handled.clear();
   c->pending.clear();
   c->have_used = false;
@@ -360,8 +428,10 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
       e.last_seen = o.last_seen;
       e.state = o.held_by >= 0 ? SM_HELD : o.state;
       e.handled = std::find(c->handled.begin(), c->handled.end(), o.id) != c->handled.end();
-      e.structural = std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
+      const int kind = c->om.kindOf(o.cls);
+      e.structural = kind == SM_KIND_STATIC || std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
       s->objs.push_back(e);
+      s->movable.push_back(kind != SM_KIND_STATIC);
       auto it = c->views.find(o.id);
       s->views.push_back(it != c->views.end() ? it->second.v : nullptr);
     }
@@ -446,6 +516,13 @@ int sm_snap_view(const sm_snapshot_t* s, uint32_t id, sm_view* out) {
     return 1;
   }
   return 0;
+}
+
+int sm_snap_movable(const sm_snapshot_t* s, uint32_t id) {
+  if (!s) return -1;
+  for (size_t i = 0; i < s->objs.size(); ++i)
+    if (s->objs[i].id == id) return s->movable[i];
+  return -1;
 }
 
 int sm_snap_map(const sm_snapshot_t* s, sm_grid* out) {
@@ -539,6 +616,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   in.grid_res = s->res; in.grid_ox = s->ox; in.grid_oy = s->oy; in.grid_w = s->w; in.grid_h = s->h;
   in.cells = s->cells.data();
   in.views = s->views;
+  in.movable = s->movable;
   in.png_dirty.assign(s->objs.size(), 0);
   {
     std::lock_guard<std::mutex> g(c->mu);

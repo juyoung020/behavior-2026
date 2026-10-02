@@ -33,6 +33,9 @@ sgrt*  sgrt_create(const sgrt_config* c, char* err, size_t err_len);
 void   sgrt_destroy(sgrt*);
 /* 새 판: 지도·물체 비우고, 프롬프트 표(이 판에서 찾을 물체 이름) 지정 */
 int    sgrt_begin(sgrt*, const char* const* prompt, int32_t n, char* err, size_t err_len);
+/* 이름 종류 표 바꾸기(scenemap sm_set_kind_names 그대로: kind 1 구조물 — 노드 안 됨, 2 고정 가구·가전 — movable=false;
+ * names == NULL 이면 기본 표). sgrt_begin 앞뒤 아무 때나. */
+int    sgrt_set_kind_names(sgrt*, int32_t kind, const char* const* names, int32_t n);
 /* 다음 sgrt_step 에 영상을 넣어야 하는가 */
 int    sgrt_want_image(const sgrt*);
 /* 한 스텝. rgb/depth 는 keyframe 이 아니면 NULL. */

@@ -110,6 +110,10 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
   return 0;
 }
 
+int sgrt_set_kind_names(sgrt* s, int32_t kind, const char* const* names, int32_t n) {
+  return s ? sm_set_kind_names(s->sm, kind, names, n) : -1;
+}
+
 int sgrt_want_image(const sgrt* s) { return s && (s->step % s->cfg.kf_every) == 0; }
 
 int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, const uint8_t* rgb, int32_t rgb_on_device,
