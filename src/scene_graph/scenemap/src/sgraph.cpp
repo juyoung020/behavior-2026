@@ -260,6 +260,23 @@ void SceneGraph::updatePlaces(const int8_t* cells, int w, int h, int gx0, int gy
   }
   pending_dirty_ = false;
   if (wx0 > wx1 || wy0 > wy1) return;
+  // 창을 그 안 빈칸 상자로 줄임(모름·점유만인 곳은 place 가 없음 — 대부분이 모름일 때 거리 변환이 작아짐)
+  {
+    int fx0 = wx1 + 1, fy0 = wy1 + 1, fx1 = wx0 - 1, fy1 = wy0 - 1;
+    for (int y = wy0; y <= wy1; ++y) {
+      const int8_t* row = cells + size_t(y) * w;
+      for (int x = wx0; x <= wx1; ++x)
+        if (row[x] >= 0 && row[x] < 50) { fx0 = std::min(fx0, x); fx1 = std::max(fx1, x); fy0 = std::min(fy0, y); fy1 = std::max(fy1, y); }
+    }
+    if (fx0 <= fx1) {
+      // place 지우기는 원래 창 전체(빈칸이 없어진 곳의 옛 place 도 지움), 거리 변환·후보는 빈칸 상자만
+      win_[0] = wx0; win_[1] = wy0; win_[2] = wx1; win_[3] = wy1;
+      wx0 = fx0; wy0 = fy0; wx1 = fx1; wy1 = fy1;
+    } else {
+      win_[0] = wx0; win_[1] = wy0; win_[2] = wx1; win_[3] = wy1;
+      wx1 = wx0 - 1;   // 빈칸 없음: 옛 place 만 지움
+    }
+  }
   // 거리 변환 영역 = 창 + 상한(창 안 값이 정확하게). 막힘 = 점유·모름·격자 밖, 모름 거리는 따로
   const int rx0 = wx0 - cap, ry0 = wy0 - cap, rx1 = wx1 + cap, ry1 = wy1 + cap;
   const int RW = rx1 - rx0 + 1, RH = ry1 - ry0 + 1;
@@ -288,7 +305,10 @@ void SceneGraph::updatePlaces(const int8_t* cells, int w, int h, int gx0, int gy
       std::copy(out.begin(), out.begin() + RW, row);
     }
   }
-  auto clr = [&](int x, int y) { return float(std::sqrt(edt_[size_t(y - ry0) * RW + (x - rx0)]) * res - 0.5 * res); };
+  // 여유(m) 한 번만: sqrt 를 칸마다 한 번
+  clr_.resize(size_t(RW) * RH);
+  for (size_t i = 0; i < clr_.size(); ++i) clr_[i] = float(std::sqrt(edt_[i]) * res - 0.5 * res);
+  auto clr = [&](int x, int y) { return clr_[size_t(y - ry0) * RW + (x - rx0)]; };
   // frontier: 여유 + tol 원 위 16 점 중 모름(격자 밖 포함)이 있으면 — 가장 가까운 막힘이 모름 쪽
   auto frontier = [&](int x, int y, float c) {
     const double r = (c + p_.frontier_tol) / res + 0.5;
@@ -299,7 +319,7 @@ void SceneGraph::updatePlaces(const int8_t* cells, int w, int h, int gx0, int gy
     }
     return false;
   };
-  const double mx0 = (gx0 + wx0) * res, my0 = (gy0 + wy0) * res, mx1 = (gx0 + wx1 + 1) * res, my1 = (gy0 + wy1 + 1) * res;
+  const double mx0 = (gx0 + win_[0]) * res, my0 = (gy0 + win_[1]) * res, mx1 = (gx0 + win_[2] + 1) * res, my1 = (gy0 + win_[3] + 1) * res;
   // 창 안 옛 place 지우기(자리는 id 다시 쓰기용으로 남김)
   std::vector<std::pair<uint64_t, std::array<double, 2>>> old;
   std::vector<uint64_t> rm;

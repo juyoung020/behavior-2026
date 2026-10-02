@@ -143,7 +143,9 @@ class SceneGraph {
   double last_places_ = -1e9;
   bool pending_dirty_ = false;
   int pd_[4] = {0, 0, 0, 0};
-  std::vector<double> edt_, edtu_, z_;
+  std::vector<double> edt_, z_;
+  std::vector<float> clr_;
+  int win_[4] = {0, 0, 0, 0};
   std::vector<int> v_;
   // 지금 격자(마지막 updatePlaces) — place → 방, 변 시야 검사
   std::vector<int8_t> cells_;
