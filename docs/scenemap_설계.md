@@ -189,6 +189,7 @@
 - **저장**(`sm_save_dsg` / `sm_save_dsg_ex`): PNG(`objects/O<id>_rgb.png` 8 비트 RGB, `O<id>_depth.png` 16 비트 회색 mm, 자체 쓰기 + zlib)는 모습이 바뀐 것·파일이 없는 것만 쓴다. 새 판·새 디렉터리면 옛 `O*_*.png` 를 지운다. 순서 PNG → scene.json → view.json.
   - scene.json 노드 메타데이터(기존 그대로 + 추가): `state, n_obs, score, first_pos, structural, handled, movable`, 모습이 있으면
     `rgbd = {rgb, depth(상대 경로), stamp, box_px[4](자른 영역, 원 영상 화소, 여유 포함), det_box_px[4], mask_area, depth_m(마스크 깊이 중앙값), score, cam_T[12](map ← 카메라 광학, 행 우선 3×4)}`. view.json `objects[]` 에 `movable`, `rgbd{rgb, depth}`.
+- **벤치마크 형식**: `tools/map_timeline <ep.bin> <det.bin> <out>/<seq>` — C ABI 로만 재생해 `map_timeline.csv`(frame,obj_id,x,y,z,label,moving; 지도가 바뀐 프레임만, 사라짐 뺌, moving = 들고 있음)를 쓴다. 벤치마크 `read_timeline` 으로 읽힘을 합성 판으로 확인(실제 판 det.bin 은 원본 HDF5 가 없어 아직 못 만듦).
 - **잰 시간**(jy-desktop, RTX 5070 Ti, Release): keyframe 720² — slam2d 만 0.57 ms, + objmap·best view(검출 6, 매번 자르기, 호스트 RGBA) 1.48 ms. 장치 자르기 6 상자(185 kB) 커널 + 내려받기 0.017 ms(온 영상 2 MB 내려받기 0.12 ms). 저장(물체 3, 격자 포함) PNG 6 장 0.66 ms, PNG 없음 0.32 ms.
 
 ### 3.3 ③ query — 계획기 질의
