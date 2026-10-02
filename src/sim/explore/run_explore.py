@@ -224,18 +224,20 @@ class ExplorePolicy:
                 self._cwarn = True
             return
         now = set()
+        links = {}
         for a, b in pairs:
-            other = b if a in self.robot_paths else a
+            mine, other = (a, b) if a in self.robot_paths else (b, a)
             if other in self.robot_paths:
                 continue
             low = other.lower()
             if "floor" in low or "collisionplane" in low:
                 continue
             now.add(other)
+            links.setdefault(other, set()).add(mine.rsplit("/", 1)[-1])
         new = now - self.contact_now
         if new:
             self.contact_n += len(new)
-            self.contact_log.write(json.dumps({"step": self.step_i, "new": sorted(new)}) + "\n")
+            self.contact_log.write(json.dumps({"step": self.step_i, "new": sorted(new), "robot_links": {k: sorted(links[k]) for k in new}}) + "\n")
             self.contact_log.flush()
             self.L.mr_set_contacts(self.mr.lib.h, self.contact_n)
         self.contact_now = now
