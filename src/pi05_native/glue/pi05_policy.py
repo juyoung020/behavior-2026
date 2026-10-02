@@ -25,7 +25,8 @@ import numpy as np
 import _pi05native as N
 
 HERE = pathlib.Path(__file__).resolve().parent
-DATA = pathlib.Path("C:/behavior-2026/data/pi05_native")
+ROOT = HERE.parents[2]  # repo root (src/pi05_native/glue -> ../../..)
+DATA = ROOT / "data/pi05_native"
 
 
 def _as_image(x):
@@ -173,7 +174,7 @@ def task_prompt(task: str) -> str:
     reg = json.loads((HERE / "b1k_tasks.json").read_text(encoding="utf-8"))  # openpi TASK_REGISTRY["b1k"]
     if task in reg:
         return reg[task]
-    meta = pathlib.Path("C:/behavior-2026/data/2026-challenge-demos/meta/tasks.jsonl")
+    meta = ROOT / "data/2026-challenge-demos/meta/tasks.jsonl"
     for line in meta.read_text(encoding="utf-8").splitlines():
         d = json.loads(line)
         if d.get("task_name") == task:
@@ -190,7 +191,7 @@ def make_policy(cfg):
 
     task = cfg["task"]["name"]
     model = os.environ.get("PI05_MODEL", "radio")
-    log = os.environ.get("PI05_NATIVE_LOG") or time.strftime(f"C:/behavior-2026/logs/native_steps_{task}_%Y%m%d_%H%M%S.csv")
+    log = os.environ.get("PI05_NATIVE_LOG") or time.strftime(f"{ROOT}/logs/native_steps_{task}_%Y%m%d_%H%M%S.csv")
     stage = os.environ.get("PI05_STAGE")
     if os.environ.get("PI05_WEIGHTS"):
         weights = os.environ["PI05_WEIGHTS"]

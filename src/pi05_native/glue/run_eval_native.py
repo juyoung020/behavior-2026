@@ -1,7 +1,7 @@
 """Launcher: official evaluator (omnigibson.eval.eval, unmodified) with --policy local, whose LocalPolicy gets the
 native pi0.5 engine as its policy (LocalPolicy.forward -> self.policy.act(obs), eval/policies.py:28-35).
 
-    python run_eval_native.py --weights C:/behavior-2026/data/pi05_native/pi05_radio.pi05w [--prompt ...]
+    python run_eval_native.py --weights <repo>/data/pi05_native/pi05_radio.pi05w [--prompt ...]
         [--replan 16] [--native-log out.csv] -- <omnigibson.eval.eval arguments, e.g. --task-name turning_on_radio>
 
 The engine lives in this (the simulator's) process, so the policy's GPU memory is not "another process" for the
@@ -23,7 +23,7 @@ def task_prompt(task: str) -> str:
     reg = json.loads((HERE / "b1k_tasks.json").read_text(encoding="utf-8"))  # openpi TASK_REGISTRY["b1k"]
     if task in reg:
         return reg[task]
-    meta = pathlib.Path("C:/behavior-2026/data/2026-challenge-demos/meta/tasks.jsonl")
+    meta = HERE.parents[2] / "data/2026-challenge-demos/meta/tasks.jsonl"
     for line in meta.read_text(encoding="utf-8").splitlines():
         d = json.loads(line)
         if d.get("task_name") == task:

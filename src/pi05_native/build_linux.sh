@@ -27,3 +27,14 @@ echo "built into $B"
 # native websocket policy server (submission side)
 g++ -O2 -std=c++20 -pthread -o $B/pi05_server $HERE/server/pi05_server.cpp $B/libpi05.a -L$CUDA/lib64 -lcudart_static -ldl -lrt
 echo "built $B/pi05_server"
+# Python extension for the evaluator process (glue/run_eval_native.py adds src/pi05_native/build to sys.path).
+# PY = the evaluator's python (conda env behavior, 3.11). Same objects as libpi05.a; CUDA runtime linked statically.
+PY=${PI05_PY:-$HOME/miniconda3/envs/behavior/bin/python}
+if [ -x "$PY" ]; then
+  PYINC=$($PY -c "import sysconfig;print(sysconfig.get_paths()['include'])")
+  EXT=$($PY -c "import sysconfig;print(sysconfig.get_config_var('EXT_SUFFIX'))")
+  mkdir -p $HERE/build
+  gcc -O2 -fPIC -DPI05_STATIC -I"$PYINC" -c $HERE/glue/pi05native_module.c -o $B/obj/pi05native_module.o
+  $NVCC -shared -o $HERE/build/_pi05native$EXT $B/obj/pi05native_module.o $B/libpi05.a -cudart static
+  echo "built $HERE/build/_pi05native$EXT"
+fi
