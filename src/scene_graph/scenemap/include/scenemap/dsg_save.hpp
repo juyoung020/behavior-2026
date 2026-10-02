@@ -1,0 +1,30 @@
+// scenemap 저장 — 로봇 기억을 파일로(sm_save_dsg). docs/scenemap_설계.md 3절 "save".
+//   scene.json : Spark-DSG DynamicSceneGraph. OBJECTS 층에 확정 물체 하나 = 노드 하나(NodeSymbol 'O', id).
+//                위치 = map xyz, 상자 = 위치 ± 크기/2, 이름 = 프롬프트 이름, 메타데이터 = 상태·관측 수·처음 위치·마지막 시각.
+//   view.json  : 계획기·뷰어용 요약(자세, 물체, 최근 사건). 의존 없는 손 JSON.
+//   map.pgm/.yaml : 2D 점유 격자(ROS map_server 형식: 254 빈칸, 0 점유, 205 모름).
+// 모든 파일은 임시 이름으로 쓰고 rename 으로 바꾼다(읽는 쪽이 반쯤 쓴 파일을 보지 않게).
+#pragma once
+#include <string>
+#include <vector>
+
+#include "scenemap.h"
+#include "scenemap/objmap.hpp"
+
+namespace scenemap {
+
+struct SaveInput {
+  double stamp = 0;
+  double pose[3] = {0, 0, 0};      // x, y, yaw (map)
+  const sm_object* objs = nullptr;
+  int n_objs = 0;
+  std::vector<ObjEvent> events;    // 최근 사건(오래된 것부터)
+  double grid_res = 0.05, grid_ox = 0, grid_oy = 0;
+  int grid_w = 0, grid_h = 0;
+  const int8_t* cells = nullptr;   // −1 모름, 0..100 점유 %
+};
+
+// 0 = 성공. Spark-DSG 없이 빌드하면 scene.json 만 빠진다.
+int saveScene(const SaveInput& in, const std::string& dir);
+
+}  // namespace scenemap

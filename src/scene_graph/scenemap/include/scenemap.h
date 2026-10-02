@@ -95,6 +95,13 @@ double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const doub
 
 #endif /* SM_API_H */
 
+/* 저장(로봇 기억). dir 에 세 파일을 원자적으로(임시 파일 → rename) 바꿔 쓴다:
+ *   scene.json — Spark-DSG DynamicSceneGraph(OBJECTS 층: 확정 물체 노드, 이름·위치 xyz·상자·상태 메타데이터)
+ *   view.json  — 계획기·뷰어용 요약(자세, 물체 표, 최근 사건)
+ *   map.pgm    — 2D 점유 격자(+ map.yaml: 해상도·원점)
+ * Spark-DSG 없이 빌드하면(SM_HAVE_SPARK_DSG 미정의) scene.json 은 건너뛴다. 0 = 성공. */
+int sm_save_dsg(sm_ctx*, const char* dir);
+
 #ifdef __cplusplus
 }
 #endif

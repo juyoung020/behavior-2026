@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--replan", type=int, default=16)
     ap.add_argument("--native-log", default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--scene-out", default=None,
+                    help="object memory on: YOLOE -> scenemap -> Spark-DSG files in this dir (src/scene_graph/runtime); "
+                         "needs the RGB-D wrapper (omnigibson.eval.wrappers.RGBDFullResWrapper)")
     args = ap.parse_args(argv[:split])
     eval_args = argv[split + 1:]
     if "--policy" in eval_args:
@@ -59,6 +62,19 @@ def main():
         self.policy = Pi05NativePolicy(args.weights, prompt, replan_every=args.replan, log_path=args.native_log,
                                        seed=args.seed)
         holder["p"] = self.policy
+        if args.scene_out:
+            sys.path.insert(0, str(HERE.parents[2] / "scene_graph" / "runtime" / "glue"))
+            from sgrt_glue import SceneMemory
+
+            mem = SceneMemory(task, args.scene_out)
+            holder["mem"] = mem
+            act = self.policy.act
+
+            def act_with_memory(obs, _act=act, _mem=mem):
+                _mem.step(obs)
+                return _act(obs)
+
+            self.policy.act = act_with_memory
 
     P.LocalPolicy.__init__ = init
     sys.argv = ["omnigibson.eval.eval", *eval_args, "--policy", "local"]
@@ -67,6 +83,9 @@ def main():
     finally:
         if "p" in holder:
             holder["p"].flush()
+        if "mem" in holder:
+            print(f"[sgrt] {holder['mem'].stats()}", flush=True)
+            holder["mem"].close()
 
 
 if __name__ == "__main__":
