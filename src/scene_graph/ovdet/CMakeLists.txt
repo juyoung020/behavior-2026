@@ -28,5 +28,8 @@ add_executable(ovdet_smoke tools/ovdet_smoke.c)
 set_source_files_properties(tools/ovdet_smoke.c PROPERTIES LANGUAGE CXX)
 target_link_libraries(ovdet_smoke ovdet)
 
+add_executable(ovdet_cmp tools/ovdet_cmp.cpp)
+target_link_libraries(ovdet_cmp ovdet)
+
 install(TARGETS ovdet ovdet_smoke)
 install(FILES include/ovdet.h DESTINATION include)
