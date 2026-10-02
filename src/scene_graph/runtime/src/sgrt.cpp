@@ -2,6 +2,7 @@
 #include "sgrt.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -12,9 +13,12 @@
 #include "scenemap.h"
 #include "scenemap/bestview.hpp"
 
+constexpr int kClosedVocabMax = 200;   // 이 이하 어휘 = 닫힌 어휘 엔진(COCO-80), 기본으로 어휘 전부
+
 struct sgrt {
   sgrt_config cfg{};
   std::string out_dir;
+  std::vector<std::string> labels;   // 이번 판 이름 표(scenemap labels)
   OvdHandle* det = nullptr;
   sm_ctx* sm = nullptr;
   int64_t step = 0;
@@ -120,9 +124,26 @@ void sgrt_destroy(sgrt* s) {
 
 int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t err_len) {
   if (!s) return -1;
-  ovd_set_prompt(s->det, prompt, n, err, err_len);   // 어휘 밖 이름은 err 에 적히고 번호는 유지(검출 안 됨)
+  // 프롬프트 방식: SGRT_PROMPT=task(과제 이름만) | all(엔진 어휘 전부) | auto(기본: 어휘가 kClosedVocabMax 이하인 닫힌 어휘
+  // 엔진 — COCO-80 YOLO-seg — 이면 all, YOLOE 큰 어휘면 task)
+  const char* mode = std::getenv("SGRT_PROMPT");
+  const std::string m = mode ? mode : "auto";
+  const int V = ovd_vocab_size(s->det);
+  const bool all = m == "all" || (m != "task" && V <= kClosedVocabMax) || !prompt || n <= 0;
+  const int found = ovd_set_prompt(s->det, prompt, n, err, err_len);   // 어휘 밖 이름은 err 에 적히고 번호는 유지(검출 안 됨)
   sm_reset(s->sm);
-  sm_set_labels(s->sm, prompt, n);                   // 같은 순서 = 검출 cls 가 그대로 이름 번호
+  s->labels.clear();
+  if (all) {   // 엔진 어휘 전부(순서 = 엔진 번호). 과제 이름 중 어휘 밖의 것은 위 err 에 남음
+    ovd_set_prompt(s->det, nullptr, 0, nullptr, 0);
+    for (int i = 0; i < V; ++i) s->labels.push_back(ovd_vocab_name(s->det, i));
+  } else {
+    for (int i = 0; i < n; ++i) s->labels.push_back(prompt[i] ? prompt[i] : "");
+  }
+  std::vector<const char*> lp;
+  for (const auto& l : s->labels) lp.push_back(l.c_str());
+  sm_set_labels(s->sm, lp.data(), int(lp.size()));   // 같은 순서 = 검출 cls 가 그대로 이름 번호
+  std::fprintf(stderr, "[sgrt] prompt %s: %d labels (task names in vocabulary %d/%d, engine vocabulary %d)\n", all ? "all" : "task",
+               int(lp.size()), found, n, V);
   s->step = 0;
   s->last_save = -1e9;
   s->n_kf = s->n_det = 0;

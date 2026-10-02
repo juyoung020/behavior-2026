@@ -37,7 +37,9 @@ struct ViewSlot {
 // 가구·가전·붙박이는 정답 물체지만 movable 0). 비교는 머리 명사: 정규화한 이름 == 항목 이거나 " 항목" 으로 끝남
 // ("glass door" → door, "floor lamp" → lamp, "coffee table" → table). 끝 's' 하나는 무시.
 const char* const kStructureNames[] = {"wall", "floor", "ceiling", "door", "doorway", "door frame", "window", "pillar", "column",
-                                       "partition", "staircase", "stairs", "stair", "railing", "baseboard"};
+                                       "partition", "staircase", "stairs", "stair", "railing", "baseboard",
+                                       // 사람(COCO person): 시뮬에는 없고 로봇 팔·몸이 이것으로 잘못 잡힘 — 노드로 만들지 않음
+                                       "person"};
 const char* const kStaticNames[] = {
     "table", "desk", "counter", "countertop", "sofa", "couch", "shelf", "shelving unit", "bookshelf", "bookcase", "cabinet",
     "wardrobe", "dresser", "chest of drawers", "nightstand", "sideboard", "bed", "bench", "island", "refrigerator", "fridge",

@@ -31,7 +31,12 @@ typedef struct {
 void   sgrt_default_config(sgrt_config* c);
 sgrt*  sgrt_create(const sgrt_config* c, char* err, size_t err_len);
 void   sgrt_destroy(sgrt*);
-/* 새 판: 지도·물체 비우고, 프롬프트 표(이 판에서 찾을 물체 이름) 지정 */
+/* 새 판: 지도·물체 비우고, 프롬프트 표(이 판에서 찾을 물체 이름) 지정.
+ * 엔진: sgrt_config.engine 이 YOLOE(큰 열린 어휘, 프롬프트로 켜고 끔) 또는 닫힌 어휘 YOLO11/YOLO26-seg(COCO-80) plan.
+ * 환경 변수 SGRT_PROMPT = task | all | auto(기본). auto 는 엔진 어휘가 200 이하(닫힌 어휘)면 all — 엔진 이름 전부를 표로
+ * 쓰고(과제 이름 중 어휘 밖 것은 err 에 적음), 아니면 task(prompt 그대로). prompt 가 NULL·0 개면 늘 all.
+ * 이름 종류(구조물·고정·옮길 수 있음)는 scenemap 기본 표: COCO 의 dining table·couch·bed·refrigerator·oven·sink·tv·toilet·
+ * microwave·potted plant·bench 는 고정, person 은 구조물(노드 안 됨), 나머지(cup·bottle·book·chair …)는 옮길 수 있음. */
 int    sgrt_begin(sgrt*, const char* const* prompt, int32_t n, char* err, size_t err_len);
 /* 이름 종류 표 바꾸기(scenemap sm_set_kind_names 그대로: kind 1 구조물 — 노드 안 됨, 2 고정 가구·가전 — movable=false;
  * names == NULL 이면 기본 표). sgrt_begin 앞뒤 아무 때나. */

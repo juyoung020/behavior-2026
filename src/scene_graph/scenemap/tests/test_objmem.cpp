@@ -213,6 +213,27 @@ static void testStructures() {
   CHECK(as2[2] != 0 && as2[5] == 0, "custom list: door %u cup %u", as2[2], as2[5]);
   sm_set_kind_names(g.c, SM_KIND_STRUCTURE, nullptr, -1);   // 기본값으로
   std::printf("  nodes %zu (wall/floor/door 없음)\n", s.objs().size());
+  // COCO-80 이름(닫힌 어휘 YOLO-seg): person 은 노드 아님, dining table·couch·tv 는 고정, cup·chair 는 옮길 수 있음
+  const std::vector<const char*> coco = {"person", "cup", "chair", "couch", "dining table", "tv", "potted plant"};
+  Rig c(coco);
+  std::vector<Rect> cr = {R(0, 40, 220, 120, 560, 2.5f, 200, 160, 120), R(1, 300, 300, 340, 340, 1.5f, 250, 0, 0),
+                          R(2, 160, 300, 260, 460, 2.0f, 90, 60, 30),   R(3, 400, 420, 700, 560, 2.2f, 30, 30, 160),
+                          R(4, 280, 480, 380, 600, 1.8f, 120, 80, 40),  R(5, 500, 220, 600, 300, 2.9f, 10, 10, 10),
+                          R(6, 620, 220, 700, 300, 2.9f, 10, 200, 10)};
+  for (int k = 0; k < 3; ++k) c.kf(0.2 * k, cr);
+  Snap cs(c.c);
+  CHECK(!cs.byName("person"), "person became a node");
+  int bad = 0;
+  for (const char* n : {"dining table", "couch", "tv", "potted plant"}) {
+    const sm_object* o = cs.byName(n);
+    bad += !o || sm_snap_movable(cs.s, o->id) != 0;
+  }
+  for (const char* n : {"cup", "chair"}) {
+    const sm_object* o = cs.byName(n);
+    bad += !o || sm_snap_movable(cs.s, o->id) != 1;
+  }
+  CHECK(bad == 0, "coco kinds wrong %d", bad);
+  std::printf("  COCO: person 노드 없음, 가구·tv·화분 고정, cup·chair 옮길 수 있음 (노드 %zu)\n", cs.objs().size());
 }
 
 // ---- 2. 상자: 깊이 이상값·큰 가구 자람 한도 ----
