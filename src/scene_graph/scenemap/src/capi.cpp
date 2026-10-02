@@ -20,6 +20,7 @@
 #include "scenemap/dsg_save.hpp"
 #include "scenemap/fk.hpp"
 #include "scenemap/objmap.hpp"
+#include "scenemap/rooms.hpp"
 #include "scenemap/slam2d.hpp"
 
 using namespace scenemap;
@@ -95,6 +96,8 @@ struct sm_ctx {
   std::unordered_map<uint32_t, uint32_t> saved_cloud_ver;   // 물체 id → 마지막으로 쓴 구름 version
   std::string saved_dir;
   bool clean_objects = true;
+  RoomTracker rooms;                  // 방 나누기(자기 잠금, sm_snapshot 이 잠금 밖에서 부름)
+  std::atomic<bool> rooms_force{false};
   explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {
     for (const char* n : kStructureNames) kind_names[SM_KIND_STRUCTURE].push_back(n);
     for (const char* n : kStaticNames) kind_names[SM_KIND_STATIC].push_back(n);
@@ -128,6 +131,11 @@ struct sm_snapshot_t {
   // reachable 용 부풀린 장애물(처음 부를 때 만듦)
   mutable std::once_flag inflate_once;
   mutable std::vector<uint8_t> blocked;
+  // 방(rooms.hpp): 나눔(공유)·이 스냅숏 물체 배정·이름, ABI 배열
+  std::shared_ptr<const RoomSeg> rseg;
+  RoomNaming rnames;
+  std::vector<sm_room> rooms;
+  std::vector<sm_room_door> rdoors;
 };
 
 namespace {
@@ -184,6 +192,40 @@ Pose2 preview(const sm_ctx* c, double* stamp) {
   return q;
 }
 
+// 방: 주기·변화가 되면 다시 나누고(잠금 밖), 이 스냅숏 물체를 방에 배정·이름
+void snapRooms(sm_ctx* c, sm_snapshot_t* s) {
+  if (!s->w || !s->h) return;
+  GridView g{s->cells.data(), s->w, s->h, s->res, int(std::lround(s->ox / s->res)), int(std::lround(s->oy / s->res))};
+  s->rseg = c->rooms.update(g, s->pose.stamp, c->rooms_force.exchange(false));
+  if (!s->rseg) return;
+  std::vector<RoomObj> ro(s->objs.size());
+  for (size_t i = 0; i < s->objs.size(); ++i) {
+    ro[i].id = s->objs[i].id;
+    ro[i].name = s->names[i];
+    for (int k = 0; k < 3; ++k) { ro[i].pos[k] = s->objs[i].pos[k]; ro[i].ext[k] = s->objs[i].extent[k]; }
+    ro[i].movable = s->movable[i];
+  }
+  const auto ov = c->rooms.overrides();
+  s->rnames = nameRooms(*s->rseg, ro, c->rooms.params(), &ov);
+  const RoomSeg& R = *s->rseg;
+  s->rooms.resize(R.rooms.size());
+  for (size_t k = 0; k < R.rooms.size(); ++k) {
+    const RoomGeom& r = R.rooms[k];
+    const RoomLabel& L = s->rnames.rooms[k];
+    sm_room& o = s->rooms[k];
+    o = sm_room{};
+    o.id = r.id;
+    o.name = L.name.c_str();
+    o.type = L.type.c_str();
+    o.name_conf = L.conf;
+    for (int j = 0; j < 2; ++j) { o.centroid[j] = r.centroid[j]; o.bbox_min[j] = r.bmin[j]; o.bbox_max[j] = r.bmax[j]; }
+    o.area_m2 = r.area_m2;
+    o.n_objects = int32_t(L.objects.size());
+    o.objects = L.objects.empty() ? nullptr : L.objects.data();
+  }
+  for (const RoomDoor& d : R.doors) s->rdoors.push_back(sm_room_door{d.a, d.b, {d.pos[0], d.pos[1]}, d.width});
+}
+
 }  // namespace
 
 extern "C" {
@@ -236,6 +278,7 @@ int sm_reset(sm_ctx* c) {
   c->saved_ver.clear();
   c->saved_cloud_ver.clear();
   c->clean_objects = true;
+  c->rooms.reset();
   return 0;
 }
 
@@ -487,6 +530,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
   }
   for (size_t i = 0; i < s->objs.size(); ++i) s->objs[i].name = s->names[i].c_str();
   s->st.n_objects = int32_t(s->objs.size());
+  snapRooms(c, s);
   *out = s;
   return 0;
 }
@@ -699,6 +743,8 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   in.clouds = s->clouds;
   in.ply_dirty.assign(s->objs.size(), 0);
   in.voxel = s->voxel;
+  in.rooms = s->rseg;
+  in.room_names = s->rnames;
   {
     std::lock_guard<std::mutex> g(c->mu);
     const auto& ev = c->om.events();
@@ -742,6 +788,78 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   }
   sm_snapshot_release(s);
   return rc;
+}
+
+// ---- 방(rooms.hpp) ----
+
+int sm_get_room_params(sm_ctx* c, sm_room_params* o) {
+  if (!c || !o) return -1;
+  const RoomParams p = c->rooms.params();
+  *o = sm_room_params{p.enabled ? 1 : 0, p.free_max, p.occ_min, p.dil_min, p.dil_max, p.dil_step, p.min_life, p.min_seed_m2,
+                      p.min_room_m2, p.max_door_m, p.hole_m2, p.speck_m2, p.obj_search_m, p.footprint_margin, p.period_s,
+                      p.min_change_m2, p.match_min};
+  return 0;
+}
+
+int sm_set_room_params(sm_ctx* c, const sm_room_params* q) {
+  if (!c || !q || q->dil_step_m <= 0 || q->dil_max_m < q->dil_min_m) return -1;
+  RoomParams p;
+  p.enabled = q->enabled != 0;
+  p.free_max = q->free_max; p.occ_min = q->occ_min;
+  p.dil_min = q->dil_min_m; p.dil_max = q->dil_max_m; p.dil_step = q->dil_step_m; p.min_life = q->min_life_m;
+  p.min_seed_m2 = q->min_seed_m2; p.min_room_m2 = q->min_room_m2; p.max_door_m = q->max_door_m;
+  p.hole_m2 = q->hole_m2; p.speck_m2 = q->speck_m2; p.obj_search_m = q->obj_search_m; p.footprint_margin = q->footprint_margin_m;
+  p.period_s = q->period_s; p.min_change_m2 = q->min_change_m2; p.match_min = q->match_min;
+  c->rooms.setParams(p);
+  return 0;
+}
+
+int sm_update_rooms(sm_ctx* c, int32_t force) {
+  if (!c) return -1;
+  c->rooms_force = force != 0;
+  sm_snapshot_t* s = nullptr;
+  if (sm_snapshot(c, &s) != 0) return -1;
+  const int n = int(s->rooms.size());
+  sm_snapshot_release(s);
+  return n;
+}
+
+int sm_set_room_name(sm_ctx* c, uint32_t id, const char* name, float conf) {
+  if (!c) return -1;
+  c->rooms.setName(id, name, conf);
+  return 0;
+}
+
+int sm_snap_rooms(const sm_snapshot_t* s, const sm_room** out) {
+  if (!s || !out) return -1;
+  *out = s->rooms.empty() ? nullptr : s->rooms.data();
+  return int(s->rooms.size());
+}
+
+int sm_snap_room_doors(const sm_snapshot_t* s, const sm_room_door** out) {
+  if (!s || !out) return -1;
+  *out = s->rdoors.empty() ? nullptr : s->rdoors.data();
+  return int(s->rdoors.size());
+}
+
+int sm_snap_room_grid(const sm_snapshot_t* s, sm_room_grid* out) {
+  if (!s || !out) return -1;
+  if (!s->rseg) return 1;
+  const RoomSeg& R = *s->rseg;
+  *out = sm_room_grid{R.res, {R.gx0 * R.res, R.gy0 * R.res}, R.w, R.h, R.ids.empty() ? nullptr : R.ids.data()};
+  return 0;
+}
+
+uint32_t sm_snap_room_at(const sm_snapshot_t* s, const double p[2]) {
+  if (!s || !p || !s->rseg) return 0;
+  return s->rseg->at(p[0], p[1]);
+}
+
+uint32_t sm_snap_object_room(const sm_snapshot_t* s, uint32_t id) {
+  if (!s) return 0;
+  for (size_t i = 0; i < s->objs.size() && i < s->rnames.obj_room.size(); ++i)
+    if (s->objs[i].id == id) return s->rnames.obj_room[i];
+  return 0;
 }
 
 }  // extern "C"

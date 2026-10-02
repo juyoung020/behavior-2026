@@ -10,11 +10,13 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 #include "scenemap/png.hpp"
 
 #ifdef SM_HAVE_SPARK_DSG
 #include <spark_dsg/dynamic_scene_graph.h>
+#include <spark_dsg/edge_attributes.h>
 #include <spark_dsg/node_attributes.h>
 #include <spark_dsg/node_symbol.h>
 #endif
@@ -90,6 +92,74 @@ std::string plyBytes(const ObjCloud& c) {
   return o;
 }
 
+// ---- 방(rooms.hpp) ----
+uint32_t objRoom(const SaveInput& in, int i) { return i < int(in.room_names.obj_room.size()) ? in.room_names.obj_room[i] : 0; }
+const RoomLabel* roomLabel(const SaveInput& in, size_t k) { return k < in.room_names.rooms.size() ? &in.room_names.rooms[k] : nullptr; }
+// 뷰어 색(방 id 마다 고정: 황금비 색상환, 채도 0.55·명도 0.95)
+void roomColor(uint32_t id, int rgb[3]) {
+  const double h = std::fmod(id * 0.6180339887, 1.0) * 6, s = 0.55, v = 0.95;
+  const int i = int(h);
+  const double f = h - i, p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+  const double r[6] = {v, q, p, p, t, v}, g[6] = {t, v, v, q, p, p}, b[6] = {p, p, t, v, v, q};
+  rgb[0] = int(r[i % 6] * 255);
+  rgb[1] = int(g[i % 6] * 255);
+  rgb[2] = int(b[i % 6] * 255);
+}
+
+// view.json 끝에 붙는 방 키: rooms(value = rooms.pgm 값), room_doors, rooms_grid
+std::string roomsJson(const SaveInput& in) {
+  if (!in.rooms) return "";
+  const RoomSeg& R = *in.rooms;
+  std::ostringstream o;
+  o.setf(std::ios::fixed);
+  o.precision(3);
+  o << ",\"rooms_grid\":\"rooms.pgm\",\"rooms\":[";
+  for (size_t k = 0; k < R.rooms.size(); ++k) {
+    const RoomGeom& r = R.rooms[k];
+    const RoomLabel* L = roomLabel(in, k);
+    int c[3];
+    roomColor(r.id, c);
+    o << (k ? "," : "") << "{\"id\":" << r.id << ",\"value\":" << std::min<size_t>(k + 1, 255) << ",\"name\":\"" << esc(L ? L->name : "")
+      << "\",\"type\":\"" << esc(L ? L->type : "") << "\",\"conf\":" << (L ? L->conf : 0.f) << ",\"centroid\":[" << r.centroid[0] << ","
+      << r.centroid[1] << "],\"area\":" << r.area_m2 << ",\"bbox\":[" << r.bmin[0] << "," << r.bmin[1] << "," << r.bmax[0] << "," << r.bmax[1]
+      << "],\"color\":[" << c[0] << "," << c[1] << "," << c[2] << "],\"objects\":[";
+    if (L)
+      for (size_t j = 0; j < L->objects.size(); ++j) o << (j ? "," : "") << L->objects[j];
+    o << "]}";
+  }
+  o << "],\"room_doors\":[";
+  for (size_t k = 0; k < R.doors.size(); ++k) {
+    const RoomDoor& d = R.doors[k];
+    o << (k ? "," : "") << "{\"a\":" << d.a << ",\"b\":" << d.b << ",\"pos\":[" << d.pos[0] << "," << d.pos[1] << "],\"width\":" << d.width << "}";
+  }
+  o << "]";
+  return o.str();
+}
+
+// map.pgm 과 같은 크기·방향(지금 격자 칸마다 나눔 칸을 찾음 — 나눔이 조금 옛 격자여도)
+std::string roomsPgm(const SaveInput& in) {
+  const RoomSeg& R = *in.rooms;
+  std::string o = "P5\n" + std::to_string(in.grid_w) + " " + std::to_string(in.grid_h) + "\n255\n";
+  const size_t h0 = o.size();
+  o.resize(h0 + size_t(in.grid_w) * in.grid_h, char(0));
+  std::unordered_map<uint32_t, int> val;
+  for (size_t k = 0; k < R.rooms.size(); ++k) val[R.rooms[k].id] = int(std::min<size_t>(k + 1, 255));
+  const int gx0 = int(std::lround(in.grid_ox / in.grid_res)), gy0 = int(std::lround(in.grid_oy / in.grid_res));
+  const int dx = gx0 - R.gx0, dy = gy0 - R.gy0;
+  for (int y = 0; y < in.grid_h; ++y) {
+    const int ry = y + dy;
+    if (ry < 0 || ry >= R.h) continue;
+    char* row = &o[h0 + size_t(in.grid_h - 1 - y) * in.grid_w];
+    for (int x = 0; x < in.grid_w; ++x) {
+      const int rx = x + dx;
+      if (rx < 0 || rx >= R.w) continue;
+      const uint32_t id = R.ids[size_t(ry) * R.w + rx];
+      if (id) row[x] = char(val[id]);
+    }
+  }
+  return o;
+}
+
 std::string viewJson(const SaveInput& in, const SaveOut& ok) {
   std::ostringstream o;
   o.setf(std::ios::fixed);
@@ -110,6 +180,7 @@ std::string viewJson(const SaveInput& in, const SaveOut& ok) {
     if (hasPly(ok, i))
       o << ",\"points\":{\"path\":\"" << plyPath(b.id) << "\",\"n\":" << in.clouds[i].size() << ",\"voxel\":" << in.voxel
         << ",\"stamp\":" << in.clouds[i].stamp << "}";
+    if (in.rooms) o << ",\"room\":" << objRoom(in, i);
     o << "}";
   }
   o << "],\"events\":[";
@@ -118,7 +189,7 @@ std::string viewJson(const SaveInput& in, const SaveOut& ok) {
     o << (i ? "," : "") << "{\"t\":" << e.t << ",\"id\":" << e.id << ",\"kind\":\"" << eventName(e.kind) << "\",\"pos\":[" << e.pos[0] << ","
       << e.pos[1] << "," << e.pos[2] << "]}";
   }
-  o << "]}\n";
+  o << "]" << roomsJson(in) << "}\n";
   return o.str();
 }
 
@@ -142,6 +213,45 @@ std::string yaml(const SaveInput& in) {
 }
 
 #ifdef SM_HAVE_SPARK_DSG
+// ROOMS 층: 방 노드('R', id) — 이름·위치(무게중심, z 0)·바닥 상자·종류 확률, metadata{area_m2, name_confidence, evidence, ...},
+// 방→물체 변, 방–방 변(metadata relation door·pos·width)
+void sceneRooms(const SaveInput& in, spark_dsg::DynamicSceneGraph& g) {
+  using namespace spark_dsg;
+  if (!in.rooms) return;
+  const RoomSeg& R = *in.rooms;
+  for (size_t k = 0; k < R.rooms.size(); ++k) {
+    const RoomGeom& r = R.rooms[k];
+    const RoomLabel* L = roomLabel(in, k);
+    auto a = std::make_unique<RoomNodeAttributes>();
+    a->position = Eigen::Vector3d(r.centroid[0], r.centroid[1], 0);
+    a->name = L ? L->name : "room " + std::to_string(r.id);
+    const Eigen::Vector3f dim(float(r.bmax[0] - r.bmin[0]), float(r.bmax[1] - r.bmin[1]), 0.f);
+    const Eigen::Vector3f ctr(float(r.bmax[0] + r.bmin[0]) / 2, float(r.bmax[1] + r.bmin[1]) / 2, 0.f);
+    a->bounding_box = BoundingBox(dim, ctr);
+    a->last_update_time_ns = uint64_t(std::max(0.0, R.stamp) * 1e9);
+    nlohmann::json ev = nlohmann::json::array();
+    if (L) {
+      a->semantic_class_probabilities = L->probs;
+      for (const RoomEvidence& e : L->evidence) ev.push_back({{"object", e.obj}, {"name", e.name}, {"type", e.type}, {"weight", e.w}});
+    }
+    a->metadata.add({{"area_m2", r.area_m2},
+                     {"name_confidence", L ? L->conf : 0.f},
+                     {"evidence", ev},
+                     {"type", L ? L->type : ""},
+                     {"external_name", L && L->external},
+                     {"max_clear_m", r.max_clear},
+                     {"grid_value", std::min<size_t>(k + 1, 255)}});
+    g.emplaceNode(DsgLayers::ROOMS, NodeSymbol('R', r.id), std::move(a));
+  }
+  for (int i = 0; i < in.n_objs; ++i)
+    if (const uint32_t rid = objRoom(in, i)) g.insertEdge(NodeSymbol('R', rid), NodeSymbol('O', in.objs[i].id));
+  for (const RoomDoor& d : R.doors) {
+    auto e = std::make_unique<EdgeAttributes>(d.width);
+    e->metadata.add({{"relation", "door"}, {"pos", {d.pos[0], d.pos[1]}}, {"width", d.width}});
+    g.insertEdge(NodeSymbol('R', d.a), NodeSymbol('R', d.b), std::move(e));
+  }
+}
+
 bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
   using namespace spark_dsg;
   DynamicSceneGraph g;
@@ -180,6 +290,7 @@ bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
                         {{"path", plyPath(b.id)}, {"n", in.clouds[i].size()}, {"voxel", in.voxel}, {"stamp", in.clouds[i].stamp}}}});
     g.emplaceNode(DsgLayers::OBJECTS, NodeSymbol('O', b.id), std::move(a));
   }
+  sceneRooms(in, g);
   g.metadata.add({{"stamp", in.stamp}, {"robot_pose", {in.pose[0], in.pose[1], in.pose[2]}}, {"grid", "map.pgm"}});
   const fs::path tmp = path.string() + ".tmp.json";
   g.save(tmp, false);
@@ -278,6 +389,7 @@ int saveScene(const SaveInput& in, const std::string& dir, SaveOut* out_) {
   if (in.grid_w > 0 && in.cells) {
     ok &= writeAtomic(d / "map.pgm", pgm(in));
     ok &= writeAtomic(d / "map.yaml", yaml(in));
+    if (in.rooms) ok &= writeAtomic(d / "rooms.pgm", roomsPgm(in));
   }
 #ifdef SM_HAVE_SPARK_DSG
   ok &= sceneDsg(in, out, d / "scene.json");

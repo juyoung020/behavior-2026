@@ -8,6 +8,8 @@
 //   objects/O<id>_mask.png : best view 마스크(8 비트 회색, 255 = 마스크 안, rgb·depth 와 같은 상자·크기).
 //   objects/O<id>_points.ply : 물체 점 구름(binary_little_endian, float x,y,z map m + uchar red,green,blue). 구름이 바뀐 것
 //                (ply_dirty)이나 파일이 없는 것만. 노드 metadata.points 가 가리킨다.
+//   rooms.pgm : 방 칸 그림(map.pgm 과 같은 크기·방향, 8 비트, 0 = 방 없음, k = view.json rooms[] 의 value). 방 나눔이 있을 때만.
+//                scene.json ROOMS 층(NodeSymbol 'R', 방 id)·방→물체 변·방–방 변(문) — rooms.hpp
 //   순서: PNG·PLY → scene.json → view.json(뷰어는 view.json 이 바뀌면 다시 읽으니 그때는 가리키는 파일이 다 있다).
 // 모든 파일은 임시 이름으로 쓰고 rename 으로 바꾼다(읽는 쪽이 반쯤 쓴 파일을 보지 않게).
 #pragma once
@@ -18,6 +20,7 @@
 #include "scenemap/bestview.hpp"
 #include "scenemap/cloud.hpp"
 #include "scenemap/objmap.hpp"
+#include "scenemap/rooms.hpp"
 
 namespace scenemap {
 
@@ -38,6 +41,8 @@ struct SaveInput {
   std::vector<uint8_t> ply_dirty;  // 1: 지난 저장 뒤 구름이 바뀜
   double voxel = 0.02;
   bool clean_objects = false;      // objects/ 에서 지금 물체가 아닌 O<id>_*.png 지우기(새 판·새 디렉터리)
+  std::shared_ptr<const RoomSeg> rooms;   // 방 나눔(null = 방 없음 — 방 파일·키 안 씀)
+  RoomNaming room_names;           // rooms->rooms 와 같은 순서, obj_room 은 objs 순서
 };
 
 struct SaveOut {

@@ -180,6 +180,7 @@ int sm_snap_points(const sm_snapshot_t*, uint32_t id, sm_cloud* out);
  *                (물체 best view 가 있으면 노드 metadata.rgbd = 그림 경로·stamp·상자·넓이·깊이·카메라 자세 — sm_save_dsg_ex)
  *   view.json  — 계획기·뷰어용 요약(자세, 물체 표, 최근 사건)
  *   map.pgm    — 2D 점유 격자(+ map.yaml: 해상도·원점)
+ *   (방이 있으면 scene.json ROOMS 층·방→물체·방–방 변, view.json rooms·room_doors·objects[].room, rooms.pgm — 3.4)
  * Spark-DSG 없이 빌드하면(SM_HAVE_SPARK_DSG 미정의) scene.json 은 건너뛴다. 0 = 성공. */
 int sm_save_dsg(sm_ctx*, const char* dir);
 /* sm_save_dsg + best view PNG(dir/objects/O<id>_rgb.png · O<id>_depth.png, 지난 저장 뒤 바뀐 것·없는 것만 씀)와 시간.
@@ -192,6 +193,48 @@ typedef struct {
   float ply_ms;
 } sm_save_stats;
 int sm_save_dsg_ex(sm_ctx*, const char* dir, sm_save_stats* stats /* NULL 가능 */);
+
+/* ---- 방(추가 ABI, rooms.hpp · docs/scenemap_설계.md 3.4) ----
+ * 2D 격자 빈칸의 거리 변환 → 문턱 거름(Hydra room finder 의 2D 판) → 씨앗 → 넘치기 → 합치기. sm_snapshot 이 주기
+ * (period_s, 시뮬 시각)마다, 빈칸이 min_change 이상 바뀌었을 때만 다시 나누고(잠금 밖, 600×600 에 수 ms), 그 사이엔 지난
+ * 나눔을 쓴다. 방 id 는 겹침으로 이어져 다시 나눠도 그대로(sm_reset 에서 1 부터). 물체 배정·이름은 스냅숏마다 새로. */
+typedef struct {
+  int32_t enabled;             /* 0 = 방 나누기 끔 */
+  int32_t free_max, occ_min;   /* 격자 값 0..free_max 빈칸, ≥ occ_min 점유 */
+  double dil_min_m, dil_max_m, dil_step_m;   /* 거름 문턱(벽 면까지 여유) */
+  double min_life_m;           /* 씨앗 수명(문턱 m): 문 반폭 ≈ dil_max − min_life 보다 좁은 통로가 방을 가름 */
+  double min_seed_m2, min_room_m2;
+  double max_door_m;           /* 이음매가 이보다 길면 한 방(0 = 안 합침) */
+  double hole_m2, speck_m2;    /* 안쪽 모름 구멍 → 빈칸, 작은 점유 점 → 빈칸(나누기에만) */
+  double obj_search_m, footprint_margin_m;
+  double period_s, min_change_m2;
+  double match_min;            /* id 잇기: 겹침 ≥ match_min × 작은 쪽 넓이 */
+} sm_room_params;
+int sm_get_room_params(sm_ctx*, sm_room_params* out);
+int sm_set_room_params(sm_ctx*, const sm_room_params*);   /* 다음 스냅숏에서 다시 봄 */
+/* 지금 격자로 다시 나눔(force = 1: 주기·변화 무시). 방 수, < 0 = 오류 */
+int sm_update_rooms(sm_ctx*, int32_t force);
+/* 외부 이름(LLM·BDDL 방 이름 등) — 그 방 id 의 규칙 이름을 덮어씀. name == NULL 이면 지움 */
+int sm_set_room_name(sm_ctx*, uint32_t room_id, const char* name, float conf);
+
+typedef struct {
+  uint32_t id;
+  const char* name;            /* "kitchen", "kitchen 2", "room 7", 외부 이름(스냅숏 수명 동안) */
+  const char* type;            /* "kitchen"/"bedroom"/"living room"/"bathroom"/"office", "" = 모름 */
+  float name_conf;
+  double centroid[2];          /* map */
+  double bbox_min[2], bbox_max[2];
+  double area_m2;
+  int32_t n_objects;
+  const uint32_t* objects;     /* n_objects 물체 id(스냅숏 수명 동안) */
+} sm_room;
+typedef struct { uint32_t a, b; double pos[2]; double width; } sm_room_door;   /* a < b, 방–방 통로(문) */
+typedef struct { double resolution; double origin[2]; int32_t width, height; const uint32_t* ids; } sm_room_grid;   /* 칸 방 id, 0 = 없음 */
+int sm_snap_rooms(const sm_snapshot_t*, const sm_room** out);              /* 방 수(id 순) */
+int sm_snap_room_doors(const sm_snapshot_t*, const sm_room_door** out);    /* 문 수 */
+int sm_snap_room_grid(const sm_snapshot_t*, sm_room_grid* out);            /* 0 = 있음, 1 = 나눔 없음 */
+uint32_t sm_snap_room_at(const sm_snapshot_t*, const double p[2]);         /* 0 = 방 없음 */
+uint32_t sm_snap_object_room(const sm_snapshot_t*, uint32_t obj_id);       /* 0 = 방 없음/물체 없음 */
 
 #ifdef __cplusplus
 }
