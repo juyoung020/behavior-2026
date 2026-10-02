@@ -1,4 +1,29 @@
-# 리눅스 듀얼 부팅 설치 — Ubuntu 22.04 + RTX 5070 Ti + Isaac Sim 5.1 + BEHAVIOR-1K v3.9.3-post1
+# 리눅스 설치 — Ubuntu 22.04 + Isaac Sim 5.1 + BEHAVIOR-1K v3.9.3-post1
+
+> **실제 상황(10-02 갱신)**: 아래 0~4 절은 Windows PC(RTX 5070 Ti)에 듀얼 부팅하려던 **계획**이다. 실제로는 **다른 PC(RTX 4090)** 에
+> 리눅스 공식 평가기를 깔아 돌리고 있다 → 바로 아래 "실제 리눅스 PC" 절이 현재 사실이다. 0 절(디스크 공간)·2 절(Blackwell 드라이버)은 이 PC 에 해당 없음.
+
+## 실제 리눅스 PC (2026-10-01~02)
+
+| 항목 | 값 |
+|---|---|
+| 호스트 | `ad17-MS-7E01`, 사용자 `ad17`, 저장소 `~/behavior-2026` |
+| OS | Ubuntu 22.04.5 LTS, 커널 6.8.0-138-generic, Secure Boot 꺼짐 |
+| GPU | RTX 4090 24 GB (Ada, sm_89) 한 장 |
+| 드라이버 | **580.178.04 (`nvidia-driver-580-open`)** — 10-02 에 535.309 에서 올림 |
+| RAM · 디스크 | 31 GB · `/` 432 GB (10-02 남은 공간 144 GB) |
+| BEHAVIOR-1K | `bd049de` (v3.9.3-post1, 공식 압축본과 파일 단위 동일 — `refs/BEHAVIOR-1K_v3.9.3-post1_official/`) |
+| conda `behavior` | isaacsim 5.1.0.0, torch 2.7.0+cu128, warp-lang 1.12.0 |
+
+겪은 것(시간순, 기록: `outputs/linux_try_*`, `outputs/linux_first_*`, `logs/linux_dl/`)
+1. 10-01: `import omnigibson` 이 `warp` 없음으로 실패 → `warp-lang==1.12.0` 설치(Windows 와 같은 처리, [설치기록.md](설치기록.md) 51 줄).
+2. 10-01~02, **드라이버 535**: 매번 Isaac Sim 이 "The currently installed NVIDIA graphics driver is unsupported or has known issues" 경고.
+   판마다 실패 모양이 달랐다 — 판 시작 전 조용히 종료, 리셋에서 카메라 RGB 관측이 비어 `Observation space does not match`,
+   평가기 생성 중 warp 오류(`wp.matrix(pos, rot, scale)` 가 warp 1.12 에서 없어짐, Isaac Sim fabric 코드).
+3. 10-02 **드라이버 580.178.04-open 으로 올림**(apt, 535 패키지는 580 을 가리키는 전환용으로 바뀜) → 재부팅 뒤 **같은 warp 1.12 그대로 정상 동작**.
+   위 2 의 오류들은 535 드라이버 탓으로 본다(warp 오류가 드라이버에 따라 갈린 이유는 확인 못 함 — 추정).
+4. 재부팅 자동 시작: crontab `@reboot ~/.local/bin/claude-boot.sh` → tmux 세션 `claude`(창 `main` = `claude -c`, `rc` = `claude rc`), 기록 `~/.local/state/claude-boot.log`.
+
 
 작성: 2026-09-30 · 목적: 이 PC 의 Windows 에서 생기는 검은 프레임 (B)(RTX 가 카메라 영상 한 칸을 3 스텝 주기로 비움, [평가기_가속설계.md](평가기_가속설계.md) 5.2.2)를
 피해, **렌더가 되는 리눅스에서 공식 평가기를 돌려** 제출용 결과를 뽑는다. 주최 측 성능 측정 장비도 "Ubuntu 22.04.5 LTS"([raw/site_challenge_evaluation.md](raw/site_challenge_evaluation.md)).
@@ -81,6 +106,13 @@ Secure Boot 상태는 권한 문제로 못 읽었다 — 켜져 있으면 드라
 
 ## 6. 확인할 것(설치 뒤)
 
-- [ ] `nvidia-smi` 드라이버 번호, `vulkaninfo --summary` 에 RTX 5070 Ti 가 잡히는지
-- [ ] `python -c "import torch;print(torch.__version__, torch.cuda.get_arch_list())"` 에 sm_120
-- [ ] 첫 확인 결과(검은 프레임 0 / 재생 비교)를 [평가기_가속설계.md](평가기_가속설계.md) 5.2.2 와 [설치기록.md](설치기록.md) 에 적기
+- [x] `nvidia-smi` 드라이버 번호 — RTX 4090, 580.178.04 (10-02)
+- [ ] `vulkaninfo --summary`
+- [x] torch 2.7.0+cu128 (4090 은 sm_89 라 sm_120 확인은 해당 없음)
+- [x] 첫 확인 결과 기록 — 아래 "첫 확인 결과"
+
+### 첫 확인 결과 (10-02, `outputs/linux_first_20261002_143938/`)
+- ① 0 행동 radio 1 판(151 스텝): 검은 프레임 카메라 3 대 모두 **0/151**. 판 정상 종료(success 0/1, 0 행동이라 당연).
+- ② Windows nf_a 행동열 재생(501 스텝): 검은 프레임 **0/501**. 판정(success False·q_score 0.0·steps 501) Windows 와 같음,
+  물리는 robot_qpos 최대 1.75e-4·qvel 0.17 차이, JSON 의 agent_distance.left/right 가 소수 넷째 자리에서 다름(`compare_vs_windows.txt`) — plan.md 3 절의 "Windows 공식 ≠ Linux 공식" 측정과 같은 크기.
+- 판정: 리눅스 2 판 연속 검은 프레임 0. 기준(5 판 연속 0)까지 3 판 남음 — 아직 "(B) 없음" 확정 아님.

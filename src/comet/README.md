@@ -10,4 +10,4 @@ There is no separate fork repository.
 | `0003` | Removes the black-frame filler again (root-cause fixes only); detection logs remain |
 
 Setup: `tools/setup/setup_comet_wsl.sh` clones upstream, checks out `4bb2aa7` on `main` and runs `git am` on these patches.
-Run notes (Korean): `docs/실행기록_스펙_있는그대로.md`.
+Run notes (Korean): `docs/archive/실행기록_스펙_있는그대로.md`.

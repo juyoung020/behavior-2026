@@ -32,3 +32,4 @@ build_win/
 
 # agent scratch scripts at repo root
 .tmp_*
+refs/BEHAVIOR-1K_v3.9.3-post1_official/

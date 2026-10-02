@@ -1,0 +1,10 @@
+#!/bin/sh
+# 커밋 메시지에서 Claude 기여자 표기(Co-Authored-By: Claude …, Claude-Session: …, "Generated with Claude Code")를 지운다.
+# 설치(PC 마다 한 번): git config core.hooksPath tools/git-hooks
+f="$1"
+sed -i.bak -E \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*([Cc]laude|anthropic\.com)/d' \
+  -e '/^Claude-Session:/d' \
+  -e '/Generated with \[?Claude Code/d' "$f" && rm -f "$f.bak"
+# 끝에 남은 빈 줄 정리
+printf '%s\n' "$(cat "$f")" > "$f"

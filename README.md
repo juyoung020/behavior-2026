@@ -52,9 +52,14 @@ plan.md               plan and decisions
 ~/.config/behavior-2026/ secrets (KAU API key), never committed — see .env.example
 ```
 
+**Linux (`ad17-MS-7E01`, RTX 4090, Ubuntu 22.04.5)**
+- Official evaluator on Linux: conda env `behavior` (Isaac Sim 5.1, torch 2.7.0+cu128, warp-lang 1.12.0), NVIDIA driver 580.178.04-open (535 failed — see [docs/Linux_설치.md](docs/Linux_설치.md)).
+- First check (`tools/setup/linux_first_check.sh`): no black frames in 2 runs so far.
+
 ## Setup notes
 
 - Submodules: `git submodule update --init` (BEHAVIOR-1K, refs, Spark-DSG).
+- Commits carry no Claude co-author lines: `.claude/settings.json` turns attribution off, and `tools/git-hooks/commit-msg` strips any that slip through. Run once per clone: `git config core.hooksPath tools/git-hooks`.
 - Data, assets, keys, model weights and videos are not in git. Download scripts live in `tools/setup/`, and install notes in [docs/설치기록.md](docs/설치기록.md).
 - Known issue on this Windows PC: if another process holds more than about 5 GiB of GPU memory, Isaac Sim 5.1 returns all-black RGB to the policy (depth is fine). See plan.md §4.0.
   - Do not run the π0.5 server on the same GPU as the simulator.

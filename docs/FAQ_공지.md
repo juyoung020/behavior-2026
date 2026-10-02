@@ -21,6 +21,7 @@
 규칙 설명
 - 원문: "Please use the `v3.9.2` tag of the `BEHAVIOR-1K` repository for challenge evaluation. It includes the fixes below."
   - 그 뒤 evaluation.html·baselines.html 은 `v3.9.3` 을 말하고, GitHub 에는 `v3.9.3-post1`(2026-09-29 게시)만 있다(`v3.9.3` 태그 없음). → 최신 권장은 v3.9.3 계열로 보이나 공지는 갱신되지 않았다.
+  - **10-02 확인**: GitHub 최신 릴리스는 `v3.9.3-post1`(릴리스 이름 "BEHAVIOR-1K v3.9.3 post 1"), `main` 은 이 태그와 같은 커밋(`bd049de`, 앞선 커밋 0). 사이트의 "v3.9.3" = 이 릴리스. 공식 압축본은 `refs/BEHAVIOR-1K_v3.9.3-post1_official/` 에 있고 로컬 `BEHAVIOR-1K/` 와 파일 단위로 같다(데이터셋·`appdata` 제외). updates.html 에는 아직 v3.9.2 문구가 남아 있다.
 
 버그 수정
 - 원문: "Corrected the arm, gripper, and trunk velocity observations in the 2026 challenge demonstration dataset. These fields now use the raw simulator joint velocities from the original HDF5 demonstrations, and `meta/stats.json` has been recomputed accordingly." → 팔·그리퍼·몸통 관절 속도 5개 구간 수정. "Actions and all other dataset fields are unchanged."
@@ -93,7 +94,7 @@ A. "RGB + depth + proprioception". 정답 분할·물체 상태·목표 물체 p
 A. 원문 "Additional components like SLAM or LLM-based querying are also permitted, provided the policy follows the challenge-track observation restrictions during evaluation." 방법 제한 없음("There are no restrictions on the type of policy used.").
 
 **Q. SAM·CLIP 같은 학습된 인식 모델은?**
-A. 이름으로 언급한 문장은 없다. 금지는 "ground-truth segmentation"(시뮬레이터 정답)이고 정책 구성은 자유라 허용으로 해석되나, 확정은 Discord. (예전 문서에 원문처럼 적혔던 『External perception models (e.g., SAM, CLIP) are permitted』 는 페이지에 없는 문장이었다 — [대회규칙_팀_meridian.md](대회규칙_팀_meridian.md) 의 정정 참고)
+A. 이름으로 언급한 문장은 없다. 금지는 "ground-truth segmentation"(시뮬레이터 정답)이고 정책 구성은 자유라 허용으로 해석되나, 확정은 Discord. (예전 문서에 원문처럼 적혔던 『External perception models (e.g., SAM, CLIP) are permitted』 는 페이지에 없는 문장이었다 — [대회규칙_팀_meridian.md](archive/대회규칙_팀_meridian.md) 의 정정 참고)
 
 **Q. 학습 때 정답 정보를 써도 되나?**
 A. 된다. 원문 "You are allowed to use privileged information during training (e.g. other observation modalities, task info, etc.), so long as you are not using it during challenge-track evaluation."
