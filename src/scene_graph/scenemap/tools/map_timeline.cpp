@@ -4,6 +4,11 @@
 //   <out>/map_timeline.csv : frame,obj_id,x,y,z,label,moving
 // 로 쓴다(METRICS.md: 같은 frame 의 줄이 그때의 지도 전체, 바뀔 때만, 빈 지도는 "frame,,,,,,"). 사라짐 상태 물체는 뺀다,
 // moving = 들고 있음(SM_HELD). 구조물(벽·바닥·문 …)은 scenemap 이 노드로 만들지 않는다(sm_set_kind_names 기본 표).
+//   <out>/map_points.npz   : 물체 점(DATA_FORMAT.md map_points) — 키 "<obj_id>@<frame>", 값 N×3 float32, 그 프레임에 적은 중심
+//                            기준 map 좌표 m(벤치마크의 world 축 = map 축). 판 안에서 모양이 바뀐 프레임에만 새 키를 쓴다:
+//                            구름 version 이 바뀌었고 점 수가 지난번보다 10 % 넘게 달라졌거나 300 프레임(10 s) 지남, 또는 처음.
+//                            들고 다니기(평행 이동)는 중심과 같이 움직여 모양이 안 바뀐다. numpy 없이 직접 씀: zip(저장 방식, 압축 없음)
+//                            안에 "<key>.npy"(NPY 1.0, '<f4', (N, 3)) — numpy.load 가 그대로 읽음.
 //
 //   map_timeline <ep.bin> <det.bin> <out dir> [--min-cells N]
 #include <algorithm>
@@ -15,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include <zlib.h>
+
 #include "scenemap.h"
 
 #pragma pack(push, 1)
@@ -24,6 +31,67 @@ struct Row {
   float prop[61];
 };
 #pragma pack(pop)
+
+// numpy .npz 쓰기(zip 저장 방식 + NPY 1.0). 항목마다 바로 파일에 쓰고 중앙 디렉터리는 끝에.
+class Npz {
+ public:
+  explicit Npz(const std::string& path) : f_(std::fopen(path.c_str(), "wb")) {}
+  ~Npz() { close(); }
+  bool ok() const { return f_ != nullptr; }
+  // N×3 float32
+  void add(const std::string& key, const std::vector<float>& xyz) {
+    if (!f_ || n_ >= 65535) return;
+    const size_t n = xyz.size() / 3;
+    std::string h = "{'descr': '<f4', 'fortran_order': False, 'shape': (" + std::to_string(n) + ", 3), }";
+    while ((10 + h.size() + 1) % 64) h += ' ';
+    h += '\n';
+    std::string npy("\x93NUMPY\x01\x00", 8);
+    npy += char(h.size() & 0xff);
+    npy += char(h.size() >> 8);
+    npy += h;
+    npy.append(reinterpret_cast<const char*>(xyz.data()), xyz.size() * 4);
+    const std::string name = key + ".npy";
+    const uint32_t crc = uint32_t(crc32(0, reinterpret_cast<const Bytef*>(npy.data()), uInt(npy.size())));
+    const uint32_t off = uint32_t(pos_);
+    std::string lh;
+    put32(lh, 0x04034b50); put16(lh, 20); put16(lh, 0); put16(lh, 0); put16(lh, 0); put16(lh, 0x21);
+    put32(lh, crc); put32(lh, uint32_t(npy.size())); put32(lh, uint32_t(npy.size())); put16(lh, uint16_t(name.size())); put16(lh, 0);
+    lh += name;
+    write(lh);
+    write(npy);
+    std::string ch;
+    put32(ch, 0x02014b50); put16(ch, 20); put16(ch, 20); put16(ch, 0); put16(ch, 0); put16(ch, 0); put16(ch, 0x21);
+    put32(ch, crc); put32(ch, uint32_t(npy.size())); put32(ch, uint32_t(npy.size())); put16(ch, uint16_t(name.size()));
+    put16(ch, 0); put16(ch, 0); put16(ch, 0); put16(ch, 0); put32(ch, 0); put32(ch, off);
+    ch += name;
+    cd_ += ch;
+    ++n_;
+  }
+  int count() const { return n_; }
+  void close() {
+    if (!f_) return;
+    const uint32_t cd_off = uint32_t(pos_);
+    write(cd_);
+    std::string e;
+    put32(e, 0x06054b50); put16(e, 0); put16(e, 0); put16(e, uint16_t(n_)); put16(e, uint16_t(n_));
+    put32(e, uint32_t(cd_.size())); put32(e, cd_off); put16(e, 0);
+    write(e);
+    std::fclose(f_);
+    f_ = nullptr;
+  }
+
+ private:
+  static void put16(std::string& o, uint16_t v) { o += char(v & 0xff); o += char(v >> 8); }
+  static void put32(std::string& o, uint32_t v) { put16(o, uint16_t(v & 0xffff)); put16(o, uint16_t(v >> 16)); }
+  void write(const std::string& b) {
+    std::fwrite(b.data(), 1, b.size(), f_);
+    pos_ += b.size();
+  }
+  FILE* f_;
+  size_t pos_ = 0;
+  std::string cd_;
+  int n_ = 0;
+};
 
 int main(int argc, char** argv) {
   if (argc < 4) {
@@ -118,6 +186,9 @@ int main(int argc, char** argv) {
   std::vector<float> score, box, dmf(ddepth.size()), kmf(depth.size());
   std::vector<uint32_t> bits;
   std::string prev = "\x01";   // 지난번 쓴 지도(같으면 안 씀)
+  Npz npz((std::filesystem::path(argv[3]) / "map_points.npz").string());
+  struct Shape { uint32_t version = 0; int n = 0; uint32_t frame = 0; bool any = false; };
+  std::map<uint32_t, Shape> shape;   // 물체 id → 마지막으로 npz 에 쓴 모양
   int n_snap = 0;
   for (uint32_t i = 0; i < n; ++i) {
     const double t = i / 30.0;
@@ -189,14 +260,39 @@ int main(int argc, char** argv) {
       return b;
     };
     const std::string cb = body(cur);
-    if (cb != prev) {
+    const bool write_rows = cb != prev;
+    if (write_rows) {
       std::fputs(cur.c_str(), o);
       prev = cb;
       ++n_snap;
     }
+    // 모양이 바뀐 물체의 점(중심 기준) — 그 중심이 이 프레임 줄에 있도록 지도를 쓴 프레임에만
+    sm_snapshot_t* s2 = nullptr;
+    sm_snapshot(c, &s2);
+    const int m2 = sm_snap_objects(s2, &ob);
+    for (int k = 0; k < m2 && write_rows; ++k) {
+      if (ob[k].state == SM_GONE) continue;
+      sm_cloud cl{};
+      if (sm_snap_points(s2, ob[k].id, &cl) != 1 || cl.n <= 0) continue;
+      Shape& sh = shape[ob[k].id];
+      const bool changed = !sh.any || (cl.version != sh.version &&
+                                       (std::abs(cl.n - sh.n) * 10 > sh.n || i - sh.frame >= 300));
+      if (!changed) continue;
+      std::vector<float> rel(3 * size_t(cl.n));
+      for (int q = 0; q < cl.n; ++q) {
+        rel[3 * q] = float(cl.origin[0] + cl.pts[q].x - ob[k].pos[0]);
+        rel[3 * q + 1] = float(cl.origin[1] + cl.pts[q].y - ob[k].pos[1]);
+        rel[3 * q + 2] = float(cl.origin[2] + cl.pts[q].z - ob[k].pos[2]);
+      }
+      npz.add(std::to_string(ob[k].id) + "@" + std::to_string(i), rel);
+      sh = Shape{cl.version, cl.n, i, true};
+    }
+    sm_snapshot_release(s2);
   }
   std::fclose(o);
   sm_destroy(c);
-  std::printf("%s: frames %u, snapshots %d\n", out.c_str(), n, n_snap);
+  const int n_npz = npz.count();
+  npz.close();
+  std::printf("%s: frames %u, snapshots %d, map_points.npz entries %d\n", out.c_str(), n, n_snap, n_npz);
   return 0;
 }

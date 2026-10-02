@@ -196,7 +196,7 @@
   - 노드 `metadata.points = {path: "objects/O<id>_points.ply", n, voxel, stamp(구름이 마지막으로 바뀐 시뮬 s)}`, `metadata.rgbd.mask = "objects/O<id>_mask.png"`. view.json `objects[]` 에 `points{path,n,voxel,stamp}`, `rgbd.mask`.
   - scene.json 노드 메타데이터(기존 그대로 + 추가): `state, n_obs, score, first_pos, structural, handled, movable`, 모습이 있으면
     `rgbd = {rgb, depth(상대 경로), stamp, box_px[4](자른 영역, 원 영상 화소, 여유 포함), det_box_px[4], mask_area, depth_m(마스크 깊이 중앙값), score, cam_T[12](map ← 카메라 광학, 행 우선 3×4)}`. view.json `objects[]` 에 `movable`, `rgbd{rgb, depth}`.
-- **벤치마크 형식**: `tools/map_timeline <ep.bin> <det.bin> <out>/<seq>` — C ABI 로만 재생해 `map_timeline.csv`(frame,obj_id,x,y,z,label,moving; 지도가 바뀐 프레임만, 사라짐 뺌, moving = 들고 있음)를 쓴다. 벤치마크 `read_timeline` 으로 읽힘을 합성 판으로 확인(실제 판 det.bin 은 원본 HDF5 가 없어 아직 못 만듦).
+- **벤치마크 형식**: `tools/map_timeline <ep.bin> <det.bin> <out>/<seq>` — C ABI 로만 재생해 `map_timeline.csv`(frame,obj_id,x,y,z,label,moving; 지도가 바뀐 프레임만, 사라짐 뺌, moving = 들고 있음)를 쓴다. 벤치마크 `read_timeline` 으로 읽힘을 합성 판으로 확인(실제 판 det.bin 은 원본 HDF5 가 없어 아직 못 만듦). 같은 폴더에 `map_points.npz`(키 `<obj_id>@<frame>`, N×3 float32, 그 프레임 중심 기준 map 좌표 — 모양이 바뀐 프레임만: 점 수 10 % 넘게 바뀜 또는 300 프레임)를 numpy 없이 직접 씀(zip 저장 방식 + NPY 1.0). 벤치마크 `MethodShapes.load` 로 경고 없이 읽힘(합성 판).
 - **잰 시간(구름 붙인 뒤)**: keyframe 720² 검출 6(매번 best view 자르기 + 구름) 2.0 ms, 검출 4 평균 1.3 ms. 저장(물체 3): 다 바뀜(PNG 9·PLY 3) 0.74 ms(PLY 0.05 ms), 안 바뀜 0.30 ms, 구름만 0.40 ms.
 - **잰 시간**(jy-desktop, RTX 5070 Ti, Release): keyframe 720² — slam2d 만 0.57 ms, + objmap·best view(검출 6, 매번 자르기, 호스트 RGBA) 1.48 ms. 장치 자르기 6 상자(185 kB) 커널 + 내려받기 0.017 ms(온 영상 2 MB 내려받기 0.12 ms). 저장(물체 3, 격자 포함) PNG 6 장 0.66 ms, PNG 없음 0.32 ms.
 

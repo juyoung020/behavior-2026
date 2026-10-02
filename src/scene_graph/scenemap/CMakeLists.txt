@@ -31,7 +31,7 @@ target_link_libraries(slam2d_eval scenemap)
 add_executable(objmap_eval tools/objmap_eval.cpp)
 target_link_libraries(objmap_eval scenemap)
 add_executable(map_timeline tools/map_timeline.cpp)
-target_link_libraries(map_timeline scenemap)
+target_link_libraries(map_timeline scenemap ZLIB::ZLIB)
 add_executable(capi_replay tools/capi_replay.cpp)
 target_link_libraries(capi_replay scenemap)
 
