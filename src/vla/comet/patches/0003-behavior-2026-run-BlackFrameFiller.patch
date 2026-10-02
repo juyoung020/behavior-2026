@@ -1,0 +1,119 @@
+From 57f4b7bc1b39967c047d88b18bb57fda692eec89 Mon Sep 17 00:00:00 2001
+From: juyoung020 <151780134+juyoung020@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 20:45:35 +0900
+Subject: [PATCH 3/3] =?UTF-8?q?behavior-2026-run:=20=EA=B2=80=EC=9D=80=20?=
+ =?UTF-8?q?=ED=94=84=EB=A0=88=EC=9E=84=20=EB=8C=80=EC=B2=B4(BlackFrameFill?=
+ =?UTF-8?q?er)=20=EC=82=AD=EC=A0=9C=20=E2=80=94=20=EA=B2=80=EC=B6=9C=20?=
+ =?UTF-8?q?=EA=B8=B0=EB=A1=9D=EB=A7=8C=20=EB=82=A8=EA=B9=80?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MLHXJb1Uv49XhzjAxkRRQN
+---
+ src/openpi/shared/eval_b1k_wrapper.py | 51 ++-------------------------
+ 1 file changed, 2 insertions(+), 49 deletions(-)
+
+diff --git a/src/openpi/shared/eval_b1k_wrapper.py b/src/openpi/shared/eval_b1k_wrapper.py
+index 517c2b1..224eb20 100644
+--- a/src/openpi/shared/eval_b1k_wrapper.py
++++ b/src/openpi/shared/eval_b1k_wrapper.py
+@@ -17,7 +17,7 @@ logger.setLevel(20)  # info
+ RESIZE_SIZE = 224
+ DESPTH_RESIZE_SIZE = 720
+ 
+-# behavior-2026-run: 검은 프레임 기록용
++# behavior-2026-run: 검은 프레임 검출 기록용 (대체는 하지 않는다)
+ CAMERA_KEYS = (
+     "robot_r1::robot_r1:zed_link:Camera:0::rgb",
+     "robot_r1::robot_r1:left_realsense_link:Camera:0::rgb",
+@@ -25,49 +25,6 @@ CAMERA_KEYS = (
+ )
+ 
+ 
+-class BlackFrameFiller:
+-    """정책 쪽 방어: 카메라 RGB 가 전부 0(검은 화면)이면 그 카메라·그 환경의 직전 정상 프레임으로 바꿔 넣는다.
+-
+-    behavior-2026 작업공간 src/sim/fasteval/pi05_chunk_server.py 의 BlackFrameFiller(커밋 2388961)와 같은 규칙:
+-    - 과거에 받은 RGB 만 쓴다(관측 제한 안). 에피소드 첫 프레임부터 검으면 채울 과거가 없으니 그대로 넘기고 센다.
+-    - mode="off" 면 받은 그대로(원래 Comet 과 같음). 환경변수 COMET_BLACK_FILL 로 고른다(기본 last).
+-    """
+-
+-    def __init__(self, mode: str = "last"):
+-        self.mode = mode
+-        self.last = {}  # (키, 환경) -> 마지막 정상 프레임
+-        self.stats = {"frames": 0, "black": 0, "filled": 0, "no_history": 0}
+-
+-    def reset(self):
+-        self.last = {}
+-        self.stats = {"frames": 0, "black": 0, "filled": 0, "no_history": 0}
+-
+-    def __call__(self, obs: dict) -> dict:
+-        for key in [k for k in obs if k.endswith("::rgb")]:
+-            arr = np.asarray(obs[key])
+-            batched = arr.ndim == 4
+-            frames = arr if batched else arr[None]
+-            out = None
+-            for b in range(frames.shape[0]):
+-                self.stats["frames"] += 1
+-                if frames[b].any():
+-                    self.last[(key, b)] = frames[b].copy()
+-                    continue
+-                self.stats["black"] += 1
+-                if self.mode != "last":
+-                    continue
+-                prev = self.last.get((key, b))
+-                if prev is None:
+-                    self.stats["no_history"] += 1
+-                    continue
+-                if out is None:
+-                    out = frames.copy()
+-                out[b] = prev
+-                self.stats["filled"] += 1
+-            if out is not None:
+-                obs[key] = out if batched else out[0]
+-        return obs
+-
+ SKILL_PROMPT = """
+ You are a robot that is trying to complete the global task: {task_prompt}
+ 
+@@ -133,7 +90,6 @@ class B1KPolicyWrapper:
+         if self._frame_log_path:
+             with open(self._frame_log_path, "a") as f:
+                 f.write("env_step,head_mean,left_mean,right_mean,n_black\n")
+-        self._filler = BlackFrameFiller(os.environ.get("COMET_BLACK_FILL", "last"))
+         self._frame_rows = []
+ 
+         self.log_config()
+@@ -171,10 +127,8 @@ class B1KPolicyWrapper:
+                 "kind": "reset",
+                 "prev_env_steps": self.env_step,
+                 "prev_black_total": self._black_total,
+-                "prev_black_fill": dict(self._filler.stats),
+             }
+         )
+-        self._filler.reset()
+         self._flush_frame_rows()
+         self.env_step = 0
+         self._last_prompt = None
+@@ -321,7 +275,7 @@ class B1KPolicyWrapper:
+         if self._last_act_end is not None:
+             self._gaps.append(now - self._last_act_end)
+         self.env_step += 1
+-        # 매 스텝 카메라 3대(머리·왼손목·오른손목) RGB 평균 밝기와 검은 프레임(배열 전부 0) 기록 — 채우기 전 원본 기준
++        # 매 스텝 카메라 3대(머리·왼손목·오른손목) RGB 평균 밝기와 검은 프레임(배열 전부 0) 검출 기록 — 관측은 받은 그대로 쓴다
+         # (이 PC 평가기가 검은 화면을 섞어 보내는 문제: Isaac Sim 5.1 버그 추정, plan.md 4.0)
+         means, blacks = [], []
+         for cam, k in zip(("head", "left", "right"), CAMERA_KEYS):
+@@ -333,7 +287,6 @@ class B1KPolicyWrapper:
+                 self._black_total[cam] += 1
+         # /mnt/c 는 WSL 에서 파일 열기가 느리다(9P, 한 번에 수십 ms) -> 모아 두었다가 π0.5 호출 때 한 번에 쓴다
+         self._frame_rows.append(f"{self.env_step},{means[0]:.2f},{means[1]:.2f},{means[2]:.2f},{sum(blacks)}\n")
+-        input_obs = self._filler(input_obs)
+         try:
+             return self._act_impl(input_obs)
+         finally:
+-- 
+2.34.1
+

@@ -23,7 +23,7 @@
       "policy": "replay",
       "quickack": true,
       "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
-      "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml"
+      "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml"
     }
   ],
   "lock_scope": "repeat"

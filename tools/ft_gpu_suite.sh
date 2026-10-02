@@ -12,9 +12,9 @@ BUSY=${FT_GPU_BUSY_MB:-5000}
 mkdir -p "$LOG" "$REPO/logs/fasttrain"
 steps=${*:-stage ref same check neg loader cbench native}
 
-# GPU 잠금: 공용 도구(선착순 대기열, src/engine/scripts/gpu_lock.sh), owner=fasttrain. 단계마다 잡고 끝나면 푼다.
+# GPU 잠금: 공용 도구(선착순 대기열, src/sim/engine/scripts/gpu_lock.sh), owner=fasttrain. 단계마다 잡고 끝나면 푼다.
 # 이미 줄 선 자리를 이어받으려면 GPU_QUEUE_TS=<20자리> 를 준다(첫 단계에만 쓰인다).
-source "$REPO/src/engine/scripts/gpu_lock.sh"
+source "$REPO/src/sim/engine/scripts/gpu_lock.sh"
 ME=fasttrain
 take_lock() { gpu_lock_acquire "$ME" "$1" "$2" 3; unset GPU_QUEUE_TS; }
 drop_lock() { gpu_lock_release "$ME" >/dev/null 2>&1; return 0; }

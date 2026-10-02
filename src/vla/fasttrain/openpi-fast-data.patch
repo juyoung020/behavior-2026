@@ -1,0 +1,55 @@
+From c43d08df11e7942a5270cd47bedc607df817da77 Mon Sep 17 00:00:00 2001
+From: juyoung020 <151780134+juyoung020@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 20:43:49 +0900
+Subject: [PATCH] =?UTF-8?q?train=5Fb1k:=20FT=5FFAST=5FDATA=3D1=20=EC=9D=B4?=
+ =?UTF-8?q?=EB=A9=B4=20=EA=B0=80=EC=86=8D=20=EB=A1=9C=EB=8D=94(behavior-20?=
+ =?UTF-8?q?26=20fasttrain)=20=EC=82=AC=EC=9A=A9?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MLHXJb1Uv49XhzjAxkRRQN
+---
+ scripts/b1k/train_b1k.py | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/scripts/b1k/train_b1k.py b/scripts/b1k/train_b1k.py
+index b53dc5c..8583fcb 100644
+--- a/scripts/b1k/train_b1k.py
++++ b/scripts/b1k/train_b1k.py
+@@ -1,4 +1,5 @@
+ import dataclasses
++import os
+ import functools
+ import logging
+ import platform
+@@ -418,12 +419,19 @@ def main(config: _config.TrainConfig):
+     )
+     init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
+ 
+-    data_loader = _data_loader.create_b1k_data_loader(
+-        config,
+-        sharding=data_sharding,
+-        shuffle=True,
+-        skip_norm_stats=False
+-    )
++    if os.environ.get("FT_FAST_DATA") == "1":
++        # 가속 로더 (behavior-2026/src/vla/fasttrain, docs/학습환경_가속.md): NVDEC + 직접 짠 CUDA 커널, 원래와 비트 동일.
++        # PYTHONPATH 에 behavior-2026/src 가 있어야 한다.
++        from fasttrain.fast import create_fast_b1k_data_loader
++
++        data_loader = create_fast_b1k_data_loader(config, sharding=data_sharding, shuffle=True)
++    else:
++        data_loader = _data_loader.create_b1k_data_loader(
++            config,
++            sharding=data_sharding,
++            shuffle=True,
++            skip_norm_stats=False
++        )
+     data_iter = iter(data_loader)
+     batch = next(data_iter)
+     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
+-- 
+2.34.1
+

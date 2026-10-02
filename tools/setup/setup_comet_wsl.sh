@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2위 Comet(openpi-comet) 실행용 사본을 WSL ~/openpi-comet 에 받고, 우리 수정(src/comet/patches)을 얹은 뒤 README 대로 uv 환경을 만든다.
+# 2위 Comet(openpi-comet) 실행용 사본을 WSL ~/openpi-comet 에 받고, 우리 수정(src/vla/comet/patches)을 얹은 뒤 README 대로 uv 환경을 만든다.
 # - 원본 커밋 4bb2aa7 (refs\openpi-comet 과 같은 커밋) 위에 패치를 main 브랜치로 적용한다. 원본에는 push 하지 않는다.
 # - README 의 "behavior for server deploy"(bddl·OmniGibson[eval] 설치)는 하지 않는다:
 #   2025 OmniGibson 의 omnigibson.learning 을 부르는 3곳을 2026 기준으로 고쳐서 필요가 없다(실행기록_스펙_있는그대로.md).
@@ -13,7 +13,7 @@ if [ ! -d ~/openpi-comet ]; then
   GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/mli0603/openpi-comet.git ~/openpi-comet
   cd ~/openpi-comet
   git checkout -B main 4bb2aa7
-  git am /mnt/c/behavior-2026/src/comet/patches/*.patch
+  git am /mnt/c/behavior-2026/src/vla/comet/patches/*.patch
 fi
 cd ~/openpi-comet
 git log --oneline -4

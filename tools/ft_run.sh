@@ -1,6 +1,6 @@
 #!/bin/bash
 # 학습 데이터 파이프라인 도구 실행기 (WSL). 사용: bash /mnt/c/behavior-2026/tools/ft_run.sh tools/ft_bench.py stages
-#  - ~/openpi 의 uv 환경 파이썬으로, 우리 코드(src/fasttrain)를 PYTHONPATH 에 얹어 돌린다.
+#  - ~/openpi 의 uv 환경 파이썬으로, 우리 코드(src/vla/fasttrain)를 PYTHONPATH 에 얹어 돌린다.
 #  - JAX 는 원래 학습처럼 GPU 를 쓰되 미리 잡지 않게 한다(워커도 openpi 가 같은 값을 넣는다, data_loader.py:534-539).
 set -e
 REPO=/mnt/c/behavior-2026

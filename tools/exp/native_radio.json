@@ -14,6 +14,6 @@
   "settings": [
     {"name": "pi05_native", "policy": "native", "module": "native_policy:pi05",
      "weights": "C:/behavior-2026/data/pi05_native/pi05_radio.pi05w",
-     "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml", "replan": 16, "seed": 0}
+     "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml", "replan": 16, "seed": 0}
   ]
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 지시 형식 오프라인 실험 (시뮬레이터 없음, π0.5 만 GPU) — 한 명령:
-#   준비(없으면) → prompt 생성(Rust src/probe) → 추론(GPU, tools/probe_infer.py) → 채점·표(Rust) → logs/probe_<모델>_<시각>.md
+#   준비(없으면) → prompt 생성(Rust src/agent/probe) → 추론(GPU, tools/probe_infer.py) → 채점·표(Rust) → logs/probe_<모델>_<시각>.md
 #   GPU 사용량은 nvidia-smi 로 1초마다 같이 기록(_gpu.csv).
 # 실행: wsl -d Ubuntu-22.04 -u juyoung -e bash /mnt/c/behavior-2026/tools/run_probe.sh [pt50|radio] [EPISODES] [PER_STAGE]
 #   pt50  = 2위 Comet pt50 (~/openpi-comet), radio = 공식 radio 체크포인트 (~/openpi, pi05_b1k)
@@ -23,7 +23,7 @@ case "$MODEL" in
            --policy_config pi05_b1k --policy_dir "$HOME/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio") ;;
   *) echo "모델: pt50 | radio"; exit 2 ;;
 esac
-cd /mnt/c/behavior-2026/src/probe && cargo build --release -q
+cd /mnt/c/behavior-2026/src/agent/probe && cargo build --release -q
 PROBE=$CARGO_TARGET_DIR/release/probe
 mkdir -p "$D"
 [ -f "$S.npz" ] || JAX_PLATFORMS=cpu "$HOME/openpi-comet/.venv/bin/python" -u "$T/probe_prep.py" --episodes "$EPISODES" --per_stage "$PER_STAGE" --out "$S"

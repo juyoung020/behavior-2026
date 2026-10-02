@@ -182,7 +182,7 @@ function Invoke-Eval($m, $s, [string]$task, [int[]]$idx, [string]$outDir, [strin
         if ($wslPorted) {
             $wea = @($ea | ForEach-Object { if ($_ -match '^[A-Za-z]:[\\/]') { To-Wsl $_ } else { $_ } })
             $wpy = P $pt 'python' 'python3'
-            $argv = @('/mnt/c/behavior-2026/src/engine/eval/ported_eval.py') + $pa + @('--') + $wea
+            $argv = @('/mnt/c/behavior-2026/src/sim/engine/eval/ported_eval.py') + $pa + @('--') + $wea
         } else {
             $argv = @("$Root\src\engine\eval\ported_eval.py") + $pa + @('--') + $ea
         }

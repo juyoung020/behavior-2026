@@ -71,7 +71,7 @@
       "policy": "native",
       "module": "native_policy:pi05",
       "weights": "C:/behavior-2026/data/pi05_native/<1위 모델>.pi05w",
-      "robot_config": "C:/behavior-2026/src/configs/r1pro_openpi.yaml",
+      "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml",
       "replan": 16,
       "seed": 0
     }

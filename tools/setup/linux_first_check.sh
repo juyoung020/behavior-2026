@@ -19,7 +19,7 @@ nvidia-smi --query-gpu=name,driver_version,memory.used --format=csv | tee "$OUT/
 for i in $(seq 1 "$N"); do
   python "$WORK/tools/eval_instrumented.py" --black-guard=warn --trace -- \
     --task-name turning_on_radio --mode public_test --policy local \
-    --robot-config "$WORK/src/configs/r1pro_openpi.yaml" --env-wrapper omnigibson.eval.wrappers.DefaultWrapper \
+    --robot-config "$WORK/src/sim/configs/r1pro_openpi.yaml" --env-wrapper omnigibson.eval.wrappers.DefaultWrapper \
     --instance-indices 0 --num-envs 1 --max-steps 150 --output-dir "$OUT/zero_$i" --write-video --headless \
     > "$OUT/zero_$i.log" 2>&1 || echo "판 $i 실패 — $OUT/zero_$i.log"
   python -c "import json;j=json.load(open('$OUT/zero_$i/black_frames.json'));print('판 $i 검은 프레임', j['black'], '/', list(j['total'].values())[0])"
@@ -33,7 +33,7 @@ if [ -f "$A/actions.npz" ]; then
   sleep 3
   python "$WORK/tools/eval_instrumented.py" --black-guard=warn --trace -- \
     --task-name turning_on_radio --mode public_test --policy websocket --host 127.0.0.1 --port 8110 \
-    --robot-config "$WORK/src/configs/r1pro_openpi.yaml" --env-wrapper omnigibson.eval.wrappers.DefaultWrapper \
+    --robot-config "$WORK/src/sim/configs/r1pro_openpi.yaml" --env-wrapper omnigibson.eval.wrappers.DefaultWrapper \
     --instance-indices 0 --num-envs 1 --max-steps 500 --output-dir "$OUT/replay" --headless > "$OUT/replay.log" 2>&1
   wait || true
   python "$WORK/tools/trace_compare.py" "$A" "$OUT/replay" --pixels-report-only | tail -25 | tee "$OUT/compare_vs_windows.txt"

@@ -47,7 +47,7 @@ repos)
   [ -d "$REPO" ] || git clone https://github.com/juyoung020/behavior-2026.git "$REPO"   # private: gh auth login first
   if [ ! -d "$OPENPI" ]; then
     git clone -b behavior https://github.com/wensi-ai/openpi.git "$OPENPI"
-    (cd "$OPENPI" && git am "$REPO/src/fasttrain/openpi-fast-data.patch")
+    (cd "$OPENPI" && git am "$REPO/src/vla/fasttrain/openpi-fast-data.patch")
   fi
   (cd "$OPENPI" && GIT_LFS_SKIP_SMUDGE=1 uv sync)
   ;;
@@ -64,20 +64,20 @@ fetch)
   fi
   ;;
 build)
-  bash "$REPO/src/pi05_native/build_linux.sh" "$NB"
-  PI05_NATIVE_BUILD=$NB bash "$REPO/src/pi05_train/build_linux.sh" "$TB"
-  bash "$REPO/src/fasttrain/build.sh"
-  PI05_NATIVE_BUILD=$NB bash "$REPO/src/pi05_train/build_linux.sh" "$TB"   # pi05_train links libftcore.so
+  bash "$REPO/src/vla/pi05_native/build_linux.sh" "$NB"
+  PI05_NATIVE_BUILD=$NB bash "$REPO/src/vla/pi05_train/build_linux.sh" "$TB"
+  bash "$REPO/src/vla/fasttrain/build.sh"
+  PI05_NATIVE_BUILD=$NB bash "$REPO/src/vla/pi05_train/build_linux.sh" "$TB"   # pi05_train links libftcore.so
   ls -la "$TB"/pi05_train "$NB"/pi05_server
   ;;
 prepare)
   mkdir -p "$FT_WORK/assets/pi05_b1k" "$RUN"
   cp -r "$CKPT/assets/turning_on_radio" "$FT_WORK/assets/pi05_b1k/" 2>/dev/null || cp -r "$CKPT/assets/"* "$FT_WORK/assets/pi05_b1k/"
-  "$PY" "$REPO/src/fasttrain/lut.py" build && "$PY" "$REPO/src/fasttrain/lut.py" check
+  "$PY" "$REPO/src/vla/fasttrain/lut.py" build && "$PY" "$REPO/src/vla/fasttrain/lut.py" check
   "$PY" -c "from fasttrain import fast, orig; print(fast.ensure_table(orig.train_config()))" | tee "$RUN/table_dir.txt"
-  "$PY" "$REPO/src/pi05_native/tools/export_weights.py" --ckpt "$CKPT" --asset turning_on_radio --out "$RUN/init.pi05w"
+  "$PY" "$REPO/src/vla/pi05_native/tools/export_weights.py" --ckpt "$CKPT" --asset turning_on_radio --out "$RUN/init.pi05w"
   for m in expert lora; do
-    "$PY" "$REPO/src/pi05_train/tools/make_state.py" --ckpt "$CKPT" --mode $m --out "$RUN/state_${m}_init.pi05d"
+    "$PY" "$REPO/src/vla/pi05_train/tools/make_state.py" --ckpt "$CKPT" --mode $m --out "$RUN/state_${m}_init.pi05d"
   done
   ;;
 verify)
@@ -95,9 +95,9 @@ train)
 export)
   : "${STATE:?STATE=<run>/state_stepN.pi05d}"
   OUT=${OUT:-$RUN/export_$(basename "$STATE" .pi05d)}
-  "$PY" "$REPO/src/pi05_train/tools/state_to_orbax.py" --state "$STATE" --base "$CKPT" --out "$OUT" --ema --merge-lora
+  "$PY" "$REPO/src/vla/pi05_train/tools/state_to_orbax.py" --state "$STATE" --base "$CKPT" --out "$OUT" --ema --merge-lora
   cp -r "$CKPT/assets" "$OUT/"
-  "$PY" "$REPO/src/pi05_native/tools/export_weights.py" --ckpt "$OUT" --asset turning_on_radio --out "$OUT.pi05w"
+  "$PY" "$REPO/src/vla/pi05_native/tools/export_weights.py" --ckpt "$OUT" --asset turning_on_radio --out "$OUT.pi05w"
   echo "serve: $NB/pi05_server --weights $OUT.pi05w --port 8000"
   ;;
 *)

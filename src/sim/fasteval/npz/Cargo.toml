@@ -1,0 +1,11 @@
+[package]
+name = "npz"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "npz(zip 안의 .npy) 읽기·쓰기 — numpy savez_compressed 와 같은 모양. src/sim/fasteval 의 Rust 도구들이 같이 쓴다"
+publish = false
+
+[dependencies]
+# zip(deflate) 만. npy 머리·배열 해석과 쓰기는 손으로 짰다.
+zip = { version = "2", default-features = false, features = ["deflate"] }

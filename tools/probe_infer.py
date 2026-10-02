@@ -1,4 +1,4 @@
-"""지시 형식 오프라인 실험 — π0.5 추론 접착부 (GPU). 실험 로직·지표는 Rust(src/probe), 여기선 정책 호출만.
+"""지시 형식 오프라인 실험 — π0.5 추론 접착부 (GPU). 실험 로직·지표는 Rust(src/agent/probe), 여기선 정책 호출만.
 
 표본(<samples>.npz: tools/probe_prep.py)과 prompt 목록(<prompts>.jsonl: `probe prompts`)을 받아 줄마다 policy.infer 를 한 번 부르고
 행동 묶음을 <out>.f32 (little-endian float32, [줄 수, H, 23]) 로, 정답 묶음을 <out>_gt.f32 로, 시간·GPU 메모리를 <out>_meta.json 으로 쓴다.

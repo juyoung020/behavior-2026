@@ -1,4 +1,4 @@
-"""π0.5 서버 훅: 중계기(`bagent relay`, src/agent)가 관측 맵에 덧붙인 지시 문장을 π0.5 입력 prompt 로 쓴다.
+"""π0.5 서버 훅: 중계기(`bagent relay`, src/agent/planner)가 관측 맵에 덧붙인 지시 문장을 π0.5 입력 prompt 로 쓴다.
 
 평가기 관측에는 prompt 가 없고, π0.5 문장은 서버 시작 때 고정된다(openpi src/openpi/shared/eval_b1k_wrapper.py
 B1KPolicyWrapper.text_prompt → process_input 의 "prompt"). 그래서 단계마다 문장을 바꾸려면 서버가 받아 줘야 한다.
