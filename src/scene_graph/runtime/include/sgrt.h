@@ -138,7 +138,7 @@ int    sgrt_reset_stage_timing(sgrt*);
 int    sgrt_clip_enabled(const sgrt*);
 /* 물체 id 의 임베딩(768 FP32, L2). 1 = 있음, 0 = 아직 없음 */
 int    sgrt_object_embedding(sgrt*, uint32_t id, float* out768);
-/* 질의 벡터(768, L2) ↔ 살아 있는 물체(구조물 빼고) 코사인 상위 k. 개수 */
+/* 질의 벡터(768, L2) ↔ 살아 있는 물체(스냅숏에 있는 것 전부, 큰 가구 포함) 코사인 상위 k. 개수 */
 int    sgrt_query_embedding(sgrt*, const float* q768, int32_t k, uint32_t* ids, float* scores);
 /* 질의 글이 라벨 표의 영어·한국어 이름과 정확히 같으면 그 미리 계산한 글 임베딩으로 찾기("radio", "라디오").
  * 개수, -2 = 표에 없는 글(→ 글 인코더로 벡터를 만들어 sgrt_query_embedding), -3 = 라벨 표 아직 없음 */
