@@ -61,9 +61,9 @@ def load_mem(mem):
     except Exception:
         pass
     live = None
-    try:   # only objects present in the latest view.json (skip structural)
+    try:   # only objects present in the latest view.json (scenemap "structural" = big / fixed furniture — keep those)
         vj = json.load(open(os.path.join(mem, "view.json")))
-        live = {o["id"] for o in vj.get("objects", []) if not o.get("structural")}
+        live = {o["id"] for o in vj.get("objects", [])}
     except Exception:
         pass
     keep = [i for i, x in enumerate(ids) if live is None or x in live]

@@ -150,6 +150,7 @@ struct sgc_labels {
   std::unordered_map<std::string, int> syn_id;
   std::vector<int> syn_row;     // synset → 표시 줄(main 먼저)
   std::unordered_map<std::string, int> by_text;
+  std::vector<uint8_t> generic; // synset → 이름으로 쓰기엔 너무 넓은 상위어(artifact, instrumentality …)
   // 색인
   std::vector<float> mu, P;     // P: PD × D(행 = 출력 차원)
   std::vector<float> cent;      // NC × PD
@@ -445,6 +446,14 @@ sgc_labels* sgc_labels_open_ex(const char* dir, const char* index_dir, const cha
       }
       for (const std::string& h : hyp[i]) r.chain.push_back(internSyn(L.get(), h));
     }
+    L->generic.assign(L->syn_names.size(), 0);
+    for (const char* g : {"artifact.n.01", "instrumentality.n.03", "whole.n.02", "object.n.01", "physical_entity.n.01", "matter.n.03",
+                          "commodity.n.01", "consumer_goods.n.01", "durables.n.01", "structure.n.01", "covering.n.02", "device.n.01",
+                          "container.n.01", "equipment.n.01", "implement.n.01", "material.n.01", "substance.n.07", "solid.n.01",
+                          "natural_object.n.01", "organism.n.01", "living_thing.n.01", "part.n.02", "creation.n.02", "unit.n.05"}) {
+      auto it = L->syn_id.find(g);
+      if (it != L->syn_id.end()) L->generic[size_t(it->second)] = 1;
+    }
     L->syn_row.assign(L->syn_names.size(), -1);
     for (int pass = 0; pass < 2; ++pass)
       for (int i = 0; i < L->K; ++i) {
@@ -565,7 +574,7 @@ int32_t sgc_labels_names(const sgc_labels* L, const float* q, sgc_names* o, cons
       all = std::find(ch.begin(), ch.end(), ch0[a]) != ch.end();
     }
     if (!all) continue;
-    if (ch0.size() - a < 4) break;   // 뿌리 가까운 말(artifact·object·whole …)은 이름이 아님 — 1위 그대로
+    if (ch0.size() - a < 4 || L->generic[size_t(ch0[a])]) break;   // 뿌리 가까운 말(artifact·object·whole …)은 이름이 아님
     const int syn = ch0[a];
     const int row = syn < int(L->syn_row.size()) ? L->syn_row[syn] : -1;
     if (row >= 0) {

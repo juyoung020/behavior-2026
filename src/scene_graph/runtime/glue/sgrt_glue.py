@@ -194,6 +194,9 @@ class SceneMemory:
             if self.gt_log is not None:
                 self.gt_log.flush()
             print(f"[sgrt] t={self.t} pose diag {self.pose_diag()}", flush=True)
+            cs = self.clip_stats()
+            if cs:
+                print(f"[sgrt] t={self.t} clip {cs}", flush=True)
             for k, v in self.timing().items():
                 print(f"[sgrt] timing {k}: " + " ".join(f"{a}={b:.1f}" if isinstance(b, float) else f"{a}={b}" for a, b in v.items()),
                       flush=True)
@@ -249,6 +252,17 @@ class SceneMemory:
         v = [ctypes.c_int32(), ctypes.c_int32(), ctypes.c_int32(), ctypes.c_float(), ctypes.c_float()]
         self.L.sgrt_stats(self.h, *[ctypes.byref(x) for x in v])
         return dict(keyframes=v[0].value, last_dets=v[1].value, objects=v[2].value, det_ms=v[3].value, save_ms=v[4].value)
+
+    def clip_stats(self):
+        """SGRT_CLIP counters and last-batch times (sgrt_get_clip_stats), None when off / old library."""
+        L = self.L
+        if not hasattr(L, "sgrt_get_clip_stats") or not L.sgrt_clip_enabled(ctypes.c_void_p(self.h)):
+            return None
+        f = [(n, ctypes.c_int32) for n in ("enabled", "n_objects", "n_named", "n_submitted", "n_done", "n_dropped", "last_batch")] + \
+            [(n, ctypes.c_float) for n in ("crop_ms", "net_ms", "submit_us", "names_us", "save_ms")]
+        st = type("_St", (ctypes.Structure,), {"_fields_": f})()
+        L.sgrt_get_clip_stats(ctypes.c_void_p(self.h), ctypes.byref(st))
+        return {n: (round(getattr(st, n), 3) if t is ctypes.c_float else getattr(st, n)) for n, t in f}
 
     def clip_report(self, queries=("radio", "라디오", "chair", "의자", "sofa", "소파")):
         """SGRT_CLIP: per-object names (en/ko) and label-table queries through the C ABI (sgrt.h, clip section)."""

@@ -244,14 +244,14 @@ int ClipMem::embedding(uint32_t id, float* out) {
 
 int ClipMem::query(const float* q, int k, uint32_t* ids, float* scores, sm_ctx* sm) {
   if (!q || k <= 0) return -1;
-  // 살아 있는(스냅숏에 있고 구조물 아닌) 물체만
+  // 살아 있는(스냅숏에 있는) 물체만. scenemap 의 structural 은 "큰·고정 가구"라 소파·냉장고도 들어가므로 거르지 않는다
   sm_snapshot_t* snap = nullptr;
   std::vector<uint32_t> live;
   if (sm && sm_snapshot(sm, &snap) == 0) {
     const sm_object* o = nullptr;
     const int n = sm_snap_objects(snap, &o);
     for (int i = 0; i < n; ++i)
-      if (!o[i].structural) live.push_back(o[i].id);
+      live.push_back(o[i].id);
     sm_snapshot_release(snap);
   }
   std::vector<std::pair<float, uint32_t>> s;
