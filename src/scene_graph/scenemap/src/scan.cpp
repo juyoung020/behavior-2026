@@ -86,32 +86,51 @@ size_t AttachFilter::nAttached() const {
 
 void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2* out, const AttachFilter* att,
               std::vector<int64_t>* vox_out) {
+  ScanWork w;
+  makeScan(d, b, p, out, att, vox_out, &w, 0.f);
+}
+
+void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2* out, const AttachFilter* att,
+              std::vector<int64_t>* vox_out, ScanWork* W, float sig_cell) {
   const int gw = (d.w + d.step - 1) / d.step, gh = (d.h + d.step - 1) / d.step;
-  // 1. 격자 화소마다 베이스 기준 점(없으면 NaN)
-  std::vector<float> P(size_t(gw) * gh * 3, std::numeric_limits<float>::quiet_NaN());
-  std::vector<float> Zo(size_t(gw) * gh, 0.f);   // 광학 z(가장자리 판정)
+  const size_t ng = size_t(gw) * gh;
+  // 1. 격자 화소마다 베이스 기준 점. 유효 = Zo > 0(광학 z), 아니면 P 는 쓰지 않음(채우기 없음)
+  if (W->P.size() < ng * 3) W->P.resize(ng * 3);
+  W->Zo.assign(ng, 0.f);
+  float* P = W->P.data();
+  float* Zo = W->Zo.data();
   const float* T = d.T_bc;
+  const float ifx = 1.f / d.fx, ify = 1.f / d.fy;
   for (int j = 0; j < gh; ++j) {
     const int v = j * d.step;
     const uint16_t* row = d.m ? nullptr : d.mm + size_t(v) * d.w;
     const float* rowf = d.m ? d.m + size_t(v) * d.w : nullptr;
     const float yn = (v - d.cy) / d.fy;
+    // 행마다 상수: Y 항
+    const float ry0 = T[1] * yn + T[2], ry1 = T[5] * yn + T[6], ry2 = T[9] * yn + T[10];
     for (int i = 0; i < gw; ++i) {
       const int u = i * d.step;
       const float z = rowf ? rowf[u] : row[u] * 1e-3f;
-      if (!(z > 0.f)) continue;
-      if (z < p.zmin || z > p.zmax) continue;
-      const float X = (u - d.cx) / d.fx * z, Y = yn * z;
+      if (!(z >= p.zmin && z <= p.zmax)) continue;   // NaN·0·범위 밖
+      const float xn = (u - d.cx) * ifx;
       float* q = &P[(size_t(j) * gw + i) * 3];
-      q[0] = T[0] * X + T[1] * Y + T[2] * z + T[3];
-      q[1] = T[4] * X + T[5] * Y + T[6] * z + T[7];
-      q[2] = T[8] * X + T[9] * Y + T[10] * z + T[11];
+      q[0] = (T[0] * xn + ry0) * z + T[3];
+      q[1] = (T[4] * xn + ry1) * z + T[7];
+      q[2] = (T[8] * xn + ry2) * z + T[11];
       Zo[size_t(j) * gw + i] = z;
     }
   }
+  (void)ify;
   // 2. 분류
   const int nb = p.bins;
-  std::vector<float> hit_r(nb, std::numeric_limits<float>::infinity()), hx(nb), hy(nb), floor_r(nb, 0.f);
+  W->hit_r.assign(nb, std::numeric_limits<float>::infinity());
+  W->hx.resize(nb);
+  W->hy.resize(nb);
+  W->floor_r.assign(nb, 0.f);
+  float* hit_r = W->hit_r.data();
+  float* hx = W->hx.data();
+  float* hy = W->hy.data();
+  float* floor_r = W->floor_r.data();
   const float bin_scale = nb / (2.f * float(M_PI));
   float ab[2][3], ab2[2];
   for (int s = 0; s < 2; ++s) {
@@ -126,15 +145,29 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
       bb0[i] = std::fmin(bb0[i], std::fmin(c.a[i], c.b[i]) - c.r);
       bb1[i] = std::fmax(bb1[i], std::fmax(c.a[i], c.b[i]) + c.r);
     }
-  struct Acc { float x, y, nx, ny; int n; };
-  std::unordered_map<int64_t, Acc> cells;
-  cells.reserve(4096);
+  // 맞추기 칸 해시(세대 번호로 비움 — 지우기 없음)
+  constexpr size_t kH = 1 << 14;
+  if (W->hkey.size() != kH) {
+    W->hkey.assign(kH, 0);
+    W->hgen.assign(kH, 0);
+    W->hidx.assign(kH, 0);
+    W->gen = 0;
+  }
+  if (++W->gen == 0) {
+    std::fill(W->hgen.begin(), W->hgen.end(), 0u);
+    W->gen = 1;
+  }
+  const uint32_t gen = W->gen;
+  W->acc.clear();
   const float inv_mc = 1.f / p.match_cell;
+  const bool use_att = att != nullptr;
+  const bool any_caps = !b.caps.empty();
   for (int j = 0; j < gh; ++j)
     for (int i = 0; i < gw; ++i) {
-      const float* q = &P[(size_t(j) * gw + i) * 3];
+      const size_t c0 = size_t(j) * gw + i;
+      if (Zo[c0] == 0.f) continue;
+      const float* q = &P[c0 * 3];
       const float px = q[0], py = q[1], pz = q[2];
-      if (std::isnan(px)) continue;
       const float r2 = px * px + py * py;
       if (r2 < self2) continue;
       bool self = false;
@@ -142,7 +175,7 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
         for (const Capsule& c : b.caps)
           if (segDist2(px, py, pz, c.a, c.b) < c.r * c.r) { self = true; break; }
       for (int s = 0; s < 2 && !self; ++s) {
-        if (!b.caps.empty()) {
+        if (any_caps) {
           if (dist2(px, py, pz, b.eef[s]) < eef2) self = true;
           continue;
         }
@@ -154,7 +187,7 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
         if (dist2(px, py, pz, c) < arm2) self = true;
       }
       if (self) continue;
-      if (pz >= p.band_lo && att && att->near(px, py)) {
+      if (use_att && pz >= p.band_lo && att->near(px, py)) {
         if (vox_out) vox_out->push_back(att->key(px, py, pz));
         if (att->attached(px, py, pz)) continue;
       }
@@ -163,35 +196,52 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
         const float rx = px - T[3], ry = py - T[7];
         int k = int((std::atan2(ry, rx) + float(M_PI)) * bin_scale);
         k = k < 0 ? 0 : (k >= nb ? nb - 1 : k);
-        const float r = std::sqrt(rx * rx + ry * ry);
+        const float rr2 = rx * rx + ry * ry;
         if (pz < p.band_lo) {
+          const float r = std::sqrt(rr2);
           if (r > floor_r[k]) floor_r[k] = r;
-        } else if (r < hit_r[k]) {
-          hit_r[k] = r; hx[k] = px; hy[k] = py;
+        } else {
+          const float r = std::sqrt(rr2);
+          if (r < hit_r[k]) { hit_r[k] = r; hx[k] = px; hy[k] = py; }
         }
       }
       // 맞추기 점: 수직면 쪽
       if (!p.dense || pz < p.band_lo || pz > p.match_hi || i == 0 || j == 0 || i == gw - 1 || j == gh - 1) continue;
-      const size_t c0 = size_t(j) * gw + i;
+      if (Zo[c0 - 1] == 0.f || Zo[c0 + 1] == 0.f || Zo[c0 - gw] == 0.f || Zo[c0 + gw] == 0.f) continue;
+      const float z = Zo[c0];
+      if (std::fabs(Zo[c0 + 1] - Zo[c0 - 1]) >= 0.1f * z || std::fabs(Zo[c0 + gw] - Zo[c0 - gw]) >= 0.1f * z) continue;
       const float* l = &P[(c0 - 1) * 3];
       const float* rr = &P[(c0 + 1) * 3];
       const float* up = &P[(c0 - gw) * 3];
       const float* dn = &P[(c0 + gw) * 3];
-      if (std::isnan(l[0]) || std::isnan(rr[0]) || std::isnan(up[0]) || std::isnan(dn[0])) continue;
-      const float z = Zo[c0];
-      if (std::fabs(Zo[c0 + 1] - Zo[c0 - 1]) >= 0.1f * z || std::fabs(Zo[c0 + gw] - Zo[c0 - gw]) >= 0.1f * z) continue;
       const float ax = rr[0] - l[0], ay = rr[1] - l[1], az = rr[2] - l[2];
       const float bx = dn[0] - up[0], by = dn[1] - up[1], bz = dn[2] - up[2];
       const float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
-      const float nn = std::sqrt(nx * nx + ny * ny + nz * nz);
-      if (nn <= 0 || std::fabs(nz) >= p.vert_nz * nn) continue;
+      const float nn2 = nx * nx + ny * ny + nz * nz;
+      const float vz = p.vert_nz;
+      if (nn2 <= 0 || nz * nz >= vz * vz * nn2) continue;
       const int64_t key = (int64_t(std::floor(px * inv_mc)) << 32) ^ (int64_t(std::floor(py * inv_mc)) & 0xffffffff);
-      Acc& a = cells[key];
-      float hx = nx, hy = ny;
-      const float hn = std::sqrt(hx * hx + hy * hy);
-      hx /= hn; hy /= hn;
-      if (hx * (T[3] - px) + hy * (T[7] - py) < 0) { hx = -hx; hy = -hy; }   // 카메라 쪽
-      a.x += px; a.y += py; a.nx += hx; a.ny += hy; ++a.n;
+      size_t h = size_t((uint64_t(key) * 0x9E3779B97F4A7C15ull) >> 50) & (kH - 1);
+      uint32_t ai = UINT32_MAX;
+      for (;;) {
+        if (W->hgen[h] != gen) {
+          if (W->acc.size() >= kH * 3 / 4) break;   // 가득(2.5 cm 칸 1.2 만 개 넘음 — 실제로는 수천): 새 칸은 버림
+          W->hgen[h] = gen;
+          W->hkey[h] = key;
+          ai = uint32_t(W->acc.size());
+          W->hidx[h] = ai;
+          W->acc.push_back(ScanWork::Acc{0, 0, 0, 0, 0});
+          break;
+        }
+        if (W->hkey[h] == key) { ai = W->hidx[h]; break; }
+        h = (h + 1) & (kH - 1);
+      }
+      if (ai == UINT32_MAX) continue;
+      ScanWork::Acc& a = W->acc[ai];
+      const float hn = std::sqrt(nx * nx + ny * ny);
+      float ux = nx / hn, uy = ny / hn;
+      if (ux * (T[3] - px) + uy * (T[7] - py) < 0) { ux = -ux; uy = -uy; }   // 카메라 쪽
+      a.x += px; a.y += py; a.nx += ux; a.ny += uy; ++a.n;
     }
   if (vox_out) {
     std::sort(vox_out->begin(), vox_out->end());
@@ -200,24 +250,30 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
   out->ox = T[3];
   out->oy = T[7];
   out->hx.clear(); out->hy.clear(); out->fx.clear(); out->fy.clear(); out->mx.clear(); out->my.clear(); out->mnx.clear(); out->mny.clear();
+  const bool want_sig = sig_cell > 0.f;
+  if (want_sig) out->sig.assign(nb, 0);
+  const float isc = want_sig ? 1.f / sig_cell : 0.f;
   for (int k = 0; k < nb; ++k) {
     if (std::isfinite(hit_r[k])) {
       out->hx.push_back(hx[k]);
       out->hy.push_back(hy[k]);
+      if (want_sig) out->sig[k] = int16_t(std::min(32000.f, hit_r[k] * isc + 1.f));
     } else if (floor_r[k] > 0) {
       const float a = (k + 0.5f) / bin_scale - float(M_PI);
       out->fx.push_back(T[3] + floor_r[k] * std::cos(a));
       out->fy.push_back(T[7] + floor_r[k] * std::sin(a));
+      if (want_sig) out->sig[k] = int16_t(-std::min(32000.f, floor_r[k] * isc + 1.f));
     }
   }
-  out->mx.reserve(cells.size());
-  out->my.reserve(cells.size());
-  for (const auto& kv : cells) {
-    out->mx.push_back(kv.second.x / kv.second.n);
-    out->my.push_back(kv.second.y / kv.second.n);
-    const float nn = std::sqrt(kv.second.nx * kv.second.nx + kv.second.ny * kv.second.ny);
-    out->mnx.push_back(nn > 1e-6f ? kv.second.nx / nn : 0.f);
-    out->mny.push_back(nn > 1e-6f ? kv.second.ny / nn : 0.f);
+  const size_t na = W->acc.size();
+  out->mx.resize(na); out->my.resize(na); out->mnx.resize(na); out->mny.resize(na);
+  for (size_t k = 0; k < na; ++k) {
+    const ScanWork::Acc& a = W->acc[k];
+    out->mx[k] = a.x / a.n;
+    out->my[k] = a.y / a.n;
+    const float nn = std::sqrt(a.nx * a.nx + a.ny * a.ny);
+    out->mnx[k] = nn > 1e-6f ? a.nx / nn : 0.f;
+    out->mny[k] = nn > 1e-6f ? a.ny / nn : 0.f;
   }
 }
 

@@ -251,6 +251,47 @@ int sm_snap_scan(const sm_snapshot_t*, sm_scan2* out);
  * 1 = 바뀜, 0 = 안 바뀜. 부를 때마다 비운다(소비자 하나 — sgrt_map). version = 격자 insert 횟수. 다음 sm_snapshot 과 짝. */
 int sm_take_dirty(sm_ctx*, int32_t out[4], uint64_t* version);
 
+/* ---- 자세 원천(추가 ABI, 10-03) ----
+ * SM_POSE_SLAM(기본): base_qvel 적분 예측 + 깊이 가상 스캔 맞추기(실제 로봇·대회 제출).
+ * SM_POSE_ODOM: 적분만(맞추기 없음, 비교용).
+ * SM_POSE_GT: sm_push_pose 로 받은 외부 자세(시뮬 정답 베이스 자세 — 진단·시각화용, 대회 규칙상 제출에는 못 씀). map = 그 자세의
+ *   프레임(시뮬 world). proprio 마다 그 stamp 의 자세로 바꾸고, keyframe 은 맞추기 없이 영상 stamp 의 자세로 넣는다.
+ *   카메라 외부 자세는 어느 모드든 proprio 순기구학(베이스 ← 카메라).
+ * sm_push_pose: 스텝마다(그 스텝 proprio 와 같은 stamp) 외부 베이스 자세. GT 가 아닌 모드에서도 넣으면 진단(sm_get_pose_diag)에
+ *   쓴다 — 첫 keyframe 에서 두 프레임을 맞추고 그 뒤 keyframe 마다 지금 자세와의 차(떠밀림). */
+enum { SM_POSE_SLAM = 0, SM_POSE_ODOM = 1, SM_POSE_GT = 2 };
+int sm_set_pose_mode(sm_ctx*, int32_t mode);
+int sm_get_pose_mode(sm_ctx*);
+int sm_push_pose(sm_ctx*, const sm_pose2* pose);
+typedef struct {
+  int32_t n;                   /* 비교한 keyframe 수 */
+  double stamp;                /* 마지막 비교 시각 */
+  double last_xy, last_yaw;    /* 마지막 오차 m, rad */
+  double max_xy, max_yaw, rms_xy, rms_yaw;
+  double est[3], ref[3];       /* 마지막 지금 자세 / 맞춘 외부 자세(map) */
+} sm_pose_diag;
+int sm_get_pose_diag(sm_ctx*, sm_pose_diag* out);
+
+/* ---- 격자 넣기 정책(추가 ABI) ----
+ * policy 0: 움직임 거르기(옛 판) — 5 cm·2° 움직였거나 still_every keyframe 마다 한 번.
+ * policy 1(기본): 사건 기반 — 움직였거나, 가상 스캔(방위 칸 서명)이 지난번 넣은 것과 다르거나, 지난 넣기가 아직 칸 값을
+ *   바꾸고 있으면(로그 오즈 한계 전) 매 keyframe 넣는다(광선 빈칸 지우기 포함). 서 있는 동안 생기고 없어진 장애물이 keyframe
+ *   몇 번(점유 ≈ 6 번, 비움 ≈ 10 번) 안에 격자에 보인다. 아무것도 안 바뀌면 건너뜀(still_every 마다 한 번은 넣음).
+ * still_every <= 0 은 그대로. */
+int sm_set_map_update(sm_ctx*, int32_t policy, int32_t still_every);
+
+/* ---- 단계별 시간(추가 ABI) ----
+ * 단계마다 µs 막대그래프(2^(1/4) 칸). 이름은 정적 문자열. 단계 수를 돌려주고 out 에 min(단계 수, cap) 개.
+ * 단계: push_proprio, integrate, image_total, pair_pose, fk, scan, attach, match, insert, objmap, view_prep, gather, crop,
+ *       cloud_add, snapshot, snap_grid, rooms, save */
+typedef struct {
+  const char* name;
+  int64_t n;
+  double mean_us, p50_us, p99_us, max_us, last_us, total_us;
+} sm_stage_timing;
+int sm_get_timing(sm_ctx*, sm_stage_timing* out, int32_t cap);
+int sm_reset_timing(sm_ctx*);
+
 #ifdef __cplusplus
 }
 #endif

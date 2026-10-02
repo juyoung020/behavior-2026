@@ -22,6 +22,7 @@
 #include "scenemap/objmap.hpp"
 #include "scenemap/rooms.hpp"
 #include "scenemap/slam2d.hpp"
+#include "scenemap/timing.hpp"
 
 using namespace scenemap;
 
@@ -98,6 +99,25 @@ struct sm_ctx {
   bool clean_objects = true;
   RoomTracker rooms;                  // 방 나누기(자기 잠금, sm_snapshot 이 잠금 밖에서 부름)
   std::atomic<bool> rooms_force{false};
+  // 자세 원천(sm_set_pose_mode): SLAM(적분 + 스캔 맞추기) / ODOM(적분만) / GT(sm_push_pose 외부·정답 자세)
+  int pose_mode = SM_POSE_SLAM;
+  std::deque<sm_pose2> gtq;           // 외부 자세(stamp 순). GT 가 아닌 모드에서는 진단(떠밀림)에만 씀
+  bool diag_align = false;            // 진단: map ← 외부 프레임 맞춤(첫 keyframe 에서 오차 0)
+  Pose2 align;
+  sm_pose_diag diag{};
+  double diag_s2xy = 0, diag_s2yaw = 0;
+  int map_policy = 1, still_every = 50;
+  // 스냅숏 격자 사본(보이는 값이 바뀌었을 때만 새로 — 그 사이 스냅숏은 같은 배열을 나눠 씀)
+  std::shared_ptr<const std::vector<int8_t>> grid8;
+  uint64_t grid8_ver = ~0ull;
+  int grid8_w = 0, grid8_h = 0;
+  // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
+  std::mutex tmu;
+  Timings tm;
+  void addT(int st, double us) {
+    std::lock_guard<std::mutex> g(tmu);
+    tm.h[st].add(us);
+  }
   explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {
     for (const char* n : kStructureNames) kind_names[SM_KIND_STRUCTURE].push_back(n);
     for (const char* n : kStaticNames) kind_names[SM_KIND_STATIC].push_back(n);
@@ -121,8 +141,9 @@ struct sm_snapshot_t {
   sm_status st{};
   double res = 0.05, ox = 0, oy = 0;
   int w = 0, h = 0;
-  std::vector<int8_t> cells;
   std::vector<sm_object> objs;
+  std::shared_ptr<const std::vector<int8_t>> cellsp;   // 격자(i8) — 바뀌지 않았으면 이전 스냅숏과 같은 배열
+  const int8_t* cells() const { return cellsp ? cellsp->data() : nullptr; }
   std::vector<std::string> names;   // objs[i].name 이 가리키는 문자열(스냅숏 수명 동안)
   std::vector<BestViewPtr> views;   // objs[i] 의 best view(없으면 null)
   std::vector<uint8_t> movable;     // objs[i]: 1 = 옮길 수 있는 물체, 0 = 가구·가전·붙박이
@@ -162,13 +183,27 @@ void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
 }
 
 // 적분 한 표본(데이터: proprio i 의 base_qvel 이 i-1 → i 구간 속도). 제자리 잡음은 Slam2D 와 같은 규칙.
+// 외부 자세 중 stamp 이하 가장 최근 것(max_age 안). 없으면 false
+bool gtAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) {
+  for (auto it = c->gtq.rbegin(); it != c->gtq.rend(); ++it) {
+    if (it->stamp > stamp + 1e-6) continue;
+    if (stamp - it->stamp > max_age) return false;
+    *out = Pose2{it->x, it->y, it->yaw};
+    return true;
+  }
+  return false;
+}
+
 void integrate(sm_ctx* c, const Prop& p) {
   if (c->have_used) {
     const double dt = p.stamp - c->last_used.stamp;
     if (dt > 0 && dt < 1.0) c->slam.pushVelocity(p.q[0], p.q[1], p.q[2], dt);
   }
+  const auto t0 = TClock::now();
   c->last_used = p;
   c->have_used = true;
+  Pose2 g;
+  if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g)) c->slam.setPose(g);
   // 영상이 없는 스텝에도 든 물체가 손을 따라가게
   float eef[2][3], grip[2];
   handsOf(p.q, eef, grip);
@@ -176,9 +211,15 @@ void integrate(sm_ctx* c, const Prop& p) {
   const Pose2 P = c->slam.pose();
   toMap(P, eef, eefm);
   c->om.updateHands(p.stamp, eefm, grip, P.th);
+  c->addT(kStIntegrate, usBetween(t0, TClock::now()));
 }
 
 Pose2 preview(const sm_ctx* c, double* stamp) {
+  if (c->pose_mode == SM_POSE_GT && !c->gtq.empty()) {   // 정답 자세: 가장 최근 것 그대로
+    const sm_pose2& g = c->gtq.back();
+    *stamp = g.stamp;
+    return Pose2{g.x, g.y, g.yaw};
+  }
   Pose2 q = c->slam.pose();
   double t = c->have_used ? c->last_used.stamp : 0;
   for (const Prop& p : c->pending) {
@@ -199,7 +240,7 @@ Pose2 preview(const sm_ctx* c, double* stamp) {
 // 방: 주기·변화가 되면 다시 나누고(잠금 밖), 이 스냅숏 물체를 방에 배정·이름
 void snapRooms(sm_ctx* c, sm_snapshot_t* s) {
   if (!s->w || !s->h) return;
-  GridView g{s->cells.data(), s->w, s->h, s->res, int(std::lround(s->ox / s->res)), int(std::lround(s->oy / s->res))};
+  GridView g{s->cells(), s->w, s->h, s->res, int(std::lround(s->ox / s->res)), int(std::lround(s->oy / s->res))};
   s->rseg = c->rooms.update(g, s->pose.stamp, c->rooms_force.exchange(false));
   if (!s->rseg) return;
   std::vector<RoomObj> ro(s->objs.size());
@@ -283,11 +324,20 @@ int sm_reset(sm_ctx* c) {
   c->saved_cloud_ver.clear();
   c->clean_objects = true;
   c->rooms.reset();
+  c->gtq.clear();
+  c->diag_align = false;
+  c->diag = sm_pose_diag{};
+  c->diag_s2xy = c->diag_s2yaw = 0;
+  c->grid8.reset();
+  c->grid8_ver = ~0ull;
+  c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
+  c->slam.setUpdatePolicy(c->map_policy, c->still_every);
   return 0;
 }
 
 int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
   if (!c || !p || !p->proprio || p->n_proprio < kProprioDim) return -1;
+  const auto t0 = TClock::now();
   std::lock_guard<std::mutex> g(c->mu);
   Prop e;
   e.stamp = p->stamp;
@@ -300,6 +350,7 @@ int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
   }
   c->st.last_proprio_stamp = p->stamp;
   c->st.n_proprio++;
+  c->addT(kStPushProprio, usBetween(t0, TClock::now()));
   return 0;
 }
 
@@ -320,8 +371,43 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
   return sm_push_image_rgb(c, im, dets, &src);
 }
 
+namespace {
+// 진단: 외부 자세(정답)가 있으면 지금 자세와 비교(첫 keyframe 에서 맞춤 — 그 뒤 떠밀림)
+void poseDiag(sm_ctx* c, double stamp) {
+  Pose2 ref;
+  if (c->pose_mode == SM_POSE_GT || !gtAt(c, stamp, &ref)) return;
+  const Pose2 est = c->slam.pose();
+  if (!c->diag_align) {   // align = est ∘ ref⁻¹
+    const double cs = std::cos(ref.th), sn = std::sin(ref.th);
+    const Pose2 inv{-(cs * ref.x + sn * ref.y), -(-sn * ref.x + cs * ref.y), -ref.th};
+    c->align = compose(est, inv);
+    c->diag_align = true;
+  }
+  const Pose2 r = compose(c->align, ref);
+  const double exy = std::hypot(est.x - r.x, est.y - r.y), eyaw = std::fabs(wrapAngle(est.th - r.th));
+  sm_pose_diag& d = c->diag;
+  d.n++;
+  d.last_xy = exy;
+  d.last_yaw = eyaw;
+  d.max_xy = std::max(d.max_xy, exy);
+  d.max_yaw = std::max(d.max_yaw, eyaw);
+  c->diag_s2xy += exy * exy;
+  c->diag_s2yaw += eyaw * eyaw;
+  d.rms_xy = std::sqrt(c->diag_s2xy / d.n);
+  d.rms_yaw = std::sqrt(c->diag_s2yaw / d.n);
+  d.est[0] = est.x; d.est[1] = est.y; d.est[2] = est.th;
+  d.ref[0] = r.x; d.ref[1] = r.y; d.ref[2] = r.th;
+  d.stamp = stamp;
+}
+}  // namespace
+
 int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, const sm_rgb_source* src) {
   if (!c || !im || im->w <= 0 || im->h <= 0) return -1;
+  const auto t_img = TClock::now();
+  struct Tot {
+    sm_ctx* c; TClock::time_point t; bool on = false;
+    ~Tot() { if (on) c->addT(kStImage, usBetween(t, TClock::now())); }
+  } tot{c, t_img};
   const sm_crop_fn crop = src ? src->crop : nullptr;
   const sm_gather_fn gather = src ? src->gather : nullptr;
   void* user = src ? src->user : nullptr;
@@ -334,18 +420,25 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   c->st.last_image_stamp = im->stamp;
   c->st.n_images++;
   if (im->cam != 0 || !im->depth_m) return 0;   // slam2d 는 머리 깊이만
+  tot.on = true;
   // 영상 stamp 까지 적분(같은 stamp 의 proprio 가 이 영상의 짝)
+  const auto tp = TClock::now();
   const double eps = 1e-6;
   while (!c->pending.empty() && c->pending.front().stamp <= im->stamp + eps) {
     integrate(c, c->pending.front());
     c->pending.pop_front();
   }
   if (!c->have_used) return 0;                  // 짝지을 proprio 가 아직 없음
+  Pose2 known;
+  const bool use_gt = c->pose_mode == SM_POSE_GT && gtAt(c, im->stamp, &known);
+  const auto tf = TClock::now();
+  c->addT(kStPair, usBetween(tp, tf));
   BodyFk fk;
   computeBodyFk(c->last_used.q, &fk);
   const float eef[2][3] = {{c->last_used.q[17], c->last_used.q[18], c->last_used.q[19]},
                            {c->last_used.q[42], c->last_used.q[43], c->last_used.q[44]}};
   const BodyState body = bodyFromFk(fk, eef);
+  c->addT(kStFk, usBetween(tf, TClock::now()));
   DepthView dv;
   dv.w = im->w;
   dv.h = im->h;
@@ -353,7 +446,12 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   dv.step = std::max(1, int(std::lround(im->w / 160.0)));   // 채점과 같은 표본 밀도(가로 160 점 안팎)
   dv.fx = float(im->fx); dv.fy = float(im->fy); dv.cx = float(im->cx); dv.cy = float(im->cy);
   std::memcpy(dv.T_bc, fk.T_head, sizeof(dv.T_bc));
-  c->slam.keyframe(dv, body);
+  {
+    std::lock_guard<std::mutex> tg(c->tmu);   // 단계 시간은 slam2d 가 직접 더함
+    if (use_gt) c->slam.keyframeKnown(dv, body, known, &c->tm);
+    else c->slam.keyframe(dv, body, nullptr, &c->tm);
+  }
+  poseDiag(c, im->stamp);
   if (!dets) { c->last_assoc.clear(); return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
   const Pose2 P = c->slam.pose();
@@ -380,7 +478,10 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   F.base_yaw = P.th;
   F.base_xy[0] = P.x;
   F.base_xy[1] = P.y;
+  const auto to = TClock::now();
   c->om.update(F);
+  const auto tv = TClock::now();
+  c->addT(kStObjmap, usBetween(to, tv));
   pts.swap(c->om.lastPoints());   // 구름 후보(색은 잠금 밖에서)
   // 검출 → 물체 id
   const std::vector<DetAssoc>& as = c->om.lastAssoc();
@@ -429,6 +530,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     cand.push_back(std::move(vc));
   }
   epoch = c->epoch;
+  c->addT(kStViewPrep, usBetween(tv, TClock::now()));
   }  // 잠금 끝: 자르기(장치 → 호스트 복사)는 잠금 밖에서
   if (cand.empty() && pts.empty()) return 0;
   // 구름 점 색: 남긴 화소에서만(sgrt 는 장치에서 모아 그 색만 내려받음). 영상이 없으면 회색
@@ -437,6 +539,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   std::vector<int32_t> xy;
   std::vector<uint8_t> rgb;
   bool have_rgb = false;
+  const auto tg0 = TClock::now();
   if (npt) {
     xy.reserve(2 * npt);
     for (const ObsPoints& q : pts) xy.insert(xy.end(), q.px.begin(), q.px.end());
@@ -448,6 +551,8 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
       have_rgb = true;
     }
   }
+  if (npt) c->addT(kStGather, usBetween(tg0, TClock::now()));
+  const auto tc0 = TClock::now();
   bool crop_ok = !cand.empty();
   if (!cand.empty()) {
     std::vector<sm_crop_req> reqs(cand.size());
@@ -460,9 +565,11 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     if (crop_ok)
       for (ViewCand& vc : cand)
         cropDepthMm(im->depth_m, im->w, im->h, dets->img_w, dets->img_h, vc.v->box, vc.v->w, vc.v->h, vc.v->depth.data());
+    c->addT(kStCrop, usBetween(tc0, TClock::now()));
   }
   std::lock_guard<std::mutex> g(c->mu);
   if (c->epoch != epoch) return 0;
+  const auto ta = TClock::now();
   size_t off = 0;
   for (const ObsPoints& q : pts) {
     const int n = int(q.px.size() / 2);
@@ -477,6 +584,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     sl.v = std::move(vc.v);
     sl.q = vc.q;
   }
+  c->addT(kStCloud, usBetween(ta, TClock::now()));
   return 0;
 }
 
@@ -497,6 +605,7 @@ int sm_mark_handled(sm_ctx* c, uint32_t id) {
 
 int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
   if (!c || !out) return -1;
+  const auto t0 = TClock::now();
   auto* s = new sm_snapshot_t();
   {
     std::lock_guard<std::mutex> g(c->mu);
@@ -510,7 +619,17 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->oy = gr.y0() * double(gr.res());
     s->w = gr.width();
     s->h = gr.height();
-    s->cells = gr.export8();
+    if (!c->grid8 || c->grid8_ver != gr.cellsVersion() || c->grid8_w != s->w || c->grid8_h != s->h) {
+      const auto tg = TClock::now();
+      auto v = std::make_shared<std::vector<int8_t>>(size_t(s->w) * s->h);
+      gr.export8(v->data());
+      c->grid8 = std::move(v);
+      c->grid8_ver = gr.cellsVersion();
+      c->grid8_w = s->w;
+      c->grid8_h = s->h;
+      c->addT(kStSnapGrid, usBetween(tg, TClock::now()));
+    }
+    s->cellsp = c->grid8;
     {
       const Scan2& sc = c->slam.lastScan();
       const Pose2 sp = c->slam.lastScanPose();
@@ -541,7 +660,11 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
   }
   for (size_t i = 0; i < s->objs.size(); ++i) s->objs[i].name = s->names[i].c_str();
   s->st.n_objects = int32_t(s->objs.size());
+  const auto tr = TClock::now();
   snapRooms(c, s);
+  const auto t1 = TClock::now();
+  c->addT(kStRooms, usBetween(tr, t1));
+  c->addT(kStSnapshot, usBetween(t0, t1));
   *out = s;
   return 0;
 }
@@ -687,7 +810,7 @@ int sm_snap_map(const sm_snapshot_t* s, sm_grid* out) {
   out->origin[1] = s->oy;
   out->width = s->w;
   out->height = s->h;
-  out->cells = s->cells.data();
+  out->cells = s->cells();
   return 0;
 }
 
@@ -710,7 +833,7 @@ double sm_snap_reachable(const sm_snapshot_t* s, const double from[2], const dou
     const int r = int(std::ceil(0.30 / s->res));
     for (int y = 0; y < H; ++y)
       for (int x = 0; x < W; ++x) {
-        if (s->cells[size_t(y) * W + x] < 65) continue;
+        if (s->cells()[size_t(y) * W + x] < 65) continue;
         for (int dy = -r; dy <= r; ++dy)
           for (int dx = -r; dx <= r; ++dx) {
             const int X = x + dx, Y = y + dy;
@@ -745,7 +868,7 @@ double sm_snap_reachable(const sm_snapshot_t* s, const double from[2], const dou
     for (int k = 0; k < 8; ++k) {
       const int X = x + DX[k], Y = y + DY[k];
       if (X < 0 || Y < 0 || X >= W || Y >= H || isBlocked(X, Y)) continue;
-      const float step = (k < 4 ? 1.f : 1.41421356f) * (s->cells[size_t(Y) * W + X] < 0 ? 1.5f : 1.f);
+      const float step = (k < 4 ? 1.f : 1.41421356f) * (s->cells()[size_t(Y) * W + X] < 0 ? 1.5f : 1.f);
       const size_t j = size_t(Y) * W + X;
       if (d + step < dist[j]) {
         dist[j] = d + step;
@@ -769,7 +892,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   in.objs = s->objs.data();
   in.n_objs = int(s->objs.size());
   in.grid_res = s->res; in.grid_ox = s->ox; in.grid_oy = s->oy; in.grid_w = s->w; in.grid_h = s->h;
-  in.cells = s->cells.data();
+  in.cells = s->cells();
   in.views = s->views;
   in.movable = s->movable;
   in.png_dirty.assign(s->objs.size(), 0);
@@ -811,6 +934,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
       if (rc == 0) c->clean_objects = false;
     }
   }
+  c->addT(kStSave, usBetween(t0, std::chrono::steady_clock::now()));
   if (stats) {
     stats->n_objects = int32_t(s->objs.size());
     stats->n_png = out.n_png;
@@ -892,6 +1016,74 @@ uint32_t sm_snap_object_room(const sm_snapshot_t* s, uint32_t id) {
   if (!s) return 0;
   for (size_t i = 0; i < s->objs.size() && i < s->rnames.obj_room.size(); ++i)
     if (s->objs[i].id == id) return s->rnames.obj_room[i];
+  return 0;
+}
+
+// ---- 자세 원천·넣기 정책·단계 시간(추가 ABI) ----
+
+int sm_set_pose_mode(sm_ctx* c, int32_t mode) {
+  if (!c || mode < SM_POSE_SLAM || mode > SM_POSE_GT) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  c->pose_mode = mode;
+  c->slam.setMethod(mode == SM_POSE_ODOM ? 'O' : c->params.method);
+  return 0;
+}
+
+int sm_get_pose_mode(sm_ctx* c) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  return c->pose_mode;
+}
+
+int sm_push_pose(sm_ctx* c, const sm_pose2* p) {
+  if (!c || !p || !std::isfinite(p->x) || !std::isfinite(p->y) || !std::isfinite(p->yaw)) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  if (!c->gtq.empty() && p->stamp < c->gtq.back().stamp - 1e-9) c->gtq.clear();   // 시각이 되돌아감(새 판)
+  c->gtq.push_back(*p);
+  // 적분·짝짓기에 쓸 만큼만(가장 오래 기다리는 proprio·영상보다 2 s 앞까지)
+  const double keep = (c->have_used ? c->last_used.stamp : p->stamp) - 2.0;
+  while (c->gtq.size() > 2 && c->gtq[1].stamp < keep) c->gtq.pop_front();
+  return 0;
+}
+
+int sm_get_pose_diag(sm_ctx* c, sm_pose_diag* out) {
+  if (!c || !out) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  *out = c->diag;
+  return 0;
+}
+
+int sm_set_map_update(sm_ctx* c, int32_t policy, int32_t still_every) {
+  if (!c || policy < 0 || policy > 1) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  c->map_policy = policy;
+  if (still_every > 0) c->still_every = still_every;
+  c->slam.setUpdatePolicy(policy, still_every);
+  return 0;
+}
+
+int sm_get_timing(sm_ctx* c, sm_stage_timing* out, int32_t cap) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->tmu);
+  for (int k = 0; k < kStCount && k < cap && out; ++k) {
+    const StageHist& h = c->tm.h[k];
+    sm_stage_timing& o = out[k];
+    o.name = stageName(k);
+    o.n = int64_t(h.n);
+    o.total_us = h.sum;
+    o.mean_us = h.n ? h.sum / double(h.n) : 0;
+    o.p50_us = h.quantile(0.5);
+    o.p99_us = h.quantile(0.99);
+    o.max_us = h.max;
+    o.last_us = h.last;
+  }
+  return kStCount;
+}
+
+int sm_reset_timing(sm_ctx* c) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->tmu);
+  c->tm.clear();
   return 0;
 }
 

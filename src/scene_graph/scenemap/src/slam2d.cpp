@@ -26,20 +26,82 @@ void Slam2D::pushVelocity(double vx, double vy, double wz, double dt) {
   odom_.th += wz * dt;
 }
 
-KeyframeStats Slam2D::keyframe(const DepthView& d, const BodyState& b, const Pose2* truth) {
+void Slam2D::scanStage(const DepthView& d, const BodyState& b, KeyframeStats* st, Timings* T) {
+  {
+    ScopedStage t(T, kStScan);
+    vox_.clear();
+    makeScan(d, b, p_.scan, &scan_, &att_, &vox_, &work_, grid_.res());
+  }
+  {
+    ScopedStage t(T, kStAttach);
+    att_.update(vox_, odom_);
+    st->n_attached = int(att_.nAttached());
+  }
+  st->n_hits = int(p_.scan.dense ? scan_.mx.size() : scan_.hx.size());
+}
+
+// 넣기 정책(SlamParams::update_policy) — 넣으면 격자 insert
+void Slam2D::insertStage(const Pose2& pose, KeyframeStats* st, Timings* T) {
+  ScopedStage t(T, kStInsert);
+  ++since_ins_;
+  const bool moved = std::hypot(pose.x - last_ins_.x, pose.y - last_ins_.y) >= p_.mf_xy ||
+                     std::fabs(wrapAngle(pose.th - last_ins_.th)) >= p_.mf_yaw;
+  bool ins;
+  if (p_.update_policy == 0) {
+    ins = first_ || !p_.motion_filter || since_ins_ >= p_.mf_kf || moved;
+  } else {
+    // 스캔이 지난번 넣은 것과 다른가(방위 칸 서명), 자세가 조금이라도 바뀌었나(1 cm·0.5°)
+    int nd = 0;
+    if (ins_sig_.size() == scan_.sig.size()) {
+      const int16_t* a = ins_sig_.data();
+      const int16_t* b = scan_.sig.data();
+      const int th = p_.change_cells;
+      for (size_t k = 0, n = scan_.sig.size(); k < n; ++k) {
+        const int dlt = int(a[k]) - int(b[k]);
+        nd += (dlt > th || dlt < -th || ((a[k] > 0) != (b[k] > 0)));
+      }
+    } else {
+      nd = 1 << 20;
+    }
+    st->scan_changed = nd > p_.change_bins;
+    const bool nudged = std::hypot(pose.x - last_ins_.x, pose.y - last_ins_.y) >= 0.01 ||
+                        std::fabs(wrapAngle(pose.th - last_ins_.th)) >= 0.5 * M_PI / 180.0;
+    ins = first_ || moved || nudged || st->scan_changed || last_changed_ > 0 || since_ins_ >= p_.still_every;
+  }
+  if (ins) {
+    last_changed_ = grid_.insert(scan_, pose);
+    st->changed_cells = last_changed_;
+    last_ins_ = pose;
+    since_ins_ = 0;
+    ins_sig_.assign(scan_.sig.begin(), scan_.sig.end());
+    st->inserted = true;
+  }
+}
+
+void Slam2D::finish(const Pose2& pose) {
+  last_scan_.ox = scan_.ox; last_scan_.oy = scan_.oy;
+  last_scan_.hx.assign(scan_.hx.begin(), scan_.hx.end());
+  last_scan_.hy.assign(scan_.hy.begin(), scan_.hy.end());
+  last_scan_.fx.assign(scan_.fx.begin(), scan_.fx.end());
+  last_scan_.fy.assign(scan_.fy.begin(), scan_.fy.end());
+  last_scan_pose_ = pose;
+  kf_ = pose;
+  delta_ = Pose2{};
+  vmax_ = wmax_ = 0;
+  first_ = false;
+}
+
+KeyframeStats Slam2D::keyframe(const DepthView& d, const BodyState& b, const Pose2* truth, Timings* T) {
   KeyframeStats st;
   const auto t0 = Clock::now();
-  Scan2 s;
-  std::vector<int64_t> vox;
-  makeScan(d, b, p_.scan, &s, &att_, &vox);
-  att_.update(vox, odom_);
-  st.n_attached = int(att_.nAttached());
-  st.n_hits = int(p_.scan.dense ? s.mx.size() : s.hx.size());
+  scanStage(d, b, &st, T);
+  const Scan2& s = scan_;
   const auto t1 = Clock::now();
   const Pose2 pred = truth ? *truth : compose(kf_, delta_);
   Pose2 pose = pred;
   st.still = p_.stationary_rule && !first_ && vmax_ < p_.still_v && wmax_ < p_.still_w;
   if (!first_ && !st.still && p_.method != 'O' && st.n_hits >= p_.min_inliers) {
+    ScopedStage tm(T, kStMatch);
     const double m = std::hypot(delta_.x, delta_.y);
     const double sig[3] = {p_.prior_xy0 + p_.prior_xy_k * m, p_.prior_xy0 + p_.prior_xy_k * m,
                            p_.prior_yaw0 + p_.prior_yaw_k * std::fabs(delta_.th)};
@@ -56,26 +118,26 @@ KeyframeStats Slam2D::keyframe(const DepthView& d, const BodyState& b, const Pos
   }
   const auto t2 = Clock::now();
   if (truth) pose = *truth;
-  ++since_ins_;
-  if (first_ || !p_.motion_filter || since_ins_ >= p_.mf_kf ||
-      std::hypot(pose.x - last_ins_.x, pose.y - last_ins_.y) >= p_.mf_xy ||
-      std::fabs(wrapAngle(pose.th - last_ins_.th)) >= p_.mf_yaw) {
-    grid_.insert(s, pose);
-    last_ins_ = pose;
-    since_ins_ = 0;
-    st.inserted = true;
-  }
+  insertStage(pose, &st, T);
   const auto t3 = Clock::now();
-  last_scan_.ox = s.ox; last_scan_.oy = s.oy;
-  last_scan_.hx = s.hx; last_scan_.hy = s.hy; last_scan_.fx = s.fx; last_scan_.fy = s.fy;
-  last_scan_pose_ = pose;
-  kf_ = pose;
-  delta_ = Pose2{};
-  vmax_ = wmax_ = 0;
-  first_ = false;
+  finish(pose);
   st.us_scan = us(t0, t1);
   st.us_match = us(t1, t2);
   st.us_insert = us(t2, t3);
+  return st;
+}
+
+KeyframeStats Slam2D::keyframeKnown(const DepthView& d, const BodyState& b, const Pose2& pose, Timings* T) {
+  KeyframeStats st;
+  st.known = true;
+  const auto t0 = Clock::now();
+  scanStage(d, b, &st, T);
+  const auto t1 = Clock::now();
+  insertStage(pose, &st, T);
+  const auto t2 = Clock::now();
+  finish(pose);
+  st.us_scan = us(t0, t1);
+  st.us_insert = us(t1, t2);
   return st;
 }
 

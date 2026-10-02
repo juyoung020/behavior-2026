@@ -53,6 +53,19 @@ struct Scan2 {
   std::vector<float> fx, fy;            // 빈칸만 있는 광선의 끝(장애물 없음)
   std::vector<float> mx, my;            // 맞추기 점(지도에도 맞음으로 넣음, 광선은 안 쏨)
   std::vector<float> mnx, mny;          // 맞추기 점의 수평 법선(깊이 영상 이웃으로, 카메라 쪽을 향하게)
+  // 방위 칸 서명(넣기 정책의 '스캔이 바뀌었나'): 칸마다 장애물 거리(칸 단위, 양수) 또는 −빈 광선 길이, 0 = 없음
+  std::vector<int16_t> sig;
+};
+
+// makeScan 작업 버퍼(keyframe 마다 다시 쓰고 할당하지 않음)
+struct ScanWork {
+  std::vector<float> P, Zo, hit_r, hx, hy, floor_r;
+  // 맞추기 칸(2.5 cm) 열린 주소 해시: 열쇠·세대·모음 번호. 모음은 처음 본 순서(래스터)로 쌓는다
+  std::vector<int64_t> hkey;
+  std::vector<uint32_t> hgen, hidx;
+  uint32_t gen = 0;
+  struct Acc { float x, y, nx, ny; int n; };
+  std::vector<Acc> acc;
 };
 
 // 로봇에 붙어 같이 움직이는 것(들고 있는 물체·팔 등) 걸러내기.
@@ -95,5 +108,8 @@ class AttachFilter {
 // att != nullptr 이면 붙은 것으로 판정된 점은 뺀다. vox_out != nullptr 이면 가까운 점의 베이스 칸 목록(중복 없음)을 낸다.
 void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2* out,
               const AttachFilter* att = nullptr, std::vector<int64_t>* vox_out = nullptr);
+// 같은 계산, 작업 버퍼 재사용. sig_cell > 0 이면 out->sig(방위 칸 서명, 칸 크기 sig_cell m)도 채운다
+void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2* out, const AttachFilter* att,
+              std::vector<int64_t>* vox_out, ScanWork* work, float sig_cell = 0.f);
 
 }  // namespace scenemap
