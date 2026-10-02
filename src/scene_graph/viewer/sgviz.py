@@ -542,6 +542,68 @@ class CropCache:
 # --------------------------------------------------------------------------
 
 
+class PickIndex:
+    """Ray picking over object point clouds (and fallback spheres), numpy only.
+
+    Each entry keeps its points (float32 [N,3]), a hit radius and an AABB
+    grown by that radius. pick(origin, direction) returns the id of the object
+    whose nearest hit point (perpendicular distance <= radius, in front of the
+    origin) is closest along the ray, or None.
+    """
+
+    def __init__(self):
+        self._e: Dict[int, Tuple[np.ndarray, float, np.ndarray, np.ndarray]] = {}
+
+    def __len__(self):
+        return len(self._e)
+
+    def __contains__(self, oid):
+        return oid in self._e
+
+    def set_points(self, oid: int, xyz: np.ndarray, radius: float):
+        xyz = np.ascontiguousarray(xyz, dtype=np.float32)
+        self._e[oid] = (xyz, float(radius), xyz.min(axis=0) - radius, xyz.max(axis=0) + radius)
+
+    def set_sphere(self, oid: int, center, radius: float):
+        c = np.asarray(center, np.float32).reshape(1, 3)
+        self._e[oid] = (c, float(radius), c[0] - radius, c[0] + radius)
+
+    def remove(self, oid: int):
+        self._e.pop(oid, None)
+
+    def pick(self, origin, direction) -> Optional[int]:
+        o = np.asarray(origin, np.float64)
+        d = np.asarray(direction, np.float64)
+        n = np.linalg.norm(d)
+        if not np.isfinite(n) or n == 0:
+            return None
+        d = d / n
+        with np.errstate(divide="ignore", invalid="ignore"):
+            inv = 1.0 / d
+        o32, d32 = o.astype(np.float32), d.astype(np.float32)
+        best, best_t = None, np.inf
+        for oid, (pts, r, lo, hi) in self._e.items():
+            # slab test against the radius-grown AABB (cheap reject)
+            with np.errstate(invalid="ignore"):
+                t1, t2 = (lo - o) * inv, (hi - o) * inv
+            t1 = np.where(np.isnan(t1), -np.inf, t1)
+            t2 = np.where(np.isnan(t2), np.inf, t2)
+            tmin = float(np.max(np.minimum(t1, t2)))
+            tmax = float(np.min(np.maximum(t1, t2)))
+            if tmax < max(tmin, 0.0) or tmin > best_t:
+                continue
+            v = pts - o32
+            t = v @ d32
+            perp2 = np.einsum("ij,ij->i", v, v) - t * t
+            ok = (t > 0) & (perp2 <= r * r)
+            if not ok.any():
+                continue
+            th = float(t[ok].min())
+            if th < best_t:
+                best, best_t = oid, th
+        return best
+
+
 def _yaw_wxyz(yaw: float):
     return (math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2))
 
@@ -585,6 +647,7 @@ class SgViewer(ViserRenderer):
         self._edge_handles: Dict[Tuple[int, int], List[Any]] = {}
         self._sel_handle = None
         self._camera_set = False
+        self.picker = PickIndex()
         self._suppress_dropdown = False
         self._build_gui()
 
@@ -598,7 +661,7 @@ class SgViewer(ViserRenderer):
             self.g_pcolor = gui.add_dropdown("Point colour", ["true colour", "state colour"],
                                              initial_value="true colour")
             self.g_psize = gui.add_number("Point size x voxel", 1.0, min=0.2, max=5.0, step=0.1)
-            self.g_markers = gui.add_checkbox("Centre markers", True)
+            self.g_markers = gui.add_checkbox("Centre markers", False)
             self.g_boxes = gui.add_checkbox("Boxes (objects w/o points)", False)
             self.g_edges = gui.add_checkbox("Support edges", True)
             self.g_trails = gui.add_checkbox("Moved trails", True)
@@ -622,6 +685,21 @@ class SgViewer(ViserRenderer):
             self.g_dstats = gui.add_markdown("", visible=False)
         self.g_select.on_update(lambda _: self._on_dropdown())
 
+        # click anywhere in the 3D view -> ray pick over the object clouds/spheres
+        @self.server.scene.on_click()
+        def _(ev):
+            self.on_scene_click(ev.ray_origin, ev.ray_direction)
+
+    def on_scene_click(self, origin, direction) -> Optional[int]:
+        """Select the object hit by the click ray (a miss keeps the current selection)."""
+        if origin is None or direction is None:
+            return None
+        with self.lock:
+            oid = self.picker.pick(origin, direction)
+        if oid is not None and oid != self.selected:
+            self.select(oid)
+        return oid
+
     def _options(self) -> List[str]:
         objs = self.scene.objects if self.scene else {}
         return ["(none)"] + [objs[k].label for k in sorted(objs)]
@@ -640,9 +718,14 @@ class SgViewer(ViserRenderer):
 
     def select(self, oid: Optional[int], from_dropdown: bool = False):
         with self.lock:
-            self.selected = oid
+            prev, self.selected = self.selected, oid
             if not from_dropdown:
                 self._set_dropdown()
+            if self.scene is not None:  # re-tint old/new selection
+                with self.server.atomic():
+                    for k in {prev, oid}:
+                        if k is not None and k in self.scene.objects and k in self._node_handles:
+                            self._draw_node(self.scene.objects[k])
             self._draw_selection()
             self._render_panel()
 
@@ -724,6 +807,7 @@ class SgViewer(ViserRenderer):
         return True
 
     def _remove_node(self, oid: int):
+        self.picker.remove(oid)
         for h in self._node_handles.pop(oid, []):
             try:
                 h.remove()
@@ -765,22 +849,29 @@ class SgViewer(ViserRenderer):
                 if o.state == "gone":
                     colors = (colors.astype(np.float32) * 0.4 + 140 * 0.6).astype(np.uint8)
                 vox = float((o.points or {}).get("voxel") or 0.02)
+                psize = max(1e-3, vox * float(self.g_psize.value))
+                if o.id == self.selected:  # highlight: tint towards yellow, slightly bigger
+                    colors = (colors.astype(np.float32) * 0.45
+                              + np.array([255, 225, 40], np.float32) * 0.55).astype(np.uint8)
+                    psize *= 1.25
                 hs.append(sc.add_point_cloud(
                     f"{base}/points", (xyz - c).astype(np.float32), colors,
-                    point_size=max(1e-3, vox * float(self.g_psize.value)),
+                    point_size=psize,
                     point_shape="square", position=tuple(float(v) for v in c)))
+                self.picker.set_points(o.id, xyz, max(2.0 * vox, 0.02))
                 top_z = float(xyz[:, 2].max())
                 has_pts = True
             elif pts is not None and len(pts[0]) > 0:
                 has_pts = True  # points hidden by toggle: still no box
 
-        # centre marker: needed for clicking (point clouds are not clickable)
+        # fallback sphere (objects without points) / optional centre marker.
+        # Clicks are handled by the scene-level ray pick, not per-mesh on_click.
         if not has_pts or self.g_markers.value:
             rad = 0.02 if has_pts else r
-            sph = sc.add_icosphere(f"{base}/node", radius=rad, color=col, position=o.pos,
-                                   subdivisions=2, opacity=opacity)
-            sph.on_click(lambda _ev, oid=o.id: self.select(oid))
-            hs.append(sph)
+            hs.append(sc.add_icosphere(f"{base}/node", radius=rad, color=col, position=o.pos,
+                                       subdivisions=2, opacity=opacity))
+            if not has_pts:
+                self.picker.set_sphere(o.id, o.pos, 1.5 * r)
         if self.g_labels.value:
             z = max(top_z, o.pos[2]) + (0.04 if has_pts else 1.8 * r)
             hs.append(sc.add_label(f"{base}/label", o.label, position=(o.pos[0], o.pos[1], z),
@@ -850,9 +941,11 @@ class SgViewer(ViserRenderer):
         sc = self.scene
         if sc is None or self.selected not in sc.objects:
             return
+        if any(h.name.endswith("/points") for h in self._node_handles.get(self.selected, [])):
+            return  # point-cloud objects are highlighted by tinting their points
         o = sc.objects[self.selected]
         self._sel_handle = self.server.scene.add_icosphere(
-            "/selection", radius=0.12, color=(255, 220, 0),
+            "/selection", radius=2.2 * float(self.g_size.value), color=(255, 220, 0),
             position=o.pos, subdivisions=2, wireframe=True)
 
     def _redraw_all(self):

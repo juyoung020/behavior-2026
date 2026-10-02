@@ -182,7 +182,60 @@ def main():
 
         server_check(d)
 
+    pick_check()
     print("test_sgviz: OK")
+
+
+def pick_check():
+    """Ray picking: hits, nearer-along-ray wins, misses, timing."""
+    import time
+
+    rng = np.random.default_rng(3)
+    P = sgviz.PickIndex()
+    a = (np.array([2.0, 0.0, 0.5]) + rng.uniform(-0.1, 0.1, (1000, 3))).astype(np.float32)
+    b = (np.array([4.0, 0.0, 0.5]) + rng.uniform(-0.1, 0.1, (1000, 3))).astype(np.float32)
+    P.set_points(10, a, 0.02)
+    P.set_points(11, b, 0.02)
+    P.set_sphere(12, (0.0, 3.0, 0.5), 0.09)
+    o = (0.0, 0.0, 0.5)
+    assert P.pick(o, (1, 0, 0)) == 10            # both on the ray: nearer one along it
+    assert P.pick((6.0, 0.0, 0.5), (-1, 0, 0)) == 11  # from the other side
+    assert P.pick((2.0, -3.0, 0.5), (0, 1, 0)) == 10  # sideways through a
+    assert P.pick((4.0, 0.0, 3.0), (0, 0, -2)) == 11  # unnormalised direction ok
+    assert P.pick(o, (0, 1, 0)) == 12            # fallback sphere
+    assert P.pick(o, (0, -1, 0)) is None         # miss
+    assert P.pick(o, (1, 0, 1)) is None          # passes over both
+    assert P.pick((3.0, 0.0, 0.5), (1, 0, 0)) == 11  # a is behind the origin
+    assert P.pick(o, (0, 0, 0)) is None
+    # grazing: a point 1.5 cm off the ray is hit with radius 2 cm, 3 cm is not
+    Q = sgviz.PickIndex()
+    Q.set_points(1, np.array([[1.0, 0.015, 0.0]], np.float32), 0.02)
+    Q.set_points(2, np.array([[0.5, 0.03, 0.0]], np.float32), 0.02)
+    assert Q.pick((0, 0, 0), (1, 0, 0)) == 1
+    P.remove(10)
+    assert P.pick(o, (1, 0, 0)) == 11
+
+    # timing: 50 objects x 4000 points, rays that pass through many AABBs
+    T = sgviz.PickIndex()
+    for i in range(50):
+        c = np.array([i * 0.3, 0.0, 0.5])
+        T.set_points(i, (c + rng.uniform(-0.15, 0.15, (4000, 3))).astype(np.float32), 0.02)
+    rays = [((-2.0, 0.0, 0.5), (1.0, 0.0, 0.0)),        # through all 50 boxes
+            ((7.5, -5.0, 3.0), (0.0, 1.0, -0.5)),      # one object
+            ((-2.0, 5.0, 5.0), (1.0, 0.1, 0.0)),       # misses everything
+            ((17.0, 0.0, 0.5), (-1.0, 0.0, 0.0))]      # worst case: every object fully tested
+    for r in rays:
+        T.pick(*r)  # warm up
+    dt = {}
+    for k, r in enumerate(rays):
+        t0 = time.perf_counter()
+        for _ in range(20):
+            T.pick(*r)
+        dt[k] = (time.perf_counter() - t0) / 20 * 1e3
+    assert T.pick(*rays[0]) == 0 and T.pick(*rays[2]) is None and T.pick(*rays[3]) == 49
+    print("pick ms (through-all / one / miss / worst 50x4000): "
+          + ", ".join(f"{v:.2f}" for v in dt.values()))
+    assert max(dt.values()) < 5.0, dt
 
 
 def server_check(d):
@@ -223,6 +276,26 @@ def server_check(d):
         assert "200 pts" in txt
         v.select(1)
         assert not v.g_rgb.visible and not v.g_dstats.visible  # table has no rgbd
+
+        # click picking through the viewer: no hidden centre sphere on the cup
+        assert "node" not in names(2) and "node" in names(1)
+        cup_c = (1.0, 0.5, 0.8)
+        assert v.on_scene_click((cup_c[0], cup_c[1] - 3, cup_c[2]), (0, 1, 0)) == 2
+        assert v.selected == 2 and v.g_select.value == "cup#2" and v.g_rgb.visible
+        assert v._sel_handle is None  # cloud highlighted by tint, no wireframe sphere
+        # straight down: cup (z 0.8) is above table sphere (z 0.4) -> cup first
+        assert v.on_scene_click((1.0, 0.5, 5.0), (0, 0, -1)) == 2
+        # ray only through the table's fallback sphere
+        assert v.on_scene_click((1.0, -3.0, 0.4), (0, 1, 0)) == 1 and v.selected == 1
+        assert v._sel_handle is not None  # sphere objects keep the wireframe highlight
+        # a miss keeps the current selection
+        assert v.on_scene_click((9.0, 9.0, 9.0), (0, 0, 1)) is None and v.selected == 1
+        # gone objects hidden -> no longer pickable
+        v.g_gone.value = False
+        v._redraw_all()
+        assert 3 not in v.picker
+        v.g_gone.value = True
+        v._redraw_all()
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
             assert r.status == 200
     finally:
