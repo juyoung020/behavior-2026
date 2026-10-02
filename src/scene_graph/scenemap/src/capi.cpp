@@ -90,6 +90,7 @@ struct sm_ctx {
   uint64_t epoch = 0;                 // sm_reset 마다 +1(잠금 밖 자르기 중 reset 이면 버림)
   // 저장(PNG 더러움): 물체 id → 마지막으로 쓴 모습 version. 디렉터리가 바뀌거나 새 판이면 비우고 objects/ 정리
   std::unordered_map<uint32_t, uint32_t> saved_ver;
+  std::unordered_map<uint32_t, uint32_t> saved_cloud_ver;   // 물체 id → 마지막으로 쓴 구름 version
   std::string saved_dir;
   bool clean_objects = true;
   explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {
@@ -120,6 +121,8 @@ struct sm_snapshot_t {
   std::vector<std::string> names;   // objs[i].name 이 가리키는 문자열(스냅숏 수명 동안)
   std::vector<BestViewPtr> views;   // objs[i] 의 best view(없으면 null)
   std::vector<uint8_t> movable;     // objs[i]: 1 = 옮길 수 있는 물체, 0 = 가구·가전·붙박이
+  std::vector<ObjCloud> clouds;     // objs[i] 의 점 구름(점 배열은 공유)
+  double voxel = 0.02;
   // reachable 용 부풀린 장애물(처음 부를 때 만듦)
   mutable std::once_flag inflate_once;
   mutable std::vector<uint8_t> blocked;
@@ -229,6 +232,7 @@ int sm_reset(sm_ctx* c) {
   c->ev_seen = 0;
   c->epoch++;
   c->saved_ver.clear();
+  c->saved_cloud_ver.clear();
   c->clean_objects = true;
   return 0;
 }
@@ -263,8 +267,18 @@ struct ViewCand {
 }  // namespace
 
 int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, sm_crop_fn crop, void* user) {
+  const sm_rgb_source src{crop, nullptr, user};
+  return sm_push_image_rgb(c, im, dets, &src);
+}
+
+int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, const sm_rgb_source* src) {
   if (!c || !im || im->w <= 0 || im->h <= 0) return -1;
+  const sm_crop_fn crop = src ? src->crop : nullptr;
+  const sm_gather_fn gather = src ? src->gather : nullptr;
+  void* user = src ? src->user : nullptr;
   std::vector<ViewCand> cand;
+  std::vector<ObsPoints> pts;
+  bool host_rgb = false;
   uint64_t epoch = 0;
   {
   std::lock_guard<std::mutex> g(c->mu);
@@ -315,7 +329,10 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
   F.grip[0] = grip[0];
   F.grip[1] = grip[1];
   F.base_yaw = P.th;
+  F.base_xy[0] = P.x;
+  F.base_xy[1] = P.y;
   c->om.update(F);
+  pts.swap(c->om.lastPoints());   // 구름 후보(색은 잠금 밖에서)
   // 검출 → 물체 id
   const std::vector<DetAssoc>& as = c->om.lastAssoc();
   c->last_assoc.resize(as.size());
@@ -334,9 +351,8 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
     for (auto it = c->views.begin(); it != c->views.end();) it = live.count(it->first) ? std::next(it) : c->views.erase(it);
   }
   // 새 모습 후보: 품질 = 유효 마스크 넓이 × 점수, 지금 것 이상(같으면 최근)
-  const bool host_rgb = !crop && im->rgba && dets->img_w == im->w && dets->img_h == im->h;
-  if (!crop && !host_rgb) return 0;
-  for (size_t k = 0; k < as.size(); ++k) {
+  host_rgb = im->rgba && dets->img_w == im->w && dets->img_h == im->h;
+  for (size_t k = 0; k < as.size() && (crop || host_rgb); ++k) {
     if (!as[k].obj_id) continue;
     const float sc = dets->score ? dets->score[k] : 1.f;
     const double q = double(as[k].area_px) * sc;
@@ -358,25 +374,54 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
     std::memcpy(v->cam_T, F.T_mc, sizeof(v->cam_T));
     v->rgb.resize(size_t(v->w) * v->h * 3);
     v->depth.resize(size_t(v->w) * v->h);
+    cropMask(dets, int(k), v->box, v->w, v->h, &v->mask);
     vc.req = sm_crop_req{v->box[0], v->box[1], v->box[2], v->box[3], v->w, v->h, v->rgb.data()};
     vc.v = std::move(v);
     cand.push_back(std::move(vc));
   }
   epoch = c->epoch;
   }  // 잠금 끝: 자르기(장치 → 호스트 복사)는 잠금 밖에서
-  if (cand.empty()) return 0;
-  std::vector<sm_crop_req> reqs(cand.size());
-  for (size_t i = 0; i < cand.size(); ++i) reqs[i] = cand[i].req;
-  if (crop) {
-    if (crop(user, reqs.data(), int32_t(reqs.size())) != 0) return 0;   // 자르기 실패: 이번 모습은 버림
-  } else {
-    for (const sm_crop_req& r : reqs) cropRgbHost(im->rgba, int64_t(im->w) * 4, 4, r);
+  if (cand.empty() && pts.empty()) return 0;
+  // 구름 점 색: 남긴 화소에서만(sgrt 는 장치에서 모아 그 색만 내려받음). 영상이 없으면 회색
+  size_t npt = 0;
+  for (const ObsPoints& q : pts) npt += q.px.size() / 2;
+  std::vector<int32_t> xy;
+  std::vector<uint8_t> rgb;
+  bool have_rgb = false;
+  if (npt) {
+    xy.reserve(2 * npt);
+    for (const ObsPoints& q : pts) xy.insert(xy.end(), q.px.begin(), q.px.end());
+    rgb.assign(3 * npt, 128);
+    if (gather) {
+      have_rgb = gather(user, xy.data(), int32_t(npt), rgb.data()) == 0;
+    } else if (host_rgb) {
+      gatherRgbHost(im->rgba, int64_t(im->w) * 4, 4, im->w, im->h, xy.data(), int(npt), rgb.data());
+      have_rgb = true;
+    }
   }
-  for (ViewCand& vc : cand)
-    cropDepthMm(im->depth_m, im->w, im->h, dets->img_w, dets->img_h, vc.v->box, vc.v->w, vc.v->h, vc.v->depth.data());
+  bool crop_ok = !cand.empty();
+  if (!cand.empty()) {
+    std::vector<sm_crop_req> reqs(cand.size());
+    for (size_t i = 0; i < cand.size(); ++i) reqs[i] = cand[i].req;
+    if (crop) {
+      crop_ok = crop(user, reqs.data(), int32_t(reqs.size())) == 0;   // 자르기 실패: 이번 모습은 버림
+    } else {
+      for (const sm_crop_req& r : reqs) cropRgbHost(im->rgba, int64_t(im->w) * 4, 4, r);
+    }
+    if (crop_ok)
+      for (ViewCand& vc : cand)
+        cropDepthMm(im->depth_m, im->w, im->h, dets->img_w, dets->img_h, vc.v->box, vc.v->w, vc.v->h, vc.v->depth.data());
+  }
   std::lock_guard<std::mutex> g(c->mu);
   if (c->epoch != epoch) return 0;
+  size_t off = 0;
+  for (const ObsPoints& q : pts) {
+    const int n = int(q.px.size() / 2);
+    c->om.addPoints(q.obj_id, q.xyz.data(), have_rgb ? rgb.data() + 3 * off : nullptr, n, im->stamp);
+    off += size_t(n);
+  }
   for (ViewCand& vc : cand) {
+    if (!crop_ok) break;
     ViewSlot& sl = c->views[vc.id];
     if (sl.v && vc.q < sl.q) continue;
     vc.v->version = ++c->view_ver;
@@ -417,6 +462,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->w = gr.width();
     s->h = gr.height();
     s->cells = gr.export8();
+    s->voxel = c->om.params().voxel;
     for (const MapObject& o : c->om.objects()) {
       if (!o.confirmed) continue;
       s->names.push_back(o.cls >= 0 && size_t(o.cls) < c->labels.size() ? c->labels[o.cls] : std::string("?"));
@@ -432,6 +478,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
       e.structural = kind == SM_KIND_STATIC || std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
       s->objs.push_back(e);
       s->movable.push_back(kind != SM_KIND_STATIC);
+      s->clouds.push_back(o.cloud);
       auto it = c->views.find(o.id);
       s->views.push_back(it != c->views.end() ? it->second.v : nullptr);
     }
@@ -513,8 +560,37 @@ int sm_snap_view(const sm_snapshot_t* s, uint32_t id, sm_view* out) {
     o.h = v->h;
     o.rgb = v->rgb.empty() ? nullptr : v->rgb.data();
     o.depth_mm = v->depth.empty() ? nullptr : v->depth.data();
+    o.mask = v->mask.empty() ? nullptr : v->mask.data();
     return 1;
   }
+  return 0;
+}
+
+int sm_snap_points(const sm_snapshot_t* s, uint32_t id, sm_cloud* out) {
+  if (!s || !out) return -1;
+  for (size_t i = 0; i < s->objs.size(); ++i) {
+    if (s->objs[i].id != id) continue;
+    const ObjCloud& cl = s->clouds[i];
+    *out = sm_cloud{};
+    out->id = id;
+    out->version = cl.version;
+    out->n = int32_t(cl.size());
+    for (int k = 0; k < 3; ++k) out->origin[k] = cl.org[k];
+    out->voxel = s->voxel;
+    out->stamp = cl.stamp;
+    static_assert(sizeof(sm_cloud_pt) == sizeof(CloudPt), "sm_cloud_pt == CloudPt");
+    out->pts = cl.data ? reinterpret_cast<const sm_cloud_pt*>(cl.data->pts.data()) : nullptr;
+    return 1;
+  }
+  return 0;
+}
+
+int sm_set_cloud_params(sm_ctx* c, double voxel, int32_t cap) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  if (voxel > 0) c->oparams.voxel = voxel;
+  if (cap > 0) c->oparams.cloud_cap = cap;
+  c->om.setCloudParams(voxel, cap);
   return 0;
 }
 
@@ -618,6 +694,9 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   in.views = s->views;
   in.movable = s->movable;
   in.png_dirty.assign(s->objs.size(), 0);
+  in.clouds = s->clouds;
+  in.ply_dirty.assign(s->objs.size(), 0);
+  in.voxel = s->voxel;
   {
     std::lock_guard<std::mutex> g(c->mu);
     const auto& ev = c->om.events();
@@ -625,7 +704,12 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
     if (c->saved_dir != dir) {
       c->saved_dir = dir;
       c->saved_ver.clear();
+      c->saved_cloud_ver.clear();
       c->clean_objects = true;
+    }
+    for (size_t i = 0; i < s->objs.size(); ++i) {
+      auto it = c->saved_cloud_ver.find(s->objs[i].id);
+      in.ply_dirty[i] = it == c->saved_cloud_ver.end() || it->second != s->clouds[i].version;
     }
     for (size_t i = 0; i < s->objs.size(); ++i) {
       if (!s->views[i]) continue;
@@ -641,6 +725,8 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
     if (c->saved_dir == dir) {
       for (size_t i = 0; i < s->objs.size() && i < out.png_ok.size(); ++i)
         if (out.png_ok[i]) c->saved_ver[s->objs[i].id] = s->views[i]->version;
+      for (size_t i = 0; i < s->objs.size() && i < out.ply_ok.size(); ++i)
+        if (out.ply_ok[i]) c->saved_cloud_ver[s->objs[i].id] = s->clouds[i].version;
       if (rc == 0) c->clean_objects = false;
     }
   }
@@ -648,6 +734,8 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
     stats->n_objects = int32_t(s->objs.size());
     stats->n_png = out.n_png;
     stats->png_ms = float(out.png_ms);
+    stats->n_ply = out.n_ply;
+    stats->ply_ms = float(out.ply_ms);
     stats->total_ms = float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
   }
   sm_snapshot_release(s);

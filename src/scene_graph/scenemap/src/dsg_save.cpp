@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -63,9 +65,32 @@ bool writeAtomic(const fs::path& path, const std::string& data) {
 
 std::string objPath(uint32_t id, const char* what) { return "objects/O" + std::to_string(id) + "_" + what + ".png"; }
 
-bool hasView(const SaveInput& in, const std::vector<uint8_t>& ok, int i) { return i < int(ok.size()) && ok[i] && in.views[i]; }
+std::string plyPath(uint32_t id) { return "objects/O" + std::to_string(id) + "_points.ply"; }
 
-std::string viewJson(const SaveInput& in, const std::vector<uint8_t>& ok) {
+bool hasView(const SaveInput& in, const SaveOut& out, int i) { return i < int(out.png_ok.size()) && out.png_ok[i] && in.views[i]; }
+bool hasPly(const SaveOut& out, int i) { return i < int(out.ply_ok.size()) && out.ply_ok[i]; }
+
+// 점 구름 → binary_little_endian PLY(머리 다음 점마다 float x,y,z(map) + uchar r,g,b = 15 바이트)
+std::string plyBytes(const ObjCloud& c) {
+  const size_t n = c.size();
+  std::string o = "ply\nformat binary_little_endian 1.0\nelement vertex " + std::to_string(n) +
+                  "\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\n"
+                  "property uchar blue\nend_header\n";
+  const size_t h = o.size();
+  o.resize(h + n * 15);
+  char* p = &o[h];
+  for (size_t i = 0; i < n; ++i, p += 15) {
+    const CloudPt& q = c.data->pts[i];
+    const float xyz[3] = {float(c.org[0] + q.x), float(c.org[1] + q.y), float(c.org[2] + q.z)};
+    std::memcpy(p, xyz, 12);   // x86 은 리틀 엔디언
+    p[12] = char(q.r);
+    p[13] = char(q.g);
+    p[14] = char(q.b);
+  }
+  return o;
+}
+
+std::string viewJson(const SaveInput& in, const SaveOut& ok) {
   std::ostringstream o;
   o.setf(std::ios::fixed);
   o.precision(3);
@@ -79,7 +104,12 @@ std::string viewJson(const SaveInput& in, const std::vector<uint8_t>& ok) {
       << b.extent[2] << "],\"first_pos\":[" << b.first_pos[0] << "," << b.first_pos[1] << "," << b.first_pos[2] << "],\"n_obs\":" << b.n_obs
       << ",\"last_seen\":" << b.last_seen << ",\"score\":" << b.score << ",\"structural\":" << (b.structural ? "true" : "false")
       << ",\"movable\":" << (i >= int(in.movable.size()) || in.movable[i] ? "true" : "false");
-    if (hasView(in, ok, i)) o << ",\"rgbd\":{\"rgb\":\"" << objPath(b.id, "rgb") << "\",\"depth\":\"" << objPath(b.id, "depth") << "\"}";
+    if (hasView(in, ok, i))
+      o << ",\"rgbd\":{\"rgb\":\"" << objPath(b.id, "rgb") << "\",\"depth\":\"" << objPath(b.id, "depth") << "\",\"mask\":\""
+        << objPath(b.id, "mask") << "\"}";
+    if (hasPly(ok, i))
+      o << ",\"points\":{\"path\":\"" << plyPath(b.id) << "\",\"n\":" << in.clouds[i].size() << ",\"voxel\":" << in.voxel
+        << ",\"stamp\":" << in.clouds[i].stamp << "}";
     o << "}";
   }
   o << "],\"events\":[";
@@ -112,7 +142,7 @@ std::string yaml(const SaveInput& in) {
 }
 
 #ifdef SM_HAVE_SPARK_DSG
-bool sceneDsg(const SaveInput& in, const std::vector<uint8_t>& ok, const fs::path& path) {
+bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
   using namespace spark_dsg;
   DynamicSceneGraph g;
   for (int i = 0; i < in.n_objs; ++i) {
@@ -136,6 +166,7 @@ bool sceneDsg(const SaveInput& in, const std::vector<uint8_t>& ok, const fs::pat
       a->metadata.add({{"rgbd",
                         {{"rgb", objPath(b.id, "rgb")},
                          {"depth", objPath(b.id, "depth")},
+                         {"mask", objPath(b.id, "mask")},
                          {"stamp", v.stamp},
                          {"box_px", {v.box[0], v.box[1], v.box[2], v.box[3]}},
                          {"det_box_px", {v.det_box[0], v.det_box[1], v.det_box[2], v.det_box[3]}},
@@ -144,6 +175,9 @@ bool sceneDsg(const SaveInput& in, const std::vector<uint8_t>& ok, const fs::pat
                          {"score", v.score},
                          {"cam_T", T}}}});
     }
+    if (hasPly(ok, i))
+      a->metadata.add({{"points",
+                        {{"path", plyPath(b.id)}, {"n", in.clouds[i].size()}, {"voxel", in.voxel}, {"stamp", in.clouds[i].stamp}}}});
     g.emplaceNode(DsgLayers::OBJECTS, NodeSymbol('O', b.id), std::move(a));
   }
   g.metadata.add({{"stamp", in.stamp}, {"robot_pose", {in.pose[0], in.pose[1], in.pose[2]}}, {"grid", "map.pgm"}});
@@ -155,26 +189,35 @@ bool sceneDsg(const SaveInput& in, const std::vector<uint8_t>& ok, const fs::pat
 }
 #endif
 
-// objects/ 의 best view PNG: 바뀐 것·없는 것만 쓰고, ok[i] = 파일 있음
-bool savePngs(const SaveInput& in, const fs::path& od, std::vector<uint8_t>& ok, SaveOut& out) {
+bool hasCloud(const SaveInput& in, int i) { return i < int(in.clouds.size()) && in.clouds[i].size() > 0; }
+
+// objects/ 의 best view PNG·구름 PLY: 바뀐 것·없는 것만 쓰고, png_ok·ply_ok[i] = 파일 있음
+bool savePngs(const SaveInput& in, const fs::path& od, SaveOut& out) {
   const auto t0 = std::chrono::steady_clock::now();
+  std::vector<uint8_t>& ok = out.png_ok;
   ok.assign(in.n_objs, 0);
+  out.ply_ok.assign(in.n_objs, 0);
   std::error_code ec;
   bool any = false;
-  for (int i = 0; i < in.n_objs && i < int(in.views.size()); ++i) any = any || in.views[i];
+  for (int i = 0; i < in.n_objs; ++i) any = any || (i < int(in.views.size()) && in.views[i]) || hasCloud(in, i);
   if (!any && !in.clean_objects) return true;
   fs::create_directories(od, ec);
-  if (in.clean_objects) {   // 지금 물체가 아닌 O<id>_rgb/depth.png 지우기
+  if (in.clean_objects) {   // 지금 물체가 아닌 O<id>_{rgb,depth,mask}.png · O<id>_points.ply 지우기
     std::vector<std::string> keep;
-    for (int i = 0; i < in.n_objs && i < int(in.views.size()); ++i)
-      if (in.views[i]) {
-        keep.push_back("O" + std::to_string(in.objs[i].id) + "_rgb.png");
-        keep.push_back("O" + std::to_string(in.objs[i].id) + "_depth.png");
-      }
+    for (int i = 0; i < in.n_objs; ++i) {
+      const std::string b = "O" + std::to_string(in.objs[i].id);
+      if (i < int(in.views.size()) && in.views[i])
+        for (const char* w : {"_rgb.png", "_depth.png", "_mask.png"}) keep.push_back(b + w);
+      if (hasCloud(in, i)) keep.push_back(b + "_points.ply");
+    }
+    auto endsWith = [](const std::string& n, const char* e) {
+      const size_t m = std::strlen(e);
+      return n.size() > m && n.compare(n.size() - m, m, e) == 0;
+    };
     for (const auto& e : fs::directory_iterator(od, ec)) {
       const std::string n = e.path().filename().string();
-      const bool ours = n.size() > 9 && n[0] == 'O' && n.compare(n.size() - 4, 4, ".png") == 0 &&
-                        (n.find("_rgb.png") != std::string::npos || n.find("_depth.png") != std::string::npos);
+      const bool ours = n.size() > 1 && n[0] == 'O' && std::isdigit(static_cast<unsigned char>(n[1])) &&
+                        (endsWith(n, "_rgb.png") || endsWith(n, "_depth.png") || endsWith(n, "_mask.png") || endsWith(n, "_points.ply"));
       if (ours && std::find(keep.begin(), keep.end(), n) == keep.end()) fs::remove(e.path(), ec);
     }
   }
@@ -195,10 +238,30 @@ bool savePngs(const SaveInput& in, const fs::path& od, std::vector<uint8_t>& ok,
       ok_i = !s.empty() && writeAtomic(pd, s);
       out.n_png += ok_i;
     }
+    const fs::path pm = od.parent_path() / objPath(in.objs[i].id, "mask");
+    if (ok_i && !v->mask.empty() && (dirty || !fs::exists(pm, ec))) {
+      const std::string s = pngGray8(v->mask.data(), v->w, v->h);
+      ok_i = !s.empty() && writeAtomic(pm, s);
+      out.n_png += ok_i;
+    }
     ok[i] = ok_i;
     good = good && ok_i;
   }
-  out.png_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  const auto t1 = std::chrono::steady_clock::now();
+  out.png_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  for (int i = 0; i < in.n_objs; ++i) {
+    if (!hasCloud(in, i)) continue;
+    const fs::path pp = od.parent_path() / plyPath(in.objs[i].id);
+    const bool dirty = i < int(in.ply_dirty.size()) && in.ply_dirty[i];
+    bool ok_i = true;
+    if (dirty || !fs::exists(pp, ec)) {
+      ok_i = writeAtomic(pp, plyBytes(in.clouds[i]));
+      out.n_ply += ok_i;
+    }
+    out.ply_ok[i] = ok_i;
+    good = good && ok_i;
+  }
+  out.ply_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
   return good;
 }
 
@@ -211,15 +274,15 @@ int saveScene(const SaveInput& in, const std::string& dir, SaveOut* out_) {
   SaveOut local;
   SaveOut& out = out_ ? *out_ : local;
   out = SaveOut{};
-  bool ok = savePngs(in, d / "objects", out.png_ok, out);
+  bool ok = savePngs(in, d / "objects", out);
   if (in.grid_w > 0 && in.cells) {
     ok &= writeAtomic(d / "map.pgm", pgm(in));
     ok &= writeAtomic(d / "map.yaml", yaml(in));
   }
 #ifdef SM_HAVE_SPARK_DSG
-  ok &= sceneDsg(in, out.png_ok, d / "scene.json");
+  ok &= sceneDsg(in, out, d / "scene.json");
 #endif
-  ok &= writeAtomic(d / "view.json", viewJson(in, out.png_ok));   // 마지막에: 뷰어는 view.json 이 바뀌면 다시 읽는다
+  ok &= writeAtomic(d / "view.json", viewJson(in, out));   // 마지막에: 뷰어는 view.json 이 바뀌면 다시 읽는다
   return ok ? 0 : -1;
 }
 

@@ -52,6 +52,9 @@ typedef struct {
   float det_ms, kf_ms, crop_ms, save_ms;
   int32_t n_crops;
   int32_t n_png;            /* 마지막 저장에서 새로 쓴 PNG 수 */
+  int32_t n_ply;            /* 마지막 저장에서 새로 쓴 점 구름 PLY 수 */
+  float gather_ms;          /* 마지막 keyframe: 구름 점 색 모으기(장치에서 남긴 화소만 → 호스트) */
+  int32_t n_points;         /* 그때 색을 모은 점 수 */
 } sgrt_timing;
 void   sgrt_get_timing(const sgrt*, sgrt_timing* out);
 

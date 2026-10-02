@@ -53,6 +53,8 @@ std::string encode(const uint8_t* rows, int w, int h, int bpp, int bit_depth, in
 
 std::string pngRgb8(const uint8_t* rgb, int w, int h, int level) { return encode(rgb, w, h, 3, 8, 2, level); }
 
+std::string pngGray8(const uint8_t* v, int w, int h, int level) { return encode(v, w, h, 1, 8, 0, level); }
+
 std::string pngGray16(const uint16_t* v, int w, int h, int level) {
   std::vector<uint8_t> be(size_t(w) * h * 2);
   for (size_t i = 0; i < size_t(w) * h; ++i) {

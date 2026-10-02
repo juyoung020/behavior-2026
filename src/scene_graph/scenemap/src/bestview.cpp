@@ -53,4 +53,34 @@ void cropDepthMm(const float* dm, int dw, int dh, int img_w, int img_h, const in
   }
 }
 
+void cropMask(const sm_detections* d, int k, const int32_t box[4], int ow, int oh, std::vector<uint8_t>* out) {
+  out->assign(size_t(ow) * oh, 0);
+  if (!d || !d->mask_bits || d->mask_w <= 0 || d->mask_h <= 0) return;
+  const size_t words = (size_t(d->mask_w) * d->mask_h + 31) / 32;
+  const uint32_t* bits = d->mask_bits + size_t(k) * words;
+  const double bw = box[2] - box[0], bh = box[3] - box[1];
+  for (int j = 0; j < oh; ++j) {
+    const double y = box[1] + (j + 0.5) * bh / oh;
+    const int mj = int(std::floor((y - d->mask_oy) / d->mask_sy));
+    if (mj < 0 || mj >= d->mask_h) continue;
+    for (int i = 0; i < ow; ++i) {
+      const double x = box[0] + (i + 0.5) * bw / ow;
+      const int mi = int(std::floor((x - d->mask_ox) / d->mask_sx));
+      if (mi < 0 || mi >= d->mask_w) continue;
+      const size_t c = size_t(mj) * d->mask_w + mi;
+      if ((bits[c >> 5] >> (c & 31)) & 1u) (*out)[size_t(j) * ow + i] = 255;
+    }
+  }
+}
+
+void gatherRgbHost(const uint8_t* src, int64_t rs, int ps, int w, int h, const int32_t* xy, int n, uint8_t* rgb) {
+  for (int i = 0; i < n; ++i) {
+    const int x = std::clamp(xy[2 * i], 0, w - 1), y = std::clamp(xy[2 * i + 1], 0, h - 1);
+    const uint8_t* p = src + y * rs + int64_t(x) * ps;
+    rgb[3 * i] = p[0];
+    rgb[3 * i + 1] = p[1];
+    rgb[3 * i + 2] = p[2];
+  }
+}
+
 }  // namespace scenemap

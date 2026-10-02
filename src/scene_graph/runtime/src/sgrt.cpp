@@ -24,6 +24,9 @@ struct sgrt {
   float kf_ms = 0, crop_ms = 0;   // 마지막 keyframe: scenemap 갱신 전체(자르기 포함), best view 자르기(장치 → 호스트)
   int32_t n_crops = 0;
   int32_t n_png = 0;              // 마지막 저장에서 쓴 PNG 수
+  int32_t n_ply = 0;
+  float gather_ms = 0;            // 마지막 keyframe: 구름 점 색 모으기(장치 → 호스트)
+  int32_t n_points = 0;
   sgrt_crop::Gpu* crop = nullptr; // 처음 장치 영상이 올 때 만듦
 };
 
@@ -41,6 +44,7 @@ struct CropSrc {
   int64_t rs;
   int ps;
   int on_device;
+  int w, h;
 };
 int cropCb(void* user, const sm_crop_req* reqs, int32_t n) {
   auto* c = static_cast<CropSrc*>(user);
@@ -54,6 +58,21 @@ int cropCb(void* user, const sm_crop_req* reqs, int32_t n) {
   }
   c->s->crop_ms += float(msSince(t0));
   c->s->n_crops += n;
+  return rc;
+}
+// sm_gather_fn: 구름 점 색(남긴 화소만)
+int gatherCb(void* user, const int32_t* xy, int32_t n, uint8_t* rgb) {
+  auto* c = static_cast<CropSrc*>(user);
+  const auto t0 = std::chrono::steady_clock::now();
+  int rc = 0;
+  if (c->on_device) {
+    if (!c->s->crop) c->s->crop = sgrt_crop::create();
+    rc = c->s->crop ? sgrt_crop::gather(c->s->crop, c->rgb, c->rs, c->ps, c->w, c->h, xy, n, rgb) : -1;
+  } else {
+    scenemap::gatherRgbHost(c->rgb, c->rs, c->ps, c->w, c->h, xy, n, rgb);
+  }
+  c->s->gather_ms += float(msSince(t0));
+  c->s->n_points += n;
   return rc;
 }
 }  // namespace
@@ -143,10 +162,11 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     si.depth_m = depth_m;
     si.fx = fx; si.fy = fy; si.cx = cx; si.cy = cy;
     const auto t1 = std::chrono::steady_clock::now();
-    s->crop_ms = 0;
-    s->n_crops = 0;
-    CropSrc cs{s, rgb, row_stride, pix_stride, rgb_on_device};
-    rc = d ? sm_push_image_ex(s->sm, &si, d, &cropCb, &cs) : sm_push_image(s->sm, &si, nullptr);
+    s->crop_ms = s->gather_ms = 0;
+    s->n_crops = s->n_points = 0;
+    CropSrc cs{s, rgb, row_stride, pix_stride, rgb_on_device, w, h};
+    const sm_rgb_source src{&cropCb, &gatherCb, &cs};
+    rc = d ? sm_push_image_rgb(s->sm, &si, d, &src) : sm_push_image(s->sm, &si, nullptr);
     s->kf_ms = float(msSince(t1));
     s->n_kf++;
     s->n_det = d ? d->n : 0;
@@ -163,6 +183,7 @@ int sgrt_save(sgrt* s) {
   const int rc = sm_save_dsg_ex(s->sm, s->out_dir.c_str(), &st);   // 바뀐 best view 만 PNG 로
   s->save_ms = float(msSince(t0));
   s->n_png = st.n_png;
+  s->n_ply = st.n_ply;
   return rc;
 }
 
@@ -188,6 +209,9 @@ void sgrt_get_timing(const sgrt* s, sgrt_timing* t) {
   t->save_ms = s->save_ms;
   t->n_crops = s->n_crops;
   t->n_png = s->n_png;
+  t->n_ply = s->n_ply;
+  t->gather_ms = s->gather_ms;
+  t->n_points = s->n_points;
 }
 
 }  // extern "C"

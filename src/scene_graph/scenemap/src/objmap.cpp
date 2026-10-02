@@ -25,6 +25,8 @@ double dist3(const double* a, const double* b) {
 }
 
 struct Obs {
+  std::vector<float> cxyz;        // 구름 후보(관측 안 복셀마다 하나)
+  std::vector<int32_t> cpx;
   int det;                        // 검출 번호
   int sk;                         // 훑은 화소 간격
   double zmed;                    // 카메라 깊이 중앙값
@@ -99,6 +101,9 @@ void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2
         o.pos[k] = np;
         o.lo[k] += dk;
         o.hi[k] += dk;
+        double d3[3] = {0, 0, 0};
+        d3[k] = dk;
+        o.cloud.translate(d3, t);   // 구름도 손을 따라감(평행 이동만)
       }
   // 붙은 물체는 받침을 따라간다(받침이 움직였으면 옮겨짐)
   for (auto& o : objs_) {
@@ -113,9 +118,20 @@ void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2
       o.pos[k] = np;
       o.lo[k] += dk;
       o.hi[k] += dk;
+      double d3[3] = {0, 0, 0};
+      d3[k] = dk;
+      o.cloud.translate(d3, t);
     }
     if (o.moved && o.state == SM_SEEN) o.state = SM_MOVED;
   }
+}
+
+void ObjectMap::addPoints(uint32_t id, const float* xyz, const uint8_t* rgb, int n, double stamp) {
+  for (auto& m : objs_)
+    if (m.id == id) {
+      m.cloud.add(xyz, rgb, n, p_.voxel, p_.cloud_cap, stamp);
+      return;
+    }
 }
 
 void ObjectMap::update(const ObjFrame& f) {
@@ -130,14 +146,18 @@ void ObjectMap::update(const ObjFrame& f) {
   std::vector<Obs> obs;
   const sm_detections* D = f.dets;
   assoc_.assign(D && D->n > 0 ? D->n : 0, DetAssoc{});
+  points_.clear();
+  const float inv_vox = float(1.0 / std::max(1e-3, p_.voxel));
+  VoxelIndex seen;
   const int st = std::max(1, p_.step);
   if (D && D->n > 0) {
     const float sxu = D->img_w > 0 ? float(f.w) / D->img_w : 1.f;   // 검출 영상 화소 ↔ 깊이 화소(크기가 다르면)
     const float syv = D->img_h > 0 ? float(f.h) / D->img_h : 1.f;
     std::vector<double> X, Y, Z, ZC, ZS;
+    std::vector<int32_t> PU, PV;
     for (int k = 0; k < D->n; ++k) {
       if (kindOf(D->cls[k]) == kKindStructure) continue;   // 벽·바닥·문 등: 격자만(물체 아님)
-      X.clear(); Y.clear(); Z.clear(); ZC.clear();
+      X.clear(); Y.clear(); Z.clear(); ZC.clear(); PU.clear(); PV.clear();
       // 상자 안만 훑는다(검출 영상 화소 → 깊이 화소)
       const float* b = D->box + 4 * k;
       const int u0 = std::max(0, int(b[0] * sxu) - 1), u1 = std::min(f.w - 1, int(b[2] * sxu) + 1);
@@ -159,6 +179,7 @@ void ObjectMap::update(const ObjFrame& f) {
           const double py = T[4] * xc + T[5] * yc + T[6] * z + T[7];
           const double pz = T[8] * xc + T[9] * yc + T[10] * z + T[11];
           X.push_back(px); Y.push_back(py); Z.push_back(pz); ZC.push_back(z);
+          PU.push_back(int32_t(xi)); PV.push_back(int32_t(yi));
         }
       if (int(X.size()) < p_.min_points) continue;
       // 깊이 이상값(마스크 가장자리로 뒤 벽·바닥이 비침): 카메라 깊이 중앙값 ± max(k·1.4826·MAD, floor) 밖 점 버림
@@ -168,10 +189,20 @@ void ObjectMap::update(const ObjFrame& f) {
       const double band = std::max(p_.mad_k * 1.4826 * pct(ZS, 0.5), p_.mad_floor);
       int near_hand = 0;
       size_t w = 0;
+      Obs o;
+      seen.clear();
       for (size_t i = 0; i < X.size(); ++i) {
         if (std::fabs(ZC[i] - zmed) > band) continue;
         const double pp[3] = {X[i], Y[i], Z[i]};
-        if (dist3(pp, f.eef[0]) < p_.hand_r || dist3(pp, f.eef[1]) < p_.hand_r) ++near_hand;
+        const double dh = std::min(dist3(pp, f.eef[0]), dist3(pp, f.eef[1]));
+        if (dh < p_.hand_r) ++near_hand;
+        // 구름 후보: 손·몸 가까운 점은 빼고, 이 관측 안에서 복셀마다 처음 점 하나
+        uint32_t old;
+        if (dh >= p_.cloud_hand_r && std::hypot(X[i] - f.base_xy[0], Y[i] - f.base_xy[1]) >= p_.body_r &&
+            seen.insert(voxelKey(float(X[i]), float(Y[i]), float(Z[i]), inv_vox), 0, &old)) {
+          o.cxyz.insert(o.cxyz.end(), {float(X[i]), float(Y[i]), float(Z[i])});
+          o.cpx.insert(o.cpx.end(), {PU[i], PV[i]});
+        }
         X[w] = X[i]; Y[w] = Y[i]; Z[w] = Z[i];
         ++w;
       }
@@ -179,7 +210,6 @@ void ObjectMap::update(const ObjFrame& f) {
       const int np = int(w);
       if (np < p_.min_points) continue;
       if (near_hand >= p_.hand_frac * np) continue;   // 손에 든 것
-      Obs o;
       o.det = k;
       o.zmed = zmed;
       o.sk = sk;
@@ -194,7 +224,7 @@ void ObjectMap::update(const ObjFrame& f) {
         o.lo[a] = lo;
         o.hi[a] = hi;
       }
-      obs.push_back(o);
+      obs.push_back(std::move(o));
     }
   }
   // 2. 같은 물체: 같은 이름 번호끼리 가까운 쌍부터 1:1
@@ -279,6 +309,7 @@ void ObjectMap::update(const ObjFrame& f) {
     if (moved_from) {
       MapObject& m = *moved_from;
       as.obj_id = m.id;
+      m.cloud.clear(f.stamp);   // 다른 자리에서 다시 찾음: 옛 구름은 비우고 새 관측으로 다시 쌓음
       for (int k = 0; k < 3; ++k) { m.pos[k] = o.pos[k]; m.ext[k] = o.ext[k]; m.lo[k] = o.lo[k]; m.hi[k] = o.hi[k]; }
       m.moved = true;
       m.state = SM_MOVED;
@@ -302,6 +333,17 @@ void ObjectMap::update(const ObjFrame& f) {
     objs_.push_back(m);
     obj_hit.push_back(1);
     event(f.stamp, objs_.back(), 0);
+  }
+  // 구름 후보를 물체 id 와 함께 내놓음(색은 호출자가 붙여 addPoints)
+  for (Obs& o : obs) {
+    const uint32_t id = assoc_[o.det].obj_id;
+    if (!id || o.cxyz.empty()) continue;
+    ObsPoints q;
+    q.obj_id = id;
+    q.det = o.det;
+    q.xyz = std::move(o.cxyz);
+    q.px = std::move(o.cpx);
+    points_.push_back(std::move(q));
   }
   // 4. 부재 확인(확정·안 든 것·이번에 안 맞은 것)
   if (f.depth_m || f.depth_mm) {

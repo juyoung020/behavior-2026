@@ -36,6 +36,17 @@ __global__ void cropKernel(const uint8_t* __restrict__ src, int64_t rs, int ps, 
   d[2] = uint8_t((s2 + n / 2) / n);
 }
 
+__global__ void gatherKernel(const uint8_t* __restrict__ src, int64_t rs, int ps, int w, int h, const int32_t* __restrict__ xy, int n,
+                             uint8_t* __restrict__ out) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const int x = min(max(xy[2 * i], 0), w - 1), y = min(max(xy[2 * i + 1], 0), h - 1);
+  const uint8_t* p = src + y * rs + int64_t(x) * ps;
+  out[3 * i] = p[0];
+  out[3 * i + 1] = p[1];
+  out[3 * i + 2] = p[2];
+}
+
 }  // namespace
 
 struct Gpu {
@@ -43,6 +54,12 @@ struct Gpu {
   uint8_t* d_out = nullptr;
   uint8_t* h_out = nullptr;   // 고정(pinned) 메모리
   size_t cap = 0;
+  // gather: 화소 좌표 올림 + 색 내림(고정 메모리), 점 수 기준
+  int32_t* d_xy = nullptr;
+  int32_t* h_xy = nullptr;
+  uint8_t* d_rgb = nullptr;
+  uint8_t* h_rgb = nullptr;
+  size_t gcap = 0;
 };
 
 Gpu* create() {
@@ -58,6 +75,10 @@ void destroy(Gpu* g) {
   if (!g) return;
   cudaFree(g->d_out);
   cudaFreeHost(g->h_out);
+  cudaFree(g->d_xy);
+  cudaFreeHost(g->h_xy);
+  cudaFree(g->d_rgb);
+  cudaFreeHost(g->h_rgb);
   cudaStreamDestroy(g->st);
   delete g;
 }
@@ -98,6 +119,31 @@ int run(Gpu* g, const uint8_t* src, int64_t rs, int ps, const sm_crop_req* reqs,
     std::memcpy(reqs[k].dst, g->h_out + off, sz);
     off += sz;
   }
+  return cudaGetLastError() == cudaSuccess ? 0 : -4;
+}
+
+int gather(Gpu* g, const uint8_t* src, int64_t rs, int ps, int w, int h, const int32_t* xy, int n, uint8_t* rgb) {
+  if (!g || !src || n <= 0) return -1;
+  if (size_t(n) > g->gcap) {
+    cudaFree(g->d_xy);
+    cudaFreeHost(g->h_xy);
+    cudaFree(g->d_rgb);
+    cudaFreeHost(g->h_rgb);
+    g->d_xy = g->h_xy = nullptr;
+    g->d_rgb = g->h_rgb = nullptr;
+    g->gcap = 0;
+    const size_t cap = size_t(n) + size_t(n) / 2 + 1024;
+    if (cudaMalloc(&g->d_xy, cap * 8) != cudaSuccess || cudaMallocHost(&g->h_xy, cap * 8) != cudaSuccess ||
+        cudaMalloc(&g->d_rgb, cap * 3) != cudaSuccess || cudaMallocHost(&g->h_rgb, cap * 3) != cudaSuccess)
+      return -2;
+    g->gcap = cap;
+  }
+  std::memcpy(g->h_xy, xy, size_t(n) * 8);
+  cudaMemcpyAsync(g->d_xy, g->h_xy, size_t(n) * 8, cudaMemcpyHostToDevice, g->st);
+  gatherKernel<<<(n + 255) / 256, 256, 0, g->st>>>(src, rs, ps, w, h, g->d_xy, n, g->d_rgb);
+  cudaMemcpyAsync(g->h_rgb, g->d_rgb, size_t(n) * 3, cudaMemcpyDeviceToHost, g->st);
+  if (cudaStreamSynchronize(g->st) != cudaSuccess) return -3;
+  std::memcpy(rgb, g->h_rgb, size_t(n) * 3);
   return cudaGetLastError() == cudaSuccess ? 0 : -4;
 }
 

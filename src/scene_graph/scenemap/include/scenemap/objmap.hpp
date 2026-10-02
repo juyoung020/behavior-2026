@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "scenemap/cloud.hpp"
 
 namespace scenemap {
 
@@ -47,6 +48,11 @@ struct ObjParams {
   float grip_closed = 0.09f;      // 손가락 합이 이보다 작으면 닫힘(열림 0.1)
   int step = 1;                   // 깊이 화소 간격(최소)
   int max_pts = 6000;             // 검출 하나에서 훑는 화소 수 한도: 큰 상자는 간격을 넓힘(백분위·중앙값에는 충분)
+  // 점 구름(모양): 위치·크기에 쓴 점(MAD 띠 안) 중 팔 끝 cloud_hand_r 안·베이스 수평 body_r 안 점은 뺌
+  double voxel = 0.02;
+  int cloud_cap = 4000;
+  double cloud_hand_r = 0.10;
+  double body_r = 0.30;
 };
 
 struct ObjEvent {
@@ -74,6 +80,7 @@ struct MapObject {
   double parent_rel[3] = {0, 0, 0};
   float score = 0;
   double last_kf = -1;
+  ObjCloud cloud;                 // 모양(점 구름): 옮겨짐 잇기(사라짐 → 다른 자리)면 비우고 새로, 들기·받침은 org 를 옮김
 };
 
 // 이름 번호의 종류
@@ -99,6 +106,16 @@ struct ObjFrame {
   double eef[2][3] = {{0}};           // map 기준 팔 끝
   float grip[2] = {0.1f, 0.1f};       // 손가락 합
   double base_yaw = 0;                // map 기준 베이스 yaw
+  double base_xy[2] = {0, 0};         // map 기준 베이스 위치(몸 점 거르기)
+};
+
+// 마지막 update 에서 물체에 붙은 관측의 점 구름 후보(관측 안에서 복셀마다 하나, map 좌표). 색은 호출자가 영상에서 골라
+// addPoints 로 넣는다(RGB 가 장치에 있을 수 있어서 — sgrt 는 이 화소만 장치에서 모음).
+struct ObsPoints {
+  uint32_t obj_id = 0;
+  int det = -1;
+  std::vector<float> xyz;             // 3n, map
+  std::vector<int32_t> px;            // 2n, 검출 영상 화소 x, y
 };
 
 class ObjectMap {
@@ -114,6 +131,14 @@ class ObjectMap {
   int kindOf(int cls) const { return cls >= 0 && size_t(cls) < kinds_.size() ? kinds_[cls] : int(kKindObject); }
   // 마지막 update 의 검출별 짝(크기 = dets->n, 검출 순서)
   const std::vector<DetAssoc>& lastAssoc() const { return assoc_; }
+  std::vector<ObsPoints>& lastPoints() { return points_; }
+  // 물체 id 의 구름에 map 좌표 점 n 개(rgb 3n, NULL = 회색)
+  void addPoints(uint32_t id, const float* xyz, const uint8_t* rgb, int n, double stamp);
+  void setCloudParams(double voxel, int cap) {
+    if (voxel > 0) p_.voxel = voxel;
+    if (cap > 0) p_.cloud_cap = cap;
+  }
+  const ObjParams& params() const { return p_; }
 
  private:
   void event(double t, const MapObject& o, int kind);
@@ -121,6 +146,7 @@ class ObjectMap {
   std::vector<MapObject> objs_;
   std::vector<ObjEvent> ev_;
   std::vector<DetAssoc> assoc_;
+  std::vector<ObsPoints> points_;
   std::vector<uint8_t> kinds_;
   uint32_t next_id_ = 1;
   bool closed_[2] = {false, false};

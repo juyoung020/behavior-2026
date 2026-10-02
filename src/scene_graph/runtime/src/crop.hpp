@@ -12,5 +12,7 @@ Gpu* create();                 // 자기 CUDA 스트림·버퍼(필요한 만큼
 void destroy(Gpu*);
 // src: 장치 포인터(첫 화소), row_stride 바이트, pix_stride 3|4. 0 = 성공.
 int run(Gpu*, const uint8_t* src, int64_t row_stride, int pix_stride, const sm_crop_req* reqs, int n);
+// 점 구름 색: 화소 n 개(xy 2n, 영상 w×h 밖은 가장자리로)의 RGB 만 장치에서 모아 rgb(3n, 호스트)로. 올림·커널·내림 한 번씩. 0 = 성공.
+int gather(Gpu*, const uint8_t* src, int64_t row_stride, int pix_stride, int w, int h, const int32_t* xy, int n, uint8_t* rgb);
 
 }  // namespace sgrt_crop

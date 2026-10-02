@@ -7,6 +7,7 @@ namespace scenemap {
 
 // level: zlib 압축 수준(1 = 가장 빠름). 실패하면 빈 문자열.
 std::string pngRgb8(const uint8_t* rgb, int w, int h, int level = 1);
+std::string pngGray8(const uint8_t* v, int w, int h, int level = 1);
 std::string pngGray16(const uint16_t* v, int w, int h, int level = 1);
 
 }  // namespace scenemap

@@ -140,9 +140,40 @@ typedef struct {
   int32_t w, h;                /* 자른 그림 크기 */
   const uint8_t* rgb;          /* w×h×3(NULL = RGB 없음), 스냅숏 수명 동안 */
   const uint16_t* depth_mm;    /* w×h, 0 = 깊이 없음 */
+  const uint8_t* mask;         /* w×h, 255 = 검출 마스크 안(같은 상자·크기) */
 } sm_view;
 /* 스냅숏 안 물체 id 의 best view. 1 = 있음, 0 = 없음, < 0 = 오류. */
 int sm_snap_view(const sm_snapshot_t*, uint32_t id, sm_view* out);
+
+/* ---- 물체 모양: 점 구름(추가 ABI) ----
+ * objmap 이 물체에 붙인 관측의 마스크 안 깊이 점(MAD 띠 안, 팔 끝 0.10 m·베이스 수평 0.30 m 안 점 뺌)을 map 에 올려
+ * 복셀(기본 0.02 m)마다 점 하나로 쌓는다(같은 칸은 새 관측으로 바꿈). 물체마다 최대 cap(기본 4000) — 넘으면 오래 안 고쳐진
+ * 점부터 버려 cap 의 90 % 로. 들기·받침 따라가기는 구름을 평행 이동(회전 없음), 사라짐은 마지막 구름 유지,
+ * 사라졌다 다른 자리에서 다시 찾으면(옮겨짐 잇기) 비우고 새로 쌓음, sm_reset 은 비움.
+ * 색: 머리 RGB 에서 남긴 화소만 — gather(user, xy, n, rgb) 가 화소 n 개(xy: 검출 입력 영상 화소 x, y 쌍)의 RGB 를 채운다
+ * (sgrt: 장치에서 모아 그 색만 내려받음). gather 가 없으면 im->rgba(호스트), 그것도 없으면 회색 128. 잠금 밖에서 불림. */
+typedef int (*sm_gather_fn)(void* user, const int32_t* xy, int32_t n, uint8_t* rgb);
+typedef struct {
+  sm_crop_fn crop;             /* best view RGB 자르기(NULL: im->rgba) */
+  sm_gather_fn gather;         /* 구름 점 색(NULL: im->rgba) */
+  void* user;
+} sm_rgb_source;
+/* sm_push_image_ex 와 같고 구름 점 색 모으기 함수도 받음(src == NULL 이면 둘 다 호스트 rgba) */
+int sm_push_image_rgb(sm_ctx*, const sm_image*, const sm_detections*, const sm_rgb_source* src);
+/* 구름 설정(<= 0 은 그대로). 이미 쌓인 구름은 다음 점부터 새 한도 */
+int sm_set_cloud_params(sm_ctx*, double voxel_m, int32_t cap);
+
+typedef struct { float x, y, z; uint8_t r, g, b, a; uint32_t seq; } sm_cloud_pt;   /* x,y,z = origin 기준(m), a 는 0 */
+typedef struct {
+  uint32_t id, version;        /* version: 점·원점이 바뀔 때마다 +1 */
+  int32_t n;
+  double origin[3];            /* map 좌표 = origin + (x, y, z) */
+  double voxel;
+  double stamp;                /* 마지막으로 바뀐 시뮬 시각 */
+  const sm_cloud_pt* pts;      /* n 개, 스냅숏 수명 동안 */
+} sm_cloud;
+/* 스냅숏 물체 id 의 구름. 1 = 있음(n 은 0 일 수 있음), 0 = 그런 물체 없음, < 0 = 오류 */
+int sm_snap_points(const sm_snapshot_t*, uint32_t id, sm_cloud* out);
 
 /* 저장(로봇 기억). dir 에 세 파일을 원자적으로(임시 파일 → rename) 바꿔 쓴다:
  *   scene.json — Spark-DSG DynamicSceneGraph(OBJECTS 층: 확정 물체 노드, 이름·위치 xyz·상자·상태 메타데이터)
@@ -157,6 +188,8 @@ typedef struct {
   int32_t n_objects;           /* 저장한 물체 노드 수 */
   int32_t n_png;               /* 이번에 새로 쓴 PNG 수 */
   float png_ms, total_ms;
+  int32_t n_ply;               /* 이번에 새로 쓴 점 구름 PLY 수(O<id>_points.ply) */
+  float ply_ms;
 } sm_save_stats;
 int sm_save_dsg_ex(sm_ctx*, const char* dir, sm_save_stats* stats /* NULL 가능 */);
 

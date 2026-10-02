@@ -31,6 +31,7 @@ struct BestView {
   int32_t w = 0, h = 0;           // 자른 그림 크기
   std::vector<uint8_t> rgb;       // w×h×3(없으면 빈 것)
   std::vector<uint16_t> depth;    // w×h mm
+  std::vector<uint8_t> mask;      // w×h, 255 = 검출 마스크 안(같은 상자·크기, 출력 화소 중심의 마스크 칸)
 };
 using BestViewPtr = std::shared_ptr<const BestView>;
 
@@ -45,5 +46,11 @@ void cropRgbHost(const uint8_t* src, int64_t row_stride, int pix_stride, const s
 // 호스트 깊이(m) → 같은 상자(검출 영상 화소, 깊이 크기가 다르면 비율로 옮김)·같은 출력 크기의 uint16 mm.
 void cropDepthMm(const float* depth_m, int dw, int dh, int img_w, int img_h, const int32_t box[4], int out_w, int out_h,
                  uint16_t* dst);
+
+// 검출 k 의 마스크를 자른 상자·출력 크기로(출력 화소 중심 → 검출 영상 화소 → 마스크 칸). 255 안, 0 밖
+void cropMask(const sm_detections* d, int k, const int32_t box[4], int out_w, int out_h, std::vector<uint8_t>* out);
+
+// 호스트 RGB(A) 영상에서 화소 n 개(xy 2n, 영상 밖은 가장자리로)의 색 → rgb 3n
+void gatherRgbHost(const uint8_t* src, int64_t row_stride, int pix_stride, int w, int h, const int32_t* xy, int n, uint8_t* rgb);
 
 }  // namespace scenemap
