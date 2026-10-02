@@ -1,10 +1,10 @@
 {
-  "comment": "tools\\subpack.ps1 -Meta 예시. 실제 제출 때 값을 채운다. README(영문)에 그대로 들어간다.",
+  "comment": "tools/subpack.py --meta 예시. 실제 제출 때 값을 채운다. README(영문)에 그대로 들어간다.",
   "team": "<team name>",
   "method": "<25 chars max>",
   "wrapper_target": "omnigibson.eval.wrappers.DefaultWrapper",
-  "wrapper_file": "C:/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/eval/wrappers/default_wrapper.py",
-  "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml",
+  "wrapper_file": "BEHAVIOR-1K/OmniGibson/omnigibson/eval/wrappers/default_wrapper.py",
+  "robot_config": "src/sim/configs/r1pro_openpi.yaml",
   "launcher": {
     "black_guard": true,
     "kit_args": [],

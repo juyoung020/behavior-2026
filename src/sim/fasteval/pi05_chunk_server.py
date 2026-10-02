@@ -4,7 +4,7 @@
         --robot b1k/R1Pro --task b1k/turning_on_radio --repo-id turning_on_radio --policy.config pi05_b1k \\
         --policy.dir ~/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio --control_mode receding_horizon \\
         --action_horizon 16 --port 8000
-    평가기: run_eval_radio.ps1 -ChunkSize 16   (= 공식 인자 --replay-action-chunk-size 16)
+    평가기: tools/run_eval_radio.sh --chunk-size 16   (= 공식 인자 --replay-action-chunk-size 16)
 
 왜 필요한가 (docs\\평가기_가속설계.md): 이 PC 에서 정책 왕복 한 번이 WSL 을 건너며 평균 28 ms 걸리고,
 receding horizon 16 이면 16 스텝 중 15 스텝은 서버가 관측을 쓰지도 않고 버퍼의 다음 행동을 꺼내 줄 뿐이다.

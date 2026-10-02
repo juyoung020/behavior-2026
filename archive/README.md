@@ -17,6 +17,27 @@
 | `tools/setup/fetch_cosmos_wsl.sh` | GR00T N1.7 백본(Cosmos-Reason2-2B) 받기. GR00T 는 계획에 없다 |
 | `src/vla/pi05_native/build_windows.bat` | Windows(MSVC) 빌드. 리눅스는 `build_linux.sh` |
 | `src/vla/pi05_native/glue/run_eval_native.ps1` | Windows 평가기 실행기. 리눅스는 같은 폴더 `run_eval_native.py` |
+| `tools/exp_run.ps1` | 리눅스판 `tools/exp_run.py` 로 대체 |
+| `tools/run_eval_radio.ps1` | 리눅스판 `tools/run_eval_radio.sh` 로 대체 |
+| `tools/run_replay_eval.ps1` | 리눅스판 `tools/run_replay_eval.sh` 로 대체 |
+| `tools/subpack.ps1` | 리눅스판 `tools/subpack.py` 로 대체 |
+| `tools/gpu_lock.ps1` | 리눅스판 `tools/gpu_lock.sh` 로 대체 |
+| `src/vla/pi05_native/exp/run_insurance.ps1` | 리눅스판 `src/vla/pi05_native/exp/run_insurance.sh` 로 대체 |
+| `src/sim/integ/run_eval_integ.ps1` | 리눅스판 `src/sim/integ/run_eval_integ.sh` 로 대체 |
+| `src/sim/integ/wsl_stack.sh` | 리눅스판 `src/sim/integ/simlink_stack.sh` 로 대체 |
+| `src/sim/integ/wsl_cleanup.sh` | 리눅스판 `src/sim/integ/simlink_cleanup.sh` 로 대체 |
+| `src/sim/engine/capture/run_capture.ps1` | 리눅스판 `src/sim/engine/capture/run_capture.sh` 로 대체 |
+| `src/sim/engine/capture/render_scene_wsl.py` | 리눅스판 `src/sim/engine/capture/render_scene.py` 로 대체 |
+| `src/sim/engine/capture/render_scene_wsl.sh` | 리눅스판 `src/sim/engine/capture/render_scene.sh` 로 대체 |
+| `src/sim/engine/tests/render/gpu_session.ps1` | 리눅스판 `src/sim/engine/tests/render/gpu_session.sh` 로 대체 |
+| `src/sim/engine/tests/render/capture/capture_with_lock.ps1` | 리눅스판 `src/sim/engine/tests/render/capture/capture_with_lock.sh` 로 대체 |
+| `src/sim/engine/tests/render/capture/process_capture.ps1` | 리눅스판 `src/sim/engine/tests/render/capture/process_capture.sh` 로 대체 |
+| `src/sim/engine/tests/render/capture/run_render_capture.ps1` | 리눅스판 `src/sim/engine/tests/render/capture/run_render_capture.sh` 로 대체 |
+| `tools/setup/download_top_ckpts_wsl.sh` | 리눅스판 `tools/setup/download_top_ckpts.sh` 로 대체 |
+| `tools/setup/fetch_qwen35_gguf_wsl.sh` | 리눅스판 `tools/setup/fetch_qwen35_gguf.sh` 로 대체 |
+| `tools/setup/setup_llamacpp_cuda_wsl.sh` | 리눅스판 `tools/setup/setup_llamacpp_cuda.sh` 로 대체 |
+
+Windows·WSL 스크립트를 리눅스판으로 옮긴 표(쓰는 법·확인한 것)는 [tools/README.md](../tools/README.md).
 
 ## 되살리기
 

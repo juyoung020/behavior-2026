@@ -1,6 +1,6 @@
 {
   "name": "ported_dummy_radio",
-  "comment": "포팅 평가기 연결 시험: dummy 백엔드(물리 없음, GPU 없음) + 재생 행동열, radio 인스턴스 0, 5 스텝. -Backend ported 로 돌린다.",
+  "comment": "포팅 평가기 연결 시험: dummy 백엔드(물리 없음, GPU 없음) + 재생 행동열, radio 인스턴스 0, 5 스텝. --backend ported 로 돌린다.",
   "mode": "public_test",
   "tasks": ["turning_on_radio"],
   "instances": [0],
@@ -8,10 +8,10 @@
   "black_guard": "off",
   "trace": true,
   "timeout_min": 10,
-  "ported": {"backend": "dummy", "host": "windows"},
+  "ported": {"backend": "dummy", "host": "local"},
   "settings": [
     {"name": "replay", "policy": "replay", "quickack": true,
-     "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
-     "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml"}
+     "actions": "outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+     "robot_config": "src/sim/configs/r1pro_openpi.yaml"}
   ]
 }

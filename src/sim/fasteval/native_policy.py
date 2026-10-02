@@ -4,7 +4,7 @@
 src\\pi05_native\\glue\\run_eval_native.py 와 같은 연결이다(LocalPolicy.forward -> self.policy.act(obs), eval/policies.py:28-35).
 평가기 코드(BEHAVIOR-1K)는 그대로고, 정책은 우리 제출물이다.
 
-설정은 환경변수로 받는다(tools\\exp_run.ps1 의 native 설정이 판마다 넣는다):
+설정은 환경변수로 받는다(tools/exp_run.py 의 native 설정이 판마다 넣는다):
     PI05_NATIVE_WEIGHTS  가중치(.pi05w)              기본 C:/behavior-2026/data/pi05_native/pi05_radio.pi05w
     PI05_NATIVE_PROMPT   지시문(없으면 과제 이름으로 run_eval_native.task_prompt)
     PI05_NATIVE_REPLAN   재계획 간격(기본 16)        PI05_NATIVE_SEED 난수 씨앗(기본 0)

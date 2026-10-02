@@ -33,7 +33,7 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     fasteval/         evaluator acceleration: chunked-replay policy server, instrumentation
     integ/            evaluator ↔ planner ↔ scenemap link (simlink, Rust)
     configs/          evaluator robot configs
-tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …)
+tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …) (tools/README.md: Linux runners, old Windows/WSL → Linux table)
 archive/              modules the current pipeline no longer uses, kept as they were (archive/README.md: what, why, how to revive)
   setup/              one-time install/download scripts
 refs/                 reference repos (2025 top teams) — submodules

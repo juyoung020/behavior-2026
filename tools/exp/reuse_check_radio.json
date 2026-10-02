@@ -1,6 +1,6 @@
 {
   "name": "reuse_check_radio",
-  "comment": "장면 재사용(-Reuse) 비트 동일 확인: 같은 행렬을 한 번은 판마다 새 프로세스로, 한 번은 -Reuse 로 돌려 exp_run.ps1 compare 로 인스턴스 0·1 을 짝지어 비교한다. 재생 행동이라 검은 프레임은 물리에 안 닿는다(warn 으로 셈만). 잠금은 행렬 한 바퀴를 한 번에. 기본 설정(칸 4 는 (B) 에 효과 없음 — 09-30 00:31).",
+  "comment": "장면 재사용(--reuse) 비트 동일 확인: 같은 행렬을 한 번은 판마다 새 프로세스로, 한 번은 --reuse 로 돌려 exp_run.py compare 로 인스턴스 0·1 을 짝지어 비교한다. 재생 행동이라 검은 프레임은 물리에 안 닿는다(warn 으로 셈만). 잠금은 행렬 한 바퀴를 한 번에. 기본 설정(칸 4 는 (B) 에 효과 없음 — 09-30 00:31).",
   "mode": "public_test",
   "tasks": [
     "turning_on_radio"
@@ -22,8 +22,8 @@
       "name": "replay",
       "policy": "replay",
       "quickack": true,
-      "actions": "C:/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
-      "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml"
+      "actions": "outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz",
+      "robot_config": "src/sim/configs/r1pro_openpi.yaml"
     }
   ],
   "lock_scope": "repeat"

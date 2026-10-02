@@ -14,7 +14,7 @@
     다름       임계를 넘는 스텝이 있다 -> 처음 넘은 스텝을 적는다
 --strict 면 '비트 동일' 만 통과. 결과 JSON 은 항상 정확히 같아야 통과(q_score·success·steps), 거리 지표는 상대 1e-6.
 --pixels-report-only 면 영상 해시·채널 평균(RTX 잡음으로 실행마다 다름, 5.1 노이즈 바닥)은 표에만 적고 통과/실패에서 뺀다
-  -- 물리·판정·지표·JSON 만으로 판정할 때(tools\\exp_run.ps1 compare).
+  -- 물리·판정·지표·JSON 만으로 판정할 때(tools/exp_run.py compare).
 """
 import argparse
 import glob

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # π0.5 서버를 '행동 묶음 재생' 응답이 되는 판(src/sim/fasteval/pi05_chunk_server.py)으로 띄운다. 인자·체크포인트는 run_pi05_server.sh 와 같다.
-# 평가기는 run_eval_radio.ps1 -ChunkSize 16 (= 공식 --replay-action-chunk-size 16). 묶음 인자 없이 오면 공식 서버와 똑같이 동작한다.
+# 평가기는 tools/run_eval_radio.sh --chunk-size 16 (= 공식 --replay-action-chunk-size 16). 묶음 인자 없이 오면 공식 서버와 똑같이 동작한다.
 # 실행: wsl -d Ubuntu-22.04 -u juyoung -- bash /mnt/c/behavior-2026/tools/run_pi05_chunk_server.sh [TASK]
 set -euo pipefail
 TASK=${1:-turning_on_radio}

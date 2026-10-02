@@ -164,7 +164,7 @@ class Pi05NativePolicy:
 
 class _EvalPolicy:
     """Official-policy-shaped wrapper (forward(obs) -> (num_envs, action_dim), reset, set_action_dim) for
-    tools/eval_instrumented.py --native-policy=pi05_policy:make_policy (tools/exp_run.ps1 policy "native")."""
+    tools/eval_instrumented.py --native-policy=pi05_policy:make_policy (tools/exp_run.py policy "native")."""
 
     def __init__(self, inner: Pi05NativePolicy):
         self.inner = inner

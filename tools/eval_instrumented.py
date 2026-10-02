@@ -709,7 +709,7 @@ def install_instance_seq(indices, eval_args, trace):
     공식 main 은 --num-envs 1 과 첫 인스턴스 하나로 돈다. main 이 부르는 첫 evaluator.run() 을 가로채,
     공식 run() 을 인스턴스마다 한 번씩 부른다(공식 --num-rollouts 가 같은 evaluator 로 run() 을 거듭 부르는 것과 같은 경로).
     결과는 인스턴스마다 <output-dir>\\i<번호>\\ (json\\, videos\\, trace.npz, actions.npz) -- 새 프로세스로 돈 판과 같은 모양.
-    새 프로세스 결과와 비트 동일인지 확인하기 전까지는 개발용이다(tools\\exp_run.ps1 -Reuse).
+    새 프로세스 결과와 비트 동일인지 확인하기 전까지는 개발용이다(tools/exp_run.py --reuse).
     """
     from omnigibson.eval import evaluator as E
     from omnigibson.eval.evaluator import resolve_instance_ids

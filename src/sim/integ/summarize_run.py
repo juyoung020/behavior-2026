@@ -1,6 +1,6 @@
-"""통합 한 판 결과 요약(일회성 도구): run_eval_integ.ps1 의 출력 폴더 하나 → summary.json + 화면 요약.
+"""통합 한 판 결과 요약(일회성 도구): run_eval_integ.sh 의 출력 폴더 하나 → summary.json + 화면 요약.
 
-    python C:\\behavior-2026\\src\\integ\\summarize_run.py C:\\behavior-2026\\outputs\\integ\\<이름>
+    python src/sim/integ/summarize_run.py outputs/integ/<이름>
 
 모으는 것: 평가 결과(q_score·스텝), 계획기 결정(decisions.jsonl · trace), 그래프 노드 수(경계마다 · scene_server 시간선),
 지연(관측 → 그래프 반영, 경계 → 결정, 접착부 비용), VRAM(시작 전·WSL 준비 뒤·판 중 최대), 검은 프레임(π0.5 입력 기준).
@@ -82,7 +82,7 @@ def main():
         errs = [e for e in ev if e.get("type") in ("graph_error", "llm_error")]
         S["errors"] = [(e.get("type"), str(e.get("error"))[:120]) for e in errs[:8]]
     # VRAM
-    S["vram"] = {**read_kv(out / "vram.txt"), **read_kv(out / "vram_windows.txt")}
+    S["vram"] = {**read_kv(out / "vram.txt"), **read_kv(out / "vram_windows.txt"), **read_kv(out / "vram_host.txt")}
     vt = out / "vram_timeline.csv"
     if vt.exists():
         vals = [int(l.split(",")[1]) for l in vt.read_text().splitlines() if "," in l and l.split(",")[1].strip().isdigit()]

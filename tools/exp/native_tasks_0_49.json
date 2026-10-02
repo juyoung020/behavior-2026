@@ -1,6 +1,6 @@
 {
   "name": "native_tasks_0_49",
-  "comment": "네이티브 π0.5(평가기 프로세스 안) 과제 0~49 보험 평가 틀. weights 는 π0.5 에이전트가 1위 모델 .pi05w 로 채운다. 공식 제한시간(1.5x), 영상 저장(제출용), 검은 프레임이면 무효. 인스턴스는 먼저 0 하나로, 제출용은 0~9. 장면 재사용(-Reuse)은 비트 동일 확인 뒤.",
+  "comment": "네이티브 π0.5(평가기 프로세스 안) 과제 0~49 보험 평가 틀. weights 는 π0.5 에이전트가 1위 모델 .pi05w 로 채운다. 공식 제한시간(1.5x), 영상 저장(제출용), 검은 프레임이면 무효. 인스턴스는 먼저 0 하나로, 제출용은 0~9. 장면 재사용(--reuse)은 비트 동일 확인 뒤.",
   "mode": "public_test",
   "tasks": [
     "turning_on_radio",
@@ -70,8 +70,8 @@
       "name": "pi05_native_top1",
       "policy": "native",
       "module": "native_policy:pi05",
-      "weights": "C:/behavior-2026/data/pi05_native/<1위 모델>.pi05w",
-      "robot_config": "C:/behavior-2026/src/sim/configs/r1pro_openpi.yaml",
+      "weights": "data/pi05_native/<1위 모델>.pi05w",
+      "robot_config": "src/sim/configs/r1pro_openpi.yaml",
       "replan": 16,
       "seed": 0
     }
