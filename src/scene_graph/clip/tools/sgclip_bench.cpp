@@ -12,6 +12,7 @@
 #include <fstream>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "sgclip.h"
@@ -108,11 +109,12 @@ int main(int argc, char** argv) {
     }
     std::printf("| method | us / object | top-1 = exact |\n|---|---|---|\n| exact 768-d FP16 (all %d rows) | %.0f | 1 |\n", sgc_labels_count(L),
                 use / nq);
-    for (auto [np, rr] : std::vector<std::pair<int, int>>{{4, 32}, {8, 32}, {8, 64}, {16, 64}, {32, 128}}) {
+    for (auto [np, rr, pf] : std::vector<std::tuple<int, int, int>>{{4, 32, 0}, {8, 32, 0}, {8, 32, 256}, {8, 64, 0}, {16, 64, 0}, {32, 128, 0}}) {
       sgc_lookup_params p;
       sgc_default_lookup(&p);
       p.nprobe = np;
       p.rerank = rr;
+      p.prefilter = pf;
       int ag = 0;
       double t = 0;
       for (int r = 0; r < 3; ++r)
@@ -123,7 +125,7 @@ int main(int argc, char** argv) {
           t += us(a, Clock::now());
           if (r == 0) ag += h[0].row == ex[i];
         }
-      std::printf("| IVF %d probes + 128-bit + 768-d re-rank %d | %.1f | %.3f |\n", np, rr, t / (3 * nq), double(ag) / nq);
+      std::printf("| IVF %d probes%s -> 128-d FP16 top %d -> 768-d | %.1f | %.3f |\n", np, pf ? " -> 128-bit Hamming 256" : "", rr, t / (3 * nq), double(ag) / nq);
     }
     double tn = 0;
     for (int i = 0; i < nq; ++i) {

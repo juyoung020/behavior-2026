@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
   expect(c2.obj.size() == 2 && !c2.get(12), "(5) gone object dropped");
   std::vector<uint16_t> back;
   expect(readEmb(mem + "/" + embRel(10), &back) && embSha(back.data()) == embSha(h[0].data()), "(7) emb file round trip + sha");
-  expect(fs::exists(mem + "/cache/index/labels_aaaaaaaaaaaaaaaa.idx"), "label index cached in cache/index");
+  expect(fs::exists(mem + "/cache/index/labels_aaaaaaaaaaaaaaaa_t.idx"), "label index cached in cache/index");
   const std::string m = c2.nodeMeta(10, objs[0].emb_sha, 1.5);
   expect(m.find("\"emb\":{") == 0 && m.find("\"names\":{") != std::string::npos, "node meta has emb + names");
   std::printf("node meta: %s\n", m.c_str());

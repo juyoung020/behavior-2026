@@ -35,7 +35,7 @@
 
 namespace {
 
-constexpr int D = SGC_DIM, PD = 128, NC = 256, kMagic = 0x31584449;   // "IDX1"
+constexpr int D = SGC_DIM, PD = 128, NC = 256, kMagic = 0x32584449;   // "IDX2"
 constexpr float kLogitScale = 111.83257f, kLogitBias = -16.766876f;  // SigLIP 2 B/32-256 (open_clip webli)
 
 float h2f(uint16_t h) {
@@ -154,6 +154,9 @@ struct sgc_labels {
   std::vector<float> mu, P;     // P: PD × D(행 = 출력 차원)
   std::vector<float> cent;      // NC × PD
   std::vector<int32_t> off, ids;
+  std::vector<float> qc;        // 질의에서 뺄 평균(영상 표본 평균, 표본이 없으면 0)
+  std::vector<uint16_t> lp;     // 목록 순서, 줄마다 128-d 투영(FP16) — 1단계 점수
+  std::string proj = "text";    // 투영을 맞춘 것: "text"(라벨 글 PCA) 또는 "img:<표본 sha>"(영상 표본 PCA)
   std::vector<uint64_t> codes;  // 목록 순서, 줄마다 2 단어
   std::vector<uint8_t> is_main; // 목록 순서
   double build_ms = 0;
@@ -166,7 +169,7 @@ void project(const sgc_labels* L, const float* q, float* qp) {
   for (int k = 0; k < PD; ++k) qp[k] = dotF32(L->P.data() + size_t(k) * D, q, D);
 }
 
-void buildIndex(sgc_labels* L) {
+void buildIndex(sgc_labels* L, const std::vector<float>& img) {
   const int K = L->K;
   std::vector<float> X(size_t(K) * D);
   for (size_t i = 0; i < X.size(); ++i) X[i] = h2f(L->text[i]);
@@ -176,12 +179,25 @@ void buildIndex(sgc_labels* L) {
   for (float& m : L->mu) m /= float(K);
   for (int i = 0; i < K; ++i)
     for (int d = 0; d < D; ++d) X[size_t(i) * D + d] -= L->mu[d];
-  // 공분산(표본 ≤ 12k 줄, 위 삼각)
-  const int stride = std::max(1, K / 12000);
+  // 공분산(표본 ≤ 12k 줄, 위 삼각). 영상 표본이 있으면 그 분포(질의 쪽)로 맞춤 — 글 PCA 보다 1단계 순위가 훨씬 낫다
+  // (평가 crop 567 개, 128-d 점수 상위 32 → 768-d: 글 PCA 0.55, 영상 PCA 0.77 = 전부 훑기 1위와 일치)
+  const int NI = int(img.size() / D);
+  L->qc.assign(D, 0.f);
+  std::vector<float> Xi;
+  if (NI > 0) {
+    for (int i = 0; i < NI; ++i)
+      for (int d = 0; d < D; ++d) L->qc[d] += img[size_t(i) * D + d] / float(NI);
+    Xi.resize(img.size());
+    for (int i = 0; i < NI; ++i)
+      for (int d = 0; d < D; ++d) Xi[size_t(i) * D + d] = img[size_t(i) * D + d] - L->qc[d];
+  }
+  const std::vector<float>& S = NI > 0 ? Xi : X;
+  const int NS = NI > 0 ? NI : K;
+  const int stride = std::max(1, NS / 12000);
   std::vector<float> C(size_t(D) * D, 0.f);
   int ns = 0;
-  for (int i = 0; i < K; i += stride, ++ns) {
-    const float* x = &X[size_t(i) * D];
+  for (int i = 0; i < NS; i += stride, ++ns) {
+    const float* x = &S[size_t(i) * D];
     for (int a = 0; a < D; ++a) {
       const float xa = x[a];
       float* c = &C[size_t(a) * D];
@@ -250,8 +266,10 @@ void buildIndex(sgc_labels* L) {
   std::vector<int> pos(L->off.begin(), L->off.end() - 1);
   for (int i = 0; i < K; ++i) L->ids[pos[as[i]]++] = i;
   L->codes.assign(size_t(K) * 2, 0);
+  L->lp.assign(size_t(K) * PD, 0);
   for (int j = 0; j < K; ++j) {
     const float* y = &Y[size_t(L->ids[j]) * PD];
+    sgc_f32_to_f16(y, &L->lp[size_t(j) * PD], PD);
     for (int k = 0; k < PD; ++k)
       if (y[k] > 0) L->codes[size_t(j) * 2 + (k >> 6)] |= 1ull << (k & 63);
   }
@@ -276,8 +294,8 @@ bool loadIndex(sgc_labels* L, const std::string& path) {
   f.read(reinterpret_cast<char*>(h), sizeof(h));
   f.read(sha, 16);
   if (!f || h[0] != kMagic || h[1] != L->K || h[2] != D || h[3] != PD || h[4] != NC || std::string(sha, 16) != L->sha) return false;
-  return rd(f, L->mu, D) && rd(f, L->P, size_t(PD) * D) && rd(f, L->cent, size_t(NC) * PD) && rd(f, L->off, NC + 1) &&
-         rd(f, L->ids, L->K) && rd(f, L->codes, size_t(L->K) * 2);
+  return rd(f, L->mu, D) && rd(f, L->qc, D) && rd(f, L->P, size_t(PD) * D) && rd(f, L->cent, size_t(NC) * PD) && rd(f, L->off, NC + 1) &&
+         rd(f, L->ids, L->K) && rd(f, L->codes, size_t(L->K) * 2) && rd(f, L->lp, size_t(L->K) * PD);
 }
 
 void saveIndex(const sgc_labels* L, const std::string& path) {
@@ -290,7 +308,7 @@ void saveIndex(const sgc_labels* L, const std::string& path) {
     char sha[16] = {0};
     std::memcpy(sha, L->sha.data(), std::min<size_t>(16, L->sha.size()));
     f.write(sha, 16);
-    wr(f, L->mu); wr(f, L->P); wr(f, L->cent); wr(f, L->off); wr(f, L->ids); wr(f, L->codes);
+    wr(f, L->mu); wr(f, L->qc); wr(f, L->P); wr(f, L->cent); wr(f, L->off); wr(f, L->ids); wr(f, L->codes); wr(f, L->lp);
   }
   std::rename(tmp.c_str(), path.c_str());
 }
@@ -320,8 +338,9 @@ int lookupImpl(const sgc_labels* L, const float* q, int k, Cand* out, const sgc_
       buf.push_back({dotF16(&L->text[size_t(i) * D], q, D), i});
     }
   } else {
-    float qp[PD];
-    project(L, q, qp);
+    float qp[PD], qq[D];
+    for (int d = 0; d < D; ++d) qq[d] = q[d] - L->qc[d];
+    project(L, qq, qp);
     uint64_t qc[2] = {0, 0};
     for (int j = 0; j < PD; ++j)
       if (qp[j] > 0) qc[j >> 6] |= 1ull << (j & 63);
@@ -335,12 +354,20 @@ int lookupImpl(const sgc_labels* L, const float* q, int k, Cand* out, const sgc_
     for (int t = 0; t < NC && (t < np || ham.size() < want); ++t)   // 묶음 nprobe 개, 후보가 모자라면 더
       for (int j = L->off[ci[t]]; j < L->off[ci[t] + 1]; ++j) {
         if (p.main_only && !L->is_main[j]) continue;
-        ham.emplace_back(popc(L->codes[size_t(j) * 2] ^ qc[0]) + popc(L->codes[size_t(j) * 2 + 1] ^ qc[1]), j);
+        ham.emplace_back(p.prefilter > 0 ? popc(L->codes[size_t(j) * 2] ^ qc[0]) + popc(L->codes[size_t(j) * 2 + 1] ^ qc[1]) : 0, j);
       }
-    const int R = std::min<int>(std::max(k, p.rerank), int(ham.size()));
-    std::nth_element(ham.begin(), ham.begin() + R, ham.end());
+    // (선택) 128-bit 해밍으로 prefilter 개까지 거름 → 128-d FP16 점수 상위 rerank → 768-d
+    if (p.prefilter > 0 && int(ham.size()) > p.prefilter) {
+      std::nth_element(ham.begin(), ham.begin() + p.prefilter, ham.end());
+      ham.resize(size_t(p.prefilter));
+    }
+    thread_local std::vector<Cand> c128;
+    c128.clear();
+    for (const auto& h : ham) c128.push_back({dotF16(&L->lp[size_t(h.second) * PD], qp, PD), h.second});
+    const int R = std::min<int>(int(want), int(c128.size()));
+    std::nth_element(c128.begin(), c128.begin() + R, c128.end(), [](const Cand& a, const Cand& b) { return a.s > b.s; });
     for (int t = 0; t < R; ++t) {
-      const int row = L->ids[ham[t].second];
+      const int row = L->ids[c128[t].row];
       buf.push_back({dotF16(&L->text[size_t(row) * D], q, D), row});
     }
   }
@@ -369,10 +396,15 @@ extern "C" {
 
 void sgc_default_lookup(sgc_lookup_params* p) {
   if (!p) return;
-  *p = sgc_lookup_params{8, 32, 0, 0};
+  *p = sgc_lookup_params{8, 32, 0, 0, 0};
 }
 
 sgc_labels* sgc_labels_open(const char* dir, const char* index_dir, char* err, size_t err_len) {
+  const char* s = std::getenv("SGC_IMG_SAMPLE");
+  return sgc_labels_open_ex(dir, index_dir, s, err, err_len);
+}
+
+sgc_labels* sgc_labels_open_ex(const char* dir, const char* index_dir, const char* img_sample, char* err, size_t err_len) {
   auto L = std::make_unique<sgc_labels>();
   try {
     if (!dir) throw std::runtime_error("label dir required");
@@ -434,23 +466,43 @@ sgc_labels* sgc_labels_open(const char* dir, const char* index_dir, char* err, s
     ef.read(reinterpret_cast<char*>(L->text.data()), std::streamsize(bytes));
     // 색인: 캐시 → 없으면 만들고 씀
     const auto t0 = std::chrono::steady_clock::now();
+    std::vector<float> img;
+    std::string tag = "t";
+    if (img_sample && *img_sample) {   // N × 768 FP16 영상 임베딩 표본(질의 분포)
+      std::ifstream sf(img_sample, std::ios::binary | std::ios::ate);
+      if (sf) {
+        const size_t nb = size_t(sf.tellg());
+        std::vector<uint16_t> h(nb / 2);
+        sf.seekg(0);
+        sf.read(reinterpret_cast<char*>(h.data()), std::streamsize(nb));
+        const size_t n = h.size() / D;
+        img.resize(n * D);
+        sgc_f16_to_f32(h.data(), img.data(), int32_t(n * D));
+        uint64_t fh = 1469598103934665603ull;
+        for (uint16_t v : h) fh = (fh ^ v) * 1099511628211ull;
+        char b[9];
+        std::snprintf(b, sizeof(b), "%08x", unsigned(fh >> 32));
+        tag = std::string("i") + b;
+        L->proj = std::string("img:") + b;
+      }
+    }
     std::string ip;
     if (index_dir && *index_dir) {
       std::error_code ec;
       std::filesystem::create_directories(index_dir, ec);
-      ip = std::string(index_dir) + "/labels_" + L->sha + ".idx";
+      ip = std::string(index_dir) + "/labels_" + L->sha + "_" + tag + ".idx";
     }
     if (!ip.empty() && loadIndex(L.get(), ip)) {
       L->from_cache = true;
     } else {
-      buildIndex(L.get());
+      buildIndex(L.get(), img);
       if (!ip.empty()) saveIndex(L.get(), ip);
     }
     L->is_main.resize(L->K);
     for (int j = 0; j < L->K; ++j) L->is_main[j] = L->rows[L->ids[j]].main;
     L->build_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    std::fprintf(stderr, "[sgclip] labels %s (%s): %d rows, index %s %.0f ms, simd %s\n", L->name.c_str(), L->sha.c_str(), L->K,
-                 L->from_cache ? "cache" : "built", L->build_ms, sgc_simd());
+    std::fprintf(stderr, "[sgclip] labels %s (%s): %d rows, index %s %.0f ms (projection %s), simd %s\n", L->name.c_str(), L->sha.c_str(),
+                 L->K, L->from_cache ? "cache" : "built", L->build_ms, L->proj.c_str(), sgc_simd());
     return L.release();
   } catch (const std::exception& x) {
     if (err && err_len) std::snprintf(err, err_len, "%s", x.what());

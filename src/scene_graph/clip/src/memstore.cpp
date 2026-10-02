@@ -68,6 +68,8 @@ bool NameCache::load(const std::string& dir) {
       for (const auto& x : v["ko"]) e.ko.emplace_back(x[0].get<std::string>(), x[1].get<float>());
       e.level = v.value("level", "");
       e.level_ko = v.value("level_ko", "");
+      e.general = v.value("general", "");
+      e.general_ko = v.value("general_ko", "");
       e.score = v.value("score", 0.f);
       e.prob = v.value("prob", 0.f);
       e.margin = v.value("margin", 0.f);
@@ -101,15 +103,23 @@ int NameCache::refresh(const sgc_labels* L, const std::vector<ObjRef>& objs, con
       continue;
     }
     sgc_names r{};
-    if (sgc_labels_names(L, o.emb, &r, p) != 0) continue;
+    sgc_lookup_params pm;   // 기본: 집 물건 주 표(tier main)만 — 평가 crop 이름 정답 0.29/0.36(시연/깨끗) 대 표 전체 0.20/0.24
+    sgc_default_lookup(&pm);
+    pm.main_only = 1;
+    if (sgc_labels_names(L, o.emb, &r, p ? p : &pm) != 0) continue;
     NameEntry e;
     e.emb_sha = o.emb_sha;
     for (int i = 0; i < r.n; ++i) {
       e.en.emplace_back(r.top[i].en, r.top[i].score);
       if (r.top[i].ko && *r.top[i].ko) e.ko.emplace_back(r.top[i].ko, r.top[i].score);
     }
-    e.level = r.level_en ? r.level_en : "";
-    e.level_ko = r.level_ko ? r.level_ko : "";
+    // 보여 줄 이름 = 1위(상위어로 올리면 정답률이 조금 떨어짐 — 상위어는 general 로 따로)
+    e.level = r.top[0].en ? r.top[0].en : "";
+    e.level_ko = r.top[0].ko ? r.top[0].ko : "";
+    if (r.rolled) {
+      e.general = r.level_en ? r.level_en : "";
+      e.general_ko = r.level_ko ? r.level_ko : "";
+    }
     e.score = r.level_score;
     e.prob = r.prob;
     e.margin = r.margin;
@@ -137,7 +147,7 @@ bool NameCache::save(const std::string& dir) const {
   j["objects"] = nlohmann::json::object();
   for (const auto& [id, e] : obj)
     j["objects"]["O" + std::to_string(id)] = {{"emb_sha", e.emb_sha}, {"en", pairs(e.en)},     {"ko", pairs(e.ko)},
-                                              {"level", e.level},     {"level_ko", e.level_ko}, {"score", r4(e.score)},
+                                              {"level", e.level},     {"level_ko", e.level_ko}, {"general", e.general}, {"general_ko", e.general_ko}, {"score", r4(e.score)},
                                               {"prob", r4(e.prob)},   {"margin", r4(e.margin)}, {"rolled", e.rolled},
                                               {"structural", e.structural}};
   const std::string s = j.dump(1);
@@ -156,8 +166,8 @@ std::string NameCache::nodeMeta(uint32_t id, const std::string& emb_sha, double 
   std::string out = "\"emb\":" + m["emb"].dump();
   if (const NameEntry* e = get(id)) {
     nlohmann::json n = {{"en", e->level},           {"ko", e->level_ko},     {"score", r4(e->score)},
-                        {"prob", r4(e->prob)},      {"top1_en", e->en.empty() ? "" : e->en[0].first},
-                        {"top1_ko", e->ko.empty() ? "" : e->ko[0].first},    {"rolled", e->rolled},
+                        {"prob", r4(e->prob)},      {"general", e->general},
+                        {"general_ko", e->general_ko},    {"rolled", e->rolled},
                         {"structural", e->structural}, {"table", table_sha}, {"top", pairs(e->en)}};
     out += ",\"names\":" + n.dump();
   }

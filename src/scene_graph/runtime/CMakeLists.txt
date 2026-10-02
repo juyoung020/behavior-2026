@@ -15,15 +15,17 @@ endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../scenemap ${CMAKE_BINARY_DIR}/scenemap)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../ovdet ${CMAKE_BINARY_DIR}/ovdet)
+# 물체 영상 임베딩(SigLIP 2 TensorRT + 라벨 찾기, src/scene_graph/clip) — SGRT_CLIP 이면 켜짐
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../clip ${CMAKE_BINARY_DIR}/clip)
 
 add_library(sgrt_crop STATIC src/crop.cu)
 set_target_properties(sgrt_crop PROPERTIES POSITION_INDEPENDENT_CODE ON CUDA_RUNTIME_LIBRARY Static)
 target_link_libraries(sgrt_crop PUBLIC scenemap CUDA::cudart_static)
 target_compile_options(sgrt_crop PRIVATE -O3)
 
-add_library(sgrt SHARED src/sgrt.cpp)
-target_include_directories(sgrt PUBLIC include)
-target_link_libraries(sgrt PRIVATE sgrt_crop scenemap ovdet)
+add_library(sgrt SHARED src/sgrt.cpp src/sgrt_clip.cpp)
+target_include_directories(sgrt PUBLIC include PRIVATE ../clip/src)
+target_link_libraries(sgrt PRIVATE sgrt_crop scenemap ovdet sgclip)
 target_compile_options(sgrt PRIVATE -Wall -Wextra)
 
 # best view 장치 자르기 시험(작은 GPU 시험): 호스트 식과 같은지, 시간

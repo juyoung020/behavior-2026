@@ -21,6 +21,7 @@
 #include "scenemap.h"
 #include "scenemap/bestview.hpp"
 #include "scenemap/timing.hpp"
+#include "sgrt_clip.hpp"
 
 constexpr int kClosedVocabMax = 200;   // 이 이하 어휘 = 닫힌 어휘 엔진(COCO-80), 기본으로 어휘 전부
 
@@ -60,6 +61,8 @@ struct sgrt {
   std::condition_variable scv;
   bool save_req = false, save_quit = false, save_busy = false;
   int32_t n_save_skipped = 0;
+  sgrt_clip::ClipMem clip;          // 물체 영상 임베딩(SGRT_CLIP 이면 켜짐)
+  std::vector<std::string> name_buf;  // sgrt_object_names 문자열
 };
 
 namespace {
@@ -212,6 +215,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
         s->save_busy = false;
       }
     });
+  s->clip.init(s->out_dir);
   if (const char* rp = std::getenv("SGRT_RECORD")) {
     s->rec = std::fopen(rp, "wb");
     if (s->rec) {
@@ -252,6 +256,7 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
   const bool all = m == "all" || (m != "task" && V <= kClosedVocabMax) || !prompt || n <= 0;
   const int found = ovd_set_prompt(s->det, prompt, n, err, err_len);   // 어휘 밖 이름은 err 에 적히고 번호는 유지(검출 안 됨)
   sm_reset(s->sm);
+  s->clip.reset();
   s->labels.clear();
   if (all) {   // 엔진 어휘 전부(순서 = 엔진 번호). 과제 이름 중 어휘 밖의 것은 위 err 에 남음
     ovd_set_prompt(s->det, nullptr, 0, nullptr, 0);
@@ -330,9 +335,11 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     const sm_rgb_source src{&cropCb, &gatherCb, &cs};
     rc = d ? sm_push_image_rgb(s->sm, &si, d, &src) : sm_push_image(s->sm, &si, nullptr);
     s->kf_ms = float(msSince(t1));
+    if (d) s->clip.keyframe(im_stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d, s->sm);   // 새·좋아진 물체만, 비동기
     s->n_kf++;
     s->n_det = d ? d->n : 0;
   }
+  s->clip.poll();
   s->step++;
   if (stamp - s->last_save >= s->cfg.save_s) {
     s->last_save = stamp;
@@ -353,6 +360,7 @@ int sgrt_save(sgrt* s) {
   if (!s) return -1;
   const auto t0 = std::chrono::steady_clock::now();
   sm_save_stats st{};
+  s->clip.save(s->out_dir, s->sm);   // emb·이름 캐시 → sm_set_object_meta(아래 scene.json 에 들어감)
   const int rc = sm_save_dsg_ex(s->sm, s->out_dir.c_str(), &st);   // 바뀐 best view 만 PNG 로
   s->save_ms = float(msSince(t0));
   s->n_png = st.n_png;
@@ -487,6 +495,49 @@ int sgrt_reset_stage_timing(sgrt* s) {
   if (!s) return -1;
   s->tm.clear();
   return sm_reset_timing(s->sm);
+}
+
+}  // extern "C"
+
+extern "C" {
+
+int sgrt_clip_enabled(const sgrt* s) { return s && s->clip.on() ? 1 : 0; }
+
+int sgrt_object_embedding(sgrt* s, uint32_t id, float* out) { return s ? s->clip.embedding(id, out) : -1; }
+
+int sgrt_query_embedding(sgrt* s, const float* q, int32_t k, uint32_t* ids, float* scores) {
+  return s ? s->clip.query(q, k, ids, scores, s->sm) : -1;
+}
+
+int sgrt_query_label(sgrt* s, const char* text, int32_t k, uint32_t* ids, float* scores) {
+  return s ? s->clip.queryText(text, k, ids, scores, s->sm) : -1;
+}
+
+int sgrt_object_names(sgrt* s, uint32_t id, sgrt_name* out, int32_t cap, const char** level_en, const char** level_ko, int32_t* structural) {
+  if (!s) return -1;
+  std::vector<std::pair<std::string, std::string>> nk;
+  std::vector<float> sc;
+  std::string lv, lk;
+  int st = 0;
+  if (!s->clip.names(id, &nk, &sc, &lv, &lk, &st)) return 0;
+  s->name_buf.clear();
+  for (auto& [e, k] : nk) s->name_buf.push_back(e), s->name_buf.push_back(k);
+  s->name_buf.push_back(lv);
+  s->name_buf.push_back(lk);
+  const int n = std::min<int>(cap, int(nk.size()));
+  for (int i = 0; i < n && out; ++i) out[i] = sgrt_name{s->name_buf[2 * i].c_str(), s->name_buf[2 * i + 1].c_str(), sc[i]};
+  if (level_en) *level_en = s->name_buf[s->name_buf.size() - 2].c_str();
+  if (level_ko) *level_ko = s->name_buf.back().c_str();
+  if (structural) *structural = st;
+  return n;
+}
+
+int sgrt_get_clip_stats(const sgrt* s, sgrt_clip_stats* o) {
+  if (!s || !o) return -1;
+  const sgrt_clip::Stats t = s->clip.stats();
+  *o = sgrt_clip_stats{s->clip.on() ? 1 : 0, t.n_objects, t.n_named, t.n_submitted, t.n_done, t.n_dropped, t.last_batch,
+                       t.crop_ms, t.net_ms, t.submit_us, t.names_us, t.save_ms};
+  return 0;
 }
 
 }  // extern "C"

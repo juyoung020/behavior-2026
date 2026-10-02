@@ -80,3 +80,7 @@ target_link_libraries(sgclip_bench sgclip)
 add_executable(sgclip_names tools/sgclip_names.cpp)
 target_include_directories(sgclip_names PRIVATE src)
 target_link_libraries(sgclip_names sgclip)
+
+# 같은 C ABI 를 공유 라이브러리로(파이썬 ctypes 평가·agent 쪽 도구용): libsgclip_c.so
+add_library(sgclip_c SHARED tools/empty.cpp)
+target_link_libraries(sgclip_c PRIVATE -Wl,--whole-archive sgclip -Wl,--no-whole-archive)

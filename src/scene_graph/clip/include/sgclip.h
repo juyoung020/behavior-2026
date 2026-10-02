@@ -6,7 +6,8 @@
  *                 sgc_submit 은 자르기 커널이 원본을 다 읽을 때까지만 기다리고(수십 µs) 돌아온다. 결과는 sgc_poll.
  *                 처음 몇 번(배치 크기별 CUDA graph 잡기) 뒤에는 프레임마다 메모리를 잡지 않는다.
  *   라벨 쪽(CPU): 라벨 표 폴더(training/embed/README.md "라벨 표 형식": manifest.json · table.jsonl · text_siglip2_b32.f16) →
- *                 IVF(128-d PCA 공간, 256 묶음) + 128-bit 부호 해밍 → 상위 32 개만 768-d FP16 으로 다시 매김(AVX2 / NEON / 일반).
+ *                 IVF(128-d PCA 공간, 256 묶음) → (선택 128-bit 부호 해밍 거름) → 128-d FP16 점수 상위 32 → 768-d FP16 다시 매김
+ *                 (AVX2 / NEON / 일반).
  *                 색인은 표 sha 별 파일로 캐시(index_dir/labels_<sha>.idx). 확신이 낮으면 WordNet 상위어로 올림.
  *
  * TensorRT 8.2(JetPack 4.6, Nano) 와 10(PC) 둘 다 빌드된다(src/encoder.cpp 의 NV_TENSORRT_MAJOR 분기).
@@ -89,6 +90,7 @@ typedef struct {
   int32_t rerank;           /* 해밍 상위 몇 개를 768-d 로 다시 매길지(32) */
   int32_t exact;            /* 1: 표 전체 768-d(기준, 느림) */
   int32_t main_only;        /* 1: tier "main"(집 물건 주 표)만 */
+  int32_t prefilter;        /* > 0: 128-bit 해밍으로 이 수까지 먼저 거름(0 = 묶음 후보 전부 128-d 점수) */
 } sgc_lookup_params;
 void sgc_default_lookup(sgc_lookup_params* p);
 
@@ -114,6 +116,9 @@ typedef struct {
 
 /* dir = 라벨 표 폴더. index_dir 에 labels_<sha>.idx 가 있으면 읽고, 없으면 만들어 씀(NULL = 캐시 없이 메모리에만). */
 sgc_labels* sgc_labels_open(const char* dir, const char* index_dir, char* err, size_t err_len);
+/* img_sample: N × 768 FP16 영상 임베딩 표본(질의 분포, 예: LVIS crop 1만 개). 있으면 128-d 투영을 영상 분포 PCA 로 맞추고
+ * 질의에서 표본 평균을 뺀다(1단계 순위가 훨씬 좋아짐). sgc_labels_open 은 환경 변수 SGC_IMG_SAMPLE 을 쓴다. 색인 파일 이름에 표본 sha */
+sgc_labels* sgc_labels_open_ex(const char* dir, const char* index_dir, const char* img_sample, char* err, size_t err_len);
 void sgc_labels_close(sgc_labels*);
 const char* sgc_labels_sha(const sgc_labels*);       /* manifest sha(16 자) */
 const char* sgc_labels_name(const sgc_labels*);      /* "objects-v1" */

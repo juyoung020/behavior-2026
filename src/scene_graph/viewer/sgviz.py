@@ -71,12 +71,26 @@ class ObjInfo:
     metadata: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
+    def names(self) -> Dict[str, Any]:
+        """SigLIP 2 names cached by the runtime (scene.json metadata.names: en, ko, score, general, top, table)."""
+        n = self.metadata.get("names")
+        return n if isinstance(n, dict) else {}
+
+    @property
+    def display_name(self) -> str:
+        """Detector name, or the embedding name when the segmenter is class-agnostic (FastSAM: "object")."""
+        en = self.names.get("en")
+        if en and self.name in ("", "object"):
+            return en
+        return self.name
+
+    @property
     def label(self) -> str:
-        return f"{self.name}#{self.id}"
+        return f"{self.display_name}#{self.id}"
 
     def draw_sig(self):
         """Fields that affect the 3D drawing."""
-        return (self.name, self.pos, self.state, self.structural, self.is_active,
+        return (self.display_name, self.pos, self.state, self.structural, self.is_active,
                 self.first_pos, self.bbox_dims, self.bbox_center, repr(self.points))
 
     def full_sig(self):
@@ -687,6 +701,13 @@ class SgViewer(ViserRenderer):
             self.g_depth = gui.add_image(blank, label="Depth crop (near bright)", visible=False)
             self.g_dstats = gui.add_markdown("", visible=False)
         self.g_select.on_update(lambda _: self._on_dropdown())
+        # text search over object embeddings: tools/text_query.py --serve (SigLIP 2 text tower, off-board)
+        self.query_url = os.environ.get("SGVIZ_QUERY_URL", "http://127.0.0.1:8091")
+        with gui.add_folder("Search (text -> objects)", expand_by_default=True):
+            self.g_query = gui.add_text("Query", initial_value="")
+            self.g_qbtn = gui.add_button("Search")
+            self.g_qres = gui.add_markdown(f"e.g. radio, 라디오, 흰 의자 — server `{self.query_url}`")
+        self.g_qbtn.on_click(lambda _: self._search(self.g_query.value))
 
         # click anywhere in the 3D view -> ray pick over the object clouds/spheres
         @self.server.scene.on_click()
@@ -746,6 +767,28 @@ class SgViewer(ViserRenderer):
         finally:
             self._suppress_dropdown = False
 
+    def _search(self, q: str):
+        q = (q or "").strip()
+        if not q:
+            return
+        import urllib.parse
+        import urllib.request
+        url = f"{self.query_url}/search?" + urllib.parse.urlencode({"mem": os.path.abspath(self.dir), "q": q, "k": 5})
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                res = json.loads(r.read().decode("utf-8"))
+        except Exception as ex:
+            self.g_qres.content = f"search failed: {ex} — start `tools/text_query.py --serve 8091` (src/scene_graph/clip)"
+            return
+        hits = res.get("hits") or []
+        lines = [f"**{q}**", "", "| # | object | name | cos |", "|---|---|---|---|"]
+        for i, h in enumerate(hits):
+            nm = h.get("name", "") + (f" / {h['name_ko']}" if h.get("name_ko") else "")
+            lines.append(f"| {i + 1} | #{h['id']} | {nm} | {float(h['score']):.3f} |")
+        self.g_qres.content = "\n".join(lines) if hits else f"**{q}**: no objects with embeddings yet"
+        if hits and self.scene is not None and hits[0]["id"] in self.scene.objects:
+            self.select(hits[0]["id"])
+
     def _render_panel(self):
         sc = self.scene
         o = sc.objects.get(self.selected) if (sc and self.selected is not None) else None
@@ -758,7 +801,7 @@ class SgViewer(ViserRenderer):
         f3 = lambda v: "-" if v is None else "(" + ", ".join(f"{x:.3f}" for x in v) + ")"
         rels = relations_of(sc, o.id)
         lines = [
-            f"**{o.name}** #{o.id} (`{o.sym}`)",
+            f"**{o.display_name}** #{o.id} (`{o.sym}`)",
             "",
             "| | |", "|---|---|",
             f"| state | **{o.state}**{' (structural)' if o.structural else ''}{' handled' if o.handled else ''} |",
@@ -770,6 +813,19 @@ class SgViewer(ViserRenderer):
             f"| bbox | {f3(o.bbox_dims)} |",
             f"| relations | {'; '.join(rels) if rels else '-'} |",
         ]
+        nm = o.names
+        if nm:
+            ko = f" / {nm['ko']}" if nm.get("ko") else ""
+            lines.append(f"| name (SigLIP 2) | **{nm.get('en', '')}{ko}** {float(nm.get('score', 0)):.3f} |")
+            if nm.get("general"):
+                lines.append(f"| general | {nm['general']}{' / ' + nm['general_ko'] if nm.get('general_ko') else ''} |")
+            top = nm.get("top") or []
+            if top:
+                lines.append("| top | " + ", ".join(f"{t[0]} {float(t[1]):.3f}" for t in top[:5]) + " |")
+            lines.append(f"| labels | `{nm.get('table', '')}`{' structural' if nm.get('structural') else ''} |")
+        emb = o.metadata.get("emb")
+        if isinstance(emb, dict):
+            lines.append(f"| embedding | `{emb.get('path', '')}` {emb.get('dim', '')}-d {emb.get('dtype', '')} sha `{emb.get('sha', '')}` |")
         if o.points:
             n = o.points.get("n", "?")
             vx = o.points.get("voxel")
