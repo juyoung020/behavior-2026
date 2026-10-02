@@ -236,6 +236,18 @@ int sm_snap_room_grid(const sm_snapshot_t*, sm_room_grid* out);            /* 0 
 uint32_t sm_snap_room_at(const sm_snapshot_t*, const double p[2]);         /* 0 = 방 없음 */
 uint32_t sm_snap_object_room(const sm_snapshot_t*, uint32_t obj_id);       /* 0 = 방 없음/물체 없음 */
 
+
+/* ---- 마지막 가상 스캔(추가 ABI): 머리 깊이 → 베이스 기준 2D 스캔(높이 띠 0.10–1.80 m 장애물 점, 장애물 없는 광선 끝).
+ * 지도에 아직 안 들어간(모르는) 방향의 살아 있는 깊이 여유를 재는 데 쓴다. pose = 그 keyframe 의 map 자세(stamp = 영상 시각).
+ * 0 = 있음, 1 = 아직 없음. 배열은 스냅숏 수명 동안. */
+typedef struct {
+  sm_pose2 pose;
+  float ox, oy;                /* 광선 시작(카메라의 베이스 기준 수평 위치) */
+  int32_t n_hit;  const float* hx; const float* hy;     /* 장애물 점(베이스 기준 m) */
+  int32_t n_free; const float* fx; const float* fy;     /* 빈 광선 끝(베이스 기준 m) */
+} sm_scan2;
+int sm_snap_scan(const sm_snapshot_t*, sm_scan2* out);
+
 #ifdef __cplusplus
 }
 #endif

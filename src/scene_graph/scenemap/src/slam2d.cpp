@@ -66,6 +66,9 @@ KeyframeStats Slam2D::keyframe(const DepthView& d, const BodyState& b, const Pos
     st.inserted = true;
   }
   const auto t3 = Clock::now();
+  last_scan_.ox = s.ox; last_scan_.oy = s.oy;
+  last_scan_.hx = s.hx; last_scan_.hy = s.hy; last_scan_.fx = s.fx; last_scan_.fy = s.fy;
+  last_scan_pose_ = pose;
   kf_ = pose;
   delta_ = Pose2{};
   vmax_ = wmax_ = 0;

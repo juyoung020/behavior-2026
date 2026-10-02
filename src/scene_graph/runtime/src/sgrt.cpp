@@ -32,6 +32,7 @@ struct sgrt {
   float gather_ms = 0;            // 마지막 keyframe: 구름 점 색 모으기(장치 → 호스트)
   int32_t n_points = 0;
   sgrt_crop::Gpu* crop = nullptr; // 처음 장치 영상이 올 때 만듦
+  sm_snapshot_t* map_snap = nullptr; // sgrt_map 이 넘긴 포인터의 주인
 };
 
 namespace {
@@ -119,6 +120,7 @@ void sgrt_destroy(sgrt* s) {
   if (s->det) ovd_destroy(s->det);
   if (s->sm) sm_destroy(s->sm);
   sgrt_crop::destroy(s->crop);
+  sm_snapshot_release(s->map_snap);
   delete s;
 }
 
@@ -233,6 +235,42 @@ void sgrt_get_timing(const sgrt* s, sgrt_timing* t) {
   t->n_ply = s->n_ply;
   t->gather_ms = s->gather_ms;
   t->n_points = s->n_points;
+}
+
+int sgrt_map(sgrt* s, sgrt_map_view* out) {
+  if (!s || !out) return -1;
+  sm_snapshot_t* snap = nullptr;
+  if (sm_snapshot(s->sm, &snap) != 0 || !snap) return -2;
+  sm_snapshot_release(s->map_snap);
+  s->map_snap = snap;
+  *out = sgrt_map_view{};
+  const sm_pose2 p = sm_snap_pose(snap);
+  out->stamp = p.stamp;
+  out->pose[0] = p.x; out->pose[1] = p.y; out->pose[2] = p.yaw;
+  sm_grid g{};
+  sm_snap_map(snap, &g);
+  out->res = g.resolution;
+  out->origin[0] = g.origin[0]; out->origin[1] = g.origin[1];
+  out->w = g.width; out->h = g.height;
+  out->cells = g.cells;
+  sm_room_grid rg{};
+  if (sm_snap_room_grid(snap, &rg) == 0 && rg.ids) {
+    out->room_res = rg.resolution;
+    out->room_origin[0] = rg.origin[0]; out->room_origin[1] = rg.origin[1];
+    out->room_w = rg.width; out->room_h = rg.height;
+    out->room_ids = rg.ids;
+  }
+  const sm_room* rooms = nullptr;
+  out->n_rooms = sm_snap_rooms(snap, &rooms);
+  if (out->n_rooms < 0) out->n_rooms = 0;
+  sm_scan2 sc{};
+  if (sm_snap_scan(snap, &sc) == 0) {
+    out->scan_pose[0] = sc.pose.x; out->scan_pose[1] = sc.pose.y; out->scan_pose[2] = sc.pose.yaw;
+    out->scan_origin[0] = sc.ox; out->scan_origin[1] = sc.oy;
+    out->n_hit = sc.n_hit; out->hit_x = sc.hx; out->hit_y = sc.hy;
+    out->n_free = sc.n_free; out->free_x = sc.fx; out->free_y = sc.fy;
+  }
+  return 0;
 }
 
 }  // extern "C"

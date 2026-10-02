@@ -63,6 +63,30 @@ typedef struct {
 } sgrt_timing;
 void   sgrt_get_timing(const sgrt*, sgrt_timing* out);
 
+
+/* 지도 보기(탐색·안전 정지용): 지금 스냅숏의 2D 점유 격자·자세·방 격자. 포인터는 다음 sgrt_map 이나 sgrt_destroy 까지 유효.
+ * cells[y·w + x]: −1 모름, 0..100 점유 %(scenemap sm_snap_map 그대로), 칸 (x, y) 왼쪽 아래 = origin + (x, y)·res.
+ * pose = map 기준 로봇 베이스 (x, y, yaw rad). room_ids 는 방 나누기가 없으면 NULL. 반환 0 = 성공. */
+typedef struct {
+  double stamp;
+  double pose[3];
+  double res;
+  double origin[2];
+  int32_t w, h;
+  const int8_t* cells;
+  double room_res;
+  double room_origin[2];
+  int32_t room_w, room_h;
+  const uint32_t* room_ids;
+  int32_t n_rooms;
+  /* 마지막 keyframe 가상 스캔(scenemap sm_snap_scan): 베이스 기준 m, scan_pose = 그때 map 자세. n = 0 이면 없음 */
+  double scan_pose[3];
+  float scan_origin[2];
+  int32_t n_hit;  const float* hit_x; const float* hit_y;
+  int32_t n_free; const float* free_x; const float* free_y;
+} sgrt_map_view;
+int    sgrt_map(sgrt*, sgrt_map_view* out);
+
 #ifdef __cplusplus
 }
 #endif

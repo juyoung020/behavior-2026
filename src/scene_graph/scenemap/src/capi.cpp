@@ -136,6 +136,10 @@ struct sm_snapshot_t {
   RoomNaming rnames;
   std::vector<sm_room> rooms;
   std::vector<sm_room_door> rdoors;
+  // 마지막 가상 스캔(베이스 기준) + 그때 map 자세
+  sm_pose2 scan_pose{};
+  float scan_ox = 0, scan_oy = 0;
+  std::vector<float> scan_hx, scan_hy, scan_fx, scan_fy;
 };
 
 namespace {
@@ -507,6 +511,13 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->w = gr.width();
     s->h = gr.height();
     s->cells = gr.export8();
+    {
+      const Scan2& sc = c->slam.lastScan();
+      const Pose2 sp = c->slam.lastScanPose();
+      s->scan_pose = sm_pose2{c->st.last_image_stamp, sp.x, sp.y, sp.th};
+      s->scan_ox = sc.ox; s->scan_oy = sc.oy;
+      s->scan_hx = sc.hx; s->scan_hy = sc.hy; s->scan_fx = sc.fx; s->scan_fy = sc.fy;
+    }
     s->voxel = c->om.params().voxel;
     for (const MapObject& o : c->om.objects()) {
       if (!o.confirmed) continue;
@@ -645,6 +656,17 @@ int sm_snap_movable(const sm_snapshot_t* s, uint32_t id) {
   for (size_t i = 0; i < s->objs.size(); ++i)
     if (s->objs[i].id == id) return s->movable[i];
   return -1;
+}
+
+int sm_snap_scan(const sm_snapshot_t* s, sm_scan2* out) {
+  if (!s || !out) return -1;
+  out->pose = s->scan_pose;
+  out->ox = s->scan_ox; out->oy = s->scan_oy;
+  out->n_hit = int32_t(s->scan_hx.size());
+  out->hx = s->scan_hx.data(); out->hy = s->scan_hy.data();
+  out->n_free = int32_t(s->scan_fx.size());
+  out->fx = s->scan_fx.data(); out->fy = s->scan_fy.data();
+  return out->n_hit + out->n_free > 0 ? 0 : 1;
 }
 
 int sm_snap_map(const sm_snapshot_t* s, sm_grid* out) {

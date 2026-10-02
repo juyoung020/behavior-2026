@@ -65,6 +65,9 @@ class Slam2D {
 
   Pose2 pose() const { return compose(kf_, delta_); }
   const OccGrid& grid() const { return grid_; }
+  // 마지막 keyframe 의 가상 스캔(베이스 기준 장애물 점·빈 광선 끝)과 그때 자세 — 탐색 안전 정지(살아 있는 깊이)용
+  const Scan2& lastScan() const { return last_scan_; }
+  Pose2 lastScanPose() const { return last_scan_pose_; }
 
  private:
   int matchB(const Scan2& s, const Pose2& pred, const double sig[3], Pose2* out) const;
@@ -76,6 +79,8 @@ class Slam2D {
   AttachFilter att_;
   Pose2 kf_, delta_, odom_;   // odom_: 적분만 한 자세(붙은 것 판정용 — 보정과 독립)
   bool first_ = true;
+  Scan2 last_scan_;
+  Pose2 last_scan_pose_;
   Pose2 last_ins_;
   int since_ins_ = 0;
   double vmax_ = 0, wmax_ = 0;   // 지난 keyframe 뒤 속도 최대
