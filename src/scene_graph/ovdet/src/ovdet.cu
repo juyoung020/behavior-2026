@@ -235,11 +235,13 @@ __global__ void __launch_bounds__(256) k_bits(const float* o0, int A, int coef_r
   for (int i = threadIdx.x; i < kMaxLanes * 4; i += blockDim.x) sb[i / 4][i % 4] = L->box[i] * g;
   for (int i = threadIdx.x; i < kMaxLanes; i += blockDim.x) sv[i] = L->valid[i];
   __syncthreads();
-  const int p = blockIdx.x * blockDim.x + threadIdx.x;  // Ph*Pw is a multiple of 256
-  const int y = p / Pw, x = p % Pw;
+  // 격자 칸 수가 256 의 배수가 아니어도 됨(416 입력: 104×104): 끝 블록의 남는 스레드는 0 비트로 ballot 에 참여
+  const int P = Ph * Pw, p = blockIdx.x * blockDim.x + threadIdx.x;
+  const bool live = p < P;
+  const int y = live ? p / Pw : 0, x = live ? p % Pw : 0;
   float pr[kProtoC];
-  for (int k = 0; k < kProtoC; ++k) pr[k] = o1[(size_t)k * Ph * Pw + p];
-  const bool inimg = y >= rt && y < rb && x >= rl && x < rr;
+  for (int k = 0; k < kProtoC; ++k) pr[k] = live ? o1[(size_t)k * P + p] : 0.f;
+  const bool inimg = live && y >= rt && y < rb && x >= rl && x < rr;
   const float fx = (float)x, fy = (float)y;
   for (int l = 0; l < kMaxLanes; ++l) {
     if (!sv[l]) continue;
@@ -247,7 +249,7 @@ __global__ void __launch_bounds__(256) k_bits(const float* o0, int A, int coef_r
     for (int k = 0; k < kProtoC; ++k) v = fmaf(co[l][k], pr[k], v);
     const bool b = v > 0.f && inimg && fx >= sb[l][0] && fx < sb[l][2] && fy >= sb[l][1] && fy < sb[l][3];
     const unsigned w = __ballot_sync(kFull, b);
-    if ((threadIdx.x & 31) == 0) bits[(size_t)l * (Ph * Pw / 32) + (p >> 5)] = w;
+    if ((threadIdx.x & 31) == 0 && (p >> 5) < (P + 31) / 32) bits[(size_t)l * ((P + 31) / 32) + (p >> 5)] = w;
   }
 }
 
@@ -469,8 +471,8 @@ OvdHandle* ovd_create(const OvdConfig* cfg, char* err, size_t err_len) {
     h->Ph = (int)s1[2];
     h->Pw = (int)s1[3];
     h->nc = h->rows - 4 - kProtoC;
-    h->words = h->Ph * h->Pw / 32;
-    if (h->nc < 1 || (h->Ph * h->Pw) % 256) throw std::runtime_error("unsupported head shape");
+    h->words = (h->Ph * h->Pw + 31) / 32;   // sm_detections 약속: ceil(mask_w·mask_h / 32) 워드
+    if (h->nc < 1) throw std::runtime_error("unsupported head shape");
     if (!cfg->names) throw std::runtime_error("the names file (<engine>.names.txt) is required");
     h->vocab = readLines(cfg->names);
     if ((int)h->vocab.size() != h->nc)
@@ -607,7 +609,7 @@ const sm_detections* ovd_detect(OvdHandle* h, const OvdImage* im, OvdTiming* tim
     const float g = (float)h->Pw / h->Sw;  // canvas pixel -> grid cell
     const int rt = (int)std::floor(L.top * g), rb = (int)std::ceil((L.top + L.nh) * g);
     const int rl = (int)std::floor(L.left * g), rr = (int)std::ceil((L.left + L.nw) * g);
-    k_bits<<<h->Ph * h->Pw / 256, 256, 0, s>>>(h->o0.p, h->A, 4 + h->nc, h->o1.p, h->Ph, h->Pw, g, h->lanes.p, rt, rb, rl, rr,
+    k_bits<<<(h->Ph * h->Pw + 255) / 256, 256, 0, s>>>(h->o0.p, h->A, 4 + h->nc, h->o1.p, h->Ph, h->Pw, g, h->lanes.p, rt, rb, rl, rr,
                                              h->bits.p);
     k_area<<<kMaxLanes, 256, 0, s>>>(h->bits.p, h->words, h->lanes.p, c.area_min, c.small_area, c.small_conf);
     if (c.mask_iou > 0) {

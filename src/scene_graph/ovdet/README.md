@@ -53,6 +53,20 @@ A prompt switches classes on and off. YOLOE's class scores are independent sigmo
 ~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx/yoloe-11l-all.onnx                                              # GPU lock
 ```
 
+### Closed-vocabulary YOLO-seg engines (YOLO11 / YOLO26, COCO-80)
+
+The same code runs Ultralytics YOLO11-seg and YOLO26-seg engines. Their head has the same layout as YOLOE: `output0` 1 x (4 + 80 + 32) x A and `output1` 1 x 32 x h x w.
+
+- **Export:** use `end2end=False`. That is the default ONNX export for these models (metadata `end2end: False`), so ovdet runs its own CUDA NMS. The NMS-free YOLO26 end2end output is not used.
+- **Input size:** taken from the engine, for example 640 or 416. The mask grid can be any size, such as 104 x 104 for a 416 input.
+- **Names:** `config/coco80.txt`, copied next to the plan as `<plan>.names.txt` (`build_engines.py --names`).
+- **Prompt:** prompt names are matched to the 80 classes; names that are not found are reported in `err`. A NULL prompt means all classes. sgrt uses all classes for closed-vocabulary engines (`SGRT_PROMPT`, see `runtime/include/sgrt.h`).
+
+```
+cd ~/ovdet_models/onnx416 && ~/ovdet_export_venv/bin/python -c "from ultralytics import YOLO; YOLO('../pt/yolo26s-seg.pt').export(format='onnx', imgsz=416, opset=13, end2end=False)"
+~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx416/yolo26s-seg-416.onnx --names config/coco80.txt --workspace-gb 1
+```
+
 ## Build (Linux / WSL; CUDA 12.8, TensorRT 10)
 
 ```
