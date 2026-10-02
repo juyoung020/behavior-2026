@@ -27,6 +27,9 @@ def main():
     g.add_argument("--script", help="JSONL file of tool-call arguments, run in order")
     ap.add_argument("--lib", default=None, help="libmove_robot.so (default: MOVE_ROBOT_LIB or the superproject build)")
     ap.add_argument("--log", default=None, help="append calls/results here (JSONL)")
+    ap.add_argument("--scene-out", default=None,
+                    help="object memory on (src/scene_graph/runtime, libsgrt): YOLO -> scenemap map/objects/graph -> files in this "
+                         "dir; needs --env-wrapper omnigibson.eval.wrappers.RGBDFullResWrapper. SGRT_POSE=gt|slam|odom picks the pose")
     args = ap.parse_args(argv[:split])
     eval_args = argv[split + 1:]
     if "--policy" in eval_args:
@@ -49,6 +52,20 @@ def main():
         orig_init(self, *a, **k)
         self.policy = MoveRobotPolicy(src, lib_path=args.lib, log_path=args.log)
         holder["p"] = self.policy
+        if args.scene_out:
+            sys.path.insert(0, str(HERE.parents[1] / "scene_graph" / "runtime" / "glue"))
+            from sgrt_glue import SceneMemory
+
+            task = eval_args[eval_args.index("--task-name") + 1]
+            mem = SceneMemory(task, args.scene_out)
+            holder["mem"] = mem
+            act = self.policy.act
+
+            def act_with_memory(obs, _act=act, _mem=mem):
+                _mem.step(obs)
+                return _act(obs)
+
+            self.policy.act = act_with_memory
 
     P.LocalPolicy.__init__ = init
     sys.argv = ["omnigibson.eval.eval", *eval_args, "--policy", "local"]
@@ -61,6 +78,9 @@ def main():
                 print(f"[move_robot] {len(src.calls)} call(s) not run (episode ended first)", flush=True)
         if "p" in holder:
             holder["p"].close()
+        if "mem" in holder:
+            print(f"[sgrt] {holder['mem'].stats()}", flush=True)
+            holder["mem"].close()
 
 
 if __name__ == "__main__":
