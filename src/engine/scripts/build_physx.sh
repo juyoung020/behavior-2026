@@ -16,8 +16,8 @@ if [ ! -d "$ROOT" ]; then
 fi
 cd "$ROOT/physx"
 
-# CUDA: /usr/local/cuda 링크는 다른 작업이 바꿀 수 있으니 12.8 을 직접 지정 (sm_120 = RTX 5070 Ti 지원 첫 버전)
-export CUDA_PATH=/usr/local/cuda-12.8
+# CUDA: 13.2 하나로 통일 (/usr/local/cuda 링크 대신 직접 지정)
+export CUDA_PATH=/usr/local/cuda-13.2
 export CUDACXX=$CUDA_PATH/bin/nvcc
 export PATH=$CUDA_PATH/bin:$PATH
 

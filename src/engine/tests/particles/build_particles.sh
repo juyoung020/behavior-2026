@@ -11,7 +11,7 @@ mkdir -p $B
 T=${@:-test_visual}
 for t in $T; do
   case $t in
-    *_gpu) /usr/local/cuda-12.8/bin/nvcc -std=c++17 -O2 -arch=sm_120 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false \
+    *_gpu) /usr/local/cuda-13.2/bin/nvcc -std=c++17 -O2 -arch=sm_120 -fmad=false -prec-div=true -prec-sqrt=true -ftz=false \
              --expt-relaxed-constexpr --extended-lambda -Xcompiler=-ffp-contract=off -I $E $E/tests/particles/$t.cu -o $B/$t ;;
     *) clang++ -std=c++17 -O2 -ffp-contract=off -fno-fast-math -I $E $E/tests/particles/$t.cpp -o $B/$t ;;
   esac

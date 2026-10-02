@@ -4,12 +4,12 @@
 #   ftprep       Rust  — mp4 packet index, per-frame tables, LUT grid
 #   libftcore.so C++/CUDA — NVDEC engine, colour-LUT and resize kernels, native loader, C ABI (no torch)
 #   ftbench      C++ — loader throughput without Python
-# Env: FT_WORK (default ~/fasttrain_work), CUDA_HOME (default /usr/local/cuda-12.8),
+# Env: FT_WORK (default ~/fasttrain_work), CUDA_HOME (default /usr/local/cuda-13.2),
 #      FT_CUDA_ARCH (default 120 = RTX 50xx; A100 80, H100 90), FT_NVHDR (nv-codec-headers include dir)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 FT_WORK=${FT_WORK:-$HOME/fasttrain_work}
-CUDA=${CUDA_HOME:-/usr/local/cuda-12.8}
+CUDA=${CUDA_HOME:-/usr/local/cuda-13.2}
 ARCH=${FT_CUDA_ARCH:-120}
 NVHDR=${FT_NVHDR:-$FT_WORK/third_party/nv-codec-headers/include}
 SRC=$FT_WORK/src/fasttrain

@@ -19,7 +19,7 @@ DATA=${DATA:-$HOME/data/2026-challenge-demos}
 CKPT=${CKPT:-$HOME/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio}   # init + norm stats (radio release)
 RUN=${RUN:-$HOME/pi05_runs}
 MODE=${MODE:-expert}
-export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda-12.8}
+export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda-13.2}
 export PATH=$CUDA_HOME/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH
 export FT_WORK=${FT_WORK:-$HOME/fasttrain_work} FT_CUDA_ARCH=89 PI05_ARCH="-gencode arch=compute_89,code=sm_89"
 export PYTHONPATH=$REPO/src${PYTHONPATH:+:$PYTHONPATH}

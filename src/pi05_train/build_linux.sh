@@ -6,7 +6,7 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 B=${1:-$HOME/pi05_train_build}
 NB=${PI05_NATIVE_BUILD:-$HOME/pi05_native_build}
-CUDA=${CUDA_HOME:-/usr/local/cuda-12.8}
+CUDA=${CUDA_HOME:-/usr/local/cuda-13.2}
 ARCH=${PI05_ARCH:-"-gencode arch=compute_120,code=sm_120"}
 NVCC="$CUDA/bin/nvcc -std=c++20 -O3 $ARCH -Xcompiler -fPIC,-O3 -lineinfo ${PI05_DEFS}"
 mkdir -p $B/obj

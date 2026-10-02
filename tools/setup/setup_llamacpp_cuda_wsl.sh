@@ -9,7 +9,7 @@ LOG=/mnt/c/behavior-2026/logs/setup_llamacpp_cuda_$(date +%Y%m%d_%H%M).log
 exec > >(tee -a "$LOG") 2>&1
 echo "== $(date) 시작"
 
-if [ ! -x /usr/local/cuda-12.8/bin/nvcc ]; then
+if [ ! -x /usr/local/cuda-13.2/bin/nvcc ]; then
   cd /tmp
   wget -q https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
   sudo dpkg -i cuda-keyring_1.1-1_all.deb
@@ -18,7 +18,7 @@ if [ ! -x /usr/local/cuda-12.8/bin/nvcc ]; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
       cuda-nvcc-$CUDA_VER cuda-cudart-dev-$CUDA_VER libcublas-dev-$CUDA_VER cuda-nvml-dev-$CUDA_VER
 fi
-export PATH=/usr/local/cuda-12.8/bin:$PATH
+export PATH=/usr/local/cuda-13.2/bin:$PATH
 nvcc --version | tail -2
 
 if [ ! -d ~/llama.cpp ]; then
