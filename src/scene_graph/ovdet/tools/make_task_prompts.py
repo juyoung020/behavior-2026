@@ -9,7 +9,7 @@ import json
 import os
 import re
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # repository root
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))   # repository root
 OUT = f'{ROOT}/src/scene_graph/ovdet/config/task_prompts.txt'
 SCENE = ['wall', 'floor', 'ceiling', 'door', 'window', 'rug', 'curtain', 'picture frame', 'lamp', 'plant',
          'staircase', 'railing', 'baseboard', 'light switch', 'electric outlet', 'radiator', 'sofa', 'shelf']

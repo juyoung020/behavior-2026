@@ -16,7 +16,7 @@ find_library(NVINFER nvinfer HINTS /usr/lib/x86_64-linux-gnu REQUIRED)
 find_library(CUDART_STATIC cudart_static HINTS ${OVDET_CUDA_ROOT}/lib64 ${OVDET_CUDA_ROOT}/targets/x86_64-linux/lib
              NO_DEFAULT_PATH REQUIRED)
 
-add_library(ovdet SHARED src/scene_graph/ovdet.cu)
+add_library(ovdet SHARED src/ovdet.cu)
 set_target_properties(ovdet PROPERTIES POSITION_INDEPENDENT_CODE ON CUDA_RUNTIME_LIBRARY Static
                       C_VISIBILITY_PRESET hidden)
 target_include_directories(ovdet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

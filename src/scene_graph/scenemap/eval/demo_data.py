@@ -12,7 +12,7 @@ import subprocess
 import numpy as np
 import pyarrow.parquet as pq
 
-ROOT = os.path.join(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..')), 'data', '2026-challenge-demos')
+ROOT = os.path.join(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..')), 'data', '2026-challenge-demos')
 CAM = 'zed_link_camera_0'
 SRC = 720
 CROP_Y0, CROP_H = 90, 540            # 720x720 → 720x540 (4:3)

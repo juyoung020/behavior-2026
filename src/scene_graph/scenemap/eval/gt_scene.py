@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # 저장소 루트
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))   # 저장소 루트
 INST = f'{ROOT}/BEHAVIOR-1K/datasets/2026-challenge-task-instances/scenes'
 ASSETS = f'{ROOT}/BEHAVIOR-1K/datasets/behavior-1k-assets/objects'
 DEMOS = f'{ROOT}/data/2026-challenge-demos'

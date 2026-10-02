@@ -19,7 +19,7 @@ import sys
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # 저장소 루트
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))   # 저장소 루트
 DEMOS = f'{ROOT}/data/2026-challenge-demos'
 RAW = f'{ROOT}/data/2026-challenge-rawdata'
 

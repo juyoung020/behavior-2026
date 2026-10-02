@@ -8,7 +8,7 @@ import json
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, '..', '..', 'integ', 'fk', 'r1pro_cam_fk.json')
+SRC = os.path.join(HERE, '..', '..', '..', 'sim', 'integ', 'fk', 'r1pro_cam_fk.json')
 OUT = os.path.join(HERE, '..', 'include', 'scenemap', 'r1pro_fk_table.hpp')
 KIND = {'fixed': 0, 'revolute': 1, 'prismatic': 2}
 
