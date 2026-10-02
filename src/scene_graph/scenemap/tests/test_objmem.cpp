@@ -5,6 +5,7 @@
 //   best view — 품질(넓이 × 점수) 최대·같으면 최근, 자른 그림 내용·상자
 //   저장     — PNG(서명·IHDR·zlib 풀어 화소 비교, 자체 디코더), scene.json 을 spark_dsg 로 다시 읽어 rgbd 메타데이터 확인,
 //              바뀐 모습만 다시 씀
+//   모양     — 점 구름이 map 의 참 자리(< 1 cm)·색, 한도, 들기(손 따라감)·사라짐(유지)·옮겨짐 잇기(새로), PLY·마스크 PNG
 //   시간     — keyframe 갱신, 저장(모습 바뀜 / 안 바뀜)
 // 사용: test_objmem [출력 디렉터리]
 #include <zlib.h>
@@ -388,6 +389,30 @@ static bool decodePng(const std::string& path, int* w, int* h, int* depth, int* 
   return true;
 }
 
+// binary_little_endian PLY(float x,y,z + uchar red,green,blue)만 읽음 — 머리 줄도 정확히 확인
+static bool readPly(const std::string& path, std::vector<float>* xyz, std::vector<uint8_t>* rgb) {
+  std::ifstream f(path, std::ios::binary);
+  std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  const size_t e = s.find("end_header\n");
+  if (e == std::string::npos) return false;
+  const std::string head = s.substr(0, e);
+  size_t n = 0;
+  if (std::sscanf(head.c_str(), "ply\nformat binary_little_endian 1.0\nelement vertex %zu", &n) != 1) return false;
+  const std::string want = "ply\nformat binary_little_endian 1.0\nelement vertex " + std::to_string(n) +
+                           "\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\n"
+                           "property uchar blue\n";
+  if (head != want) return false;
+  const char* p = s.data() + e + 11;
+  if (s.size() != e + 11 + n * 15) return false;
+  xyz->resize(3 * n);
+  rgb->resize(3 * n);
+  for (size_t i = 0; i < n; ++i, p += 15) {
+    std::memcpy(&(*xyz)[3 * i], p, 12);
+    std::memcpy(&(*rgb)[3 * i], p + 12, 3);
+  }
+  return true;
+}
+
 static std::string slurp(const fs::path& p) {
   std::ifstream f(p, std::ios::binary);
   return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -406,7 +431,11 @@ static void testSave(const std::string& dir) {
   double t0 = nowMs();
   CHECK(sm_save_dsg_ex(g.c, dir.c_str(), &st) == 0, "save failed");
   const double save1 = nowMs() - t0;
-  CHECK(st.n_png == 6, "first save png %d", st.n_png);
+  CHECK(st.n_png == 9 && st.n_ply == 3, "first save png %d ply %d", st.n_png, st.n_ply);
+  // 곧바로 다시 저장: 바뀐 것 없음 → PNG·PLY 안 씀
+  sm_save_stats st0{};
+  sm_save_dsg_ex(g.c, dir.c_str(), &st0);
+  CHECK(st0.n_png == 0 && st0.n_ply == 0, "unchanged save png %d ply %d", st0.n_png, st0.n_ply);
   // 같은 장면(품질 같음 → 최근으로 바뀜)이 아니라, 더 작은 점수로 다시 봄 → 모습 안 바뀜 → PNG 안 씀
   for (auto& r : rs) r.score = 0.3f;
   for (int k = 4; k < 8; ++k, ++nkf) kf_ms += g.kf(0.2 * k, rs);
@@ -414,17 +443,18 @@ static void testSave(const std::string& dir) {
   t0 = nowMs();
   CHECK(sm_save_dsg_ex(g.c, dir.c_str(), &st2) == 0, "save2 failed");
   const double save2 = nowMs() - t0;
-  CHECK(st2.n_png == 0, "clean save wrote %d png", st2.n_png);
+  CHECK(st2.n_png == 0 && st2.n_ply == 3, "clean save wrote %d png %d ply", st2.n_png, st2.n_ply);   // 구름은 새 관측으로 바뀜
   // 책만 더 잘 보임 → 책 두 장만
   rs[1].score = 0.99f;
   ++nkf;
   kf_ms += g.kf(1.8, rs);
   sm_save_stats st3{};
   sm_save_dsg_ex(g.c, dir.c_str(), &st3);
-  CHECK(st3.n_png == 2, "dirty save wrote %d png", st3.n_png);
-  std::printf("  keyframe 평균 %.3f ms (720², 검출 4), 저장 모습 바뀜(6 PNG) %.3f ms, 안 바뀜 %.3f ms, 하나 바뀜(2 PNG) %.3f ms\n",
-              kf_ms / nkf, save1, save2, st3.total_ms);
-  std::printf("  (sm_save_stats: 첫 저장 png %.3f ms / 전체 %.3f ms)\n", st.png_ms, st.total_ms);
+  CHECK(st3.n_png == 3, "dirty save wrote %d png", st3.n_png);
+  std::printf("  keyframe 평균 %.3f ms (720², 검출 4), 저장: 다 바뀜(PNG 9·PLY 3) %.3f ms, 안 바뀜 %.3f ms, 구름만(PLY 3) %.3f ms, "
+              "책 모습+구름(PNG 3·PLY %d) %.3f ms\n",
+              kf_ms / nkf, save1, st0.total_ms, save2, st3.n_ply, st3.total_ms);
+  std::printf("  (sm_save_stats 첫 저장: png %.3f ms, ply %.3f ms, 전체 %.3f ms)\n", st.png_ms, st.ply_ms, st.total_ms);
 
   // PNG 확인: 스냅숏 모습과 화소 비교
   Snap s(g.c);
@@ -444,15 +474,34 @@ static void testSave(const std::string& dir) {
     bool same = raw.size() == size_t(v.w) * v.h * 2;
     for (int i = 0; same && i < v.w * v.h; ++i) same = (uint16_t(raw[2 * i]) << 8 | raw[2 * i + 1]) == v.depth_mm[i];
     CHECK(same, "%s depth pixels", dp.c_str());
+    const fs::path mp = fs::path(dir) / "objects" / ("O" + std::to_string(o.id) + "_mask.png");
+    CHECK(decodePng(mp.string(), &w, &h, &bd, &ct, &raw), "decode %s", mp.c_str());
+    CHECK(w == v.w && h == v.h && bd == 8 && ct == 0 && v.mask, "%s IHDR %dx%d %d %d", mp.c_str(), w, h, bd, ct);
+    CHECK(v.mask && raw.size() == size_t(v.w) * v.h && std::memcmp(raw.data(), v.mask, raw.size()) == 0, "%s pixels", mp.c_str());
+    // PLY: 머리·점 = 스냅숏 구름(map)
+    sm_cloud cl{};
+    CHECK(sm_snap_points(s.s, o.id, &cl) == 1 && cl.n > 0, "cloud");
+    std::vector<float> xyz;
+    std::vector<uint8_t> col;
+    const fs::path pp = fs::path(dir) / "objects" / ("O" + std::to_string(o.id) + "_points.ply");
+    CHECK(readPly(pp.string(), &xyz, &col), "read %s", pp.c_str());
+    bool pts_same = int(xyz.size()) == 3 * cl.n;
+    for (int i = 0; pts_same && i < cl.n; ++i) {
+      const sm_cloud_pt& q = cl.pts[i];
+      pts_same = std::fabs(xyz[3 * i] - float(cl.origin[0] + q.x)) < 1e-6f && std::fabs(xyz[3 * i + 2] - float(cl.origin[2] + q.z)) < 1e-6f &&
+                 col[3 * i] == q.r && col[3 * i + 2] == q.b;
+    }
+    CHECK(pts_same, "%s points (%zu vs %d)", pp.c_str(), xyz.size() / 3, cl.n);
     ++checked;
   }
   CHECK(checked == 3, "views checked %d", checked);
-  std::printf("  PNG %d 쌍 디코드·화소 일치\n", checked);
+  std::printf("  PNG(rgb·depth·mask) %d 벌 디코드·화소 일치, PLY 점·색 일치\n", checked);
 
   // view.json 에 경로
   const std::string vj = slurp(fs::path(dir) / "view.json");
   CHECK(vj.find("\"rgbd\":{\"rgb\":\"objects/O") != std::string::npos, "view.json rgbd");
   CHECK(vj.find("\"movable\":") != std::string::npos, "view.json movable");
+  CHECK(vj.find("_mask.png\"}") != std::string::npos && vj.find("\"points\":{\"path\":\"objects/O") != std::string::npos, "view.json mask/points");
 
 #ifdef SM_TEST_SPARK_DSG
   using namespace spark_dsg;
@@ -485,6 +534,16 @@ static void testSave(const std::string& dir) {
         for (int i = 0; i < 12; ++i) dT = std::max(dT, std::fabs(r["cam_T"][i].get<double>() - v.cam_T[i]));
         CHECK(dT < 1e-5, "cam_T diff %.2e", dT);
       }
+      CHECK(r.contains("mask") && r["mask"].get<std::string>() == "objects/O" + std::to_string(oid) + "_mask.png", "rgbd.mask");
+      CHECK(m.contains("points"), "node points");
+      if (m.contains("points")) {
+        const auto& P = m["points"];
+        sm_cloud cl{};
+        sm_snap_points(s.s, oid, &cl);
+        CHECK(P["path"].get<std::string>() == "objects/O" + std::to_string(oid) + "_points.ply" && P["n"].get<int>() == cl.n &&
+                  std::fabs(P["voxel"].get<double>() - 0.02) < 1e-9 && std::fabs(P["stamp"].get<double>() - cl.stamp) < 1e-9,
+              "points meta");
+      }
       if (a.name == "sofa" && m.contains("movable")) CHECK(m["movable"].get<bool>() == false, "sofa movable");
       if (a.name == "cup" && m.contains("movable")) CHECK(m["movable"].get<bool>() == true, "cup movable");
     }
@@ -497,8 +556,151 @@ static void testSave(const std::string& dir) {
   sm_set_labels(g.c, kLabels.data(), int(kLabels.size()));
   sm_save_dsg(g.c, dir.c_str());
   int left = 0;
-  for (const auto& e : fs::directory_iterator(fs::path(dir) / "objects")) left += e.path().extension() == ".png";
+  for (const auto& e : fs::directory_iterator(fs::path(dir) / "objects")) left += e.path().extension() == ".png" || e.path().extension() == ".ply";
   CHECK(left == 0, "stale png after reset %d", left);
+}
+
+// ---- 6. 모양(점 구름) ----
+// 점 p(map) → 카메라 화소·깊이(cam_T = map ← 카메라 광학)
+static void project(const double T[12], const double p[3], double* u, double* v, double* z) {
+  const double d[3] = {p[0] - T[3], p[1] - T[7], p[2] - T[11]};
+  const double xc = T[0] * d[0] + T[4] * d[1] + T[8] * d[2];
+  const double yc = T[1] * d[0] + T[5] * d[1] + T[9] * d[2];
+  const double zc = T[2] * d[0] + T[6] * d[1] + T[10] * d[2];
+  *u = FX * xc / zc + CX;
+  *v = FX * yc / zc + CX;
+  *z = zc;
+}
+
+struct CloudCheck {
+  int n = 0;
+  double max_dz = 0;           // 깊이 오차 m
+  int outside = 0;             // 사각형 밖으로 투영된 점
+  int wrong_rgb = 0;
+  double mean[3] = {0, 0, 0};
+};
+static CloudCheck checkCloud(const sm_snapshot_t* s, uint32_t id, const double T[12], const Rect& r) {
+  CloudCheck c;
+  sm_cloud cl{};
+  if (sm_snap_points(s, id, &cl) != 1) return c;
+  c.n = cl.n;
+  for (int i = 0; i < cl.n; ++i) {
+    const sm_cloud_pt& q = cl.pts[i];
+    const double p[3] = {cl.origin[0] + q.x, cl.origin[1] + q.y, cl.origin[2] + q.z};
+    double u, v, z;
+    project(T, p, &u, &v, &z);
+    c.max_dz = std::max(c.max_dz, std::fabs(z - r.depth));
+    c.outside += u < r.x0 - 0.5 || u > r.x1 + 0.5 || v < r.y0 - 0.5 || v > r.y1 + 0.5;
+    c.wrong_rgb += q.r != r.rgb[0] || q.g != r.rgb[1] || q.b != r.rgb[2];
+    for (int k = 0; k < 3; ++k) c.mean[k] += p[k] / std::max(1, cl.n);
+  }
+  return c;
+}
+
+static void testCloud() {
+  std::printf("[cloud]\n");
+  // (a) 자리·색: 컵 사각형 + 뒤 벽 이상값 20 % — 남은 점은 모두 1.5 m 면 위, 사각형 안, 컵 색
+  {
+    Rig g(kLabels);
+    Rect cup = R(C_CUP, 300, 300, 360, 360, 1.5f, 250, 10, 20);
+    cup.out_frac = 0.2f;
+    cup.out_depth = 2.6f;
+    for (int k = 0; k < 5; ++k) g.kf(0.2 * k, {cup});
+    Snap s(g.c);
+    const sm_object* o = s.byName("cup");
+    sm_view v{};
+    CHECK(o && sm_snap_view(s.s, o->id, &v) == 1, "cup view");
+    if (o) {
+      const CloudCheck c = checkCloud(s.s, o->id, v.cam_T, cup);
+      sm_cloud cl{};
+      sm_snap_points(s.s, o->id, &cl);
+      std::printf("  cup 점 %d (복셀 %.2f), 깊이 오차 최대 %.4f m, 사각형 밖 %d, 색 틀림 %d\n", c.n, cl.voxel, c.max_dz, c.outside, c.wrong_rgb);
+      CHECK(c.n > 20 && c.max_dz < 0.01 && c.outside == 0 && c.wrong_rgb == 0, "cup cloud");
+      // 마스크(best view): 상자 72→ 가운데는 255, 가장자리(여유)는 0
+      CHECK(v.mask && v.mask[(v.h / 2) * v.w + v.w / 2] == 255 && v.mask[0] == 0, "best-view mask");
+    }
+  }
+  // (b) 한도: 복셀 0.005·한도 500 으로 큰 소파를 거듭 봄 → 늘 500 이하
+  {
+    Rig g(kLabels);
+    sm_set_cloud_params(g.c, 0.005, 500);
+    int maxn = 0;
+    for (int k = 0; k < 8; ++k) {
+      g.kf(0.2 * k, {R(C_SOFA, 60 + 5 * k, 350, 660, 520, 1.8f, 30, 30, 160)});
+      Snap s(g.c);
+      const sm_object* o = s.byName("sofa");
+      sm_cloud cl{};
+      if (o && sm_snap_points(s.s, o->id, &cl) == 1) maxn = std::max(maxn, cl.n);
+    }
+    std::printf("  한도 500(복셀 0.005): 최대 %d 점\n", maxn);
+    CHECK(maxn > 300 && maxn <= 500, "cap %d", maxn);
+  }
+  // (c) 들기: 팔 끝을 컵에 대고 그리퍼 닫음 → 팔을 +0.3 m(x) 옮기면 구름도 같이 0.3 m
+  {
+    Rig g(kLabels);
+    const Rect cup = R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0);
+    for (int k = 0; k < 4; ++k) g.kf(0.2 * k, {cup});
+    double before[3] = {0, 0, 0}, opos[3] = {0, 0, 0};
+    uint32_t id = 0;
+    {
+      Snap s(g.c);
+      const sm_object* o = s.byName("cup");
+      sm_view v{};
+      if (o && sm_snap_view(s.s, o->id, &v) == 1) {
+        id = o->id;
+        const CloudCheck c = checkCloud(s.s, o->id, v.cam_T, cup);
+        for (int k = 0; k < 3; ++k) { before[k] = c.mean[k]; opos[k] = o->pos[k]; }
+      }
+    }
+    // 베이스는 원점(속도 0) → map = 베이스. 왼 팔 끝을 물체 자리로, 닫음
+    g.q[17] = float(opos[0]); g.q[18] = float(opos[1]); g.q[19] = float(opos[2]);
+    g.q[24] = g.q[25] = 0.02f;
+    g.kf(1.0, {}, 3.0f, true, false);
+    g.q[17] += 0.3f;
+    g.kf(1.2, {}, 3.0f, true, false);
+    Snap s(g.c);
+    const sm_object* o = s.byName("cup");
+    sm_cloud cl{};
+    double mean[3] = {0, 0, 0};
+    if (o && sm_snap_points(s.s, id, &cl) == 1)
+      for (int i = 0; i < cl.n; ++i) {
+        mean[0] += (cl.origin[0] + cl.pts[i].x) / cl.n;
+        mean[1] += (cl.origin[1] + cl.pts[i].y) / cl.n;
+        mean[2] += (cl.origin[2] + cl.pts[i].z) / cl.n;
+      }
+    std::printf("  들기: 상태 %d(3=held), 구름 중심 이동 (%.3f, %.3f, %.3f)\n", o ? o->state : -1, mean[0] - before[0], mean[1] - before[1],
+                mean[2] - before[2]);
+    CHECK(o && o->state == SM_HELD, "held state");
+    CHECK(std::fabs(mean[0] - before[0] - 0.3) < 1e-3 && std::fabs(mean[1] - before[1]) < 1e-3, "held cloud follows hand");
+  }
+  // (d) 사라짐 → 구름 유지, 다른 자리에서 다시 찾음(옮겨짐 잇기) → 비우고 새 자리 점만
+  {
+    Rig g(kLabels);
+    const Rect a = R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0);
+    const Rect b = R(C_CUP, 520, 300, 560, 340, 1.5f, 250, 0, 0);
+    double t = 0;
+    for (int k = 0; k < 4; ++k, t += 0.2) g.kf(t, {a});
+    int n_gone = -1;
+    for (; t < 3.0; t += 0.2) g.kf(t, {});
+    {
+      Snap s(g.c);
+      const sm_object* o = s.byName("cup");
+      sm_cloud cl{};
+      if (o && o->state == SM_GONE && sm_snap_points(s.s, o->id, &cl) == 1) n_gone = cl.n;
+    }
+    g.kf(t, {b});
+    Snap s(g.c);
+    const sm_object* o = s.byName("cup");
+    sm_view v{};
+    CloudCheck c;
+    if (o && sm_snap_view(s.s, o->id, &v) == 1) c = checkCloud(s.s, o->id, v.cam_T, b);
+    std::printf("  사라짐: 구름 %d 점 유지 → 다른 자리(상태 %d, 2=moved): 점 %d, 새 사각형 밖 %d\n", n_gone, o ? o->state : -1, c.n, c.outside);
+    CHECK(n_gone > 20, "gone keeps cloud %d", n_gone);
+    CHECK(o && o->state == SM_MOVED && c.n > 20 && c.outside == 0, "moved cloud rebuilt (outside %d)", c.outside);
+    sm_reset(g.c);
+    Snap s2(g.c);
+    CHECK(s2.objs().empty(), "reset clears");
+  }
 }
 
 // keyframe 시간: slam2d 만(검출 없음) / slam2d + objmap + best view(검출 6, 호스트 RGBA 자르기)
@@ -530,6 +732,7 @@ int main(int argc, char** argv) {
   testBoxes();
   testGone();
   testBestView();
+  testCloud();
   testSave(dir);
   testTiming();
   std::printf(g_fail ? "FAILED %d\n" : "ok\n", g_fail);

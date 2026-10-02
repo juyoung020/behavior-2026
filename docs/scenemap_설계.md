@@ -186,10 +186,18 @@
 - **best view**: 검출이 물체에 붙으면(`sm_last_assoc`, objmap `lastAssoc()`) 품질 = 유효 마스크 넓이(깊이 화소) × 점수. 지금 것 이상이면(같으면 최근) 바꾼다. 옮겨짐·놓기 사건이 나면 품질을 0 으로 내려 다음 관측이 바로 바꾼다.
   - 자르기: 상자 + 변마다 10 %, 긴 변 최대 256 px(넓이 평균). RGB 는 `sm_push_image_ex` 의 자르기 함수가 한다 — sgrt 는 장치 메모리에서 커널 한 번(32 상자씩) + 자른 것만 고정 메모리로 내려받는다(온 영상 복사 없음). 깊이는 호스트 깊이에서 같은 상자·같은 크기, uint16 mm.
   - 질의: `sm_snap_view(snap, id, &v)`.
+- **모양(점 구름, 10-03)**: 물체에 붙은 관측마다 위치·크기에 쓴 마스크 안 깊이 점(MAD 띠 안)에서 팔 끝 0.10 m·베이스 수평 0.30 m 안 점을 빼고, 관측 안에서 복셀(0.02 m)마다 하나를 물체 구름에 넣는다(같은 칸은 새것으로 바꿈). 물체마다 4000 점 한도 — 넘으면 오래 안 고쳐진 점부터 버려 3600 으로(`sm_set_cloud_params`).
+  - 색: 남긴 화소만 모은다 — sgrt 는 장치에서 화소 좌표를 올려 커널로 모으고 그 색만 내림(3000 점 0.016 ms). 영상이 없으면 회색 128.
+  - 상태: 들기·받침 따라가기 = 구름 평행 이동(원점만 옮김, 회전 없음), 사라짐 = 마지막 구름 유지, 사라졌다 다른 자리에서 다시 찾음(옮겨짐 잇기) = 비우고 새로 쌓음(옛 자세에서의 모양을 옮겨 붙이면 회전·부분 관측이 섞여서), `sm_reset` = 비움.
+  - 점은 원점 기준 float 로 두고 바뀔 때만 새 배열(쓸 때 복사) — 스냅숏은 포인터만 복사, `sm_snap_points` 로 읽음.
+  - best view 마스크: 검출 마스크를 자른 상자·크기로(255 안).
 - **저장**(`sm_save_dsg` / `sm_save_dsg_ex`): PNG(`objects/O<id>_rgb.png` 8 비트 RGB, `O<id>_depth.png` 16 비트 회색 mm, 자체 쓰기 + zlib)는 모습이 바뀐 것·파일이 없는 것만 쓴다. 새 판·새 디렉터리면 옛 `O*_*.png` 를 지운다. 순서 PNG → scene.json → view.json.
+  - 파일: `objects/O<id>_rgb.png`(8 비트 RGB) · `_depth.png`(16 비트 회색 mm) · `_mask.png`(8 비트 회색, 255 = 마스크 안) · `_points.ply`(binary_little_endian, `float x,y,z`(map m) + `uchar red,green,blue`, 15 바이트/점, 주석 없음). 구름은 version 이 바뀐 것만 다시 쓴다.
+  - 노드 `metadata.points = {path: "objects/O<id>_points.ply", n, voxel, stamp(구름이 마지막으로 바뀐 시뮬 s)}`, `metadata.rgbd.mask = "objects/O<id>_mask.png"`. view.json `objects[]` 에 `points{path,n,voxel,stamp}`, `rgbd.mask`.
   - scene.json 노드 메타데이터(기존 그대로 + 추가): `state, n_obs, score, first_pos, structural, handled, movable`, 모습이 있으면
     `rgbd = {rgb, depth(상대 경로), stamp, box_px[4](자른 영역, 원 영상 화소, 여유 포함), det_box_px[4], mask_area, depth_m(마스크 깊이 중앙값), score, cam_T[12](map ← 카메라 광학, 행 우선 3×4)}`. view.json `objects[]` 에 `movable`, `rgbd{rgb, depth}`.
 - **벤치마크 형식**: `tools/map_timeline <ep.bin> <det.bin> <out>/<seq>` — C ABI 로만 재생해 `map_timeline.csv`(frame,obj_id,x,y,z,label,moving; 지도가 바뀐 프레임만, 사라짐 뺌, moving = 들고 있음)를 쓴다. 벤치마크 `read_timeline` 으로 읽힘을 합성 판으로 확인(실제 판 det.bin 은 원본 HDF5 가 없어 아직 못 만듦).
+- **잰 시간(구름 붙인 뒤)**: keyframe 720² 검출 6(매번 best view 자르기 + 구름) 2.0 ms, 검출 4 평균 1.3 ms. 저장(물체 3): 다 바뀜(PNG 9·PLY 3) 0.74 ms(PLY 0.05 ms), 안 바뀜 0.30 ms, 구름만 0.40 ms.
 - **잰 시간**(jy-desktop, RTX 5070 Ti, Release): keyframe 720² — slam2d 만 0.57 ms, + objmap·best view(검출 6, 매번 자르기, 호스트 RGBA) 1.48 ms. 장치 자르기 6 상자(185 kB) 커널 + 내려받기 0.017 ms(온 영상 2 MB 내려받기 0.12 ms). 저장(물체 3, 격자 포함) PNG 6 장 0.66 ms, PNG 없음 0.32 ms.
 
 ### 3.3 ③ query — 계획기 질의
