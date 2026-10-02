@@ -125,8 +125,8 @@ int main(int argc, char** argv) {
     double worst = 1;
     for (auto& [id, vs] : by)
       for (auto& v : vs) worst = std::min(worst, cosine(v.data(), vs[0].data()));
-    std::printf("graph %d: batch 1/3/8 consistency worst cosine %.6f -> %s\n", graph, worst, worst > 0.9999 ? "ok" : "FAIL");
-    fails += worst <= 0.9999;
+    std::printf("graph %d: batch 1/3/8 consistency worst cosine %.6f -> %s\n", graph, worst, worst > 0.9995 ? "ok" : "FAIL");
+    fails += worst <= 0.9995;   // 배치 칸 엔진은 프로필마다 다른 FP16 전술(코사인 0.9999 안팎)
     // 묶음 크기별 시간(같은 영상, 장치 영상처럼 한 번 올려 둠)
     for (int nb : {1, 8}) {
       double crop = 0, net = 0, sub = 0;

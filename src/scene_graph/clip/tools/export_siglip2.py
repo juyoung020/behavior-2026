@@ -9,6 +9,7 @@ Variants (efficiency study, docs/clip_candidates.md 8):
     --res R          input size (224 -> 49 tokens, 192 -> 36), position embeddings resampled (timm set_input_size)
     --layers L       keep only the first L of 12 transformer blocks (early exit; final norm + MAP head unchanged)
     --keep K@J       mask-guided token dropping: before block J keep the K tokens with the largest w (static K)
+    --conv-patch     keep the 32x32 patch Conv (default: reshape + one GEMM, faster in TensorRT)
     --tome R@J       ToMe bipartite token merging, R tokens per block from block J on (proportional attention,
                      mask weight and size carried through, size enters the MAP head as log(size))
 
@@ -88,14 +89,27 @@ def tome_merge(x, w, s, metric, r):
 
 
 class MaskEmbed(nn.Module):
-    def __init__(self, m, layers=12, keep=None, tome=None):
+    def __init__(self, m, layers=12, keep=None, tome=None, pe_gemm=True):
         super().__init__()
         self.tr, self.hd = m.visual.trunk, m.visual.head
-        self.layers, self.keep, self.tome = layers, keep, tome
+        self.layers, self.keep, self.tome, self.pe_gemm = layers, keep, tome, pe_gemm
+
+    def patches(self, images):
+        """32 x 32 stride-32 patch conv as reshape + one GEMM (TensorRT picks a slow implicit-GEMM conv for this shape:
+        ~13 % of the engine time; as a MatMul it is a plain tensor-core GEMM). Same numbers as the conv."""
+        pe = self.tr.patch_embed
+        if not self.pe_gemm:
+            return pe(images)
+        n, c, h, w = images.shape
+        p = pe.proj.kernel_size[0]
+        g = h // p
+        x = images.reshape(n, c, g, p, g, p).permute(0, 2, 4, 1, 3, 5).reshape(n, g * g, c * p * p)
+        wt = pe.proj.weight.reshape(pe.proj.weight.shape[0], -1)
+        return x @ wt.t() + pe.proj.bias
 
     def forward(self, images, wpatch):
         tr = self.tr
-        x = tr.patch_embed(images)
+        x = self.patches(images)
         x = tr._pos_embed(x)
         x = tr.norm_pre(x)
         w = wpatch
@@ -121,11 +135,11 @@ class MaskEmbed(nn.Module):
         return e / e.norm(dim=-1, keepdim=True)
 
 
-def build(res=256, layers=12, keep=None, tome=None, model=None):
+def build(res=256, layers=12, keep=None, tome=None, model=None, pe_gemm=True):
     m = model if model is not None else load_model()
     if res != 256:
         m.visual.trunk.set_input_size(img_size=(res, res))
-    return MaskEmbed(m, layers, keep, tome).eval()
+    return MaskEmbed(m, layers, keep, tome, pe_gemm).eval()
 
 
 def _pair(v):
@@ -142,9 +156,10 @@ def main():
     ap.add_argument("--layers", type=int, default=12)
     ap.add_argument("--keep", default="", help="K@J: keep K tokens (largest mask weight) before block J")
     ap.add_argument("--tome", default="", help="R@J: merge R tokens per block from block J on")
+    ap.add_argument("--conv-patch", action="store_true", help="keep the patch-embed Conv (default: reshape + GEMM)")
     ap.add_argument("--batch", type=int, default=8, help="dummy batch for tracing (dynamic batch axis)")
     a = ap.parse_args()
-    mod = build(a.res, a.layers, _pair(a.keep), _pair(a.tome))
+    mod = build(a.res, a.layers, _pair(a.keep), _pair(a.tome), pe_gemm=not a.conv_patch)
     g = a.res // 32
     x, w = torch.randn(a.batch, 3, a.res, a.res), torch.rand(a.batch, g * g)
     with torch.no_grad():

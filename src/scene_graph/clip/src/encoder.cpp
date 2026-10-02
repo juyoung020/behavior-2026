@@ -196,9 +196,9 @@ void runNet(sgc_encoder* e, int si, int n) {
   const int nb = bucketFor(e, n, &prof);
   if (nb < 0) throw std::runtime_error("batch outside the engine profiles");
 #if NV_TENSORRT_MAJOR >= 10
-  const bool graph = e->cfg.use_graph && e->nprof == 1;
+  // 칸·배치 크기별 graph(잡을 때의 프로필·주소·모양이 그대로 박힘 — 띄울 때 문맥 상태를 안 봄. 시험: 배치 1·3·8 섞어도 같은 답)
+  const bool graph = e->cfg.use_graph != 0;
   if (graph && s.graphs[nb]) {
-    if (prof != e->cur_prof) setShapes(e, s, prof, nb);
     ck(cudaGraphLaunch(s.graphs[nb], e->stream), "graph launch");
     return;
   }
