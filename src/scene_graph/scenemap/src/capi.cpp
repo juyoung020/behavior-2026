@@ -658,6 +658,17 @@ int sm_snap_movable(const sm_snapshot_t* s, uint32_t id) {
   return -1;
 }
 
+int sm_take_dirty(sm_ctx* c, int32_t out[4], uint64_t* version) {
+  if (!c || !out) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  OccGrid& gr = c->slam.gridMut();
+  if (version) *version = gr.version();
+  int x0, y0, x1, y1;
+  if (!gr.takeDirty(&x0, &y0, &x1, &y1)) return 0;
+  out[0] = x0 - gr.x0(); out[1] = y0 - gr.y0(); out[2] = x1 - gr.x0(); out[3] = y1 - gr.y0();
+  return 1;
+}
+
 int sm_snap_scan(const sm_snapshot_t* s, sm_scan2* out) {
   if (!s || !out) return -1;
   out->pose = s->scan_pose;

@@ -2,6 +2,7 @@
 #include "sgrt.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -33,6 +34,7 @@ struct sgrt {
   int32_t n_points = 0;
   sgrt_crop::Gpu* crop = nullptr; // 처음 장치 영상이 올 때 만듦
   sm_snapshot_t* map_snap = nullptr; // sgrt_map 이 넘긴 포인터의 주인
+  std::vector<float> movable;         // sgrt_map: 옮길 수 있는 물체 x, y, r
 };
 
 namespace {
@@ -239,6 +241,9 @@ void sgrt_get_timing(const sgrt* s, sgrt_timing* t) {
 
 int sgrt_map(sgrt* s, sgrt_map_view* out) {
   if (!s || !out) return -1;
+  int32_t dbox[4] = {0, 0, 0, 0};
+  uint64_t ver = 0;
+  const int dirty = sm_take_dirty(s->sm, dbox, &ver);   // 스냅숏 앞: 그 사이 insert 는 다음 부름의 상자에 들어감
   sm_snapshot_t* snap = nullptr;
   if (sm_snapshot(s->sm, &snap) != 0 || !snap) return -2;
   sm_snapshot_release(s->map_snap);
@@ -270,6 +275,20 @@ int sgrt_map(sgrt* s, sgrt_map_view* out) {
     out->n_hit = sc.n_hit; out->hit_x = sc.hx; out->hit_y = sc.hy;
     out->n_free = sc.n_free; out->free_x = sc.fx; out->free_y = sc.fy;
   }
+  out->dirty = dirty > 0;
+  for (int k = 0; k < 4; ++k) out->dirty_box[k] = dbox[k];
+  out->map_version = ver;
+  s->movable.clear();
+  const sm_object* objs = nullptr;
+  const int no = sm_snap_objects(snap, &objs);
+  for (int k = 0; k < no; ++k) {
+    if (objs[k].structural || sm_snap_movable(snap, objs[k].id) != 1 || objs[k].state == SM_HELD) continue;
+    s->movable.push_back(float(objs[k].pos[0]));
+    s->movable.push_back(float(objs[k].pos[1]));
+    s->movable.push_back(float(0.5 * std::hypot(objs[k].extent[0], objs[k].extent[1])));
+  }
+  out->n_movable = int32_t(s->movable.size() / 3);
+  out->movable_xyr = s->movable.empty() ? nullptr : s->movable.data();
   return 0;
 }
 

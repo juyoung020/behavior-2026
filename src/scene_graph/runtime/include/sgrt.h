@@ -84,6 +84,14 @@ typedef struct {
   float scan_origin[2];
   int32_t n_hit;  const float* hit_x; const float* hit_y;
   int32_t n_free; const float* free_x; const float* free_y;
+  /* 지난 sgrt_map 뒤 바뀐 칸 경계 상자(이 격자 칸 좌표, 끝 포함). dirty = 0 이면 안 바뀜. 격자 모양(원점·크기)이 바뀌었으면
+   * 호출자가 전부 바뀐 것으로 본다. map_version = slam2d 격자 insert 횟수 */
+  int32_t dirty;
+  int32_t dirty_box[4];
+  uint64_t map_version;
+  /* 물체 기억에서 옮길 수 있는 물체(움직일 수 있음 → 비용 힌트): map x, y, 반지름(상자 반 대각, m) */
+  int32_t n_movable;
+  const float* movable_xyr;
 } sgrt_map_view;
 int    sgrt_map(sgrt*, sgrt_map_view* out);
 

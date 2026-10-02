@@ -42,6 +42,9 @@ class OccGrid {
   int height() const { return h_; }
   // 계획기용: −1 모름, 0..100 점유 확률(%)
   std::vector<int8_t> export8() const;
+  // 바뀐 영역: 지난 takeDirty 뒤 insert 가 고친 칸의 경계 상자(전역 칸 좌표, 끝 포함). 없으면 false. 부를 때마다 비움.
+  bool takeDirty(int* ix0, int* iy0, int* ix1, int* iy1);
+  uint64_t version() const { return version_; }
 
   float pmin = 0.1f, pmax = 0.9f;
 
@@ -59,6 +62,9 @@ class OccGrid {
   std::vector<uint16_t> cnt_;
   std::vector<uint32_t> stamp_;   // 이 스캔에서 이미 고친 칸
   uint32_t scan_id_ = 0;
+  uint64_t version_ = 0;          // insert 마다 +1
+  bool dirty_ = false;
+  int dx0_ = 0, dy0_ = 0, dx1_ = 0, dy1_ = 0;
 };
 
 }  // namespace scenemap

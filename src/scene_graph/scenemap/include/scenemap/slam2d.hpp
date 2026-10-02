@@ -65,6 +65,7 @@ class Slam2D {
 
   Pose2 pose() const { return compose(kf_, delta_); }
   const OccGrid& grid() const { return grid_; }
+  OccGrid& gridMut() { return grid_; }
   // 마지막 keyframe 의 가상 스캔(베이스 기준 장애물 점·빈 광선 끝)과 그때 자세 — 탐색 안전 정지(살아 있는 깊이)용
   const Scan2& lastScan() const { return last_scan_; }
   Pose2 lastScanPose() const { return last_scan_pose_; }

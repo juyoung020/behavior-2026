@@ -247,6 +247,9 @@ typedef struct {
   int32_t n_free; const float* fx; const float* fy;     /* 빈 광선 끝(베이스 기준 m) */
 } sm_scan2;
 int sm_snap_scan(const sm_snapshot_t*, sm_scan2* out);
+/* 바뀐 영역(추가 ABI): 지난 부름 뒤 slam2d 가 격자에 넣은 스캔들이 고친 칸의 경계 상자(지금 격자 칸 좌표 x0,y0,x1,y1, 끝 포함).
+ * 1 = 바뀜, 0 = 안 바뀜. 부를 때마다 비운다(소비자 하나 — sgrt_map). version = 격자 insert 횟수. 다음 sm_snapshot 과 짝. */
+int sm_take_dirty(sm_ctx*, int32_t out[4], uint64_t* version);
 
 #ifdef __cplusplus
 }

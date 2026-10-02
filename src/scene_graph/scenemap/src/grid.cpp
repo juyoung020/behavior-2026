@@ -73,6 +73,9 @@ void OccGrid::insert(const Scan2& s, const Pose2& pose) {
   grow(s.fx, s.fy);
   grow(s.mx, s.my);
   ensure(bx0, by0, bx1, by1);
+  ++version_;
+  if (!dirty_) { dx0_ = bx0; dy0_ = by0; dx1_ = bx1; dy1_ = by1; dirty_ = true; }
+  else { dx0_ = std::min(dx0_, bx0); dy0_ = std::min(dy0_, by0); dx1_ = std::max(dx1_, bx1); dy1_ = std::max(dy1_, by1); }
   // 맞음 먼저(한 스캔에서 맞은 칸은 빈칸으로 덮이지 않게)
   // 맞추기 점 먼저(법선이 있는 쪽이 칸의 첫 맞음이 되게), 그다음 레이저 한 줄
   for (size_t k = 0; k < s.mx.size(); ++k) {
@@ -140,6 +143,13 @@ float OccGrid::prob(int ix, int iy) const {
   if (!seen_[i]) return pmin;
   const float pr = 1.f / (1.f + std::exp(-L_[i]));
   return std::clamp(pr, pmin, pmax);
+}
+
+bool OccGrid::takeDirty(int* ix0, int* iy0, int* ix1, int* iy1) {
+  if (!dirty_) return false;
+  *ix0 = dx0_; *iy0 = dy0_; *ix1 = dx1_; *iy1 = dy1_;
+  dirty_ = false;
+  return true;
 }
 
 std::vector<int8_t> OccGrid::export8() const {
