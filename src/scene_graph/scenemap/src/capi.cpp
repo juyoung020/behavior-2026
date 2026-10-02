@@ -90,6 +90,8 @@ struct sm_ctx {
   // best view
   std::unordered_map<uint32_t, ViewSlot> views;
   std::vector<uint32_t> last_assoc;   // 마지막 영상의 검출 → 물체 id
+  std::vector<uint8_t> last_view_upd; // 마지막 영상의 검출 k 가 그 물체의 best view 가 됨(sm_last_views — CLIP 갱신 신호)
+  std::vector<float> last_view_q;     // 검출 k 의 모습 품질(유효 마스크 넓이 × 점수, 안 붙으면 0)
   size_t ev_seen = 0;                 // 처리한 objmap 사건 수(옮겨짐·놓기 → 품질 0)
   uint32_t view_ver = 0;
   uint64_t epoch = 0;                 // sm_reset 마다 +1(잠금 밖 자르기 중 reset 이면 버림)
@@ -210,7 +212,8 @@ void integrate(sm_ctx* c, const Prop& p) {
   c->last_used = p;
   c->have_used = true;
   Pose2 g;
-  if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g)) c->slam.setPose(g);
+  // 같은 stamp 의 외부 자세가 있을 때만(없는 스텝은 적분으로 이어감 — 접착부는 영상 짝 스텝에만 넣어도 됨)
+  if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g, 1e-4)) c->slam.setPose(g);
   // 영상이 없는 스텝에도 든 물체가 손을 따라가게
   float eef[2][3], grip[2];
   handsOf(p.q, eef, grip);
@@ -325,6 +328,8 @@ int sm_reset(sm_ctx* c) {
   c->st = sm_status{};
   c->views.clear();
   c->last_assoc.clear();
+  c->last_view_upd.clear();
+  c->last_view_q.clear();
   c->ev_seen = 0;
   c->epoch++;
   c->saved_ver.clear();
@@ -369,6 +374,7 @@ namespace {
 // best view 를 바꿀 검출 하나(잠금 안에서 정하고, 잠금 밖에서 자름)
 struct ViewCand {
   uint32_t id;
+  int det;                     // 검출 번호(sm_last_views)
   double q;
   sm_crop_req req;
   std::shared_ptr<BestView> v;
@@ -507,7 +513,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     else c->slam.keyframe(dv, body, nullptr, &c->tm);
   }
   poseDiag(c, im->stamp);
-  if (!dets) { c->last_assoc.clear(); updateGraph(c, im->stamp, false); return 0; }   // 검출 없음: 지도(slam2d)만
+  if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
   const Pose2 P = c->slam.pose();
   const double cs = std::cos(P.th), sn = std::sin(P.th);
@@ -542,6 +548,10 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   const std::vector<DetAssoc>& as = c->om.lastAssoc();
   c->last_assoc.resize(as.size());
   for (size_t k = 0; k < as.size(); ++k) c->last_assoc[k] = as[k].obj_id;
+  c->last_view_upd.assign(as.size(), 0);
+  c->last_view_q.assign(as.size(), 0.f);
+  for (size_t k = 0; k < as.size(); ++k)
+    if (as[k].obj_id) c->last_view_q[k] = float(double(as[k].area_px) * (dets->score ? dets->score[k] : 1.f));
   // 옮겨짐·놓기: 지금 모습은 옛 자리 — 품질을 내려 다음 관측이 바꾸게
   const auto& ev = c->om.events();
   for (; c->ev_seen < ev.size(); ++c->ev_seen)
@@ -565,6 +575,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     if (it != c->views.end() && q < it->second.q) continue;
     ViewCand vc{};
     vc.id = as[k].obj_id;
+    vc.det = int(k);
     vc.q = q;
     auto v = std::make_shared<BestView>();
     const float* b = dets->box + 4 * k;
@@ -639,6 +650,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     vc.v->version = ++c->view_ver;
     sl.v = std::move(vc.v);
     sl.q = vc.q;
+    if (vc.det >= 0 && vc.det < int(c->last_view_upd.size())) c->last_view_upd[vc.det] = 1;
   }
   c->addT(kStCloud, usBetween(ta, TClock::now()));
   return 0;
@@ -649,6 +661,17 @@ int sm_last_assoc(sm_ctx* c, uint32_t* ids, int cap) {
   std::lock_guard<std::mutex> g(c->mu);
   const int n = int(c->last_assoc.size());
   for (int k = 0; k < std::min(n, cap) && ids; ++k) ids[k] = c->last_assoc[k];
+  return n;
+}
+
+int sm_last_views(sm_ctx* c, uint8_t* updated, float* quality, int cap) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  const int n = int(c->last_view_upd.size());
+  for (int k = 0; k < std::min(n, cap); ++k) {
+    if (updated) updated[k] = c->last_view_upd[k];
+    if (quality) quality[k] = c->last_view_q[k];
+  }
   return n;
 }
 

@@ -115,6 +115,8 @@ class SceneMemory:
         self.t = 0
         self.robot = None
         self.use_gt = os.environ.get("SGRT_GT_POSE", "1") != "0" and self.has_pose
+        self.gt_every = os.environ.get("SGRT_GT_EVERY", "0") == "1"
+        self.kf_every = kf_every
         self.gt_log = None
         if os.environ.get("SGRT_GT_LOG"):
             self.gt_log_path = os.environ["SGRT_GT_LOG"]
@@ -138,7 +140,11 @@ class SceneMemory:
                 self.robot = _find_robot()
                 if self.robot is not None and self.gt_log is not None:
                     self.dump_gt_objects(self.gt_log_path + ".objects.json")  # now: the evaluator may os._exit before close()
-            if self.robot is not None:
+            # reading the sim pose costs ~0.6 ms (python/torch); scenemap needs it only at image stamps (keyframe step - lag)
+            # and for the keyframe step itself -> read on those steps unless SGRT_GT_EVERY=1
+            kf, lag = self.kf_every, int(os.environ.get("SGRT_IMAGE_LAG", "1"))
+            need = self.gt_every or kf <= 1 or (self.t % kf) in {0, (-lag) % kf} or self.t < 2
+            if self.robot is not None and need:
                 pos, q = self.robot.get_position_orientation()
                 yaw = _yaw(q)
                 self.L.sgrt_push_pose(self.h, stamp, float(pos[0]), float(pos[1]), yaw)
