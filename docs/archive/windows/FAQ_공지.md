@@ -94,7 +94,7 @@ A. "RGB + depth + proprioception". 정답 분할·물체 상태·목표 물체 p
 A. 원문 "Additional components like SLAM or LLM-based querying are also permitted, provided the policy follows the challenge-track observation restrictions during evaluation." 방법 제한 없음("There are no restrictions on the type of policy used.").
 
 **Q. SAM·CLIP 같은 학습된 인식 모델은?**
-A. 이름으로 언급한 문장은 없다. 금지는 "ground-truth segmentation"(시뮬레이터 정답)이고 정책 구성은 자유라 허용으로 해석되나, 확정은 Discord. (예전 문서에 원문처럼 적혔던 『External perception models (e.g., SAM, CLIP) are permitted』 는 페이지에 없는 문장이었다 — 대회규칙_팀_meridian.md 의 정정 참고)
+A. 이름으로 언급한 문장은 없다. 금지는 "ground-truth segmentation"(시뮬레이터 정답)이고 정책 구성은 자유라 허용으로 해석되나, 확정은 Discord. (예전 문서에 원문처럼 적혔던 『External perception models (e.g., SAM, CLIP) are permitted』 는 페이지에 없는 문장이었다)
 
 **Q. 학습 때 정답 정보를 써도 되나?**
 A. 된다. 원문 "You are allowed to use privileged information during training (e.g. other observation modalities, task info, etc.), so long as you are not using it during challenge-track evaluation."
