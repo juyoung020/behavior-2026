@@ -3,7 +3,7 @@
 #   bash /mnt/c/behavior-2026/src/engine/tests/joints/build.sh [대상...]      (대상 없으면 joints 시험 전부)
 #   실행: LD_LIBRARY_PATH=~/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked ~/engine-build/joints/joints/test_joints_prep
 set -e
-export CUDACXX=/usr/local/cuda-13.2/bin/nvcc
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
 B=~/engine-build/joints
 mkdir -p $B
 if [ ! -f $B/CMakeCache.txt ]; then

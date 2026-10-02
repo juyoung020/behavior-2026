@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 # ovdet: open-vocabulary detector library (TensorRT FP16 segmentation head + hand-written CUDA). C API in include/ovdet.h.
-set(OVDET_CUDA_ROOT "/usr/local/cuda-13.2" CACHE PATH "CUDA toolkit root")
+set(OVDET_CUDA_ROOT "/usr/local/cuda-12.8" CACHE PATH "CUDA toolkit root")
 set(CMAKE_CUDA_COMPILER ${OVDET_CUDA_ROOT}/bin/nvcc)
 set(CMAKE_CUDA_ARCHITECTURES 120 CACHE STRING "GPU architectures")
 project(ovdet LANGUAGES CXX CUDA)

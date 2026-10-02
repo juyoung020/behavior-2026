@@ -1,15 +1,16 @@
 # 엔진 시험 (층 1 C++ / 층 2 CUDA vs 층 0 PhysX 정답지). 정답지 비교 때문에 "시험 프로그램만" PhysX 에 링크한다.
-#   export CUDACXX=/usr/local/cuda-13.2/bin/nvcc
+#   export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
 #   cmake -S /mnt/c/behavior-2026/src/engine/tests -B ~/engine-build/tests -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CUDA_HOST_COMPILER=g++
 #   cmake --build ~/engine-build/tests -j
 # 모듈마다 tests/<모듈>/CMakeLists.txt 를 두고 engine_test() 로 시험을 더한다 (이 파일은 리드가 관리, 모듈은 자기 폴더만).
 cmake_minimum_required(VERSION 3.18)
+# project() 앞에서 정한다: project() 가 툴킷 기본값(CUDA 12 는 52, CUDA 13 은 75)을 넣으면 사용자 지정과 구별이 안 된다.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 120)  # RTX 5070 Ti. 다른 장비는 -DCMAKE_CUDA_ARCHITECTURES=86 등
+endif()
 project(engine_tests CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
-  set(CMAKE_CUDA_ARCHITECTURES 120)  # RTX 5070 Ti. 다른 장비는 -DCMAKE_CUDA_ARCHITECTURES=86 등
-endif()
 
 set(PHYSX_ROOT "$ENV{HOME}/engine-deps/physx-107.3-omni/physx" CACHE PATH "PhysX 5.6.1 소스·빌드 (정답지)")
 set(PHYSX_CONFIG "checked" CACHE STRING "공식 omni.physx 와 같은 checked")

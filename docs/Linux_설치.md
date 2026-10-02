@@ -42,9 +42,9 @@
 ### 3.1 두 번째 PC (`jy-desktop`, RTX 5070 Ti 16 GB sm_120, 저장소 `~/robot-agent/src/behavior-2026`, 10-03)
 
 - 저장소는 `robot-agent` 의 서브모듈. 옛 경로를 쓰는 스크립트를 위해 심볼릭 링크 `~/behavior-2026`, `/mnt/c/behavior-2026` → 서브모듈.
-- CUDA 는 **13.2 하나**(빌드 스크립트의 12.8 경로를 13.2 로 바꿈). clang 14 + `libstdc++-12-dev` 가 있어야 clang 링크가 된다.
-- PhysX 5.6.1 (`build_physx.sh`): CUDA 13 의 `cuCtxCreate_v4` 때문에 패치 한 줄(스크립트가 넣음). CPU 정적 라이브러리(정답지) 전부 빌드됨.
-  `libPhysXGpu_64.so` 만 cudart 중복 정의로 링크 실패 — 엔진 시험은 `px_gpu_stub` 이라 안 씀.
+- CUDA 는 **12.8**(저장소 스크립트 기준). 13.2 로 바꿔 봤다가 되돌림: 13.2 는 PhysX 에 `cuCtxCreate_v4` 패치가 필요하고 `libPhysXGpu_64.so` 링크가 깨지며,
+  드라이버 580(CUDA 13.0)이 13.2 PTX 를 JIT 못 해("PTX was compiled with an unsupported toolchain") SASS 없는 빌드가 GPU 에서 안 돈다. clang 14 + `libstdc++-12-dev` 가 있어야 clang 링크가 된다.
+- 엔진 시험 CMake 는 `CMAKE_CUDA_ARCHITECTURES` 기본을 `project()` 앞에서 120 으로 정한다(CUDA 13 기본 75 이면 sm_75 만 빌드되던 문제).
 - **드라이버 595.91.07 에서 Isaac Sim 5.1 이 시작 때 `librtx.scenedb.plugin.so` 세그폴트**(맨 SimulationApp 도, iGPU 막아도 같음 — 595 계열 알려진 문제) → `nvidia-driver-580-open` 580.178.04 로 내림.
 - `import omnigibson` 은 `warp-lang==1.12.0` 이 있어야 된다(위 3 의 1 과 같음). HF 토큰은 `hf auth login`(저장소 밖).
 

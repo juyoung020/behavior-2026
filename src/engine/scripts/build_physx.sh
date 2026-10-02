@@ -16,8 +16,8 @@ if [ ! -d "$ROOT" ]; then
 fi
 cd "$ROOT/physx"
 
-# CUDA: 13.2 하나로 통일 (/usr/local/cuda 링크 대신 직접 지정)
-export CUDA_PATH=/usr/local/cuda-13.2
+# CUDA: /usr/local/cuda 링크는 다른 작업이 바꿀 수 있으니 12.8 을 직접 지정 (sm_120 = RTX 5070 Ti 지원 첫 버전)
+export CUDA_PATH=/usr/local/cuda-12.8
 export CUDACXX=$CUDA_PATH/bin/nvcc
 export PATH=$CUDA_PATH/bin:$PATH
 
@@ -29,14 +29,6 @@ if ! grep -q 'ENGINE_LOCAL_ARCH' "$GPU_CMAKE"; then
   sed -i 's/GENERATE_ARCH_CODE_LIST(SASS "70,80,86,89,90,100,120" PTX "120")/GENERATE_ARCH_CODE_LIST(SASS "120" PTX "120") # ENGINE_LOCAL_ARCH/' "$GPU_CMAKE"
 fi
 grep -n 'ENGINE_LOCAL_ARCH' "$GPU_CMAKE"
-
-# CUDA 13: cuCtxCreate 가 cuCtxCreate_v4(ctx, params, flags, dev) 로 바뀜 — params 는 NULL(기본, 이전 동작과 같음). CPU 물리 결과와는 무관(GPU 문맥 생성만).
-CCM=source/cudamanager/src/CudaContextManager.cpp
-if ! grep -q 'ENGINE_CUDA13' "$CCM"; then
-  cp -n "$CCM" "$CCM.orig"
-  sed -i 's/status = cuCtxCreate(&mCtx, (unsigned int)flags, mDevHandle);/status = cuCtxCreate(\&mCtx, NULL, (unsigned int)flags, mDevHandle); \/\/ ENGINE_CUDA13/' "$CCM"
-fi
-grep -n 'ENGINE_CUDA13' "$CCM"
 
 ./generate_projects.sh "$PRESET"
 cd "compiler/$PRESET-$CONFIG"

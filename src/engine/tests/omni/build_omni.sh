@@ -2,7 +2,7 @@
 # omni 시험 빌드 (WSL). 산출물: ~/engine-build/omni
 #   bash /mnt/c/behavior-2026/src/engine/tests/omni/build_omni.sh [target...]
 set -e
-export CUDACXX=/usr/local/cuda-13.2/bin/nvcc
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
 B=~/engine-build/omni
 if [ ! -f $B/CMakeCache.txt ]; then
   cmake -S /mnt/c/behavior-2026/src/engine/tests -B $B -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CUDA_HOST_COMPILER=g++ \
