@@ -1,7 +1,7 @@
 # agent — high-level planner agent + evaluator↔π0.5 relay (Rust)
 
 The "judgement" layer of `plan.md` §1–2. It keeps the long plan, memory and step tracking, and gives π0.5 only the
-instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../../docs/에이전트_설계.md)** (Korean).
+instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../../../docs/에이전트_설계.md)** (Korean).
 
 ## Two paths
 
@@ -40,7 +40,9 @@ reference resolution, step budgets and instruction rendering. Deciders: `LlmDeci
 | `prompts/system.md` | System prompt (English) |
 | `tests/e2e.rs` | End-to-end tests (relay byte identity, fake-world episodes, fallback, replay, HTTP LLM) |
 
-## Quick start (WSL)
+## Quick start (Linux)
+
+`--llm kau` is Qwen3.5-9B through the KAU API of the AI agent class (`https://agent.kau.ac.kr/v1`); a local llama.cpp server is optional.
 
 ```bash
 export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/cargo-target/agent

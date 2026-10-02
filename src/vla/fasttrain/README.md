@@ -2,7 +2,7 @@
 
 Drop-in replacement for openpi's `create_b1k_data_loader` that produces **bit-identical** batches
 (same tensors, same shuffle order) while moving all hot-path work into C++/CUDA and Rust.
-Full write-up (Korean): [`docs/학습환경_가속.md`](../../docs/학습환경_가속.md).
+Full write-up (Korean): [`docs/학습환경_가속.md`](../../../docs/학습환경_가속.md).
 
 ## What replaces what
 
@@ -20,7 +20,7 @@ Full write-up (Korean): [`docs/학습환경_가속.md`](../../docs/학습환경_
 Python (`fast.py`) is only ctypes glue. The verification tools stay in Python because their *reference*
 side is the original openpi/JAX/torchcodec code.
 
-## Build (Linux / WSL)
+## Build (Linux)
 
 ```bash
 bash src/vla/fasttrain/build.sh            # syncs sources to $FT_WORK/src, builds ftprep (Rust) and libftcore.so + ftbench (C++/CUDA)

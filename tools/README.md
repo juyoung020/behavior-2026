@@ -149,6 +149,8 @@ bash tools/setup/setup_llamacpp_cuda.sh [--dry-run]     # ~/llama.cpp/build/bin/
 bash tools/run_qwen_server.sh [CTX] [PORT]              # 위 둘이 있어야 함, 127.0.0.1:8081 (QWEN_HOST 로 바꿈)
 ```
 
+계획기 LLM 은 AI 에이전트 수업(최영식 교수)의 KAU API(`https://agent.kau.ac.kr/v1`, Qwen3.5-9B)가 기본이고, 아래 로컬 llama.cpp 는 선택이다.
+
 llama.cpp 는 `/usr/local/cuda-12.8` 의 nvcc 로 `CMAKE_CUDA_ARCHITECTURES=120` 빌드한다(13.2 안 씀). 12.8 이 없으면 NVIDIA ubuntu2204 저장소에서
 컴파일러·런타임·cuBLAS 만 apt 로 받는다(sudo).
 
