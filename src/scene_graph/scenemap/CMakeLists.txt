@@ -8,9 +8,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp
+add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/png.cpp
             src/dsg_save.cpp)
 target_include_directories(scenemap PUBLIC include)
+find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
+target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)
 # Spark-DSG(저장, scene.json). 없으면 view.json·map.pgm 만 쓴다. 설치: refs/code/Spark-DSG → ~/.local (docs/Linux_설치.md)
 list(APPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local")
 find_package(spark_dsg QUIET)

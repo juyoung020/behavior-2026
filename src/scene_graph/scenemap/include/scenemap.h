@@ -131,10 +131,20 @@ int sm_snap_view(const sm_snapshot_t*, uint32_t id, sm_view* out);
 
 /* 저장(로봇 기억). dir 에 세 파일을 원자적으로(임시 파일 → rename) 바꿔 쓴다:
  *   scene.json — Spark-DSG DynamicSceneGraph(OBJECTS 층: 확정 물체 노드, 이름·위치 xyz·상자·상태 메타데이터)
+ *                (물체 best view 가 있으면 노드 metadata.rgbd = 그림 경로·stamp·상자·넓이·깊이·카메라 자세 — sm_save_dsg_ex)
  *   view.json  — 계획기·뷰어용 요약(자세, 물체 표, 최근 사건)
  *   map.pgm    — 2D 점유 격자(+ map.yaml: 해상도·원점)
  * Spark-DSG 없이 빌드하면(SM_HAVE_SPARK_DSG 미정의) scene.json 은 건너뛴다. 0 = 성공. */
 int sm_save_dsg(sm_ctx*, const char* dir);
+/* sm_save_dsg + best view PNG(dir/objects/O<id>_rgb.png · O<id>_depth.png, 지난 저장 뒤 바뀐 것·없는 것만 씀)와 시간.
+ * sm_save_dsg 도 같은 일을 한다(stats 만 없음). scene.json 노드 metadata.rgbd, view.json objects[].rgbd 가 경로를 가리킴. */
+typedef struct {
+  int32_t n_objects;           /* 저장한 물체 노드 수 */
+  int32_t n_png;               /* 이번에 새로 쓴 PNG 수 */
+  float png_ms, total_ms;
+} sm_save_stats;
+int sm_save_dsg_ex(sm_ctx*, const char* dir, sm_save_stats* stats /* NULL 가능 */);
+
 #ifdef __cplusplus
 }
 #endif

@@ -23,6 +23,7 @@ struct sgrt {
   float det_ms = 0, save_ms = 0;
   float kf_ms = 0, crop_ms = 0;   // 마지막 keyframe: scenemap 갱신 전체(자르기 포함), best view 자르기(장치 → 호스트)
   int32_t n_crops = 0;
+  int32_t n_png = 0;              // 마지막 저장에서 쓴 PNG 수
   sgrt_crop::Gpu* crop = nullptr; // 처음 장치 영상이 올 때 만듦
 };
 
@@ -154,8 +155,10 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
 int sgrt_save(sgrt* s) {
   if (!s) return -1;
   const auto t0 = std::chrono::steady_clock::now();
-  const int rc = sm_save_dsg(s->sm, s->out_dir.c_str());
+  sm_save_stats st{};
+  const int rc = sm_save_dsg_ex(s->sm, s->out_dir.c_str(), &st);   // 바뀐 best view 만 PNG 로
   s->save_ms = float(msSince(t0));
+  s->n_png = st.n_png;
   return rc;
 }
 
@@ -180,6 +183,7 @@ void sgrt_get_timing(const sgrt* s, sgrt_timing* t) {
   t->crop_ms = s->crop_ms;
   t->save_ms = s->save_ms;
   t->n_crops = s->n_crops;
+  t->n_png = s->n_png;
 }
 
 }  // extern "C"

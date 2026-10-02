@@ -4,6 +4,7 @@
 // 스냅숏은 그 순간의 자세·상태·격자(i8)를 통째로 복사한 것(참조 카운트) — 격자 600×600 에서 약 1 ms.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <deque>
@@ -54,6 +55,10 @@ struct sm_ctx {
   size_t ev_seen = 0;                 // 처리한 objmap 사건 수(옮겨짐·놓기 → 품질 0)
   uint32_t view_ver = 0;
   uint64_t epoch = 0;                 // sm_reset 마다 +1(잠금 밖 자르기 중 reset 이면 버림)
+  // 저장(PNG 더러움): 물체 id → 마지막으로 쓴 모습 version. 디렉터리가 바뀌거나 새 판이면 비우고 objects/ 정리
+  std::unordered_map<uint32_t, uint32_t> saved_ver;
+  std::string saved_dir;
+  bool clean_objects = true;
   explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {}
 };
 
@@ -155,7 +160,8 @@ int sm_reset(sm_ctx* c) {
   c->last_assoc.clear();
   c->ev_seen = 0;
   c->epoch++;
-
+  c->saved_ver.clear();
+  c->clean_objects = true;
   return 0;
 }
 
@@ -518,8 +524,11 @@ double sm_snap_reachable(const sm_snapshot_t* s, const double from[2], const dou
   return -1;
 }
 
-int sm_save_dsg(sm_ctx* c, const char* dir) {
+int sm_save_dsg(sm_ctx* c, const char* dir) { return sm_save_dsg_ex(c, dir, nullptr); }
+
+int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   if (!c || !dir) return -1;
+  const auto t0 = std::chrono::steady_clock::now();
   sm_snapshot_t* s = nullptr;
   if (sm_snapshot(c, &s) != 0) return -1;
   SaveInput in;
@@ -529,12 +538,40 @@ int sm_save_dsg(sm_ctx* c, const char* dir) {
   in.n_objs = int(s->objs.size());
   in.grid_res = s->res; in.grid_ox = s->ox; in.grid_oy = s->oy; in.grid_w = s->w; in.grid_h = s->h;
   in.cells = s->cells.data();
+  in.views = s->views;
+  in.png_dirty.assign(s->objs.size(), 0);
   {
     std::lock_guard<std::mutex> g(c->mu);
     const auto& ev = c->om.events();
     in.events.assign(ev.end() - std::min<size_t>(ev.size(), 50), ev.end());   // 최근 50 개
+    if (c->saved_dir != dir) {
+      c->saved_dir = dir;
+      c->saved_ver.clear();
+      c->clean_objects = true;
+    }
+    for (size_t i = 0; i < s->objs.size(); ++i) {
+      if (!s->views[i]) continue;
+      auto it = c->saved_ver.find(s->objs[i].id);
+      in.png_dirty[i] = it == c->saved_ver.end() || it->second != s->views[i]->version;
+    }
+    in.clean_objects = c->clean_objects;
   }
-  const int rc = saveScene(in, dir);
+  SaveOut out;
+  const int rc = saveScene(in, dir, &out);
+  {
+    std::lock_guard<std::mutex> g(c->mu);
+    if (c->saved_dir == dir) {
+      for (size_t i = 0; i < s->objs.size() && i < out.png_ok.size(); ++i)
+        if (out.png_ok[i]) c->saved_ver[s->objs[i].id] = s->views[i]->version;
+      if (rc == 0) c->clean_objects = false;
+    }
+  }
+  if (stats) {
+    stats->n_objects = int32_t(s->objs.size());
+    stats->n_png = out.n_png;
+    stats->png_ms = float(out.png_ms);
+    stats->total_ms = float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+  }
   sm_snapshot_release(s);
   return rc;
 }
