@@ -30,7 +30,9 @@ scenemap 이 부르는 검출기다. 코드는 `src/ovdet`(README 영어), 형�
   - 조각남: 한 물체에 50% 이상 걸친 검출 수의 평균과, 2개 이상인 비율이다.
   - 작은 물체: 원 해상도 1500 px 미만인 물체다.
 - **프롬프트**: 과제 BDDL 물체와 구조물 18개(`config/task_prompts.txt`). `allp` 만 어휘 272개 전부를 쓴다.
-- **도구**: `src/ovdet/scripts/eval_linux.sh`, `eval_conf.sh`. 결과 JSON 은 `logs/ovdet_compare.json`, `logs/ovdet_conf.json`.
+- **도구**: `src/ovdet/scripts/eval_linux.sh`, `eval_conf.sh`.
+
+> **주의(10-02)**: 아래 2 절 숫자는 제대로 잰 값이 아니다(결과 JSON 도 지움). 방향 참고로만 보고, 이 PC 에서 다시 잰다.
 
 | 검출기 | GPU MB | 지연 p50/p99 ms | 과제 물체 찾음/이름 (n1630) | 이름 댈 수 있는 물체 찾음/이름 (n3130) | 작은 물체 찾음/이름 (n1034) | 이름 정밀도 | 조각남 평균/2개 이상 |
 |---|---|---|---|---|---|---|---|
