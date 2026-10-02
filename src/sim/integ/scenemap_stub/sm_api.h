@@ -8,10 +8,11 @@
  * (읽기 전용 스냅숏, 참조 카운트). sm_set_labels·sm_mark_handled 는 계획기 스레드에서 온다(scenemap 이 잠금, 다음 스냅숏부터 보임).
  * 시각: stamp 는 전부 시뮬 시각 [s](판 시작 = 0). 영상 k 의 stamp = 장면 시각 k-1, proprio 는 그 스텝 상태의 stamp.
  */
+/* scenemap.h 가 이제 전체 C ABI 를 선언한다(같은 가드 SM_API_H). 먼저 include 해서 그 선언을 쓰고, 아래 사본은 건너뛴다. */
+#include <stdint.h>
+#include "scenemap.h"
 #ifndef SM_API_H
 #define SM_API_H
-#include <stdint.h>
-#include "scenemap.h" /* sm_detections */
 
 #ifdef __cplusplus
 extern "C" {

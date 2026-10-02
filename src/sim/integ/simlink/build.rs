@@ -8,6 +8,14 @@ fn main() {
     if let Ok(dir) = std::env::var("SCENEMAP_LIB_DIR") {
         println!("cargo:rustc-link-search=native={dir}");
         println!("cargo:rustc-link-lib=scenemap");
+        // libscenemap.a 의 의존: Spark-DSG(저장, ~/.local 또는 SPARK_DSG_LIB_DIR) · zlib(best view PNG)
+        let sdsg = std::env::var("SPARK_DSG_LIB_DIR")
+            .unwrap_or_else(|_| format!("{}/.local/lib", std::env::var("HOME").unwrap_or_default()));
+        println!("cargo:rerun-if-env-changed=SPARK_DSG_LIB_DIR");
+        println!("cargo:rustc-link-search=native={sdsg}");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{sdsg}");
+        println!("cargo:rustc-link-lib=spark_dsg");
+        println!("cargo:rustc-link-lib=z");
         println!("cargo:rustc-link-lib=stdc++");
         println!("cargo:rustc-cfg=scenemap_real");
         return;
