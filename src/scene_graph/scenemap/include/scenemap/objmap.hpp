@@ -45,7 +45,8 @@ struct ObjParams {
   int min_px = 6;                 // 시야 안 판정: 물체가 이 화소보다 작게 보이면 부재 증거로 안 씀
   double grasp_r = 0.25;
   float grip_closed = 0.09f;      // 손가락 합이 이보다 작으면 닫힘(열림 0.1)
-  int step = 1;                   // 깊이 화소 간격
+  int step = 1;                   // 깊이 화소 간격(최소)
+  int max_pts = 6000;             // 검출 하나에서 훑는 화소 수 한도: 큰 상자는 간격을 넓힘(백분위·중앙값에는 충분)
 };
 
 struct ObjEvent {

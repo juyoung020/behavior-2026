@@ -173,6 +173,24 @@
 
   - 못 찾는 것: 천장 조명(2.3 m, 얇음), 전자레인지·오븐 일부(합쳐짐·가림). ep3000 은 정답 자세로도 54% 라 slam 이 아니라 objmap 쪽 문제다(아직 안 봄). 나무 토막은 과제 인스턴스 상자에 없어 '옮겨짐 0/0'(정답 쪽 한계, 따로 봐야 함).
 
+#### 3.2.2 실시간 물체 기억: 종류·상자·사라짐·best view·저장(10-03)
+
+코드: `src/scene_graph/scenemap`(objmap·capi·bestview·png·dsg_save), `src/scene_graph/runtime`(libsgrt, `src/crop.cu`). 시험: `scenemap/tests/test_objmem.cpp`, `runtime/tests/test_crop.cpp`.
+
+- **이름 종류**(팀 벤치마크 dynamic-object-mapping-benchmark 의 정답 정의를 따름: 배경 구조물은 instance 0, 채점 안 함)
+  - 구조물 — 물체 노드가 안 되고 격자만: wall, floor, ceiling, door, doorway, door frame, window, pillar, column, partition, staircase, stairs, stair, railing, baseboard.
+  - 고정(가구·가전·붙박이) — 노드지만 `movable=false`, 사라짐 판정 없음, 상자는 한도 있는 합집합: table, desk, counter, sofa, shelf, cabinet, bed, refrigerator, oven, sink, lamp, plant, picture frame, rug, curtain, radiator, light switch, electric outlet …(`capi.cpp` `kStaticNames`).
+  - 나머지는 옮길 수 있는 물체. 비교: 정규화(".n.NN" 버림, '_'→' ', 소문자) 뒤 머리 명사("glass door" → door, "floor lamp" → lamp). 표는 `sm_set_kind_names(ctx, SM_KIND_STRUCTURE|SM_KIND_STATIC, names, n)`(NULL = 기본)로 바꾼다. 확정(서로 다른 keyframe 2 번)된 것만 노드가 된다.
+- **상자**: 마스크 안 카메라 깊이가 중앙값 ± max(3·1.4826·MAD, 0.10 m) 밖인 점은 버린다(뒤 벽이 비침). 큰 가구 합집합은 keyframe 마다 면마다 0.25 m 까지, 한 변 4 m 까지. 검출 하나에서 훑는 화소는 6000 개 안팎으로 간격을 넓힌다(720² 에서 keyframe 4.6 → 1.5 ms).
+- **사라짐**: 작은 물체만, 3 번 연속 놓치고 첫 놓침에서 시뮬 2 s 넘게 지나야 한다. 고정 종류·큰 것은 사라지지 않는다.
+- **best view**: 검출이 물체에 붙으면(`sm_last_assoc`, objmap `lastAssoc()`) 품질 = 유효 마스크 넓이(깊이 화소) × 점수. 지금 것 이상이면(같으면 최근) 바꾼다. 옮겨짐·놓기 사건이 나면 품질을 0 으로 내려 다음 관측이 바로 바꾼다.
+  - 자르기: 상자 + 변마다 10 %, 긴 변 최대 256 px(넓이 평균). RGB 는 `sm_push_image_ex` 의 자르기 함수가 한다 — sgrt 는 장치 메모리에서 커널 한 번(32 상자씩) + 자른 것만 고정 메모리로 내려받는다(온 영상 복사 없음). 깊이는 호스트 깊이에서 같은 상자·같은 크기, uint16 mm.
+  - 질의: `sm_snap_view(snap, id, &v)`.
+- **저장**(`sm_save_dsg` / `sm_save_dsg_ex`): PNG(`objects/O<id>_rgb.png` 8 비트 RGB, `O<id>_depth.png` 16 비트 회색 mm, 자체 쓰기 + zlib)는 모습이 바뀐 것·파일이 없는 것만 쓴다. 새 판·새 디렉터리면 옛 `O*_*.png` 를 지운다. 순서 PNG → scene.json → view.json.
+  - scene.json 노드 메타데이터(기존 그대로 + 추가): `state, n_obs, score, first_pos, structural, handled, movable`, 모습이 있으면
+    `rgbd = {rgb, depth(상대 경로), stamp, box_px[4](자른 영역, 원 영상 화소, 여유 포함), det_box_px[4], mask_area, depth_m(마스크 깊이 중앙값), score, cam_T[12](map ← 카메라 광학, 행 우선 3×4)}`. view.json `objects[]` 에 `movable`, `rgbd{rgb, depth}`.
+- **잰 시간**(jy-desktop, RTX 5070 Ti, Release): keyframe 720² — slam2d 만 0.57 ms, + objmap·best view(검출 6, 매번 자르기, 호스트 RGBA) 1.48 ms. 장치 자르기 6 상자(185 kB) 커널 + 내려받기 0.017 ms(온 영상 2 MB 내려받기 0.12 ms). 저장(물체 3, 격자 포함) PNG 6 장 0.66 ms, PNG 없음 0.32 ms.
+
 ### 3.3 ③ query — 계획기 질의
 
 - 같은 프로세스 Rust API 가 기본이다. 디버그·도구용 TCP JSON 줄은 선택이다.

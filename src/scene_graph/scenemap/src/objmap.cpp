@@ -26,6 +26,7 @@ double dist3(const double* a, const double* b) {
 
 struct Obs {
   int det;                        // 검출 번호
+  int sk;                         // 훑은 화소 간격
   double zmed;                    // 카메라 깊이 중앙값
   int cls;
   float score;
@@ -141,8 +142,10 @@ void ObjectMap::update(const ObjFrame& f) {
       const float* b = D->box + 4 * k;
       const int u0 = std::max(0, int(b[0] * sxu) - 1), u1 = std::min(f.w - 1, int(b[2] * sxu) + 1);
       const int v0 = std::max(0, int(b[1] * syv) - 1), v1 = std::min(f.h - 1, int(b[3] * syv) + 1);
-      for (int v = v0; v <= v1; v += st)
-        for (int u = u0; u <= u1; u += st) {
+      const double box_px = double(std::max(0, u1 - u0 + 1)) * std::max(0, v1 - v0 + 1);
+      const int sk = std::max(st, int(std::ceil(std::sqrt(box_px / std::max(1, p_.max_pts)))));
+      for (int v = v0; v <= v1; v += sk)
+        for (int u = u0; u <= u1; u += sk) {
           // 깊이 화소 중심 → 검출 영상 화소 → 마스크 칸, 1 칸 깎기(네 이웃도 마스크)
           const float xi = (u + 0.5f) / sxu, yi = (v + 0.5f) / syv;
           const int i = int(std::floor((xi - D->mask_ox) / D->mask_sx)), j = int(std::floor((yi - D->mask_oy) / D->mask_sy));
@@ -179,6 +182,7 @@ void ObjectMap::update(const ObjFrame& f) {
       Obs o;
       o.det = k;
       o.zmed = zmed;
+      o.sk = sk;
       o.cls = D->cls[k];
       o.score = D->score ? D->score[k] : 1.f;
       o.n = np;
@@ -222,7 +226,7 @@ void ObjectMap::update(const ObjFrame& f) {
     const Obs& o = obs[a];
     DetAssoc& as = assoc_[o.det];
     as.n_valid = o.n;
-    as.area_px = float(o.n) * st * st;
+    as.area_px = float(o.n) * o.sk * o.sk;
     as.depth_med = float(o.zmed);
     if (obs_to[a] >= 0) {
       MapObject& m = objs_[obs_to[a]];
