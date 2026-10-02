@@ -388,6 +388,43 @@ C ABI 전체(`sm_bench`, 같은 기록, 스냅숏 6 스텝마다, 저장 1 s 마
 - 실시간 단계 시간(B, sgrt 안, Isaac Sim·다른 에이전트와 CPU 를 나눔 — 재생 표보다 2–3 배): keyframe 당 scan 389·objmap 393·insert 78 µs, image_total 1.74 ms(장치 자르기·구름 색 포함), graph_places 0.98 ms(0.5 s 마다), 검출(YOLO26s) 7.8 ms, 저장은 저장 스레드(평균 11.7 ms, 스텝 밖). 파이썬 쪽: 시뮬 정답 자세 읽기 약 0.6 ms/번(그래서 영상 짝 스텝에만 읽게 바꿈), 준비 21 µs, sgrt_step 호출 평균 1.8 ms(검출 포함).
 - 뷰어 8080: B 의 memory(층 쌓기 — 물체·궤적·places·방 4·건물, 물체 그림).
 
+### 3.7 ⑥ 물체 영상 임베딩·이름 캐시 — SigLIP 2 B/32-256(10-03)
+
+물체마다 **영상 벡터 1개(768-d)** 가 원본이고, 이름은 그 벡터와 라벨 표에서 뽑은 캐시다(상위 저장소 `docs/clip_candidates.md` 3.5·8절).
+코드는 `src/scene_graph/clip/`(sgclip, [README](../src/scene_graph/clip/README.md)), sgrt 연결은 `runtime/src/sgrt_clip.*`.
+
+- **켜기**: `SGRT_CLIP=1`(기본 엔진 `~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`) 또는 plan 경로. 없으면 꺼짐.
+  라벨 표 `SGRT_LABELS`(기본 `~/embed_work/labels/objects-v1`, training/embed 형식), 투영 표본 `SGC_IMG_SAMPLE`.
+- **신호**: scenemap 새 ABI `sm_last_views(ctx, updated[], quality[], cap)` — 마지막 영상의 검출 k 가 그 물체 best view 를 바꿨는가와
+  모습 품질(유효 마스크 넓이 × 점수). `sm_last_assoc` 과 짝(검출 → 물체 id). capi.cpp 의 best view 확정 고리에서만 적는다.
+- **고르기(keyframe 마다)**: ① 임베딩이 없는 물체(품질 큰 것 먼저) ② best view 가 바뀌고 품질이 임베딩 때의 1.2 배 이상(좋아진 비율 순).
+  최대 8 개. 같은 물체 검출 둘이면 품질 큰 것.
+- **실행**: 원본 RGB(장치) + 검출 상자 + 검출기 마스크 비트 → CUDA 커널 하나(정사각 + 10 % 둘레, 256², 8 × 8 마스크 비율) →
+  TensorRT(자기 스트림, 같은 CUDA 문맥). `sgc_submit` 은 커널이 원본을 다 읽을 때까지만 기다린다(커널 실행 3–12 µs, nsys).
+  결과는 다음 스텝들의 `poll`(이벤트 질의)로 받는다 — 프레임 고리를 막지 않는다.
+- **저장(저장 스레드, `sm_save_dsg_ex` 앞)**:
+  - `objects/O<id>_emb.f16`: 768 × FP16, L2 정규화(원본). 바뀐 물체만, 임시 → rename.
+  - `cache/names.json`: `{"table": {name, version, sha}, "objects": {"O12": {emb_sha, en: [[이름, 점수] ×5], ko, level, level_ko,
+    general, general_ko, score, prob, margin, rolled, structural}}}`. 표 sha 가 바뀌었거나 emb_sha(FNV-1a 64) 가 바뀐 물체만 다시 뽑는다.
+  - `cache/index/labels_<표 sha>_<투영>.idx`: 라벨 찾기 색인(처음 1 s 안팎에 만들고 다음부터 읽음).
+  - scene.json 노드 metadata: `sm_set_object_meta` 로 `"emb": {path, sha, dim, dtype, model, stamp}`,
+    `"names": {en, ko, score, prob, general, general_ko, rolled, structural, table, top}`. dsg_save 는 고치지 않았다.
+- **sgrt C ABI(추가)**: `sgrt_clip_enabled`, `sgrt_object_embedding(id, out768)`, `sgrt_query_embedding(q768, k, ids, scores)`
+  (살아 있는 물체 전부 — scenemap `structural` 은 "큰·고정 가구" 라 거르지 않음), `sgrt_query_label(text, …)`(라벨 표 영어·한국어
+  이름과 같으면 미리 계산한 글 임베딩으로, 없으면 -2), `sgrt_object_names(id, …)`, `sgrt_get_clip_stats`.
+- **글 쪽**: 로봇 밖 `clip/tools/text_query.py`(SigLIP 2 글 탑, `--serve` HTTP `/encode`·`/search`). 로봇 안 한국어 학생은
+  training/embed 가 같은 약속(글 → 768-d L2)으로 만든다.
+- **뷰어**: sgviz 물체 판에 이름(영·한·점수·상위 5·표 sha·emb), FastSAM(`object`)이면 노드 이름 대신 임베딩 이름, 글 찾기 칸
+  (`SGVIZ_QUERY_URL`, 기본 `http://127.0.0.1:8091`).
+
+#### 3.7.1 시뮬 확인(10-03, bringing_water public_test 0, 3000 스텝, headless, FastSAM-s 416, SGRT_POSE=gt)
+
+- `outputs/clip_fastsam_20261003_075313/`: 물체 255 개 모두 임베딩·이름(표 objects-v1 `8e57b350d0f88b87`). 부엌: drop in sink / 싱크대,
+  oven / 오븐, range hood, countertop, bar stool, ceiling light, couch / 소파, chair / 의자 …
+- 글 찾기(`text_query.py`, 1위): "white chair"·"흰 의자" → chair #9(0.130 / 0.127), "sofa" → couch #170, "kitchen sink" → sink #19,
+  "오븐" → oven 계열. 이 장면에는 라디오가 없다(라디오는 turning_on_radio — 상위 문서 8절).
+- 같은 기억 폴더를 `sgclip_names` 로 다시 돌리면 0 개 다시 뽑음(표·emb_sha 같음).
+
 ## 4. 약속(인터페이스)
 
 ### 4.1 simlink → scenemap (C ABI, 같은 프로세스)
