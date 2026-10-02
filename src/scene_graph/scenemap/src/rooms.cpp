@@ -83,46 +83,57 @@ struct DSU {
   }
 };
 
-// 작은 모름 구멍 → 빈칸, 빈칸에 둘러싸인 작은 점유 점 → 빈칸
+// 작은 모름 구멍 → 빈칸, 빈칸에 둘러싸인 작은 점유 점 → 빈칸. 덧댄 격자(밖 = 3)로 범위 검사 없이
 void cleanFree(const std::vector<uint8_t>& cls, int W, int H, int hole_cells, int speck_cells, std::vector<uint8_t>& free) {
-  const size_t N = size_t(W) * H;
-  std::vector<uint8_t> seen(N, 0);
+  const int PW = W + 2, PH = H + 2;
+  std::vector<uint8_t> pc(size_t(PW) * PH, 3);   // 0 모름, 1 빈칸, 2 점유, 3 밖, |0x80 = 본 칸
+  for (int y = 0; y < H; ++y) std::memcpy(&pc[size_t(y + 1) * PW + 1], &cls[size_t(y) * W], size_t(W));
+  const int o4[4] = {-1, 1, -PW, PW}, od[4] = {-PW - 1, -PW + 1, PW - 1, PW + 1};
   std::vector<int> stack, comp;
-  for (size_t s = 0; s < N; ++s) {
-    if (cls[s] == 1 || seen[s]) continue;
-    const uint8_t want = cls[s];   // 0 모름, 2 점유
-    const bool eight = want == 2;
-    const int limit = want == 0 ? hole_cells : speck_cells;
-    stack.assign(1, int(s));
-    seen[s] = 1;
-    comp.clear();
-    bool border = false, keep = limit > 0;
-    int nfree = 0, nother = 0;
-    while (!stack.empty()) {
-      const int c = stack.back();
-      stack.pop_back();
-      if (keep) comp.push_back(c);
-      if (int(comp.size()) > limit) { keep = false; comp.clear(); }
-      const int x = c % W, y = c / W;
-      for (int dy = -1; dy <= 1; ++dy)
-        for (int dx = -1; dx <= 1; ++dx) {
-          if (!dx && !dy) continue;
-          const bool diag = dx && dy;
-          const int X = x + dx, Y = y + dy;
-          if (X < 0 || Y < 0 || X >= W || Y >= H) { border = true; continue; }
-          const size_t j = size_t(Y) * W + X;
-          if (cls[j] == want) {
-            if ((!diag || eight) && !seen[j]) { seen[j] = 1; stack.push_back(int(j)); }
-          } else if (!diag) {
-            if (cls[j] == 1) ++nfree; else ++nother;
+  for (int y = 1; y <= H; ++y)
+    for (int x = 1; x <= W; ++x) {
+      const int s0 = y * PW + x;
+      const uint8_t want = pc[s0];
+      if (want == 1 || want & 0x80) continue;
+      const bool eight = want == 2;
+      const int limit = want == 0 ? hole_cells : speck_cells;
+      stack.assign(1, s0);
+      pc[s0] |= 0x80;
+      comp.clear();
+      bool border = false, keep = limit > 0;
+      int nfree = 0, nother = 0;
+      while (!stack.empty()) {
+        const int c = stack.back();
+        stack.pop_back();
+        if (keep) {
+          comp.push_back(c);
+          if (int(comp.size()) > limit) keep = false;
+        }
+        for (int k = 0; k < 4; ++k) {
+          const int j = c + o4[k];
+          const uint8_t v = pc[j] & 0x7f;
+          if (v == want) {
+            if (!(pc[j] & 0x80)) { pc[j] |= 0x80; stack.push_back(j); }
+          } else if (v == 3) {
+            border = true;
+          } else if (v == 1) {
+            ++nfree;
+          } else {
+            ++nother;
           }
         }
+        if (eight)
+          for (int k = 0; k < 4; ++k) {
+            const int j = c + od[k];
+            if (pc[j] == want) { pc[j] |= 0x80; stack.push_back(j); }
+            else if ((pc[j] & 0x7f) == 3) border = true;
+          }
+      }
+      if (!keep || border || comp.empty()) continue;
+      const bool ok = want == 0 ? (nfree > 0 && 2 * nfree >= nfree + nother) : nother == 0;
+      if (ok)
+        for (int c : comp) free[size_t(c / PW - 1) * W + (c % PW - 1)] = 1;
     }
-    if (!keep || border || comp.empty()) continue;
-    const bool ok = want == 0 ? (nfree > 0 && 2 * nfree >= nfree + nother) : nother == 0;
-    if (ok)
-      for (int c : comp) free[size_t(c)] = 1;
-  }
 }
 
 }  // namespace
@@ -140,7 +151,8 @@ int RoomSeg::index(uint32_t id) const {
   return -1;
 }
 
-std::shared_ptr<RoomSeg> segmentRooms(const GridView& g, const RoomParams& P) {
+namespace {
+std::shared_ptr<RoomSeg> segmentCore(const GridView& g, const RoomParams& P) {
   const auto t0 = std::chrono::steady_clock::now();
   auto S = std::make_shared<RoomSeg>();
   S->w = g.w; S->h = g.h; S->gx0 = g.gx0; S->gy0 = g.gy0; S->res = g.res;
@@ -465,6 +477,37 @@ std::shared_ptr<RoomSeg> segmentRooms(const GridView& g, const RoomParams& P) {
     S->doors.push_back(d);
   }
   std::sort(S->doors.begin(), S->doors.end(), [](const RoomDoor& x, const RoomDoor& y) { return x.a != y.a ? x.a < y.a : x.b < y.b; });
+  S->ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return S;
+}
+
+}  // namespace
+
+// 빈칸 상자(+ 여유 2 칸)만 잘라 나누고 온 격자 크기로 되돌림(실제 지도는 대부분 모름)
+std::shared_ptr<RoomSeg> segmentRooms(const GridView& g, const RoomParams& P) {
+  const auto t0 = std::chrono::steady_clock::now();
+  int x0 = g.w, y0 = g.h, x1 = -1, y1 = -1;
+  for (int y = 0; y < g.h; ++y)
+    for (int x = 0; x < g.w; ++x) {
+      const int v = g.cells[size_t(y) * g.w + x];
+      if (v >= 0 && v <= P.free_max) { x0 = std::min(x0, x); x1 = std::max(x1, x); y0 = std::min(y0, y); y1 = std::max(y1, y); }
+    }
+  if (x1 < 0 || !g.cells) return segmentCore(g, P);
+  x0 = std::max(0, x0 - 2); y0 = std::max(0, y0 - 2); x1 = std::min(g.w - 1, x1 + 2); y1 = std::min(g.h - 1, y1 + 2);
+  const int w = x1 - x0 + 1, h = y1 - y0 + 1;
+  if (size_t(w) * h * 10 > size_t(g.w) * g.h * 9) return segmentCore(g, P);   // 거의 다면 그대로
+  std::vector<int8_t> sub(size_t(w) * h);
+  for (int y = 0; y < h; ++y) std::memcpy(&sub[size_t(y) * w], &g.cells[size_t(y + y0) * g.w + x0], size_t(w));
+  auto S = segmentCore(GridView{sub.data(), w, h, g.res, g.gx0 + x0, g.gy0 + y0}, P);
+  std::vector<uint32_t> ids(size_t(g.w) * g.h, 0);
+  std::vector<uint8_t> rf(size_t(g.w) * g.h, 0);
+  for (int y = 0; y < h; ++y) {
+    std::memcpy(&ids[size_t(y + y0) * g.w + x0], &S->ids[size_t(y) * w], sizeof(uint32_t) * w);
+    std::memcpy(&rf[size_t(y + y0) * g.w + x0], &S->rawfree[size_t(y) * w], size_t(w));
+  }
+  S->ids.swap(ids);
+  S->rawfree.swap(rf);
+  S->w = g.w; S->h = g.h; S->gx0 = g.gx0; S->gy0 = g.gy0;
   S->ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return S;
 }

@@ -215,6 +215,34 @@
 
 - 이름 매칭: 계획기는 BDDL 이름(`radio_receiver.n.01`)으로 묻고, scenemap 은 YOLOE 프롬프트 id 로 저장한다. 표는 판 시작 때 같이 만든다(5절).
 
+### 3.4 ④ rooms — 방 나누기(10-03)
+
+코드: `scenemap/include/scenemap/rooms.hpp`, `src/rooms.cpp`. 시험: `tests/test_rooms.cpp`. 오프라인: `tools/rooms_pgm <memory 디렉터리> [출력]`(map.pgm·map.yaml·view.json 을 읽어 방·문·물체 배정을 찍고 rooms.pgm·rooms_color.ppm 을 씀).
+
+Hydra(RSS 2022) room finder 를 2D 격자로 옮겼다. Hydra 는 places(GVD) 노드의 장애물 거리로 문턱을 키워 가며 그래프를 끊고(dilation), 여러 문턱에서 오래 사는 성분을 방 씨앗으로 삼은 뒤 나머지 place 를 다시 붙인다. 여기서는 place 대신 격자 빈칸을 그대로 쓴다.
+
+1. **분류**: 값 0..49 빈칸(광선이 한 번 지나간 칸 = 40 %), ≥ 65 점유, 그 사이·모름 = 막힘. 안쪽 모름 구멍 < 0.25 m²(빈칸이 둘레의 반 이상) → 빈칸, 빈칸에 둘러싸인 점유 점 ≤ 0.01 m²(의자 다리) → 빈칸(나누기에만). 빈칸 상자 + 2 칸만 잘라 계산.
+2. **거리 변환**: 빈칸 → 막힌 칸(격자 밖 포함) 정확한 유클리드 거리(세로 두 번 쓸기 + 가로 Felzenszwalb 봉투). 여유 c = 거리 − res/2(벽 면까지).
+3. **거름**: 문턱 t = 0.60 → 0.30 m(0.025 간격, 13 층)로 낮추며 {c > t} 칸을 넣고 union-find. 두 성분이 만날 때 둘 다 0.5 m² 이상이고 어린 쪽 수명(태어난 문턱 − 만난 문턱) ≥ 0.10 m 면 둘 다 씨앗으로 얼리고(Hydra barcode/lifetime), 아니면 짧게 산 쪽을 흡수. 결과적으로 폭 ≈ 2·(0.60 − 0.10) = 1.0 m 보다 좁은 통로로만 이어진 곳이 다른 방이 된다(보통 문 0.8–0.9 m). 0.6 m 보다 좁은 틈은 거름 안에서 이어지지도 않는다.
+4. **넘치기**: 씨앗에서 여유 큰 칸부터(반 칸 단위 통, 같은 통은 먼저 온 순) 4 이웃으로 — 경계가 좁은 곳(문)에 선다. 씨앗 없는 빈칸 덩이는 2 m² 이상이면 방 하나, 아니면 방 없음.
+5. **합치기**: 이음매(맞닿은 칸 쌍)가 1.6 m 이상이면 문이 아님 → 합침. 2 m² 보다 작은 방은 이음매가 가장 긴 이웃에(이웃 없으면 버림).
+6. **문(방–방 변)**: 남은 이음매(≥ 2 쌍)마다 가운데 위치, 폭 = 2·이음매 최대 여유 + res.
+7. **id 유지**: 이전 나눔과 세계 칸 좌표로 겹침을 세어(격자가 넓어지거나 원점이 옮겨져도) 큰 겹침부터 욕심쟁이 짝(겹침 ≥ 0.3 × 작은 쪽 넓이). 짝 없는 방만 새 id. 나뉘면 큰 쪽이 옛 id, 합쳐지면 겹침 큰 옛 id.
+8. **다시 나누기**: `sm_snapshot` 이 시뮬 3 s 마다 빈칸 분류가 0.25 m² 이상 바뀌었는지 보고 바뀌었을 때만 다시 나눈다(scenemap 잠금 밖, 방 추적기 자기 잠금, 한 번에 하나). 물체 배정·이름은 스냅숏마다 새로(수 µs).
+9. **물체 배정**: 바닥 자리(xy 상자 반폭 max(크기/2, 0.1) + 0.15 m)의 방 칸 다수결(가구는 바닥 자리가 점유 칸이라 둘레 빈칸이 표를 줌), 없으면 1 m 안 가장 가까운 방 칸.
+10. **이름(규칙)**: 머리 명사 점수 — kitchen(refrigerator/fridge/oven/stove/cooktop/dishwasher 3, microwave/toaster 2, sink 1), bathroom(toilet/bathtub/shower 3, sink 1), bedroom(bed 3, nightstand 2, wardrobe/dresser 1), living room(sofa/couch 3, tv/television/coffee table 2, armchair/fireplace 1), office(desk/monitor/office chair 2, computer/keyboard/printer 1). 확률 = 점수 / (합 + 1.5), "unknown" = 1.5 / (합 + 1.5). 가장 큰 점수 ≥ 2 면 그 종류(같은 종류 둘째는 "kitchen 2"), 아니면 "room <id>". 근거(물체 id·이름·종류·무게)를 남긴다. **외부 이름 고리**: `sm_set_room_name(ctx, room_id, name, conf)` — LLM·BDDL 방 이름이 규칙 이름을 덮음(id 가 이어지니 다시 나눠도 유지, `sm_reset` 에서 지움).
+
+C ABI: `sm_get/set_room_params`, `sm_update_rooms(ctx, force)`, `sm_set_room_name`, `sm_snap_rooms`(id·이름·종류·확신도·무게중심·상자·넓이·물체 id), `sm_snap_room_doors`, `sm_snap_room_grid`(칸 방 id), `sm_snap_room_at(xy)`, `sm_snap_object_room(obj_id)`.
+
+저장(방이 있을 때만, 기존 키·파일은 그대로):
+- scene.json ROOMS 층: 노드 `NodeSymbol('R', id)` RoomNodeAttributes — name, position = 무게중심(z 0), bounding_box = 방 칸 xy 상자(z 0), semantic_class_probabilities, metadata `{area_m2, name_confidence, evidence[{object,name,type,weight}], type, external_name, max_clear_m, grid_value}`. 방→물체 변(층 사이), 방–방 변(weight = 문 폭, metadata `{relation:"door", pos[2], width}`).
+- `rooms.pgm`: map.pgm 과 같은 크기·방향(위가 +y, map.yaml 그대로 씀), 8 비트, 0 = 방 없음, k = view.json `rooms[]` 의 `value`(id 순 자리 + 1, 255 에서 멈춤).
+- view.json: `rooms_grid:"rooms.pgm"`, `rooms:[{id, value, name, type, conf, centroid[2], area, bbox[x0,y0,x1,y1], color[r,g,b](id 마다 고정), objects[ids]}]`, `room_doors:[{a, b, pos[2], width}]`, `objects[].room`(0 = 없음).
+
+잰 것(jy-desktop, Release, 다른 일로 부하 16 중): 합성 두 방 + 0.9 m 문 → 방 2·문 1(폭 0.95), ㄱ자 방(팔 2 m) → 1, 복도 1.4 m + 방 셋 → 4·문 3(복도–방만), 잡음(모름 5 %·점유 점 0.5 %·40 % 칸 20 %·모름 덩이 0.3²) → 2·1, 자람 3 단계 + 원점 −2 m 이동에서 id 그대로, 600×600 집(9 방·문 12·가구) 중앙값 8.4–9.1 ms(전부 빈칸 600×600 7.5 ms), 작은 판 0.3–0.8 ms. 실제 판 `outputs/mem_seg_20261003_042852/memory`(301×285, 빈칸 14 m², 대부분 모름): 1.0 ms, 방 2 — 소파·스탠드 둘이 있는 10.4 m² 방(living room, 확신도 0.67)과 문(폭 0.58, 틈새 너머) 너머 보인 5.5 m² 띠(복도로 보임, 이름 없음).
+
+남은 것: 2D 라 가구가 만든 좁은 틈(< 1 m)도 문으로 볼 수 있음 · 넓게 트인 거실–부엌은 한 방 · 모름 경계(탐험 끝)도 좁으면 문처럼 갈림(지도가 자라면 다시 나눠 고쳐짐) · LLM 이름은 고리만.
+
 ## 4. 약속(인터페이스)
 
 ### 4.1 simlink → scenemap (C ABI, 같은 프로세스)
