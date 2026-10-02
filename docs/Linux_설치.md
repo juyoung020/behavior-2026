@@ -46,6 +46,7 @@
   드라이버 580(CUDA 13.0)이 13.2 PTX 를 JIT 못 해("PTX was compiled with an unsupported toolchain") SASS 없는 빌드가 GPU 에서 안 돈다. clang 14 + `libstdc++-12-dev` 가 있어야 clang 링크가 된다.
 - 엔진 시험 CMake 는 `CMAKE_CUDA_ARCHITECTURES` 기본을 `project()` 앞에서 120 으로 정한다(CUDA 13 기본 75 이면 sm_75 만 빌드되던 문제).
 - **드라이버 595.91.07 에서 Isaac Sim 5.1 이 시작 때 `librtx.scenedb.plugin.so` 세그폴트**(맨 SimulationApp 도, iGPU 막아도 같음 — 595 계열 알려진 문제) → `nvidia-driver-580-open` 580.178.04 로 내림.
+- 엔진 시험(CUDA 12.8, sm_120, 10-03): PhysX 대조 CPU·GPU 시험 전부 비트 동일(관절체·접촉·조인트·풀이·섬·렌더 층1=층2·초월함수 전수). 녹화 데이터(`~/engine-data`)가 필요한 시험 30 개는 이 PC 에 데이터가 없어 못 돌림. `test_aos_diff_1lane` 은 문서대로 ±0 두 함수만 다름(예상). `test_render_math` 는 인자 없이(간격 1) 돌리면 fexp2 입력 수가 int 를 넘어 죽음 — `test_render_math 4` 로 통과. `test_pcm_convex_gpu` 는 커널 스택 50,416 B 가 한도 32 KB 를 넘어 실패 → 64 KB 로(`CX_STACK_KB`), 통과.
 - `import omnigibson` 은 `warp-lang==1.12.0` 이 있어야 된다(위 3 의 1 과 같음). HF 토큰은 `hf auth login`(저장소 밖).
 
 ## 4. 첫 확인 (`tools/setup/linux_first_check.sh N`)

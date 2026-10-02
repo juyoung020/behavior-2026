@@ -88,7 +88,8 @@ int main(int argc, char** argv) {
   const Gu::NarrowPhaseParams npP(contactDist, meshMargin, tolLen);
   const eng::px::Gu::NarrowPhaseParams npE(contactDist, meshMargin, tolLen);
 
-  CK(cudaDeviceSetLimit(cudaLimitStackSize, 32 * 1024));
+  // kConvexConvexBatch 스택 프레임: CUDA 12.8 sm_120 에서 50,416 B (ptxas -v) — 32 KB 면 넘친다. test_contact_gpu 와 같게 64 KB.
+  CK(cudaDeviceSetLimit(cudaLimitStackSize, size_t(getenv("CX_STACK_KB") ? atoi(getenv("CX_STACK_KB")) : 64) * 1024));
   const int threads = 64;
 
   // ---- 비교 실행: E 판 × P 쌍 × F 프레임
