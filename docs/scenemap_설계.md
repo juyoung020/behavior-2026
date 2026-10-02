@@ -15,7 +15,7 @@
 | 물체 인식 | YOLO-seg nano, 80종 밖이면 YOLOE / YOLO-World | **YOLOE-seg**(열린 어휘). 프롬프트 = 과제 BDDL 물체 이름. C++ frontend 에이전트가 만든다. 출력 형식은 이 문서 5절이 정한다 | 형식 제안 |
 | 같은 물체 판단(DA) | 직접. 같은 이름끼리 위치로 비교, 부족하면 색 분포 | 같음 | 설계 |
 | 지도 갱신 | 직접. 바뀐 부분만(DovSG·Khronos 참고) | 같음 + 들고 있는 물체 처리(2절 규칙) | 설계 |
-| 저장·보기 | Spark-DSG + 뷰어, 계획기에는 JSON | 같음. Spark-DSG C++ 라이브러리로 저장(ROS 없음), 뷰어는 `spark-dsg visualize`(오프라인 도구) | 설계 |
+| 저장·보기 | Spark-DSG + 뷰어, 계획기에는 JSON | 같음. 살아 있는 Hydra 식 층 그래프(3.5) + Spark-DSG JSON 직접 쓰기, 뷰어 sgviz(층 쌓기) | 동작 중 |
 | 계획 | Qwen3.5-9B API | 같음(`src/agent`, KAU API) | 동작 중 |
 | 행동 | π0.5 | 같음(네이티브 C++/CUDA 엔진, 평가기 프로세스 안) | 동작 중 |
 
@@ -287,6 +287,91 @@ Hydra 가 더 나은·싼 것과 우리 판단(재서 정함):
 - **한 번 쓸기 거름**: 이전 판도 이미 한 번 정렬 + 내림차순 union-find 였다. 이번에 거름과 넘치기·씨앗 없는 덩이 찾기·씨앗 칸 표시를 한 쓸기로 합침(ToMATo).
 - **PLATEAU 문턱·MODULARITY**: 위 측정대로 문턱은 우리 쪽이 낫고, 2D 칸 격자에서 modularity 는 넘치기보다 비싸고 문 자리에서 경계를 세울 근거가 없어 안 씀.
 - 그 밖에 빨라진 것: 줄마다 빈칸 토막별 봉투·바로 가로 봉투, `std::ceil` 대신 정수 올림(기본 x86-64 에선 함수 부름), 맨 위 통은 세지 않음(같은 통 잇단 ++ 의 저장–읽기 지연), 덧댄 분류 격자에 바로 분류, 줄 토막 모음, 스레드마다 일감 버퍼 재사용(600×600 이면 약 8 MB 를 쥐고 있음, 부를 때마다 쪽 잘못 없음), 이상한 설정 막기(간격 ≥ 1 mm, 층 0 아래 통 늘 하나).
+
+### 3.5 ⑤ 살아 있는 장면 그래프 — Hydra 식 층(10-03)
+
+코드: `scenemap/include/scenemap/sgraph.hpp`, `src/sgraph.cpp`(갱신), `src/capi.cpp`(keyframe 뒤 갱신·C ABI), `src/dsg_save.cpp`(scene.json 직접 쓰기). 시험: `tests/test_posemap.cpp` testGraph, 뷰어 `viewer/sglayers.py`·`test_sglayers.py`.
+
+물체를 저장할 때만 노드로 만들던 것을, 판 내내 살아 있는 그래프로 바꿨다. keyframe 마다 바뀐 곳만 고치고, 스냅숏은 그때의 바뀌지 않는 사본(GraphView)을 포인터로 나눠 쓴다.
+
+| 층(Spark-DSG 번호) | 노드 | 속성 | 층 안 변 | 갱신 |
+|---|---|---|---|---|
+| 2 OBJECTS | 'O'<물체 id>, 확정 물체 | 위치·상자·상태·movable·이름 | on(바닥이 아래 물체 윗면 ±0.1 m·xy 겹침) / in(중심이 더 큰 물체 상자 안) / near(0.6 m), 쌍마다 하나 | 검출이 있는 keyframe, 바뀐 것만(1 mm·상태·이름) |
+| 2 AGENTS(partition 'a') | 'a'<k>, 로봇 keyframe 자세 | 위치·yaw·시각 | 앞뒤 | 0.5 m·30° 움직이거나 10 s 마다 |
+| 3 PLACES | 'p'<k>, 빈 공간 뼈대 | 위치(z 0)·여유(distance)·frontier | 직선 시야가 빈칸인 이웃(2 m 안, 가까운 6 개), 무게 = 변을 따라 가장 작은 여유(병목) | 격자 보이는 값이 바뀐 상자 + 2 m 창만, 0.5 s 마다 |
+| 4 ROOMS | 'R'<방 id>(3.4) | 이름·무게중심·상자·넓이 | 문(무게 = 폭, 자리) | 방 나눔이 바뀔 때 |
+| 5 BUILDINGS | 'B'0 | 방 넓이 가중 중심 | — | 방과 함께 |
+
+- 층 사이 변(부모 → 자식): 건물 → 방, 방 → place(방 칸), 방 → 물체(3.4 배정), place → 물체(가장 가까운 place, 3 m 안), place → agent(2 m 안).
+- **PLACES 만들기**(Hydra 는 3D ESDF 의 GVD, 우리는 2D 격자):
+  1. 창 = 지난 계산 뒤 보이는 값이 바뀐 칸 상자(격자의 두 번째 dirty 소비자 — 탐색 쪽 `sm_take_dirty` 와 따로) + 2 m, 그 안 빈칸 상자로 줄임.
+  2. 거리 변환(Felzenszwalb, 창 + 1 m 여백): 막힘 = 점유(≥ 50)·모름·격자 밖. 여유 = 거리 − res/2, 상한 1 m.
+  3. 능선 후보: 빈칸, 여유 ≥ 0.20 m, 네 방향(가로·세로·대각 둘) 중 하나에서 양 옆보다 작지 않음(GVD 흉내 — 넓은 방 안은 상한이 평평해 고른 격자처럼 깔림).
+  4. 성글게: 여유 큰 순으로, 간격 clamp(1.5·여유, 0.5, 1.5) m 안에 다른 place(창 밖 포함)가 없을 때만. 창 안 옛 place 는 지우고, 0.3 m 안 옛 id 는 다시 씀(id 가 덜 흔들림).
+  5. frontier: 여유 + 0.15 m 원 위 16 점에 모름(또는 격자 밖)이 있으면 — 가장 가까운 막힘이 모름 쪽. 탐색 쪽이 바로 씀.
+  6. 변: 창 + 2 m 안 place 의 place 변만 다시.
+- 자세 보정 고리(SLAM 모드): 루프 닫기가 없어 격자가 휘지 않으므로 그래프는 map 좌표 그대로다. 보정이 생기면 agent 노드는 keyframe 자세를 가지고 있어 다시 붙일 수 있고, place 는 격자에서 다시 만든다(창을 전부로) — 지금은 부르지 않음.
+- **C ABI**(추가만): `sm_snap_graph_nodes(snap, SM_GL_OBJECTS|AGENTS|PLACES|ROOMS|BUILDINGS|ALL, &nodes)`, `sm_snap_graph_edges`, `sm_snap_graph_node(id)`, `sm_snap_graph_neighbors(id, edge_idx, cap)`(CSR), `sm_snap_place_path(from, to, min_clear, ids, cap, &len)`(place 그래프 다익스트라, 변 여유 ≥ min_clear 만), `sm_set_object_meta(ctx, id, json_members)`(SigLIP 2 emb·이름 같은 것을 scene.json 물체 metadata 에 덧붙임). sgrt: `sgrt_map_snapshot(s)` = 마지막 `sgrt_map` 스냅숏(그래프·물체·방을 같은 순간 그대로).
+- **저장(scene.json)**: Spark-DSG 라이브러리로 그래프를 저장 때마다 새로 만들고 nlohmann 으로 쓰던 것을, 같은 Spark-DSG 1.1.3 JSON 형식을 직접 문자열로 쓰는 것으로 바꿨다(`to_chars`, place·agent·방·건물 노드 조각은 노드 ver 로 캐시). 한 쌍에 변 하나(Spark-DSG 규칙). 기본 `spark_dsg` 파이썬(`DynamicSceneGraph.load`, 뷰어 venv)과 C++(test_objmem) 둘 다 읽는다. 라이브러리 판은 `SM_DSG_SAVE=spark` 로 비교용으로 남김. Spark-DSG 자체는 고치지 않았다(포맷을 직접 써서 라이브러리 쪽 비용이 없어짐 — 벤더링 필요 없음). view.json 에 `graph{nodes(agent·place·건물), edges[[a, b, rel, w]]}` 를 덧붙여 뷰어가 spark_dsg 없이 층을 그린다.
+- 주기 저장은 sgrt 저장 스레드에서(스텝을 안 막음, 앞 저장이 덜 끝났으면 그 주기는 건너뜀, `SGRT_SAVE_SYNC=1` 이면 예전처럼).
+
+#### 3.5.1 Hydra 와 견줌
+
+| | Hydra(RSS 2022, `refs/code/Hydra`) | 우리(2D) |
+|---|---|---|
+| 지도 | TSDF/ESDF 3D 복셀, 메시 | 2D 점유 격자(5 cm, 깊이 가상 스캔) |
+| places | ESDF 의 GVD(복셀 둘 이상의 가장 가까운 장애물), 희소화 후 노드·변(무게 = 변 위 최소 거리) | 2D 거리 변환 능선 + 여유 비례 간격 희소화, 변 = 직선 시야, 무게 = 병목 여유(같은 생각) |
+| 갱신 | 활성 창(로봇 둘레)만 앞단에서, 뒷단이 루프 닫기 때 변형(deformation graph) | 바뀐 칸 상자 + 2 m 창만(0.5 s), 루프 닫기 없음 — 정답 자세 모드에선 변형 필요 없음 |
+| objects | 메시 의미 분할 → 물체 노드 | 열린/닫힌 어휘 검출 + 깊이 → objmap(3.2) |
+| agents | 자세 그래프 노드 | keyframe 자세 노드(0.5 m·30°·10 s) |
+| rooms | places 거름 + 씨앗 넘치기(3.4.1) | 같은 생각을 격자 칸에서(3.4) |
+| frontier | places 의 active/anti frontier(3D) | place 둘레 원 위 모름 |
+| 층 사이 | place → room, object → place | 같음 + 방 → 물체(바닥 자리 다수결), 물체 on/in/near |
+| 질의 | 오프라인·ROS | 같은 프로세스 C ABI(스냅숏), place 길 찾기 |
+
+### 3.6 자세 원천·격자 넣기 정책·단계별 시간(10-03)
+
+- **자세 원천**(`sm_set_pose_mode`, sgrt `SGRT_POSE=slam|odom|gt`)
+  - `slam`(기본, 실제 로봇·대회 제출): base_qvel 적분 + 스캔 맞추기(3.1). map = 판 시작 베이스 프레임.
+  - `odom`: 적분만(비교용).
+  - `gt`: 시뮬 정답 베이스 자세(`sm_push_pose`, 접착부가 `robot.get_position_orientation()` 을 스텝마다 넣음 — 한 번 수십 µs). map = 시뮬 world. 맞추기 없이 그 자세로 넣는다. **대회 규칙상 제출에는 못 씀**(진단·시각화·정답 비교용).
+  - 카메라 외부 자세는 어느 모드든 proprio 순기구학(베이스 ← 카메라). 확인: 기록한 판 455 keyframe 에서 정답 베이스 ∘ 순기구학 cam_rel 과 시뮬 정답 머리 카메라 자세 차 = 위치 평균 0.15 mm·최대 0.24 mm, 회전 최대 0.074°(같은 스텝 짝).
+  - 다른 모드에서도 외부 자세를 넣으면 떠밀림 진단(`sm_get_pose_diag`: 첫 keyframe 에서 두 프레임을 맞추고 그 뒤 keyframe 마다 차).
+  - 사용자가 본 "지도·로봇 자세가 어긋남"의 원인: (1) slam 모드 map 은 판 시작 프레임이라 world(정답·GT 물체 자리)와 회전·평행 이동만큼 다름 — gt 모드에선 world 그대로. (2) 접착부가 영상 stamp 를 그 스텝 시각으로 넣어 영상(장면 k-1)을 proprio k 와 짝지었다 — sgrt 가 영상 stamp 를 직전 스텝 시각으로 넣게 고침(`SGRT_IMAGE_LAG=1` 기본, docs/통합_실시간.md 2.7).
+- **SLAM 떠밀림**(bringing_water public_test 0, comet π0.5 3000 스텝 기록 재생, `sm_bench`): 로봇이 거의 제자리(약 30 cm·몸통·머리 움직임)
+  | 모드 | 최대 위치 / yaw | rms 위치 / yaw |
+  |---|---|---|
+  | slam(영상 늦춤 1, 정책 1) | 3.7 cm / 0.95° | 2.3 cm / 0.52° |
+  | slam(영상 늦춤 0) | 4.4 cm / 0.90° | 2.3 cm / 0.40° |
+  | slam(옛 움직임 거르기 정책 0) | 4.9 cm / 1.30° | 3.0 cm / 0.71° |
+  | odom(적분만) | 15.7 cm / 4.20° | 9.4 cm / 2.53° |
+  베이스를 움직이는 판(move_robot 대본, 3.6.1)은 아래에.
+- **넣기 정책**(`sm_set_map_update`, `SGRT_MAP_POLICY`): 1(기본, 사건 기반) — 움직였거나, 가상 스캔 방위 칸 서명(720 칸, 칸 거리 5 cm 단위)이 지난번 넣은 것과 2 칸 넘게 다르거나, 지난 넣기가 아직 로그 오즈를 바꾸고 있으면(한계 전) 매 keyframe 넣는다(광선 빈칸 지우기 포함). 아무것도 안 바뀌면 건너뜀, 50 keyframe 마다 한 번은 넣음. 0 = 옛 판(5 cm·2° 또는 50 keyframe ≈ 10 s). 시험(test_posemap): 서 있을 때 상자가 생기면 6 keyframe(1.2 s) 뒤 점유, 없어지면 11 keyframe 뒤 빈칸, 안 바뀐 20 keyframe 동안 넣기 0 번 — 옛 판은 30 keyframe 안에 못 봄.
+- **바뀐 영역**: 격자 보이는 값(i8)이 실제로 바뀐 칸만 감싼다(전에는 넣은 스캔 전체 상자). 소비자 둘(탐색 `sm_take_dirty`, 장면 그래프).
+- **단계별 시간**(`sm_get_timing` / `sgrt_get_stage_timing`): 단계마다 µs 막대그래프(2^(1/4) 칸, 할당 없음) — push_proprio, integrate, image_total, pair_pose, fk, scan, attach, match, insert, objmap, view_prep, gather, crop, cloud_add, snapshot, snap_grid, rooms, save, graph_obj, graph_places, graph_publish(+ sgrt det, step, map, record). 접착부는 끝에 표와 파이썬 쪽(정답 자세 읽기·준비·호출) 평균을 찍는다.
+- **기록·재생**: `SGRT_RECORD=<파일>` 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 쓰고, `tools/sm_bench`(C ABI, 모드·늦춤·정책·저장 주기 바꿔 재생, 떠밀림·단계 표), `tools/stage_bench`(내부 API — 옛 판 소스로도 빌드되어 같은 기록으로 전후 비교)가 다시 재생한다.
+
+#### 3.6.1 단계별 µs 전후(같은 기록 500 keyframe, 720² 깊이·검출 평균 2.1, jy-desktop Ryzen 9 9950X 한 코어 고정, Release -O2)
+
+`stage_bench` — 전 = 624b54b(이 작업 앞), 후 = 지금. 넣기는 전 판이 서 있어 40 번만 넣었고(움직임 거르기), 후 판은 매 keyframe 넣는다.
+
+| 단계 | 전 평균 / p50 / p99 µs | 후 평균 / p50 / p99 µs | 바꾼 것 |
+|---|---|---|---|
+| 순기구학 + 몸 캡슐 | 2.4 / 2.4 / 3.8 | 2.6 / 2.4 / 4.1 | — |
+| 깊이 → 가상 스캔(+붙은 것) | 334 / 297 / 595 | 188 / 154 / 440 | 화소 방위 칸·수평 배율 캐시(머리 회전 2e-4 안이면 다시 씀, 아니면 빠른 atan2), 거리² 비교, 캡슐별 상자, 작업 버퍼 재사용·평평한 해시(맞추기 칸) |
+| 스캔 맞추기(움직일 때 314 번) | 99 / 87 / 673 | 98 / 84 / 703 | — |
+| 격자 넣기 | 65 / 59 / 193(40 번) | 24 / 23 / 58(1000 번) | 뜨거운 8 B·차가운 20 B 칸 배치, int16 로그 오즈, 보이는 값 LUT 캐시, 점 변환 한 번, 광선 칸 번호 더하기만 |
+| objmap + 구름 | 243 / 235 / 845 | 170 / 163 / 600 | 열마다 마스크 칸 미리(안쪽 고리 나눗셈 없음), 10/50/90 백분위 한 번에 + 2048 표본, 거리², VoxelIndex 세대 비우기, 작업 버퍼 재사용 |
+| 격자 사본(스냅숏) | 53 / 49 / 81(매번 exp) | 23 / 17 / 47(바뀔 때만 복사) | 보이는 값 캐시 복사 |
+| **keyframe 합** | **613 / 578 / 1416** | **416 / 388 / 1242** | |
+
+C ABI 전체(`sm_bench`, 같은 기록, 스냅숏 6 스텝마다, 저장 1 s 마다, 호스트 RGB 자르기): push_proprio 0.08 µs·integrate 0.07 µs/스텝, 스냅숏 평균 52 µs(방 다시 나눌 때 p99 0.66 ms), graph_obj 7 µs, graph_publish 10 µs, graph_places 470 µs(0.5 s 마다 — 거리 변환 170·후보 70·고르기 60·변 40 µs), 저장 평균 1.6 ms·p99 14 ms(PNG·PLY 가 대부분 — sgrt 에선 저장 스레드라 스텝 밖). 스텝당 평균(모든 호출) 176 µs, 그중 keyframe 이 6 스텝에 한 번. sgrt 실제 판에선 best view 자르기가 장치 커널(약 17 µs)이다.
+
+- **Jetson Nano 추정**(Cortex-A57 1.43 GHz, 이 PC 한 코어보다 약 5–7 배 느리다고 봄 — 재 보지 않음): keyframe 2–3 ms, 스텝 평균 0.4–0.6 ms(5 Hz keyframe), places 2.5–3.5 ms(0.5 s 마다), 저장은 별도 스레드. 스캔·objmap 이 가장 크다 — 남은 손: 스캔 화소 간격(지금 가로 160 점)을 Nano 에선 넓히기, objmap 표본 수(6000)·백분위 표본(2048) 줄이기, NEON.
+
+#### 3.6.2 시뮬 확인
+
+(아래 3.6.3 에 적음)
 
 ## 4. 약속(인터페이스)
 
