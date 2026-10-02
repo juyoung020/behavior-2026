@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   std::string pose = "slam", save_dir, traj, labels_path;
+  double gt_shift = 0;   // 외부 자세 stamp 를 이만큼 스텝 뒤로(= 그 자세가 늦게 그려진다고 봄)
   int lag = 1, policy = 1, snap_every = 6, frames = 0, loops = 1;
   double save_every = 0;
   bool dets_on = true;
@@ -39,6 +40,7 @@ int main(int argc, char** argv) {
     if (a == "--pose") pose = nx();
     else if (a == "--lag") lag = std::atoi(nx());
     else if (a == "--policy") policy = std::atoi(nx());
+    else if (a == "--gt-shift") gt_shift = std::atof(nx());
     else if (a == "--no-dets") dets_on = false;
     else if (a == "--snap-every") snap_every = std::atoi(nx());
     else if (a == "--save-every") save_every = std::atof(nx());
@@ -79,15 +81,18 @@ int main(int argc, char** argv) {
     begin();
     if (loop == 0) sm_reset_timing(c);
     double cur = -1, before = -1, last_save = -1e9;
+    std::vector<double> hist;
     int step = 0;
     const auto w0 = std::chrono::steady_clock::now();
     for (const Rec& r : recs) {
       if (r.tag == 'G') {
-        const sm_pose2 p{r.stamp, r.g[0], r.g[1], r.g[2]};
+        const sm_pose2 p{r.stamp + gt_shift / 30.0, r.g[0], r.g[1], r.g[2]};
         sm_push_pose(c, &p);
       } else if (r.tag == 'P') {
         before = cur;
         cur = r.stamp;
+        hist.push_back(r.stamp);
+        if (hist.size() > 8) hist.erase(hist.begin());
         sm_proprio p{r.stamp, r.f.data(), int(r.f.size())};
         sm_push_proprio(c, &p);
         if (snap_every > 0 && step % snap_every == 0) {
@@ -106,7 +111,9 @@ int main(int argc, char** argv) {
         }
         ++step;
       } else if (r.tag == 'I') {
-        const double st = lag && before >= 0 && before < cur ? before : cur;
+        // 영상 stamp = lag 스텝 앞(기록 시각 그대로, 첫 스텝들은 가장 오래된 것)
+        const double st = lag <= 0 || hist.empty() ? cur : hist[hist.size() - 1 - std::min<size_t>(size_t(lag), hist.size() - 1)];
+        (void)before;
         sm_image im{st, 0, r.w, r.h, r.rgba.empty() ? nullptr : r.rgba.data(), r.f.data(), r.K[0], r.K[1], r.K[2], r.K[3]};
         sm_detections d{};
         d.stamp = st;

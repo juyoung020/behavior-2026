@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
@@ -43,8 +44,10 @@ struct sgrt {
   sm_snapshot_t* map_snap = nullptr; // sgrt_map 이 넘긴 포인터의 주인
   std::vector<float> movable;         // sgrt_map: 옮길 수 있는 물체 x, y, r
   // 영상 stamp = 직전 스텝 stamp(SGRT_IMAGE_LAG)
-  int image_lag = 1;
+  int image_lag = 1;             // 0..7 스텝
   double prev_stamp = -1;
+  double stamps[8] = {0};         // 최근 스텝 시각(고리)
+  int64_t n_stamps = 0;
   // 기록(SGRT_RECORD)
   FILE* rec = nullptr;
   std::vector<uint8_t> rec_rgb;
@@ -193,7 +196,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     sm_set_pose_mode(s->sm, m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
   }
   if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
-  if (const char* lg = std::getenv("SGRT_IMAGE_LAG")) s->image_lag = std::atoi(lg) ? 1 : 0;
+  if (const char* lg = std::getenv("SGRT_IMAGE_LAG")) s->image_lag = std::clamp(std::atoi(lg), 0, 7);
   if (const char* ss = std::getenv("SGRT_SAVE_SYNC")) s->save_async = std::atoi(ss) == 0;
   if (s->save_async)
     s->saver = std::thread([s] {
@@ -263,6 +266,7 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
                int(lp.size()), found, n, V);
   s->step = 0;
   s->prev_stamp = -1;
+  s->n_stamps = 0;
   s->last_save = -1e9;
   s->n_kf = s->n_det = 0;
   return 0;
@@ -288,7 +292,10 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
   sm_proprio p{stamp, proprio, n_proprio};
   int rc = sm_push_proprio(s->sm, &p);
   // 영상 k = 장면 k-1: 직전 스텝 시각(첫 스텝은 자기 시각)
-  const double im_stamp = s->image_lag && s->prev_stamp >= 0 && s->prev_stamp < stamp ? s->prev_stamp : stamp;
+  s->stamps[s->n_stamps % 8] = stamp;
+  ++s->n_stamps;
+  const int64_t back = std::min<int64_t>(s->image_lag, s->n_stamps - 1);
+  const double im_stamp = s->stamps[(s->n_stamps - 1 - back) % 8];
   s->prev_stamp = stamp;
   if (rc == 0 && rgb && depth_m && w > 0 && h > 0) {
     const auto t0 = std::chrono::steady_clock::now();

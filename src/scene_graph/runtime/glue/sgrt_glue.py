@@ -136,6 +136,8 @@ class SceneMemory:
         if self.use_gt:
             if self.robot is None and self.t % 30 == 0:
                 self.robot = _find_robot()
+                if self.robot is not None and self.gt_log is not None:
+                    self.dump_gt_objects(self.gt_log_path + ".objects.json")  # now: the evaluator may os._exit before close()
             if self.robot is not None:
                 pos, q = self.robot.get_position_orientation()
                 yaw = _yaw(q)
@@ -163,7 +165,16 @@ class SceneMemory:
                 rgb = rgb.contiguous()
             rp, dev, rs, ps = _ptr(rgb)
             h, w = int(rgb.shape[0]), int(rgb.shape[1])
-            depth = np.ascontiguousarray((depth.detach().cpu().numpy() if hasattr(depth, "detach") else np.asarray(depth)), np.float32)
+            if hasattr(depth, "is_cuda") and depth.is_cuda:
+                # one reused pinned host buffer: no per-keyframe allocation, faster device->host copy
+                buf = getattr(self, "_dbuf", None)
+                if buf is None or tuple(buf.shape) != tuple(depth.shape):
+                    import torch
+                    self._dbuf = buf = torch.empty(tuple(depth.shape), dtype=torch.float32, pin_memory=True)
+                buf.copy_(depth)
+                depth = buf.numpy()
+            else:
+                depth = np.ascontiguousarray((depth.detach().cpu().numpy() if hasattr(depth, "detach") else np.asarray(depth)), np.float32)
         t2 = time.perf_counter_ns()
         self.L.sgrt_step(self.h, stamp, prop.ctypes.data, prop.size, rp, dev, rs, ps, w, h,
                          depth.ctypes.data if depth is not None else None, *HEAD_K)
@@ -173,6 +184,13 @@ class SceneMemory:
         self.py_ns["call"] += t3 - t2
         self.py_n += 1
         self.t += 1
+        if self.t % 900 == 0:  # the evaluator shuts the app down hard at the end -> report as we go
+            if self.gt_log is not None:
+                self.gt_log.flush()
+            print(f"[sgrt] t={self.t} pose diag {self.pose_diag()}", flush=True)
+            for k, v in self.timing().items():
+                print(f"[sgrt] timing {k}: " + " ".join(f"{a}={b:.1f}" if isinstance(b, float) else f"{a}={b}" for a, b in v.items()),
+                      flush=True)
 
     def _head_cam(self):
         if not hasattr(self, "_cam"):
