@@ -424,6 +424,9 @@ C ABI 전체(`sm_bench`, 같은 기록, 스냅숏 6 스텝마다, 저장 1 s 마
 - 글 찾기(`text_query.py`, 1위): "white chair"·"흰 의자" → chair #9(0.130 / 0.127), "sofa" → couch #170, "kitchen sink" → sink #19,
   "오븐" → oven 계열. 이 장면에는 라디오가 없다(라디오는 turning_on_radio — 상위 문서 8절).
 - 같은 기억 폴더를 `sgclip_names` 로 다시 돌리면 0 개 다시 뽑음(표·emb_sha 같음).
+- turning_on_radio public_test 0(`outputs/clip_fastsam_radio_20261003_081437`): 269 물체, CLIP 773 번. 라디오 O39 이름은 "extinguisher" 로
+  틀리지만 "red radio"·"빨간 라디오" 1위, "라디오" 3위, "radio" 5위로 찾는다. `sgc_submit` 은 시뮬과 GPU 를 나눠 2.6–3.9 ms 기다린다
+  (커널 자체는 µs — 다음 일: 원본을 다음 스텝까지 붙잡아 기다림을 미루는 선택).
 
 ## 4. 약속(인터페이스)
 
