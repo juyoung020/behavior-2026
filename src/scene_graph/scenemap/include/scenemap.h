@@ -292,6 +292,41 @@ typedef struct {
 int sm_get_timing(sm_ctx*, sm_stage_timing* out, int32_t cap);
 int sm_reset_timing(sm_ctx*);
 
+/* ---- 살아 있는 장면 그래프(추가 ABI, 10-03, sgraph.hpp · 설계 3.5) ----
+ * Hydra 식 층: OBJECTS(층 2, 'O'<물체 id>) · AGENTS(층 2 partition 'a', 로봇 keyframe 자세 'a'<k>) · PLACES(층 3, 2D 빈칸 뼈대
+ * 'p'<k>, clearance = 장애물까지 m, state 1 = frontier) · ROOMS(층 4, 'R'<방 id>) · BUILDINGS(층 5, 'B'0).
+ * 노드 id = Spark-DSG NodeSymbol((문자 << 56) | 번호). 그래프는 keyframe 마다 바뀐 곳만 고치고, 스냅숏이 그때의 사본을 나눠 쓴다.
+ * 변 rel: 층 사이(부모 → 자식: 건물→방, 방→place, 방→물체, place→물체, place→agent), place–place(weight = 병목 여유 m),
+ * 방–방 문(weight = 폭 m, pos = 자리), 물체 on/in(a 가 b 위·안), near, agent 앞뒤. */
+enum { SM_GL_OBJECTS = 0, SM_GL_AGENTS = 1, SM_GL_PLACES = 2, SM_GL_ROOMS = 3, SM_GL_BUILDINGS = 4, SM_GL_ALL = -1 };
+enum { SM_REL_PARENT = 0, SM_REL_PLACE = 1, SM_REL_DOOR = 2, SM_REL_ON = 3, SM_REL_IN = 4, SM_REL_NEAR = 5, SM_REL_AGENT = 6 };
+typedef struct {
+  uint64_t id;
+  int32_t layer, partition;    /* Spark-DSG 층 번호(2·3·4·5)·partition(agent = 'a') */
+  int32_t group;               /* SM_GL_* */
+  double pos[3];
+  double bbox_min[3], bbox_max[3];
+  const char* name;            /* 물체·방 이름(스냅숏 수명 동안), 없으면 "" */
+  int32_t state;               /* 물체: SM_SEEN..; place: 1 = frontier */
+  float clearance;             /* place: 여유 m; 방: 가장 큰 여유 */
+  double yaw, stamp;           /* agent */
+  int32_t movable;             /* 물체 */
+} sm_gnode;
+typedef struct { uint64_t a, b; float weight; int32_t rel; float pos[2]; } sm_gedge;
+/* 층 group 의 노드(id 순). SM_GL_ALL = 전부(층 순). 개수 */
+int sm_snap_graph_nodes(const sm_snapshot_t*, int32_t group, const sm_gnode** out);
+int sm_snap_graph_edges(const sm_snapshot_t*, const sm_gedge** out);
+const sm_gnode* sm_snap_graph_node(const sm_snapshot_t*, uint64_t id);   /* 없으면 NULL */
+/* id 의 이웃: 변 번호(sm_snap_graph_edges 배열 자리)를 edge_idx 에 min(n, cap) 개. 개수(< 0 = 없음) */
+int sm_snap_graph_neighbors(const sm_snapshot_t*, uint64_t id, int32_t* edge_idx, int32_t cap);
+/* PLACES 그래프 위 최단 길: from·to 에 가장 가까운 place(2 m 안) 사이, 변 여유 ≥ min_clear 만. place id 를 ids 에 min(n, cap),
+ * *length = 길이 m. 개수, 0 = 길 없음, < 0 = 오류 */
+int sm_snap_place_path(const sm_snapshot_t*, const double from[2], const double to[2], double min_clear, uint64_t* ids, int32_t cap,
+                       double* length);
+/* 물체 노드 metadata 에 덧붙일 JSON 멤버(예: "\"emb\":{\"path\":\"objects/O3_emb.f16\"},\"names\":[\"cup\"]") — 저장 때 scene.json 에.
+ * json == NULL 이면 지움. 물체 id 기준(사라져도 남음, sm_reset 에서 비움) */
+int sm_set_object_meta(sm_ctx*, uint32_t obj_id, const char* json_members);
+
 #ifdef __cplusplus
 }
 #endif

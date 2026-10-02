@@ -4,7 +4,10 @@
 #include <cuda_runtime.h>
 
 #include <chrono>
+#include <atomic>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -47,6 +50,13 @@ struct sgrt {
   std::vector<uint8_t> rec_rgb;
   // sgrt 단계 시간: det, step, map, record
   scenemap::Timings tm;
+  // 주기 저장은 저장 스레드에서(PNG·JSON·파일 쓰기가 스텝을 막지 않게). SGRT_SAVE_SYNC=1 이면 예전처럼 스텝 안에서
+  bool save_async = true;
+  std::thread saver;
+  std::mutex smu;
+  std::condition_variable scv;
+  bool save_req = false, save_quit = false, save_busy = false;
+  int32_t n_save_skipped = 0;
 };
 
 namespace {
@@ -184,6 +194,21 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
   }
   if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
   if (const char* lg = std::getenv("SGRT_IMAGE_LAG")) s->image_lag = std::atoi(lg) ? 1 : 0;
+  if (const char* ss = std::getenv("SGRT_SAVE_SYNC")) s->save_async = std::atoi(ss) == 0;
+  if (s->save_async)
+    s->saver = std::thread([s] {
+      std::unique_lock<std::mutex> lk(s->smu);
+      for (;;) {
+        s->scv.wait(lk, [s] { return s->save_req || s->save_quit; });
+        if (s->save_quit && !s->save_req) return;
+        s->save_req = false;
+        s->save_busy = true;
+        lk.unlock();
+        sgrt_save(s);
+        lk.lock();
+        s->save_busy = false;
+      }
+    });
   if (const char* rp = std::getenv("SGRT_RECORD")) {
     s->rec = std::fopen(rp, "wb");
     if (s->rec) {
@@ -198,6 +223,14 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
 
 void sgrt_destroy(sgrt* s) {
   if (!s) return;
+  if (s->saver.joinable()) {
+    {
+      std::lock_guard<std::mutex> lk(s->smu);
+      s->save_quit = true;
+    }
+    s->scv.notify_all();
+    s->saver.join();
+  }
   if (s->det) ovd_destroy(s->det);
   if (s->sm) sm_destroy(s->sm);
   sgrt_crop::destroy(s->crop);
@@ -294,7 +327,17 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     s->n_det = d ? d->n : 0;
   }
   s->step++;
-  if (stamp - s->last_save >= s->cfg.save_s) sgrt_save(s), s->last_save = stamp;
+  if (stamp - s->last_save >= s->cfg.save_s) {
+    s->last_save = stamp;
+    if (s->save_async) {   // 저장 스레드에 맡김(앞 저장이 아직이면 이번 것은 건너뜀 — 다음 주기에 최신으로)
+      std::lock_guard<std::mutex> lk(s->smu);
+      if (s->save_busy || s->save_req) ++s->n_save_skipped;
+      else s->save_req = true;
+      s->scv.notify_one();
+    } else {
+      sgrt_save(s);
+    }
+  }
   s->tm.h[kSgStep].add(msSince(t_step) * 1e3);
   return rc;
 }
@@ -390,6 +433,8 @@ int sgrt_map(sgrt* s, sgrt_map_view* out) {
   out->movable_xyr = s->movable.empty() ? nullptr : s->movable.data();
   return 0;
 }
+
+sm_snapshot_t* sgrt_map_snapshot(sgrt* s) { return s ? s->map_snap : nullptr; }
 
 int sgrt_set_pose_mode(sgrt* s, int32_t mode) { return s ? sm_set_pose_mode(s->sm, mode) : -1; }
 

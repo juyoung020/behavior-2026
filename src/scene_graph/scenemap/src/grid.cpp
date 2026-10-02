@@ -47,8 +47,11 @@ void OccGrid::ensure(int ix0, int iy0, int ix1, int iy1) {
 inline void OccGrid::mark(int ix, int iy, int8_t old_c8, int8_t new_c8) {
   if (old_c8 == new_c8) return;
   cells_changed_ = true;
-  if (!dirty_) { dx0_ = dx1_ = ix; dy0_ = dy1_ = iy; dirty_ = true; return; }
-  dx0_ = std::min(dx0_, ix); dy0_ = std::min(dy0_, iy); dx1_ = std::max(dx1_, ix); dy1_ = std::max(dy1_, iy);
+  for (int k = 0; k < 2; ++k) {
+    int* b = db_[k];
+    if (!dirty_[k]) { b[0] = b[2] = ix; b[1] = b[3] = iy; dirty_[k] = true; continue; }
+    b[0] = std::min(b[0], ix); b[1] = std::min(b[1], iy); b[2] = std::max(b[2], ix); b[3] = std::max(b[3], iy);
+  }
 }
 
 inline void OccGrid::hit(size_t i, float hx, float hy, float nx, float ny, int ix, int iy) {
@@ -187,10 +190,11 @@ float OccGrid::prob(int ix, int iy) const {
   return std::clamp(lutp_[h.L + lut_off_], pmin, pmax);
 }
 
-bool OccGrid::takeDirty(int* ix0, int* iy0, int* ix1, int* iy1) {
-  if (!dirty_) return false;
-  *ix0 = dx0_; *iy0 = dy0_; *ix1 = dx1_; *iy1 = dy1_;
-  dirty_ = false;
+bool OccGrid::takeDirty(int* ix0, int* iy0, int* ix1, int* iy1, int consumer) {
+  const int k = consumer ? 1 : 0;
+  if (!dirty_[k]) return false;
+  *ix0 = db_[k][0]; *iy0 = db_[k][1]; *ix1 = db_[k][2]; *iy1 = db_[k][3];
+  dirty_[k] = false;
   return true;
 }
 

@@ -2,6 +2,7 @@
 // 합성 장면: 8×8 m 방(벽 높이 2.5 m) + 상자 장애물, 머리 깊이는 순기구학 카메라에서 광선 추적으로 만든다.
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -228,6 +229,50 @@ static void testTiming() {
   CHECK(T[0].n == 0, "reset timing");
 }
 
+// 5. 장면 그래프: 빈 방을 돌며 보면 PLACES 층(여유·변)·AGENTS 층이 생기고, place 길 찾기·이웃·scene.json 층이 맞음
+static void testGraph() {
+  Run r;
+  sm_set_pose_mode(r.c, SM_POSE_GT);
+  const double v0[3] = {0, 0, 0};
+  for (int k = 0; k < 6 * 24; ++k) {   // 제자리에서 한 바퀴(24 keyframe × 15°) + 앞으로 조금
+    const double pose[3] = {0.02 * (k / 6), 0, (k / 6) * 15 * M_PI / 180};
+    r.stepTo(pose, v0, {}, k % 6 == 0);
+  }
+  sm_update_rooms(r.c, 1);
+  sm_snapshot_t* s = nullptr;
+  sm_snapshot(r.c, &s);
+  const sm_gnode* pl = nullptr;
+  const int np = sm_snap_graph_nodes(s, SM_GL_PLACES, &pl);
+  const sm_gnode* ag = nullptr;
+  const int na = sm_snap_graph_nodes(s, SM_GL_AGENTS, &ag);
+  const sm_gedge* E = nullptr;
+  const int ne = sm_snap_graph_edges(s, &E);
+  int npe = 0;
+  for (int k = 0; k < ne; ++k) npe += E[k].rel == SM_REL_PLACE;
+  CHECK(np >= 6, "places %d", np);
+  CHECK(na >= 3, "agents %d", na);
+  CHECK(npe >= np - 1, "place edges %d for %d places", npe, np);
+  float cmax = 0;
+  for (int k = 0; k < np; ++k) {
+    cmax = std::max(cmax, pl[k].clearance);
+    CHECK(pl[k].layer == 3 && std::fabs(pl[k].pos[0]) < 4 && std::fabs(pl[k].pos[1]) < 4, "place inside room");
+  }
+  CHECK(cmax > 0.8, "max clearance %.2f", cmax);
+  const double a[2] = {-2.5, -2.5}, b[2] = {2.5, 2.5};
+  uint64_t ids[64];
+  double len = 0;
+  const int n = sm_snap_place_path(s, a, b, 0.2, ids, 64, &len);
+  CHECK(n >= 2 && len > 4.0 && len < 12.0, "place path n %d len %.2f", n, len);
+  if (np) {
+    int32_t ei[32];
+    const int nn = sm_snap_graph_neighbors(s, pl[0].id, ei, 32);
+    CHECK(nn >= 1, "neighbors %d", nn);
+    CHECK(sm_snap_graph_node(s, pl[0].id) == &pl[0], "node lookup");
+  }
+  sm_snapshot_release(s);
+  std::printf("  장면 그래프: place %d(최대 여유 %.2f m, 변 %d), agent %d, 길 %d place %.2f m\n", np, cmax, npe, na, n, len);
+}
+
 int main() {
   std::printf("test_posemap\n");
   testGtPose();
@@ -235,6 +280,7 @@ int main() {
   testDiag(SM_POSE_SLAM, "SLAM");
   testDiag(SM_POSE_ODOM, "ODOM");
   testTiming();
+  testGraph();
   std::printf(g_fail ? "FAILED %d\n" : "OK\n", g_fail);
   return g_fail ? 1 : 0;
 }

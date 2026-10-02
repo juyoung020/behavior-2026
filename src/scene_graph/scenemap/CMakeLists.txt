@@ -9,7 +9,7 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
 add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp
-            src/dsg_save.cpp src/rooms.cpp)
+            src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp)
 target_include_directories(scenemap PUBLIC include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
 target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)

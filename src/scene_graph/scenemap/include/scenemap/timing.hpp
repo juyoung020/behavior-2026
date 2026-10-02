@@ -29,13 +29,17 @@ enum Stage : int {
   kStSnapGrid,          // 스냅숏 격자 사본(바뀌었을 때만)
   kStRooms,             // 방 나누기·배정(스냅숏 안)
   kStSave,              // sm_save_dsg 전체
+  kStGraphObj,          // 장면 그래프: 물체·agent 층(keyframe 마다 바뀐 것만)
+  kStGraphPlaces,       // 장면 그래프: PLACES 층(바뀐 격자 둘레 창, 주기)
+  kStGraphPublish,      // 장면 그래프: 읽기 사본(바뀌었을 때만)
   kStCount
 };
 
 inline const char* stageName(int s) {
   static const char* const k[kStCount] = {"push_proprio", "integrate", "image_total", "pair_pose", "fk",       "scan",
                                           "attach",       "match",     "insert",      "objmap",    "view_prep", "gather",
-                                          "crop",         "cloud_add", "snapshot",    "snap_grid", "rooms",     "save"};
+                                          "crop",         "cloud_add", "snapshot",    "snap_grid", "rooms",     "save",
+                                          "graph_obj",    "graph_places", "graph_publish"};
   return s >= 0 && s < kStCount ? k[s] : "?";
 }
 

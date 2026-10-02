@@ -94,6 +94,10 @@ typedef struct {
   const float* movable_xyr;
 } sgrt_map_view;
 int    sgrt_map(sgrt*, sgrt_map_view* out);
+/* 마지막 sgrt_map 이 잡은 scenemap 스냅숏(다음 sgrt_map·sgrt_destroy 까지 유효, 놓지 말 것) — scenemap.h 의 sm_snap_* 로
+ * 장면 그래프(sm_snap_graph_nodes·edges·neighbors·sm_snap_place_path)·물체·방을 같은 순간 그대로 읽는다. 없으면 NULL */
+typedef struct sm_snapshot_t sm_snapshot_t;
+sm_snapshot_t* sgrt_map_snapshot(sgrt*);
 
 /* ---- 자세 원천·단계 시간·기록(추가 ABI, 10-03) ----
  * 자세 원천: 0 slam(기본, 적분 + 스캔 맞추기), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화용, 대회 제출 금지).
@@ -103,6 +107,7 @@ int    sgrt_map(sgrt*, sgrt_map_view* out);
  * 영상 시각: 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면이다(docs/통합_실시간.md 2.7). sgrt 는 영상 stamp 를 직전 sgrt_step 의
  *   stamp 로 넣는다(SGRT_IMAGE_LAG=1 기본, 실제 로봇처럼 영상과 proprio 가 같은 순간이면 0).
  * 격자 넣기 정책: SGRT_MAP_POLICY=1(기본, 사건 기반 — 서 있어도 바뀐 장애물을 넣고 지움) | 0(옛 움직임 거르기).
+ * 저장: sgrt_step 의 주기 저장(save_s)은 저장 스레드에서 한다(SGRT_SAVE_SYNC=1 이면 스텝 안에서). 앞 저장이 덜 끝났으면 그 주기는 건너뜀.
  * 기록: SGRT_RECORD=<파일> 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 이진 파일로 쓴다 —
  *   scenemap/tools/sm_bench 가 다시 재생한다(자세 모드 비교·단계 시간). */
 int    sgrt_set_pose_mode(sgrt*, int32_t mode);

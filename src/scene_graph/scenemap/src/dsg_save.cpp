@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -160,6 +161,8 @@ std::string roomsPgm(const SaveInput& in) {
   return o;
 }
 
+std::string graphJson(const SaveInput& in);
+
 std::string viewJson(const SaveInput& in, const SaveOut& ok) {
   std::ostringstream o;
   o.setf(std::ios::fixed);
@@ -189,7 +192,7 @@ std::string viewJson(const SaveInput& in, const SaveOut& ok) {
     o << (i ? "," : "") << "{\"t\":" << e.t << ",\"id\":" << e.id << ",\"kind\":\"" << eventName(e.kind) << "\",\"pos\":[" << e.pos[0] << ","
       << e.pos[1] << "," << e.pos[2] << "]}";
   }
-  o << "]" << roomsJson(in) << "}\n";
+  o << "]" << roomsJson(in) << graphJson(in) << "}\n";
   return o.str();
 }
 
@@ -300,6 +303,425 @@ bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
 }
 #endif
 
+
+// ---- scene.json 빠른 쓰기(Spark-DSG 1.1.3 JSON 형식 그대로 — 기본 spark_dsg 가 읽음, 라이브러리 없이 문자열로) ----
+struct J {
+  std::string& o;
+  void raw(const char* s) { o += s; }
+  void raw(const std::string& s) { o += s; }
+  void num(double v) {
+    if (!std::isfinite(v)) { o += "0.0"; return; }
+    char b[32];
+    auto r = std::to_chars(b, b + sizeof b, v);
+    o.append(b, r.ptr);
+    // 정수처럼 보이면 ".0"(spark_dsg 는 float 칸을 정수로 읽어도 되지만 보기 좋게)
+    bool dot = false;
+    for (char* p = b; p < r.ptr; ++p) dot |= (*p == '.' || *p == 'e' || *p == 'n' || *p == 'i');
+    if (!dot) o += ".0";
+  }
+  void inum(int64_t v) {
+    char b[24];
+    auto r = std::to_chars(b, b + sizeof b, v);
+    o.append(b, r.ptr);
+  }
+  void unum(uint64_t v) {
+    char b[24];
+    auto r = std::to_chars(b, b + sizeof b, v);
+    o.append(b, r.ptr);
+  }
+  void str(const std::string& s) { o += '"'; o += esc(s); o += '"'; }
+  void vec3(const double* v) { o += '['; num(v[0]); o += ','; num(v[1]); o += ','; num(v[2]); o += ']'; }
+  void key(const char* k) { o += '"'; o += k; o += "\":"; }
+};
+
+const char* kHeader = "{\"SPARK_DSG_header\":{\"project_name\":\"main\",\"version\":{\"major\":1,\"minor\":1,\"patch\":3}},\"directed\":false,";
+const char* kColor = "\"color\":{\"a\":255,\"b\":0,\"g\":0,\"r\":0},";
+const char* kNoFeat = "\"semantic_feature\":{\"cols\":0,\"data\":null,\"rows\":0},\"semantic_label\":4294967295,";
+const char* kIdentQ = "{\"w\":1.0,\"x\":0.0,\"y\":0.0,\"z\":0.0}";
+
+void bbox(J& j, const double lo[3], const double hi[3], bool valid) {
+  const double c[3] = {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
+  const double d[3] = {hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]};
+  j.raw("\"bounding_box\":{\"dimensions\":");
+  j.vec3(d);
+  j.raw(valid ? ",\"type\":\"AABB\",\"world_P_center\":" : ",\"type\":\"INVALID\",\"world_P_center\":");
+  j.vec3(c);
+  j.raw(",\"world_R_center\":");
+  j.raw(kIdentQ);
+  j.raw("},");
+}
+
+void nodeTail(J& j, uint64_t id, int layer, int partition) {
+  j.raw("},\"id\":");
+  j.unum(id);
+  j.raw(",\"layer\":");
+  j.inum(layer);
+  j.raw(",\"partition\":");
+  j.inum(partition);
+  j.raw("}");
+}
+
+void objectNode(J& j, const SaveInput& in, const SaveOut& ok, int i) {
+  const sm_object& b = in.objs[i];
+  double lo[3], hi[3];
+  for (int k = 0; k < 3; ++k) { lo[k] = b.pos[k] - b.extent[k] / 2; hi[k] = b.pos[k] + b.extent[k] / 2; }
+  j.raw("{\"attributes\":{");
+  bbox(j, lo, hi, true);
+  j.raw(kColor);
+  j.raw(b.state != SM_GONE ? "\"is_active\":true," : "\"is_active\":false,");
+  j.raw("\"is_predicted\":false,\"last_update_time_ns\":");
+  j.unum(uint64_t(std::max(0.0, b.last_seen) * 1e9));
+  j.raw(",\"mesh_connections\":[],\"metadata\":{\"first_pos\":");
+  j.vec3(b.first_pos);
+  j.raw(",\"handled\":");
+  j.raw(b.handled ? "true" : "false");
+  j.raw(",\"movable\":");
+  j.raw(i >= int(in.movable.size()) || in.movable[i] != 0 ? "true" : "false");
+  j.raw(",\"n_obs\":");
+  j.unum(b.n_obs);
+  if (hasPly(ok, i)) {
+    j.raw(",\"points\":{\"n\":");
+    j.unum(in.clouds[i].size());
+    j.raw(",\"path\":");
+    j.str(plyPath(b.id));
+    j.raw(",\"stamp\":");
+    j.num(in.clouds[i].stamp);
+    j.raw(",\"voxel\":");
+    j.num(in.voxel);
+    j.raw("}");
+  }
+  if (hasView(in, ok, i)) {
+    const BestView& v = *in.views[i];
+    j.raw(",\"rgbd\":{\"box_px\":[");
+    for (int k = 0; k < 4; ++k) { if (k) j.raw(","); j.inum(v.box[k]); }
+    j.raw("],\"cam_T\":[");
+    for (int k = 0; k < 12; ++k) { if (k) j.raw(","); j.num(v.cam_T[k]); }
+    j.raw("],\"depth\":");
+    j.str(objPath(b.id, "depth"));
+    j.raw(",\"depth_m\":");
+    j.num(v.depth_m);
+    j.raw(",\"det_box_px\":[");
+    for (int k = 0; k < 4; ++k) { if (k) j.raw(","); j.inum(v.det_box[k]); }
+    j.raw("],\"mask\":");
+    j.str(objPath(b.id, "mask"));
+    j.raw(",\"mask_area\":");
+    j.num(v.mask_area);
+    j.raw(",\"rgb\":");
+    j.str(objPath(b.id, "rgb"));
+    j.raw(",\"score\":");
+    j.num(v.score);
+    j.raw(",\"stamp\":");
+    j.num(v.stamp);
+    j.raw("}");
+  }
+  j.raw(",\"score\":");
+  j.num(b.score);
+  j.raw(",\"state\":");
+  j.str(stateName(b.state));
+  j.raw(",\"structural\":");
+  j.raw(b.structural ? "true" : "false");
+  if (i < int(in.obj_meta.size()) && !in.obj_meta[i].empty()) {
+    j.raw(",");
+    j.raw(in.obj_meta[i]);
+  }
+  j.raw("},\"name\":");
+  j.str(b.name ? b.name : "");
+  j.raw(",\"position\":");
+  j.vec3(b.pos);
+  j.raw(",\"registered\":false,");
+  j.raw(kNoFeat);
+  j.raw("\"type\":\"ObjectNodeAttributes\",\"world_R_object\":");
+  j.raw(kIdentQ);
+  nodeTail(j, nodeSym('O', b.id), 2, 0);
+}
+
+void roomNode(J& j, const SaveInput& in, size_t k) {
+  const RoomGeom& r = in.rooms->rooms[k];
+  const RoomLabel* L = roomLabel(in, k);
+  const double lo[3] = {r.bmin[0], r.bmin[1], 0}, hi[3] = {r.bmax[0], r.bmax[1], 0};
+  j.raw("{\"attributes\":{");
+  bbox(j, lo, hi, true);
+  j.raw(kColor);
+  j.raw("\"is_active\":false,\"is_predicted\":false,\"last_update_time_ns\":");
+  j.unum(uint64_t(std::max(0.0, in.rooms->stamp) * 1e9));
+  j.raw(",\"metadata\":{\"area_m2\":");
+  j.num(r.area_m2);
+  j.raw(",\"evidence\":[");
+  if (L)
+    for (size_t e = 0; e < L->evidence.size(); ++e) {
+      const RoomEvidence& v = L->evidence[e];
+      j.raw(e ? ",{\"name\":" : "{\"name\":");
+      j.str(v.name);
+      j.raw(",\"object\":");
+      j.unum(v.obj);
+      j.raw(",\"type\":");
+      j.str(v.type);
+      j.raw(",\"weight\":");
+      j.num(v.w);
+      j.raw("}");
+    }
+  j.raw("],\"external_name\":");
+  j.raw(L && L->external ? "true" : "false");
+  j.raw(",\"grid_value\":");
+  j.unum(std::min<size_t>(k + 1, 255));
+  j.raw(",\"max_clear_m\":");
+  j.num(r.max_clear);
+  j.raw(",\"name_confidence\":");
+  j.num(L ? L->conf : 0.0);
+  j.raw(",\"type\":");
+  j.str(L ? L->type : "");
+  j.raw("},\"name\":");
+  j.str(L ? L->name : "room " + std::to_string(r.id));
+  const double c[3] = {r.centroid[0], r.centroid[1], 0};
+  j.raw(",\"position\":");
+  j.vec3(c);
+  j.raw(",\"semantic_class_probabilities\":{");
+  if (L && !L->probs.empty()) {
+    bool first = true;
+    for (const auto& [n, pr] : L->probs) {
+      if (!first) j.raw(",");
+      first = false;
+      j.str(n);
+      j.raw(":");
+      j.num(pr);
+    }
+  }
+  j.raw("},");
+  j.raw(kNoFeat);
+  j.raw("\"type\":\"RoomNodeAttributes\"");
+  nodeTail(j, nodeSym('R', r.id), 4, 0);
+}
+
+void graphNode(J& j, const GNode& n) {
+  j.raw("{\"attributes\":{");
+  if (n.partition == 'a') {   // AgentNodeAttributes
+    j.raw("\"dbow_ids\":null,\"dbow_values\":null,\"external_key\":");
+    j.unum(n.id);
+    j.raw(",\"is_active\":false,\"is_predicted\":false,\"last_update_time_ns\":");
+    j.unum(uint64_t(std::max(0.0, n.stamp) * 1e9));
+    j.raw(",\"metadata\":{\"yaw\":");
+    j.num(n.yaw);
+    j.raw("},\"position\":");
+    const double p[3] = {n.pos[0], n.pos[1], 0};
+    j.vec3(p);
+    j.raw(",\"timestamp\":");
+    j.unum(uint64_t(std::max(0.0, n.stamp) * 1e9));
+    j.raw(",\"type\":\"AgentNodeAttributes\",\"world_R_body\":{\"w\":");
+    j.num(std::cos(n.yaw / 2));
+    j.raw(",\"x\":0.0,\"y\":0.0,\"z\":");
+    j.num(std::sin(n.yaw / 2));
+    j.raw("}");
+    nodeTail(j, n.id, 2, 'a');
+    return;
+  }
+  if (n.layer == 3) {   // PlaceNodeAttributes(2D: z 0, distance = 여유)
+    j.raw(n.state ? "\"active_frontier\":true," : "\"active_frontier\":false,");
+    j.raw("\"anti_frontier\":false,");
+    const double z[3] = {0, 0, 0};
+    bbox(j, z, z, false);
+    j.raw(kColor);
+    j.raw("\"deformation_connections\":[],\"distance\":");
+    j.num(n.clearance);
+    j.raw(",\"frontier_scale\":[0.0,0.0,0.0],\"is_active\":true,\"is_predicted\":false,\"last_update_time_ns\":");
+    j.unum(uint64_t(std::max(0.0, n.stamp) * 1e9));
+    j.raw(",\"mesh_vertex_labels\":[],\"metadata\":{\"frontier\":");
+    j.raw(n.state ? "true" : "false");
+    j.raw("},\"name\":\"\",\"need_cleanup\":false,\"num_basis_points\":0,\"num_frontier_voxels\":0,\"orientation\":");
+    j.raw(kIdentQ);
+    j.raw(",\"pcl_mesh_connections\":[],\"position\":");
+    const double p[3] = {n.pos[0], n.pos[1], 0};
+    j.vec3(p);
+    j.raw(",\"real_place\":true,");
+    j.raw(kNoFeat);
+    j.raw("\"type\":\"PlaceNodeAttributes\",\"voxblox_mesh_connections\":[]");
+    nodeTail(j, n.id, 3, 0);
+    return;
+  }
+  // 건물: SemanticNodeAttributes
+  const double z[3] = {0, 0, 0};
+  bbox(j, z, z, false);
+  j.raw(kColor);
+  j.raw("\"is_active\":false,\"is_predicted\":false,\"last_update_time_ns\":0,\"metadata\":{},\"name\":");
+  j.str(n.name);
+  j.raw(",\"position\":");
+  const double p[3] = {n.pos[0], n.pos[1], 0};
+  j.vec3(p);
+  j.raw(",");
+  j.raw(kNoFeat);
+  j.raw("\"type\":\"SemanticNodeAttributes\"");
+  nodeTail(j, n.id, n.layer, n.partition);
+}
+
+const char* relName(int r) {
+  static const char* n[] = {"parent", "place", "door", "on", "in", "near", "agent"};
+  return r >= 0 && r < 7 ? n[r] : "?";
+}
+
+bool sceneJsonFast(const SaveInput& in, const SaveOut& ok, const fs::path& path, SaveOut* out) {
+  const auto t0 = std::chrono::steady_clock::now();
+  std::string o;
+  o.reserve(64 * 1024);
+  J j{o};
+  j.raw(kHeader);
+  // 변
+  j.raw("\"edges\":[");
+  bool first = true;
+  auto edge = [&](uint64_t a, uint64_t b, double w, bool weighted, const std::string& meta) {
+    if (!first) j.raw(",");
+    first = false;
+    j.raw("{\"info\":{\"metadata\":{");
+    j.raw(meta);
+    j.raw("},\"type\":\"EdgeAttributes\",\"weight\":");
+    j.num(w);
+    j.raw(weighted ? ",\"weighted\":true},\"source\":" : ",\"weighted\":false},\"source\":");
+    j.unum(a);
+    j.raw(",\"target\":");
+    j.unum(b);
+    j.raw("}");
+  };
+  // 저장할 노드 = 물체(in.objs) + 방(in.rooms) + 그래프의 agent·place·건물. 변은 양 끝이 저장되는 것만
+  std::unordered_map<uint64_t, char> have;
+  for (int i = 0; i < in.n_objs; ++i) have[nodeSym('O', in.objs[i].id)] = 1;
+  if (in.rooms)
+    for (const RoomGeom& r : in.rooms->rooms) have[nodeSym('R', r.id)] = 1;
+  if (in.graph)
+    for (const GNode& n : in.graph->nodes)
+      if (n.partition == 'a' || n.layer == 3 || n.layer == 5) have[n.id] = 1;
+  if (in.graph) {
+    std::unordered_map<uint64_t, char> pairs;   // Spark-DSG 는 한 쌍에 변 하나
+    for (const GEdge& e : in.graph->edges) {
+      if (!have.count(e.a) || !have.count(e.b)) continue;
+      const uint64_t lo = std::min(e.a, e.b), hi = std::max(e.a, e.b);
+      if (!pairs.emplace(lo * 1000003ull ^ hi, 1).second) continue;
+      std::string meta;
+      if (e.rel != kRelGeneric) {
+        meta = "\"relation\":\"" + std::string(relName(e.rel)) + "\"";
+        if (e.rel == kRelDoor) {
+          meta += ",\"pos\":[";
+          J m{meta};
+          m.num(e.pos[0]);
+          meta += ",";
+          m.num(e.pos[1]);
+          meta += "],\"width\":";
+          m.num(e.weight);
+        } else if (e.rel == kRelPlace) {
+          meta += ",\"min_clear_m\":";
+          J m{meta};
+          m.num(e.weight);
+        }
+      }
+      edge(e.a, e.b, e.rel == kRelGeneric || e.rel == kRelOn || e.rel == kRelIn || e.rel == kRelNear || e.rel == kRelAgent ? 1.0 : e.weight,
+           e.rel == kRelPlace || e.rel == kRelDoor, meta);
+    }
+  } else {
+    for (int i = 0; i < in.n_objs; ++i)
+      if (const uint32_t rid = objRoom(in, i)) edge(nodeSym('R', rid), nodeSym('O', in.objs[i].id), 1.0, false, "");
+    if (in.rooms)
+      for (const RoomDoor& d : in.rooms->doors) {
+        std::string meta = "\"pos\":[";
+        J m{meta};
+        m.num(d.pos[0]); meta += ","; m.num(d.pos[1]); meta += "],\"relation\":\"door\",\"width\":"; m.num(d.width);
+        edge(nodeSym('R', d.a), nodeSym('R', d.b), d.width, true, meta);
+      }
+  }
+  // 층
+  bool has_agents = false, has_places = false, has_build = false;
+  if (in.graph)
+    for (const GNode& n : in.graph->nodes) {
+      has_agents |= n.partition == 'a';
+      has_places |= n.layer == 3;
+      has_build |= n.layer == 5;
+    }
+  (void)has_places; (void)has_build;
+  j.raw("],\"layer_keys\":[{\"layer\":2,\"partition\":0},");
+  if (has_agents) j.raw("{\"layer\":2,\"partition\":97},");
+  j.raw("{\"layer\":3,\"partition\":0},{\"layer\":4,\"partition\":0},{\"layer\":5,\"partition\":0}],");
+  j.raw("\"layer_names\":{\"AGENTS\":{\"layer\":2,\"partition\":0},\"BUILDINGS\":{\"layer\":5,\"partition\":0},"
+        "\"OBJECTS\":{\"layer\":2,\"partition\":0},\"PLACES\":{\"layer\":3,\"partition\":0},\"ROOMS\":{\"layer\":4,\"partition\":0}},");
+  j.raw("\"metadata\":{\"grid\":\"map.pgm\",\"robot_pose\":");
+  j.vec3(in.pose);
+  j.raw(",\"stamp\":");
+  j.num(in.stamp);
+  j.raw("},\"multigraph\":false,\"nodes\":[");
+  first = true;
+  auto sep = [&]() { if (!first) j.raw(","); first = false; };
+  for (int i = 0; i < in.n_objs; ++i) { sep(); objectNode(j, in, ok, i); }
+  if (in.rooms)
+    for (size_t k = 0; k < in.rooms->rooms.size(); ++k) { sep(); roomNode(j, in, k); }
+  if (in.graph)
+    for (const GNode& n : in.graph->nodes) {
+      if (!(n.partition == 'a' || n.layer == 3 || n.layer == 5)) continue;
+      sep();
+      if (in.json_cache) {   // 바뀌지 않은 노드는 지난 조각 그대로
+        auto& slot = in.json_cache->nodes[n.id];
+        if (slot.second.empty() || slot.first != n.ver) {
+          slot.second.clear();
+          J c{slot.second};
+          graphNode(c, n);
+          slot.first = n.ver;
+        }
+        o += slot.second;
+      } else {
+        graphNode(j, n);
+      }
+    }
+  j.raw("]}\n");
+  if (in.json_cache && in.graph && in.json_cache->nodes.size() > 2 * in.graph->nodes.size() + 64) {   // 지워진 노드 정리
+    for (auto it = in.json_cache->nodes.begin(); it != in.json_cache->nodes.end();)
+      it = in.graph->find(it->first) ? std::next(it) : in.json_cache->nodes.erase(it);
+  }
+  const bool good = writeAtomic(path, o);
+  if (out) {
+    out->json_bytes = o.size();
+    out->json_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  }
+  return good;
+}
+
+// view.json "graph": 뷰어용 짧은 꼴(agent·place·건물 노드, 모든 변)
+std::string graphJson(const SaveInput& in) {
+  if (!in.graph) return "";
+  std::string o = ",\"graph\":{\"nodes\":[";
+  J j{o};
+  bool first = true;
+  for (const GNode& n : in.graph->nodes) {
+    const char* kind = n.partition == 'a' ? "agent" : n.layer == 3 ? "place" : n.layer == 5 ? "building" : nullptr;
+    if (!kind) continue;
+    if (!first) o += ",";
+    first = false;
+    o += "{\"id\":\"";
+    o += char(symChar(n.id));
+    j.unum(symIdx(n.id));
+    o += "\",\"kind\":\"";
+    o += kind;
+    o += "\",\"pos\":[";
+    j.num(n.pos[0]); o += ","; j.num(n.pos[1]);
+    o += "]";
+    if (n.layer == 3) { o += ",\"clear\":"; j.num(n.clearance); o += n.state ? ",\"frontier\":true" : ",\"frontier\":false"; }
+    if (n.partition == 'a') { o += ",\"yaw\":"; j.num(n.yaw); o += ",\"t\":"; j.num(n.stamp); }
+    o += "}";
+  }
+  o += "],\"edges\":[";
+  first = true;
+  for (const GEdge& e : in.graph->edges) {
+    if (!first) o += ",";
+    first = false;
+    o += "[\"";
+    o += char(symChar(e.a));
+    j.unum(symIdx(e.a));
+    o += "\",\"";
+    o += char(symChar(e.b));
+    j.unum(symIdx(e.b));
+    o += "\",\"";
+    o += relName(e.rel);
+    o += "\",";
+    j.num(e.weight);
+    o += "]";
+  }
+  o += "]}";
+  return o;
+}
+
 bool hasCloud(const SaveInput& in, int i) { return i < int(in.clouds.size()) && in.clouds[i].size() > 0; }
 
 // objects/ 의 best view PNG·구름 PLY: 바뀐 것·없는 것만 쓰고, png_ok·ply_ok[i] = 파일 있음
@@ -391,9 +813,17 @@ int saveScene(const SaveInput& in, const std::string& dir, SaveOut* out_) {
     ok &= writeAtomic(d / "map.yaml", yaml(in));
     if (in.rooms) ok &= writeAtomic(d / "rooms.pgm", roomsPgm(in));
   }
+  // scene.json: 기본은 빠른 직접 쓰기(같은 Spark-DSG JSON 형식). SM_DSG_SAVE=spark 면 Spark-DSG 라이브러리로(비교용)
+  static const bool use_lib = [] { const char* e = std::getenv("SM_DSG_SAVE"); return e && std::string(e) == "spark"; }();
 #ifdef SM_HAVE_SPARK_DSG
-  ok &= sceneDsg(in, out, d / "scene.json");
+  if (use_lib) {
+    const auto tj = std::chrono::steady_clock::now();
+    ok &= sceneDsg(in, out, d / "scene.json");
+    out.json_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tj).count();
+  } else
 #endif
+  ok &= sceneJsonFast(in, out, d / "scene.json", &out);
+  (void)use_lib;
   ok &= writeAtomic(d / "view.json", viewJson(in, out));   // 마지막에: 뷰어는 view.json 이 바뀌면 다시 읽는다
   return ok ? 0 : -1;
 }

@@ -14,6 +14,7 @@
 // 모든 파일은 임시 이름으로 쓰고 rename 으로 바꾼다(읽는 쪽이 반쯤 쓴 파일을 보지 않게).
 #pragma once
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "scenemap.h"
@@ -21,8 +22,14 @@
 #include "scenemap/cloud.hpp"
 #include "scenemap/objmap.hpp"
 #include "scenemap/rooms.hpp"
+#include "scenemap/sgraph.hpp"
 
 namespace scenemap {
+
+// 노드 JSON 조각 캐시: 노드 id → (그래프 노드 ver, JSON). 바뀐 노드만 다시 씀
+struct JsonCache {
+  std::unordered_map<uint64_t, std::pair<uint32_t, std::string>> nodes;
+};
 
 struct SaveInput {
   double stamp = 0;
@@ -43,6 +50,9 @@ struct SaveInput {
   bool clean_objects = false;      // objects/ 에서 지금 물체가 아닌 O<id>_*.png 지우기(새 판·새 디렉터리)
   std::shared_ptr<const RoomSeg> rooms;   // 방 나눔(null = 방 없음 — 방 파일·키 안 씀)
   RoomNaming room_names;           // rooms->rooms 와 같은 순서, obj_room 은 objs 순서
+  std::shared_ptr<const GraphView> graph;   // 살아 있는 장면 그래프(AGENTS·PLACES·BUILDINGS 층과 모든 변) — null 이면 물체·방만
+  std::vector<std::string> obj_meta;        // objs[i] 노드 metadata 에 덧붙일 JSON 멤버("\"emb\":{...}" 꼴, 비어 있어도 됨)
+  struct JsonCache* json_cache = nullptr;   // place·agent·방·건물 노드 JSON 캐시(저장 사이 재사용, 호출자 소유)
 };
 
 struct SaveOut {
@@ -52,6 +62,8 @@ struct SaveOut {
   std::vector<uint8_t> ply_ok;     // objs[i]: objects/ 에 지금 구름 PLY 가 있음
   int n_ply = 0;                   // 이번에 쓴 PLY 수
   double ply_ms = 0;
+  double json_ms = 0;              // scene.json 만들기·쓰기
+  size_t json_bytes = 0;
 };
 
 // 0 = 성공. Spark-DSG 없이 빌드하면 scene.json 만 빠진다.

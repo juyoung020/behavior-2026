@@ -21,6 +21,7 @@
 #include "scenemap/fk.hpp"
 #include "scenemap/objmap.hpp"
 #include "scenemap/rooms.hpp"
+#include "scenemap/sgraph.hpp"
 #include "scenemap/slam2d.hpp"
 #include "scenemap/timing.hpp"
 
@@ -114,6 +115,11 @@ struct sm_ctx {
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
   Timings tm;
+  // 살아 있는 장면 그래프(sgraph.hpp) — mu 아래에서 고침
+  SceneGraph graph;
+  JsonCache jcache;                   // scene.json 노드 조각(저장 스레드 하나 — save_mu)
+  std::mutex save_mu;
+  std::unordered_map<uint32_t, std::string> obj_meta;
   void addT(int st, double us) {
     std::lock_guard<std::mutex> g(tmu);
     tm.h[st].add(us);
@@ -157,6 +163,7 @@ struct sm_snapshot_t {
   RoomNaming rnames;
   std::vector<sm_room> rooms;
   std::vector<sm_room_door> rdoors;
+  std::shared_ptr<const GraphView> graph;   // 장면 그래프 사본
   // 마지막 가상 스캔(베이스 기준) + 그때 map 자세
   sm_pose2 scan_pose{};
   float scan_ox = 0, scan_oy = 0;
@@ -330,6 +337,8 @@ int sm_reset(sm_ctx* c) {
   c->diag_s2xy = c->diag_s2yaw = 0;
   c->grid8.reset();
   c->grid8_ver = ~0ull;
+  c->graph.reset();
+  c->obj_meta.clear();
   c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
   c->slam.setUpdatePolicy(c->map_policy, c->still_every);
   return 0;
@@ -372,6 +381,52 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
 }
 
 namespace {
+// 스냅숏·그래프가 쓰는 격자 사본(보이는 값이 바뀌었을 때만 새로). mu 아래
+void refreshGrid8(sm_ctx* c) {
+  const OccGrid& gr = c->slam.grid();
+  if (c->grid8 && c->grid8_ver == gr.cellsVersion() && c->grid8_w == gr.width() && c->grid8_h == gr.height()) return;
+  const auto tg = TClock::now();
+  auto v = std::make_shared<std::vector<int8_t>>(size_t(gr.width()) * gr.height());
+  gr.export8(v->data());
+  c->grid8 = std::move(v);
+  c->grid8_ver = gr.cellsVersion();
+  c->grid8_w = gr.width();
+  c->grid8_h = gr.height();
+  c->addT(kStSnapGrid, usBetween(tg, TClock::now()));
+}
+
+// keyframe 뒤 장면 그래프: agent, (검출이 있었으면) 물체, 주기마다 바뀐 격자 둘레 place. mu 아래
+void updateGraph(sm_ctx* c, double stamp, bool objects) {
+  const auto t0 = TClock::now();
+  c->graph.updateAgent(stamp, c->slam.pose());
+  if (objects) {
+    std::vector<ObjIn> v;
+    for (const MapObject& o : c->om.objects()) {
+      if (!o.confirmed) continue;
+      ObjIn q;
+      q.id = o.id;
+      q.name = o.cls >= 0 && size_t(o.cls) < c->labels.size() ? c->labels[o.cls] : std::string("?");
+      for (int k = 0; k < 3; ++k) { q.pos[k] = o.pos[k]; q.lo[k] = o.lo[k]; q.hi[k] = o.hi[k]; }
+      q.state = o.held_by >= 0 ? SM_HELD : o.state;
+      q.movable = c->om.kindOf(o.cls) != SM_KIND_STATIC;
+      v.push_back(std::move(q));
+    }
+    c->graph.updateObjects(v);
+  }
+  const auto t1 = TClock::now();
+  c->addT(kStGraphObj, usBetween(t0, t1));
+  OccGrid& gr = c->slam.gridMut();
+  int b[4];
+  const bool d = gr.takeDirty(&b[0], &b[1], &b[2], &b[3], 1);
+  if (gr.width() > 0 && c->graph.placesDue(stamp, d, gr.width(), gr.height(), gr.x0(), gr.y0())) {
+    refreshGrid8(c);
+    c->graph.updatePlaces(c->grid8->data(), gr.width(), gr.height(), gr.x0(), gr.y0(), gr.res(), stamp, d ? b : nullptr, false);
+    c->addT(kStGraphPlaces, usBetween(t1, TClock::now()));
+  } else if (d) {
+    c->graph.updatePlaces(nullptr, 0, 0, 0, 0, gr.res(), stamp, b, false);   // 상자만 쌓아 둠
+  }
+}
+
 // 진단: 외부 자세(정답)가 있으면 지금 자세와 비교(첫 keyframe 에서 맞춤 — 그 뒤 떠밀림)
 void poseDiag(sm_ctx* c, double stamp) {
   Pose2 ref;
@@ -452,7 +507,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     else c->slam.keyframe(dv, body, nullptr, &c->tm);
   }
   poseDiag(c, im->stamp);
-  if (!dets) { c->last_assoc.clear(); return 0; }   // 검출 없음: 지도(slam2d)만
+  if (!dets) { c->last_assoc.clear(); updateGraph(c, im->stamp, false); return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
   const Pose2 P = c->slam.pose();
   const double cs = std::cos(P.th), sn = std::sin(P.th);
@@ -531,6 +586,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   }
   epoch = c->epoch;
   c->addT(kStViewPrep, usBetween(tv, TClock::now()));
+  updateGraph(c, im->stamp, true);
   }  // 잠금 끝: 자르기(장치 → 호스트 복사)는 잠금 밖에서
   if (cand.empty() && pts.empty()) return 0;
   // 구름 점 색: 남긴 화소에서만(sgrt 는 장치에서 모아 그 색만 내려받음). 영상이 없으면 회색
@@ -619,16 +675,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->oy = gr.y0() * double(gr.res());
     s->w = gr.width();
     s->h = gr.height();
-    if (!c->grid8 || c->grid8_ver != gr.cellsVersion() || c->grid8_w != s->w || c->grid8_h != s->h) {
-      const auto tg = TClock::now();
-      auto v = std::make_shared<std::vector<int8_t>>(size_t(s->w) * s->h);
-      gr.export8(v->data());
-      c->grid8 = std::move(v);
-      c->grid8_ver = gr.cellsVersion();
-      c->grid8_w = s->w;
-      c->grid8_h = s->h;
-      c->addT(kStSnapGrid, usBetween(tg, TClock::now()));
-    }
+    refreshGrid8(c);
     s->cellsp = c->grid8;
     {
       const Scan2& sc = c->slam.lastScan();
@@ -663,6 +710,19 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
   const auto tr = TClock::now();
   snapRooms(c, s);
   const auto t1 = TClock::now();
+  {   // 방 → 그래프(바뀌었을 때), 그래프 사본
+    std::lock_guard<std::mutex> g(c->mu);
+    if (s->rseg) {
+      std::vector<std::pair<uint32_t, uint32_t>> orl;
+      for (size_t i = 0; i < s->objs.size() && i < s->rnames.obj_room.size(); ++i) orl.push_back({s->objs[i].id, s->rnames.obj_room[i]});
+      std::vector<std::string> rn;
+      for (const RoomLabel& L : s->rnames.rooms) rn.push_back(L.name);
+      c->graph.updateRooms(s->rseg, orl, rn);
+    }
+    const auto tp = TClock::now();
+    s->graph = c->graph.publish();
+    c->addT(kStGraphPublish, usBetween(tp, TClock::now()));
+  }
   c->addT(kStRooms, usBetween(tr, t1));
   c->addT(kStSnapshot, usBetween(t0, t1));
   *out = s;
@@ -901,6 +961,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   in.voxel = s->voxel;
   in.rooms = s->rseg;
   in.room_names = s->rnames;
+  in.graph = s->graph;
   {
     std::lock_guard<std::mutex> g(c->mu);
     const auto& ev = c->om.events();
@@ -921,9 +982,17 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
       in.png_dirty[i] = it == c->saved_ver.end() || it->second != s->views[i]->version;
     }
     in.clean_objects = c->clean_objects;
+    in.obj_meta.assign(s->objs.size(), std::string());
+    for (size_t i = 0; i < s->objs.size(); ++i) {
+      auto it = c->obj_meta.find(s->objs[i].id);
+      if (it != c->obj_meta.end()) in.obj_meta[i] = it->second;
+    }
   }
   SaveOut out;
+  std::unique_lock<std::mutex> sl(c->save_mu);   // 저장 하나씩(노드 조각 캐시)
+  in.json_cache = &c->jcache;
   const int rc = saveScene(in, dir, &out);
+  sl.unlock();
   {
     std::lock_guard<std::mutex> g(c->mu);
     if (c->saved_dir == dir) {
@@ -1084,6 +1153,107 @@ int sm_reset_timing(sm_ctx* c) {
   if (!c) return -1;
   std::lock_guard<std::mutex> g(c->tmu);
   c->tm.clear();
+  return 0;
+}
+
+// ---- 장면 그래프(추가 ABI) ----
+
+int sm_snap_graph_nodes(const sm_snapshot_t* s, int32_t group, const sm_gnode** out) {
+  if (!s || !out) return -1;
+  *out = nullptr;
+  if (!s->graph) return 0;
+  const GraphView& g = *s->graph;
+  if (group < 0) { *out = g.cn.empty() ? nullptr : g.cn.data(); return int(g.cn.size()); }
+  if (group > 4) return -1;
+  const int a = g.layer_off[group], b = g.layer_off[group + 1];
+  *out = b > a ? g.cn.data() + a : nullptr;
+  return b - a;
+}
+
+int sm_snap_graph_edges(const sm_snapshot_t* s, const sm_gedge** out) {
+  if (!s || !out) return -1;
+  *out = nullptr;
+  if (!s->graph || s->graph->edges.empty()) return 0;
+  *out = reinterpret_cast<const sm_gedge*>(s->graph->edges.data());
+  return int(s->graph->edges.size());
+}
+
+const sm_gnode* sm_snap_graph_node(const sm_snapshot_t* s, uint64_t id) {
+  if (!s || !s->graph) return nullptr;
+  auto it = s->graph->index.find(id);
+  return it == s->graph->index.end() ? nullptr : &s->graph->cn[it->second];
+}
+
+int sm_snap_graph_neighbors(const sm_snapshot_t* s, uint64_t id, int32_t* edge_idx, int32_t cap) {
+  if (!s || !s->graph) return -1;
+  const GraphView& g = *s->graph;
+  auto it = g.index.find(id);
+  if (it == g.index.end()) return -1;
+  const uint32_t a = g.adj_off[it->second], b = g.adj_off[it->second + 1];
+  for (uint32_t k = a; k < b && edge_idx && int32_t(k - a) < cap; ++k) edge_idx[k - a] = int32_t(g.adj[k]);
+  return int(b - a);
+}
+
+int sm_snap_place_path(const sm_snapshot_t* s, const double from[2], const double to[2], double min_clear, uint64_t* ids, int32_t cap,
+                       double* length) {
+  if (!s || !from || !to) return -1;
+  if (length) *length = 0;
+  if (!s->graph) return 0;
+  const GraphView& g = *s->graph;
+  const int a = g.layer_off[SM_GL_PLACES], b = g.layer_off[SM_GL_PLACES + 1];
+  if (b <= a) return 0;
+  auto nearest = [&](const double* p) {
+    int best = -1;
+    double bd = 2.0 * 2.0;
+    for (int i = a; i < b; ++i) {
+      const double d = (g.nodes[i].pos[0] - p[0]) * (g.nodes[i].pos[0] - p[0]) + (g.nodes[i].pos[1] - p[1]) * (g.nodes[i].pos[1] - p[1]);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  };
+  const int s0 = nearest(from), g0 = nearest(to);
+  if (s0 < 0 || g0 < 0) return 0;
+  const int n = b - a;
+  std::vector<double> dist(n, INFINITY);
+  std::vector<int> prev(n, -1);
+  using QE = std::pair<double, int>;
+  std::priority_queue<QE, std::vector<QE>, std::greater<QE>> pq;
+  dist[s0 - a] = 0;
+  pq.push({0, s0});
+  while (!pq.empty()) {
+    const auto [d, u] = pq.top();
+    pq.pop();
+    if (d > dist[u - a]) continue;
+    if (u == g0) break;
+    for (uint32_t k = g.adj_off[u]; k < g.adj_off[u + 1]; ++k) {
+      const GEdge& e = g.edges[g.adj[k]];
+      if (e.rel != kRelPlace || e.weight < min_clear) continue;
+      auto jt = g.index.find(e.a == g.nodes[u].id ? e.b : e.a);
+      if (jt == g.index.end()) continue;
+      const int v = int(jt->second);
+      if (v < a || v >= b) continue;
+      const double w = std::hypot(g.nodes[v].pos[0] - g.nodes[u].pos[0], g.nodes[v].pos[1] - g.nodes[u].pos[1]);
+      if (d + w < dist[v - a]) {
+        dist[v - a] = d + w;
+        prev[v - a] = u;
+        pq.push({d + w, v});
+      }
+    }
+  }
+  if (!std::isfinite(dist[g0 - a])) return 0;
+  std::vector<uint64_t> path;
+  for (int u = g0; u >= 0; u = prev[u - a]) path.push_back(g.nodes[u].id);
+  std::reverse(path.begin(), path.end());
+  for (int i = 0; i < int(path.size()) && i < cap && ids; ++i) ids[i] = path[i];
+  if (length) *length = dist[g0 - a];
+  return int(path.size());
+}
+
+int sm_set_object_meta(sm_ctx* c, uint32_t id, const char* json) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  if (!json || !*json) c->obj_meta.erase(id);
+  else c->obj_meta[id] = json;
   return 0;
 }
 
