@@ -1,6 +1,8 @@
 # ovdet — 독립 물체 검출기 (YOLOE, TensorRT FP16, C API)
 
-scenemap 이 부르는 검출기다. 코드는 `src/ovdet`(README 영어), 형식은 `docs/scenemap_설계.md` 4.2 `sm_detections` 다.
+> 지금 상태: 물체 인식은 YOLOE(이 문서, 코드는 그대로 있음)에서 FastSAM-s 416 + SigLIP 2 B/32(`src/scene_graph/clip`, 진행 중)로 옮기는 중이다. 물체 벡터는 원래 임베딩을 그대로 쓰고, 이름은 기억 폴더 `cache/` 에 둔다. 아래 FastSAM+CLIP 비교는 그 전 기록이다.
+
+scenemap 이 부르는 검출기다. 코드는 `src/scene_graph/ovdet`(README 영어), 형식은 `docs/scenemap_설계.md` 4.2 `sm_detections` 다.
 
 ## 1. 상태 (09-30 마무리 시점)
 
@@ -11,7 +13,7 @@ scenemap 이 부르는 검출기다. 코드는 `src/ovdet`(README 영어), 형�
 | 빌드 | Linux 에서 `scripts/build_linux.sh` 로 빌드한다(제출 Docker 도 Linux). |
 | FastSAM+CLIP 경로 | 뺐다. 기본 빌드는 YOLOE 만 싣는다. 비교표용으로 한 번만 돌렸다. |
 | 검출기 단위 비교표 | **끝**(아래 2절). YOLO-World 는 넣지 않았다(3절). |
-| AGPL | 사용자 결정(09-30): 제출물 소스를 AGPL 로 공개한다. `src/ovdet/README.md` 에 라이선스 절을, `docs/제출지침.md` 에 체크 항목을 넣었다. |
+| AGPL | 사용자 결정(09-30): 제출물 소스를 AGPL 로 공개한다. `src/scene_graph/ovdet/README.md` 에 라이선스 절을, `docs/제출지침.md` 에 체크 항목을 넣었다. |
 | Ultralytics 원본과 대조 | **못 함**. `tools/ref_check.py` 는 작성만 했고 돌리지 않았다(4절). |
 
 ## 2. 검출기 단위 비교 (같은 영상, 정답 장면 기준)
@@ -30,7 +32,7 @@ scenemap 이 부르는 검출기다. 코드는 `src/ovdet`(README 영어), 형�
   - 조각남: 한 물체에 50% 이상 걸친 검출 수의 평균과, 2개 이상인 비율이다.
   - 작은 물체: 원 해상도 1500 px 미만인 물체다.
 - **프롬프트**: 과제 BDDL 물체와 구조물 18개(`config/task_prompts.txt`). `allp` 만 어휘 272개 전부를 쓴다.
-- **도구**: `src/ovdet/scripts/eval_linux.sh`, `eval_conf.sh`.
+- **도구**: `src/scene_graph/ovdet/scripts/eval_linux.sh`, `eval_conf.sh`.
 
 > **주의(10-02)**: 아래 2 절 숫자는 제대로 잰 값이 아니다(결과 JSON 도 지움). 방향 참고로만 보고, 이 PC 에서 다시 잰다.
 
