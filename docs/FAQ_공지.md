@@ -121,7 +121,7 @@ A. 원문 "After we freeze the leaderboard upon submission deadline, we will eva
 A. 원문 "The submitted model should run on a single 24GB VRAM GPU. Final evaluation will use GPUs such as RTX 3090, A5000, and TitanRTX."
 
 **Q. 설치 요구사항은?**
-A. 설치 문서 요구사항 원문: "Ubuntu 22.04+", "RAM: 32GB+", "GPU: NVIDIA RTX 2070+", "VRAM: 8GB+". 이 PC 는 Ubuntu 22.04.5 + RTX 4090 → [Linux_설치.md](Linux_설치.md).
+A. 설치 문서 요구사항 원문: "Ubuntu 22.04+", "RAM: 32GB+", "GPU: NVIDIA RTX 2070+", "VRAM: 8GB+". 지금 작업 PC 는 Ubuntu 22.04 + RTX 5070 Ti 16 GB(`jy-desktop`) → [Linux_설치.md](Linux_설치.md).
 
 ## 4. 사이트 FAQ·알려진 문제 중 관련 있는 것 (요약)
 
