@@ -1,7 +1,10 @@
 // 저장된 기억(map.pgm + map.yaml [+ view.json 물체])에서 방을 나눠 출력한다(rooms.hpp, 오프라인).
-// 사용: rooms_pgm <memory 디렉터리> [출력 디렉터리]
+// 사용: rooms_pgm <memory 디렉터리> [출력 디렉터리] [되풀이 수(시간 재기: 나누기 + id 잇기 중앙값)]
 //   출력: 방·문·거름 표, <출력>/rooms.pgm(값 = 방 순서 + 1), <출력>/rooms_color.ppm(방 색 + 벽 검정 + 모름 회색)
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +27,7 @@ static std::string slurp(const fs::path& p) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: rooms_pgm <memory dir> [out dir]\n");
+    std::fprintf(stderr, "usage: rooms_pgm <memory dir> [out dir] [repeat]\n");
     return 2;
   }
   const fs::path dir(argv[1]), out = argc > 2 ? fs::path(argv[2]) : dir;
@@ -59,6 +62,18 @@ int main(int argc, char** argv) {
   auto s = segmentRooms(g, P);
   uint32_t next = 1;
   matchRoomIds(*s, nullptr, &next, P.match_min);
+  if (argc > 3 && std::atoi(argv[3]) > 0) {
+    std::vector<double> ms;
+    for (int k = 0; k < std::atoi(argv[3]); ++k) {
+      const auto t0 = std::chrono::steady_clock::now();
+      auto q = segmentRooms(g, P);
+      uint32_t nx = 1;
+      matchRoomIds(*q, s.get(), &nx, P.match_min);
+      ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    }
+    std::sort(ms.begin(), ms.end());
+    std::printf("timing x%zu: median %.3f ms (min %.3f, max %.3f)\n", ms.size(), ms[ms.size() / 2], ms.front(), ms.back());
+  }
   int nfree = 0;
   for (int8_t v : cells) nfree += v >= 0 && v <= P.free_max;
   std::printf("grid %dx%d res %.3f origin (%.2f, %.2f), free cells %d (%.1f m²)\n", W, H, res, ox, oy, nfree, nfree * res * res);

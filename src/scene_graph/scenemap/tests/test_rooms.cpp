@@ -1,5 +1,6 @@
 // 방 나누기 시험(rooms.hpp): 합성 격자
-//   두 방 + 문, ㄱ자 방, 복도 + 방 셋, 잡음(모름 점·점유 점·40 % 칸), 자람(id 유지·원점 이동), 물체 배정·이름,
+//   두 방 + 문, ㄱ자 방, 복도 + 방 셋, 잡음(모름 점·점유 점·40 % 칸), 크기 다른 방(욕실 — 전역 문턱 하나로는 못 가름),
+//   이상한 설정, 자람(id 유지·원점 이동), 물체 배정·이름,
 //   외부 이름, 저장(scene.json ROOMS 층·rooms.pgm·view.json rooms), C ABI(빈 지도·설정), 시간(600×600).
 // 사용: test_rooms [출력 디렉터리]
 #include <algorithm>
@@ -169,6 +170,42 @@ static void testNoise(const RoomParams& P) {
   dump("noise", *s);
   CHECK(s->rooms.size() == 2, "rooms %zu", s->rooms.size());
   CHECK(s->doors.size() == 1, "doors %zu", s->doors.size());
+}
+
+// 크기 다른 방: 큰 방 A [0,6)×[0,5), 욕실 B [6.1,7.4)×[0,2)(폭 1.3 m, 문 0.7 m), 큰 방 C [0,5)×[5.1,10)(문 0.9 m).
+// Hydra 처럼 전역 문턱 하나(PLATEAU)를 고르면 0.325 m 에서 A·C 가 이어져 방 2 — 성분마다 수명을 보면 3.
+static void testMixed(const RoomParams& P) {
+  std::printf("mixed sizes (bathroom + two big rooms)\n");
+  Grid g(-1, -1, 10, 12);
+  g.room(0, 0, 6, 5);
+  g.room(6.1, 0, 7.4, 2);
+  g.room(0, 5.1, 5, 10);
+  g.rect(5.95, 0.6, 6.15, 1.3, 0);
+  g.rect(2.0, 4.95, 2.9, 5.15, 0);
+  auto s = segmentRooms(g.view(), P);
+  dump("mixed", *s);
+  CHECK(s->rooms.size() == 3, "rooms %zu", s->rooms.size());
+  const uint32_t a = s->at(3, 2.5), b = s->at(6.7, 1), c = s->at(2.5, 7.5);
+  CHECK(a && b && c && a != b && a != c && b != c, "a %u b %u c %u", a, b, c);
+  CHECK(findDoor(*s, a, b) && findDoor(*s, a, c) && !findDoor(*s, b, c), "doors");
+  const int ib = s->index(b);
+  CHECK(ib >= 0 && std::fabs(s->rooms[ib].area_m2 - 2.6) < 0.4, "bathroom area %.2f", ib >= 0 ? s->rooms[ib].area_m2 : 0);
+  CHECK(s->n_seeds == 3, "seeds %d", s->n_seeds);
+}
+
+// 이상한 설정(0 간격·뒤집힌 문턱·아주 작은 문턱)에도 죽지 않고 뭔가 냄
+static void testOddParams(const RoomParams& P0) {
+  std::printf("odd params\n");
+  Grid g = twoRooms();
+  const double cfg[][3] = {{0.0, 0.0, 0.0}, {0.6, 0.3, 0.025}, {0.0, 0.6, 0.005}, {0.3, 0.6, 1.0}, {2.0, 3.0, 0.025}};
+  for (auto& c : cfg) {
+    RoomParams P = P0;
+    P.dil_min = c[0]; P.dil_max = c[1]; P.dil_step = c[2];
+    auto s = segmentRooms(g.view(), P);
+    std::printf("  dil %.2f..%.2f step %.3f: %zu rooms\n", c[0], c[1], c[2], s->rooms.size());
+    CHECK(!s->rooms.empty() && s->rooms.size() <= 2, "rooms %zu", s->rooms.size());
+    CHECK(s->at(2, 2) != 0, "unlabeled");
+  }
 }
 
 // 자람: A 만 → A + 문 + B 일부 → 다 보임(격자도 −x 쪽으로 넓어짐)
@@ -444,6 +481,8 @@ int main(int argc, char** argv) {
   testLShape(P);
   testCorridor(P);
   testNoise(P);
+  testMixed(P);
+  testOddParams(P);
   testGrowth(P);
   testNaming(P);
   testTiming(P);

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <climits>
 #include <cmath>
 #include <cstring>
 #include <numeric>
@@ -13,7 +14,7 @@ namespace {
 
 constexpr float kInf = 1e20f;
 
-// Felzenszwalb–Huttenlocher 1D 제곱 거리 변환
+// Felzenszwalb–Huttenlocher 1D 제곱 거리 변환(float — 나눗셈 없는 정수 판보다 이 기계에서 빠름, 잼)
 void dt1d(const float* f, int n, float* d, int* v, float* z) {
   int k = 0;
   v[0] = 0;
@@ -39,57 +40,31 @@ void dt1d(const float* f, int n, float* d, int* v, float* z) {
   }
 }
 
-// free 칸의 막힌 칸(그리고 격자 밖)까지 제곱 거리(칸²)
-std::vector<float> edt(const std::vector<uint8_t>& free, int W, int H) {
-  // 세로(1D, 이진이라 두 번 쓸기): 위·아래로 가장 가까운 막힌 칸(격자 밖 = 막힘)까지 칸 수, 행 단위로 쓸어 캐시 친화
-  const int PW = W + 2;
-  std::vector<float> g(size_t(H) * PW, 0.f);
-  std::vector<int> run(W, 0);
-  for (int y = 0; y < H; ++y) {   // 아래(−y) 쪽 거리
-    const uint8_t* fr = &free[size_t(y) * W];
-    float* row = &g[size_t(y) * PW + 1];
-    for (int x = 0; x < W; ++x) {
-      run[x] = fr[x] ? run[x] + 1 : 0;
-      row[x] = float(run[x]);
-    }
-  }
-  std::fill(run.begin(), run.end(), 0);
-  for (int y = H - 1; y >= 0; --y) {   // 위(+y) 쪽과 작은 것, 제곱
-    const uint8_t* fr = &free[size_t(y) * W];
-    float* row = &g[size_t(y) * PW + 1];
-    for (int x = 0; x < W; ++x) {
-      run[x] = fr[x] ? run[x] + 1 : 0;
-      const float m = std::min(row[x], float(run[x]));
-      row[x] = m * m;
-    }
-  }
-  // 가로: 아래 봉투(Felzenszwalb–Huttenlocher), 양 끝 덧댐 칸 = 막힘
-  std::vector<float> d(PW), z(PW + 1);
-  std::vector<int> v(PW);
-  std::vector<float> out(size_t(W) * H);
-  for (int y = 0; y < H; ++y) {
-    float* row = &g[size_t(y) * PW];
-    dt1d(row, PW, d.data(), v.data(), z.data());
-    std::memcpy(&out[size_t(y) * W], d.data() + 1, sizeof(float) * W);
-  }
-  return out;
+// 빠른 올림(std::ceil 은 SSE4.1 없는 기본 x86-64 에서 함수 부름)
+inline int iceil(float x) {
+  const int t = int(x);
+  return t + (float(t) < x);
 }
 
-struct DSU {
-  std::vector<int> p;
-  int find(int a) {
-    while (p[a] != a) a = p[a] = p[p[a]];
-    return a;
-  }
+// 칸마다 쓰는 일감 버퍼 — 스레드마다 하나를 다시 써서 부를 때마다 수 MB 를 새로 잡지(쪽 잘못) 않는다.
+// 방 추적기는 한 번에 하나만 나누므로 보통 스레드 하나 몫.
+struct Work {
+  std::vector<uint8_t> free, pc;
+  std::vector<float> g, clear, d, z;
+  std::vector<int> v, run, key, cnt, order, b, stack, comp;
 };
+Work& work() {
+  thread_local Work w;
+  return w;
+}
 
 // 작은 모름 구멍 → 빈칸, 빈칸에 둘러싸인 작은 점유 점 → 빈칸. 덧댄 격자(밖 = 3)로 범위 검사 없이
-void cleanFree(const std::vector<uint8_t>& cls, int W, int H, int hole_cells, int speck_cells, std::vector<uint8_t>& free) {
-  const int PW = W + 2, PH = H + 2;
-  std::vector<uint8_t> pc(size_t(PW) * PH, 3);   // 0 모름, 1 빈칸, 2 점유, 3 밖, |0x80 = 본 칸
-  for (int y = 0; y < H; ++y) std::memcpy(&pc[size_t(y + 1) * PW + 1], &cls[size_t(y) * W], size_t(W));
+void cleanFree(Work& wk, int W, int H, int hole_cells, int speck_cells) {
+  const int PW = W + 2;
+  std::vector<uint8_t>& pc = wk.pc;   // 덧댄 분류(segmentCore 가 채움): 0 모름, 1 빈칸, 2 점유, 3 밖, |0x80 = 본 칸
   const int o4[4] = {-1, 1, -PW, PW}, od[4] = {-PW - 1, -PW + 1, PW - 1, PW + 1};
-  std::vector<int> stack, comp;
+  std::vector<int>& stack = wk.stack;
+  std::vector<int>& comp = wk.comp;
   for (int y = 1; y <= H; ++y)
     for (int x = 1; x <= W; ++x) {
       const int s0 = y * PW + x;
@@ -132,8 +107,71 @@ void cleanFree(const std::vector<uint8_t>& cls, int W, int H, int hole_cells, in
       if (!keep || border || comp.empty()) continue;
       const bool ok = want == 0 ? (nfree > 0 && 2 * nfree >= nfree + nother) : nother == 0;
       if (ok)
-        for (int c : comp) free[size_t(c / PW - 1) * W + (c % PW - 1)] = 1;
+        for (int c : comp) wk.free[size_t(c / PW - 1) * W + (c % PW - 1)] = 1;
     }
+}
+
+// 빈칸의 벽 면까지 여유(m) clear 와 거름 층 통 key(층 L − Lmin, 막힌 칸 −1), 통마다 칸 수 cnt.
+// 정확한 유클리드 거리: 세로(이진이라 위·아래 두 번 쓸기) + 가로 Felzenszwalb–Huttenlocher 아래 봉투, 격자 밖 = 막힘.
+void clearance(Work& wk, int W, int H, double res, double dil_min, double step, int Lmin, int nbins) {
+  const int PW = W + 2;
+  const size_t N = size_t(W) * H;
+  const uint8_t* free = wk.free.data();
+  wk.g.resize(size_t(H) * PW);
+  wk.run.assign(W, 0);
+  int* run = wk.run.data();
+  for (int y = 0; y < H; ++y) {   // 아래(−y) 쪽 거리
+    const uint8_t* fr = free + size_t(y) * W;
+    float* row = &wk.g[size_t(y) * PW];
+    row[0] = row[PW - 1] = 0.f;   // 덧댄 칸 = 막힘
+    for (int x = 0; x < W; ++x) {
+      run[x] = fr[x] ? run[x] + 1 : 0;
+      row[x + 1] = float(run[x]);
+    }
+  }
+  wk.d.resize(PW);
+  wk.z.resize(PW + 1);
+  wk.v.resize(PW);
+  wk.clear.resize(N);
+  wk.key.resize(N);
+  wk.cnt.assign(nbins, 0);
+  int* cnt = wk.cnt.data();
+  const int top = nbins - 1;
+  const float fres = float(res), half = float(res / 2), fmin = float(dil_min), inv = float(1.0 / step);
+  std::fill(wk.run.begin(), wk.run.end(), 0);
+  for (int y = H - 1; y >= 0; --y) {   // 위(+y) 쪽과 작은 것, 제곱 → 이 줄은 끝났으니 바로 가로 봉투
+    const uint8_t* fr = free + size_t(y) * W;
+    float* row = &wk.g[size_t(y) * PW];
+    bool any = false;
+    for (int x = 0; x < W; ++x) {
+      run[x] = fr[x] ? run[x] + 1 : 0;
+      const float m = std::min(row[x + 1], float(run[x]));
+      row[x + 1] = m * m;
+      any |= fr[x] != 0;
+    }
+    float* cl = &wk.clear[size_t(y) * W];
+    int* ky = &wk.key[size_t(y) * W];
+    std::memset(cl, 0, sizeof(float) * W);
+    std::fill(ky, ky + W, -1);
+    if (!any) continue;   // 빈칸 없는 줄(실제 지도는 대부분 모름)
+    // 빈칸 토막마다 따로 봉투: 양 끝 막힌 칸(F = 0)이 닻이라 토막 밖 포물선은 토막 안에서 이길 수 없다
+    for (int x = 0; x < W;) {
+      if (!fr[x]) { ++x; continue; }
+      const int x0 = x;
+      while (x < W && fr[x]) ++x;
+      const int n = x - x0 + 2;   // 덧댄 좌표 [x0, x + 1) = 닻 + 토막 + 닻
+      dt1d(row + x0, n, wk.d.data(), wk.v.data(), wk.z.data());
+      const float* d = wk.d.data() + 1;
+      for (int q = 0; q < n - 2; ++q) {
+        const float c = std::sqrt(d[q]) * fres - half;
+        cl[x0 + q] = c;
+        const int L = iceil((c - fmin) * inv - 1e-5f) - 1;
+        const int k = std::clamp(L - Lmin, 0, top);
+        ky[x0 + q] = k;
+        if (k < top) cnt[k]++;   // 맨 위 통은 세지 않음(정렬 안 함). 같은 통 잇단 ++ 는 저장–읽기 지연이라 대부분인 맨 위를 뺌
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -152,6 +190,22 @@ int RoomSeg::index(uint32_t id) const {
 }
 
 namespace {
+
+struct DSU {
+  std::vector<int> p;
+  int find(int a) {
+    while (p[a] != a) a = p[a] = p[p[a]];
+    return a;
+  }
+};
+
+// 한 번 쓸기 거름 + 붙이기(ToMATo 꼴, 문서 3.4):
+//   빈칸을 여유 큰 것부터(층 통, 한 번 세기 정렬) 넣는다. 칸은 이미 들어온 이웃 중 여유가 가장 큰 칸의 '태어남'
+//   번호를 물려받는다(가파른 오르막 = 넘치기). 태어남 번호 하나가 성분(union-find cpar)이자 씨앗(union-find spar).
+//   성분이 만날 때(층 Lc): Hydra barcode 처럼 어린 쪽 수명 = 태어난 층 − 만난 층. 둘 다 크고(min_seed) 오래 살았으면
+//   둘 다 얼리고(섞인 성분), 아니면 짧게 산 쪽 씨앗을 만난 자리 건너편 씨앗에 합친다.
+//   dil_min 아래로 내려가면(늦은 단계) 새 씨앗은 없고, 남은 홀로 성분 중 큰 것은 씨앗(strong), 나머지는 약함 —
+//   약한 쪽은 만나는 대로 건너편에 붙고, 끝까지 약한 덩이는 min_room 이상이면 방 하나.
 std::shared_ptr<RoomSeg> segmentCore(const GridView& g, const RoomParams& P) {
   const auto t0 = std::chrono::steady_clock::now();
   auto S = std::make_shared<RoomSeg>();
@@ -159,231 +213,269 @@ std::shared_ptr<RoomSeg> segmentCore(const GridView& g, const RoomParams& P) {
   const int W = g.w, H = g.h;
   const size_t N = size_t(W) * H;
   if (!N || !g.cells) return S;
+  Work& wk = work();
   const double res = g.res, a1 = res * res;
   // 1) 분류·정리
-  std::vector<uint8_t> cls(N);
   S->rawfree.resize(N);
-  for (size_t i = 0; i < N; ++i) {
-    const int v = g.cells[i];
-    cls[i] = (v >= 0 && v <= P.free_max) ? 1 : (v >= P.occ_min ? 2 : 0);
-    S->rawfree[i] = cls[i] == 1;
+  {   // 덧댄 분류 격자(cleanFree 가 바로 씀): 0 모름, 1 빈칸, 2 점유, 3 밖
+    const int PW = W + 2;
+    wk.pc.resize(size_t(PW) * (H + 2));
+    std::memset(wk.pc.data(), 3, size_t(PW));
+    std::memset(wk.pc.data() + size_t(H + 1) * PW, 3, size_t(PW));
+    for (int y = 0; y < H; ++y) {
+      uint8_t* pr = &wk.pc[size_t(y + 1) * PW];
+      uint8_t* rf = &S->rawfree[size_t(y) * W];
+      const int8_t* cr = g.cells + size_t(y) * W;
+      pr[0] = pr[W + 1] = 3;
+      for (int x = 0; x < W; ++x) {
+        const int v = cr[x];
+        const uint8_t c = (v >= 0 && v <= P.free_max) ? 1 : (v >= P.occ_min ? 2 : 0);
+        pr[x + 1] = c;
+        rf[x] = c == 1;
+      }
+    }
   }
-  std::vector<uint8_t> free = S->rawfree;
-  cleanFree(cls, W, H, int(P.hole_m2 / a1), int(P.speck_m2 / a1 + 1e-9), free);
+  wk.free.assign(S->rawfree.begin(), S->rawfree.end());
+  cleanFree(wk, W, H, int(P.hole_m2 / a1), int(P.speck_m2 / a1 + 1e-9));
   // 테두리 빈칸은 잠시 막음(이웃 범위 검사 없이) — 끝에서 안쪽 이웃의 방을 받음
   std::vector<int> rim;
-  for (int y = 0; y < H; ++y)
-    for (int x = 0; x < W; ++x)
-      if ((x == 0 || y == 0 || x == W - 1 || y == H - 1) && free[size_t(y) * W + x]) {
-        rim.push_back(y * W + x);
-        free[size_t(y) * W + x] = 0;
-      }
-  // 2) 거리 변환 → 여유(벽 면까지, m)
-  const std::vector<float> d2 = edt(free, W, H);
-  std::vector<float> clear(N, 0.f);
-  for (size_t i = 0; i < N; ++i)
-    if (free[i]) clear[i] = float(std::sqrt(d2[i]) * res - res / 2);
-  // 3) 거름: 높은 문턱부터 칸을 넣고 union-find, 수명 긴 성분을 씨앗으로 얼림
-  const int K = std::clamp(int(std::floor((P.dil_max - P.dil_min) / P.dil_step + 1e-9)) + 1, 1, 120);
-  const int life = std::max(1, int(std::lround(P.min_life / P.dil_step)));
-  const int min_seed = std::max(1, int(P.min_seed_m2 / a1));
-  // 칸을 문턱 층으로(세기 정렬): order[start[L] .. start[L+1])
-  std::vector<int8_t> lv(N, -1);
-  const float inv_step = float(1.0 / P.dil_step);
-  std::vector<int> start(K + 1, 0);
-  for (size_t i = 0; i < N; ++i) {
-    if (!free[i] || clear[i] <= P.dil_min) continue;
-    const float x = (clear[i] - float(P.dil_min)) * inv_step;
-    const int L = std::clamp(int(std::ceil(x - 1e-5f)) - 1, 0, K - 1);
-    lv[i] = int8_t(L);
-    start[L + 1]++;
-  }
-  for (int L = 0; L < K; ++L) start[L + 1] += start[L];
-  std::vector<int> order(start[K]);
-  {
-    std::vector<int> fill(start.begin(), start.end() - 1);
-    for (size_t i = 0; i < N; ++i)
-      if (lv[i] >= 0) order[fill[lv[i]]++] = int(i);
-  }
-  struct Span {
-    const int* b; const int* e;
-    const int* begin() const { return b; }
-    const int* end() const { return e; }
+  auto block = [&](int x, int y) {
+    const size_t i = size_t(y) * W + x;
+    if (wk.free[i]) { rim.push_back(int(i)); wk.free[i] = 0; }
   };
-  auto bucket = [&](int L) { return Span{order.data() + start[L], order.data() + start[L + 1]}; };
-  std::vector<int> par(N, -1), size(N, 0), birth(N, 0), csid(N, -1);   // csid: 뿌리의 씨앗 id(−1 = 여럿)
-  std::vector<int> cell_sid(N, -1);
-  DSU sid;
-  std::vector<uint8_t> sdead;
-  auto findc = [&](int a) {
-    while (par[a] != a) a = par[a] = par[par[a]];
+  for (int x = 0; x < W; ++x) { block(x, 0); if (H > 1) block(x, H - 1); }
+  for (int y = 1; y + 1 < H; ++y) { block(0, y); if (W > 1) block(W - 1, y); }
+  // 2) 거리 변환 → 여유, 층 통
+  const double step = std::max(P.dil_step, 1e-3);
+  const int K = std::clamp(int(std::floor((P.dil_max - P.dil_min) / step + 1e-9)) + 1, 1, 120);
+  const int life = std::max(1, int(std::lround(P.min_life / step)));
+  const int min_seed = std::max(1, int(P.min_seed_m2 / a1));
+  const int min_room = int(P.min_room_m2 / a1);
+  const int Lmin = std::min(-1, int(std::ceil((res / 2 - P.dil_min) / step - 1e-5)) - 2);   // 여유 ≥ res/2, 층 0 아래 통 하나는 늘 있음
+  const int nbins = K - Lmin;   // 맨 위 통(nbins − 1) = 층 K − 1 이상(c > dil_max − step) 전부
+  const int top = nbins - 1;
+  clearance(wk, W, H, res, P.dil_min, step, Lmin, nbins);
+  const float* clear = wk.clear.data();
+  const int* ky = wk.key.data();
+  // 세기 정렬(내림차순, 맨 위 통 빼고): order = [통 top−1]...[통 0], 끝나면 cnt[k] = 통 k 의 끝
+  int* st = wk.cnt.data();
+  {
+    int acc = 0;
+    for (int k = top - 1; k >= 0; --k) {
+      const int n = st[k];
+      st[k] = acc;
+      acc += n;
+    }
+    wk.order.resize(size_t(acc));
+    int* od = wk.order.data();
+    for (size_t i = 0; i < N; ++i)
+      if (ky[i] >= 0 && ky[i] < top) od[st[ky[i]]++] = int(i);
+  }
+  // 3) 한 번 쓸기 거름 + 붙이기
+  wk.b.assign(N, -1);
+  int* b = wk.b.data();
+  std::vector<int> cpar, csz, cbirth, ccs, spar;   // 태어남 번호마다: 성분 부모·크기·태어난 층·홑씨앗(−1 = 섞임), 씨앗 부모
+  std::vector<uint8_t> strong;
+  auto cf = [&](int a) {
+    while (cpar[a] != a) a = cpar[a] = cpar[cpar[a]];
     return a;
   };
-  int nbig = 0;
-  auto sig = [&](int r, int L) { return size[r] >= min_seed && birth[r] - L >= life; };
-  auto kill = [&](int s) { sdead[sid.find(s)] = 1; };
-  for (int L = K - 1; L >= 0; --L) {
-    for (int c : bucket(L)) {
-      const int nb[4] = {c - 1, c + 1, c - W, c + W};   // 빈칸은 테두리에 없음(아래 rim)
-      int first = -1;
-      for (int j : nb)
-        if (j >= 0 && par[j] >= 0) { first = j; break; }
-      if (first < 0) {   // 새 성분, 새 씨앗
-        par[c] = c;
-        size[c] = 1;
-        birth[c] = L;
-        const int s = int(sid.p.size());
-        sid.p.push_back(s);
-        sdead.push_back(0);
-        csid[c] = s;
-        cell_sid[c] = s;
-        if (min_seed <= 1) ++nbig;
-      } else {           // 이웃 성분에 붙음(혼자 칸은 언제나 짧게 산 쪽: 홀로 성분이면 그 씨앗, 섞인 성분이면 넘치기가 정함)
-        const int r = findc(first);
-        par[c] = r;
-        nbig += size[r] + 1 == min_seed;
-        size[r]++;
-        cell_sid[c] = csid[r];
-      }
-      for (int j : nb) {
-        if (j < 0 || j == first || par[j] < 0) continue;
-        int ra = findc(c), rb = findc(j);
-        if (ra == rb) continue;
-        const bool bigA = size[ra] >= min_seed, bigB = size[rb] >= min_seed;
-        // ra = 나이 많은 쪽(태어난 문턱 높음, 같으면 큰 쪽)
-        if (birth[rb] > birth[ra] || (birth[rb] == birth[ra] && size[rb] > size[ra])) std::swap(ra, rb);
-        const int sa = csid[ra], sb = csid[rb];
-        int out_sid;
-        if (sa < 0 && sb < 0) {
-          out_sid = -1;
-        } else if (sa < 0 || sb < 0) {
-          const int single = sa < 0 ? rb : ra;
-          if (!sig(single, L)) kill(csid[single]);
-          out_sid = -1;
-        } else if (sig(ra, L) && sig(rb, L)) {
-          out_sid = -1;
-        } else {
-          // 짧게 산 쪽을 흡수(둘 다 짧으면 어린 쪽을 나이 많은 쪽에)
-          const bool keepA = sig(ra, L) || !sig(rb, L);
-          const int keep = keepA ? sa : sb, lose = keepA ? sb : sa;
-          sid.p[sid.find(lose)] = sid.find(keep);
-          out_sid = sid.find(keep);
-        }
-        par[rb] = ra;
-        size[ra] += size[rb];
-        csid[ra] = out_sid;
-        nbig += (size[ra] >= min_seed) - bigA - bigB;
-      }
-      // 섞인 성분(여럿)에 바로 든 칸의 자기 씨앗은 위 합치기에서 죽음 → 넘치기가 정함
-    }
-    S->filtration.push_back({P.dil_min + L * P.dil_step, nbig});
-  }
-  // 남은 홀로 성분: 크면 씨앗
-  for (int L = 0; L < K; ++L)
-    for (int c : bucket(L))
-      if (par[c] == c && csid[c] >= 0 && size[c] < min_seed) kill(csid[c]);
-  std::vector<int> lab(N, 0);
-  std::vector<int> seed_of(sid.p.size(), 0);   // 씨앗 뿌리 → 1..n
-  int nseed = 0;
-  for (int L = 0; L < K; ++L)
-    for (int c : bucket(L)) {
-      if (cell_sid[c] < 0) continue;
-      const int r = sid.find(cell_sid[c]);
-      if (sdead[r]) continue;
-      if (!seed_of[r]) seed_of[r] = ++nseed;
-      lab[c] = seed_of[r];
-    }
-  S->n_seeds = nseed;
-  // 4) 넘치기: 여유 큰 칸부터(반 칸 단위 통), 같은 통은 먼저 온 순
-  int nreg = S->n_seeds;
+  auto sf = [&](int a) {
+    while (spar[a] != a) a = spar[a] = spar[spar[a]];
+    return a;
+  };
+  auto born = [&](int c, int L) {
+    const int n = int(cpar.size());
+    b[c] = n;
+    cpar.push_back(n); spar.push_back(n); csz.push_back(1); cbirth.push_back(L); ccs.push_back(n); strong.push_back(0);
+  };
+  auto sig = [&](int r, int L) { return csz[r] >= min_seed && cbirth[r] - L >= life; };
+  // 맨 위 층: 한 층이라 만남은 언제나 수명 0(흡수) → 그냥 연결 성분. 줄마다 토막(run)으로 아랫줄 토막과 이음(캐시 친화)
   {
-    const float q = float(2.0 / res);
-    float cmax = 0;
-    for (size_t i = 0; i < N; ++i) cmax = std::max(cmax, clear[i]);
-    const int NB = int(cmax * q) + 2;
-    std::vector<std::vector<int>> qb(NB);
-    auto key = [&](size_t i) { return std::clamp(int(std::max(0.f, clear[i]) * q), 0, NB - 1); };
-    for (int y = 0; y < H; ++y)   // 처음 앞줄: 이웃에 아직 정해지지 않은 빈칸이 있는 씨앗 칸만
-      for (int x = 0; x < W; ++x) {
-        const size_t i = size_t(y) * W + x;
-        if (!lab[i]) continue;
-        const bool fr = (x > 0 && free[i - 1] && !lab[i - 1]) || (x + 1 < W && free[i + 1] && !lab[i + 1]) ||
-                        (y > 0 && free[i - W] && !lab[i - W]) || (y + 1 < H && free[i + W] && !lab[i + W]);
-        if (fr) qb[key(i)].push_back(int(i));
-      }
-    for (int k = NB - 1; k >= 0; --k) {
-      std::vector<int>& b = qb[k];
-      for (size_t h = 0; h < b.size(); ++h) {
-        const int c = b[h];
-        const int nb[4] = {c - 1, c + 1, c - W, c + W};   // 빈칸은 테두리에 없음(아래 rim)
-        for (int j : nb) {
-          if (j < 0 || !free[j] || lab[j]) continue;
-          lab[j] = lab[c];
-          const int kj = std::min(k, key(size_t(j)));
-          qb[kj].push_back(j);
+    struct Run { int x0, x1, id; };
+    std::vector<Run> prev, cur;
+    for (int y = 1; y + 1 < H; ++y) {
+      cur.clear();
+      const int* kr = ky + size_t(y) * W;
+      size_t p = 0;
+      for (int x = 1; x + 1 < W;) {
+        if (kr[x] != top) { ++x; continue; }
+        const int x0 = x;
+        while (x + 1 < W && kr[x] == top) ++x;
+        const int x1 = x - 1;   // [x0, x1]
+        int id = -1;
+        while (p < prev.size() && prev[p].x1 < x0) ++p;   // 4 이웃: 겹치는 아랫줄 토막
+        for (size_t q = p; q < prev.size() && prev[q].x0 <= x1; ++q) {
+          if (id < 0) { id = prev[q].id; continue; }
+          int ra = cf(id), rb = cf(prev[q].id);
+          if (ra == rb) continue;
+          if (csz[rb] > csz[ra]) std::swap(ra, rb);
+          cpar[rb] = ra;
+          spar[ccs[rb]] = ccs[ra];
+          csz[ra] += csz[rb];
         }
+        const int c0 = y * W + x0;
+        if (id < 0) {
+          born(c0, K - 1);
+          id = b[c0];
+          csz[id] = 0;
+        }
+        std::fill(b + c0, b + y * W + x1 + 1, id);
+        csz[cf(id)] += x1 - x0 + 1;
+        cur.push_back({x0, x1, id});
       }
-      std::vector<int>().swap(b);
+      prev.swap(cur);
     }
-    // 씨앗 없는 빈칸 덩이
-    const int min_room = int(P.min_room_m2 / a1);
-    std::vector<int> st, comp;
-    for (size_t s = 0; s < N; ++s) {
-      if (!free[s] || lab[s]) continue;
-      comp.clear();
-      st.assign(1, int(s));
-      lab[s] = -1;
-      while (!st.empty()) {
-        const int c = st.back();
-        st.pop_back();
-        comp.push_back(c);
-        const int nb[4] = {c - 1, c + 1, c - W, c + W};   // 빈칸은 테두리에 없음(아래 rim)
-        for (int j : nb)
-          if (j >= 0 && free[j] && !lab[j]) { lab[j] = -1; st.push_back(j); }
-      }
-      const int v = int(comp.size()) >= min_room ? ++nreg : -1;
-      for (int c : comp) lab[c] = v;
-    }
-    for (int& v : lab) v = std::max(v, 0);
   }
-  // 5) 합치기(긴 이음매 · 작은 방)
-  struct Seam { int n = 0; double sx = 0, sy = 0; float cmax = 0; };
-  auto seams = [&](const std::vector<int>& L, std::unordered_map<uint64_t, Seam>& out) {
-    out.clear();
-    for (int y = 0; y < H; ++y)
-      for (int x = 0; x < W; ++x) {
-        const size_t c = size_t(y) * W + x;
-        const int a = L[c];
-        if (!a) continue;
-        for (int k = 0; k < 2; ++k) {
-          const int X = x + (k == 0), Y = y + (k == 1);
-          if (X >= W || Y >= H) continue;
-          const size_t j = size_t(Y) * W + X;
-          const int b = L[j];
-          if (!b || b == a) continue;
-          const uint64_t key = (uint64_t(std::min(a, b)) << 32) | uint32_t(std::max(a, b));
-          Seam& s = out[key];
-          ++s.n;
-          s.sx += (x + X) * 0.5;
-          s.sy += (y + Y) * 0.5;
-          s.cmax = std::max(s.cmax, std::min(clear[c], clear[j]));
-        }
+  int nbig = 0;
+  for (int i = 0; i < int(cpar.size()); ++i) nbig += cpar[i] == i && csz[i] >= min_seed;
+  S->filtration.push_back({P.dil_min + (K - 1) * step, nbig});
+  bool late = false;
+  auto goLate = [&]() {   // dil_min 아래로: 섞인 성분의 씨앗·큰 홑성분 씨앗 = strong
+    late = true;
+    for (int i = 0; i < int(spar.size()); ++i)
+      if (spar[i] == i) {
+        const int r = cf(i);
+        strong[i] = ccs[r] < 0 || csz[r] >= min_seed;
       }
   };
+  const int* order = wk.order.data();
+  for (int k = top - 1; k >= 0; --k) {
+    const int L = k + Lmin, Lc = L;
+    if (L < 0 && !late) goLate();
+    const int* it = order + (k == top - 1 ? 0 : st[k + 1]);
+    const int* end = order + st[k];
+    for (; it != end; ++it) {
+      const int c = *it;
+      const int nb[4] = {c - 1, c + 1, c - W, c + W};   // 빈칸은 테두리에 없음(rim)
+      int best = -1;
+      float bc = -1.f;
+      for (int j : nb)
+        if (b[j] >= 0 && clear[j] > bc) { bc = clear[j]; best = j; }
+      if (best < 0) {   // 새 성분 = 새 씨앗(늦은 단계면 약함)
+        born(c, Lc);
+        nbig += min_seed <= 1;
+        continue;
+      }
+      b[c] = b[best];
+      int rc = cf(b[c]);
+      nbig += ++csz[rc] == min_seed;
+      for (int j : nb) {
+        if (j == best || b[j] < 0) continue;
+        int rb = cf(b[j]);
+        if (rb == rc) continue;
+        int ra = rc, sideA = sf(b[c]), sideB = sf(b[j]);   // 만난 자리 양쪽 씨앗
+        // ra = 나이 많은 쪽(태어난 층 높음, 같으면 큰 쪽)
+        if (cbirth[rb] > cbirth[ra] || (cbirth[rb] == cbirth[ra] && csz[rb] > csz[ra])) { std::swap(ra, rb); std::swap(sideA, sideB); }
+        const bool bigA = csz[ra] >= min_seed, bigB = csz[rb] >= min_seed;
+        const int sa = ccs[ra], sb = ccs[rb];
+        int out = -1;
+        if (!late) {
+          if (sa >= 0 && sb >= 0) {
+            if (!(sig(ra, Lc) && sig(rb, Lc))) {   // 짧게 산 쪽을 흡수(둘 다 짧으면 어린 쪽을 나이 많은 쪽에)
+              const bool keepA = sig(ra, Lc) || !sig(rb, Lc);
+              const int keep = keepA ? sa : sb, lose = keepA ? sb : sa;
+              spar[lose] = keep;
+              out = keep;
+            }
+          } else if (sa >= 0 || sb >= 0) {   // 홑성분이 섞인 성분을 만남: 짧게 살았으면 건너편 씨앗에
+            const bool singleA = sa >= 0;
+            if (!sig(singleA ? ra : rb, Lc)) spar[singleA ? sa : sb] = singleA ? sideB : sideA;
+          }
+        } else {
+          const bool stA = sa < 0 || strong[sa], stB = sb < 0 || strong[sb];
+          if (stA && !stB) { spar[sb] = sideA; out = sa; }
+          else if (!stA && stB) { spar[sa] = sideB; out = sb; }
+          else if (!stA && !stB) { spar[sb] = sa; out = sa; }
+        }
+        cpar[rb] = ra;
+        csz[ra] += csz[rb];
+        ccs[ra] = out;
+        nbig += (csz[ra] >= min_seed) - bigA - bigB;
+        rc = ra;
+      }
+    }
+    if (L >= 0) S->filtration.push_back({P.dil_min + L * step, nbig});
+  }
+  if (!late) goLate();
+  // 씨앗 → 방 번호: strong 씨앗(태어남 순), 그다음 끝까지 약한 덩이 중 min_room 이상
+  const int nbirth = int(cpar.size());
+  std::vector<int> reg(nbirth, 0);
+  int nreg = 0;
+  for (int i = 0; i < nbirth; ++i)
+    if (spar[i] == i && strong[i]) reg[i] = ++nreg;
+  S->n_seeds = nreg;
+  for (int i = 0; i < nbirth; ++i)
+    if (spar[i] == i && !strong[i] && csz[cf(i)] >= min_room) reg[i] = ++nreg;
+  for (int i = 0; i < nbirth; ++i) reg[i] = reg[sf(i)];
+  S->ids.assign(N, 0);
+  uint32_t* ids = S->ids.data();
+  for (size_t i = 0; i < N; ++i)
+    if (b[i] >= 0) ids[i] = uint32_t(reg[b[i]]);
+  if (W >= 3 && H >= 3)
+    for (int c : rim) {
+      const int x = std::clamp(c % W, 1, W - 2), y = std::clamp(c / W, 1, H - 2);
+      ids[c] = ids[size_t(y) * W + x];
+    }
+  // 4) 방마다 모음(넓이·무게중심·상자·최대 여유)과 이음매(맞닿은 칸 쌍) — 한 번 쓸기, 합친 뒤엔 모음끼리 더함
+  struct Acc {
+    int n = 0;
+    double sx = 0, sy = 0;
+    int x0 = INT_MAX, y0 = INT_MAX, x1 = -1, y1 = -1;
+    float cmax = 0;
+  };
+  struct Seam { int n = 0; double sx = 0, sy = 0; float cmax = 0; };
+  std::vector<Acc> acc(nreg + 1);
   std::unordered_map<uint64_t, Seam> sm;
-  seams(lab, sm);
+  auto addSeam = [&](uint32_t a, uint32_t bb, double px, double py, float cm) {
+    Seam& s = sm[(uint64_t(std::min(a, bb)) << 32) | std::max(a, bb)];
+    ++s.n;
+    s.sx += px;
+    s.sy += py;
+    s.cmax = std::max(s.cmax, cm);
+  };
+  for (int y = 0; y < H; ++y) {
+    const uint32_t* row = ids + size_t(y) * W;
+    const uint32_t* up = y + 1 < H ? row + W : nullptr;
+    const float* cl = clear + size_t(y) * W;
+    for (int x = 0; x < W;) {   // 같은 방 토막마다 모음
+      const uint32_t a = row[x];
+      if (!a) { ++x; continue; }
+      const int x0 = x;
+      while (x < W && row[x] == a) ++x;
+      const int x1 = x - 1;
+      float m4[4] = {0.f, 0.f, 0.f, 0.f};   // 최대 여유: 네 갈래로 의존 사슬을 끊음
+      int q = x0;
+      for (; q + 3 <= x1; q += 4)
+        for (int j = 0; j < 4; ++j) m4[j] = std::max(m4[j], cl[q + j]);
+      for (; q <= x1; ++q) m4[0] = std::max(m4[0], cl[q]);
+      const float cm = std::max(std::max(m4[0], m4[1]), std::max(m4[2], m4[3]));
+      if (up)
+        for (int q2 = x0; q2 <= x1; ++q2)
+          if (up[q2] != a && up[q2]) addSeam(a, up[q2], q2, y + 0.5, std::min(cl[q2], cl[q2 + W]));
+      Acc& r = acc[a];
+      const int len = x1 - x0 + 1;
+      r.n += len;
+      r.sx += 0.5 * double(x0 + x1) * len;
+      r.sy += double(y) * len;
+      r.x0 = std::min(r.x0, x0); r.x1 = std::max(r.x1, x1);
+      r.y0 = std::min(r.y0, y); r.y1 = std::max(r.y1, y);
+      r.cmax = std::max(r.cmax, cm);
+      if (x < W && row[x]) addSeam(a, row[x], x1 + 0.5, y, std::min(cl[x1], cl[x]));
+    }
+  }
+  // 5) 합치기(긴 이음매 · 작은 방)
   DSU rg;
   rg.p.resize(nreg + 1);
   std::iota(rg.p.begin(), rg.p.end(), 0);
   std::vector<int> area(nreg + 1, 0);
-  for (int v : lab) area[v]++;
+  for (int r = 1; r <= nreg; ++r) area[r] = acc[r].n;
   const int max_door = P.max_door_m > 0 ? int(std::lround(P.max_door_m / res)) : 1 << 30;
   for (auto& [k, s] : sm)
     if (s.n >= max_door) {
-      const int a = rg.find(int(k >> 32)), b = rg.find(int(k & 0xffffffffu));
-      if (a != b) { rg.p[b] = a; area[a] += area[b]; }
+      const int a = rg.find(int(k >> 32)), bb = rg.find(int(k & 0xffffffffu));
+      if (a != bb) { rg.p[bb] = a; area[a] += area[bb]; }
     }
-  const int min_room = int(P.min_room_m2 / a1);
   std::vector<uint8_t> dropped(nreg + 1, 0);
   while (true) {   // 가장 작은 방부터 이음매가 가장 긴 이웃에
     int small = -1;
@@ -392,10 +484,10 @@ std::shared_ptr<RoomSeg> segmentCore(const GridView& g, const RoomParams& P) {
     if (small < 0) break;
     std::unordered_map<int, int> nbn;
     for (auto& [k, s] : sm) {
-      const int a = rg.find(int(k >> 32)), b = rg.find(int(k & 0xffffffffu));
-      if (a == b) continue;
-      if (a == small) nbn[b] += s.n;
-      else if (b == small) nbn[a] += s.n;
+      const int a = rg.find(int(k >> 32)), bb = rg.find(int(k & 0xffffffffu));
+      if (a == bb) continue;
+      if (a == small) nbn[bb] += s.n;
+      else if (bb == small) nbn[a] += s.n;
     }
     int best = -1, bn = 0;
     for (auto& [r, n] : nbn)
@@ -407,59 +499,47 @@ std::shared_ptr<RoomSeg> segmentCore(const GridView& g, const RoomParams& P) {
   // 다시 번호(1..n)
   std::vector<int> remap(nreg + 1, 0);
   int n = 0;
+  bool same = true;
   for (int r = 1; r <= nreg; ++r) {
     const int root = rg.find(r);
-    if (dropped[root]) continue;
+    if (dropped[root]) { same = false; continue; }
     if (!remap[root]) remap[root] = ++n;
     remap[r] = remap[root];
+    same = same && remap[r] == r;
   }
-  for (int& v : lab) v = v ? remap[v] : 0;
-  if (W >= 3 && H >= 3)
-    for (int c : rim) {
-      const int x = std::clamp(c % W, 1, W - 2), y = std::clamp(c / W, 1, H - 2);
-      lab[c] = lab[size_t(y) * W + x];
-    }
+  if (!same)
+    for (size_t i = 0; i < N; ++i) ids[i] = ids[i] ? uint32_t(remap[ids[i]]) : 0;
   // 6) 방 모양·문
   S->rooms.resize(n);
-  std::vector<double> sx(n, 0), sy(n, 0);
-  for (int i = 0; i < n; ++i) {
-    S->rooms[i].id = uint32_t(i + 1);
-    S->rooms[i].bmin[0] = S->rooms[i].bmin[1] = 1e18;
-    S->rooms[i].bmax[0] = S->rooms[i].bmax[1] = -1e18;
+  std::vector<Acc> ra(n);
+  for (int r = 1; r <= nreg; ++r) {
+    const int v = remap[r];
+    if (!v) continue;
+    Acc& t = ra[v - 1];
+    const Acc& q = acc[r];
+    t.n += q.n; t.sx += q.sx; t.sy += q.sy;
+    t.x0 = std::min(t.x0, q.x0); t.x1 = std::max(t.x1, q.x1);
+    t.y0 = std::min(t.y0, q.y0); t.y1 = std::max(t.y1, q.y1);
+    t.cmax = std::max(t.cmax, q.cmax);
   }
-  S->ids.assign(N, 0);
-  for (int y = 0; y < H; ++y)
-    for (int x = 0; x < W; ++x) {
-      const size_t c = size_t(y) * W + x;
-      const int v = lab[c];
-      if (!v) continue;
-      S->ids[c] = uint32_t(v);
-      RoomGeom& r = S->rooms[v - 1];
-      r.n_cells++;
-      sx[v - 1] += x;
-      sy[v - 1] += y;
-      r.bmin[0] = std::min(r.bmin[0], double(x));
-      r.bmin[1] = std::min(r.bmin[1], double(y));
-      r.bmax[0] = std::max(r.bmax[0], double(x));
-      r.bmax[1] = std::max(r.bmax[1], double(y));
-      r.max_clear = std::max(r.max_clear, double(clear[c]));
-    }
   for (int i = 0; i < n; ++i) {
     RoomGeom& r = S->rooms[i];
-    r.area_m2 = r.n_cells * a1;
-    r.centroid[0] = (g.gx0 + sx[i] / std::max(1, r.n_cells) + 0.5) * res;
-    r.centroid[1] = (g.gy0 + sy[i] / std::max(1, r.n_cells) + 0.5) * res;
-    for (int k = 0; k < 2; ++k) {
-      r.bmin[k] = ((k ? g.gy0 : g.gx0) + r.bmin[k]) * res;
-      r.bmax[k] = ((k ? g.gy0 : g.gx0) + r.bmax[k] + 1) * res;
-    }
+    const Acc& q = ra[i];
+    r.id = uint32_t(i + 1);
+    r.n_cells = q.n;
+    r.area_m2 = q.n * a1;
+    r.max_clear = q.cmax;
+    r.centroid[0] = (g.gx0 + q.sx / std::max(1, q.n) + 0.5) * res;
+    r.centroid[1] = (g.gy0 + q.sy / std::max(1, q.n) + 0.5) * res;
+    r.bmin[0] = (g.gx0 + q.x0) * res; r.bmax[0] = (g.gx0 + q.x1 + 1) * res;
+    r.bmin[1] = (g.gy0 + q.y0) * res; r.bmax[1] = (g.gy0 + q.y1 + 1) * res;
   }
-  {   // 이음매를 새 번호로 모음(다시 세는 것과 같음: 합친 방 안쪽 이음매는 사라짐)
+  {   // 이음매를 새 번호로 모음(합친 방 안쪽 이음매는 사라짐)
     std::unordered_map<uint64_t, Seam> m2;
     for (auto& [k, q] : sm) {
-      const int a = remap[int(k >> 32)], b = remap[int(k & 0xffffffffu)];
-      if (!a || !b || a == b) continue;
-      Seam& t = m2[(uint64_t(std::min(a, b)) << 32) | uint32_t(std::max(a, b))];
+      const int a = remap[int(k >> 32)], bb = remap[int(k & 0xffffffffu)];
+      if (!a || !bb || a == bb) continue;
+      Seam& t = m2[(uint64_t(std::min(a, bb)) << 32) | uint32_t(std::max(a, bb))];
       t.n += q.n; t.sx += q.sx; t.sy += q.sy; t.cmax = std::max(t.cmax, q.cmax);
     }
     sm.swap(m2);
@@ -486,13 +566,20 @@ std::shared_ptr<RoomSeg> segmentCore(const GridView& g, const RoomParams& P) {
 // 빈칸 상자(+ 여유 2 칸)만 잘라 나누고 온 격자 크기로 되돌림(실제 지도는 대부분 모름)
 std::shared_ptr<RoomSeg> segmentRooms(const GridView& g, const RoomParams& P) {
   const auto t0 = std::chrono::steady_clock::now();
+  if (!g.cells || g.w <= 0 || g.h <= 0) return segmentCore(g, P);
   int x0 = g.w, y0 = g.h, x1 = -1, y1 = -1;
-  for (int y = 0; y < g.h; ++y)
-    for (int x = 0; x < g.w; ++x) {
-      const int v = g.cells[size_t(y) * g.w + x];
-      if (v >= 0 && v <= P.free_max) { x0 = std::min(x0, x); x1 = std::max(x1, x); y0 = std::min(y0, y); y1 = std::max(y1, y); }
-    }
-  if (x1 < 0 || !g.cells) return segmentCore(g, P);
+  for (int y = 0; y < g.h; ++y) {
+    const int8_t* row = g.cells + size_t(y) * g.w;
+    int a = -1, b = -1;
+    for (int x = 0; x < g.w; ++x)
+      if (row[x] >= 0 && row[x] <= P.free_max) { a = x; break; }
+    if (a < 0) continue;
+    for (int x = g.w - 1; x >= a; --x)
+      if (row[x] >= 0 && row[x] <= P.free_max) { b = x; break; }
+    x0 = std::min(x0, a); x1 = std::max(x1, b);
+    y0 = std::min(y0, y); y1 = y;
+  }
+  if (x1 < 0) return segmentCore(g, P);
   x0 = std::max(0, x0 - 2); y0 = std::max(0, y0 - 2); x1 = std::min(g.w - 1, x1 + 2); y1 = std::min(g.h - 1, y1 + 2);
   const int w = x1 - x0 + 1, h = y1 - y0 + 1;
   if (size_t(w) * h * 10 > size_t(g.w) * g.h * 9) return segmentCore(g, P);   // 거의 다면 그대로
