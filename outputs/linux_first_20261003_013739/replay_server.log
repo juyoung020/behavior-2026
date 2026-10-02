@@ -1,0 +1,11 @@
+2026-10-03 01:42:59,451 재생 서버: 행동 (501, 1, 23) 포트 8110 quickack=True
+2026-10-03 01:42:59,451 server listening on 127.0.0.1:8110
+2026-10-03 01:44:22,395 HTTP response sent (200 OK)
+2026-10-03 01:44:22,396 connection closed
+2026-10-03 01:44:22,398 connection open
+2026-10-03 01:44:22,398 접속 ('127.0.0.1', 46148)
+2026-10-03 01:44:49,954 connection closed
+2026-10-03 01:44:49,954 접속 종료
+2026-10-03 01:44:49,982 관측 기록 저장: /home/juyoung/behavior-2026/outputs/linux_first_20261003_013739/replay/server_log.npz (501 스텝)
+2026-10-03 01:44:49,983 server closing
+2026-10-03 01:44:49,983 server closed

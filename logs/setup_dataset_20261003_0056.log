@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/home/juyoung/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/__init__.py", line 8, in <module>
+    from omnigibson.controllers import REGISTERED_CONTROLLERS
+  File "/home/juyoung/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/controllers/__init__.py", line 3, in <module>
+    from omnigibson.controllers.controller_base import (
+  File "/home/juyoung/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/controllers/controller_base.py", line 10, in <module>
+    from omnigibson.utils.usd_utils import ControllableObjectViewAPI
+  File "/home/juyoung/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/utils/usd_utils.py", line 10, in <module>
+    import warp as wp
+ModuleNotFoundError: No module named 'warp'

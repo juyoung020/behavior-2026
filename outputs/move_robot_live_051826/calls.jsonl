@@ -1,0 +1,11 @@
+{"part":"torso","mode":"delta","values":[0,0,0,0]}
+{"part":"left_arm","mode":"delta","values":[0,0,0,0,0,0,0]}
+{"part":"left_arm","mode":"delta","values":[0,20,0,-30,0,0,0]}
+{"part":"right_arm","mode":"delta","values":[0,-20,0,-30,0,0,0]}
+{"part":"left_gripper","mode":"absolute","values":[0]}
+{"part":"left_gripper","mode":"absolute","values":[1]}
+{"part":"torso","mode":"delta","values":[5,0,0,0]}
+{"part":"base","mode":"delta","values":[0.3,0,0]}
+{"part":"base","mode":"delta","values":[0,0,30]}
+{"part":"base","mode":"delta","values":[0,0.2,0]}
+{"part":"left_arm","mode":"absolute","values":[0,300,0,0,0,0,0]}

@@ -1,0 +1,22 @@
+{"step": 0, "call": {"part": "torso", "mode": "delta", "values": [0, 0, 0, 0]}}
+{"step": 0, "result": {"part": "torso", "state": [58.6, -82.9, -26.9, -0.0], "status": "reached", "steps": 0, "units": "deg", "wall_s": 0.0}}
+{"step": 1, "call": {"part": "left_arm", "mode": "delta", "values": [0, 0, 0, 0, 0, 0, 0]}}
+{"step": 1, "result": {"part": "left_arm", "state": [0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0], "status": "reached", "steps": 0, "units": "deg", "wall_s": 0.0}}
+{"step": 2, "call": {"part": "left_arm", "mode": "delta", "values": [0, 20, 0, -30, 0, 0, 0]}}
+{"step": 40, "result": {"part": "left_arm", "state": [0.0, 20.0, -0.0, -30.0, -0.0, 0.0, -0.0], "status": "reached", "steps": 38, "target": [0.0, 20.0, -0.0, -30.0, -0.0, 0.0, -0.0], "time_s": 1.27, "units": "deg", "wall_s": 1.96}}
+{"step": 40, "call": {"part": "right_arm", "mode": "delta", "values": [0, -20, 0, -30, 0, 0, 0]}}
+{"step": 78, "result": {"part": "right_arm", "state": [0.0, -20.0, -0.0, -30.0, -0.0, -0.0, -0.0], "status": "reached", "steps": 38, "target": [0.0, -20.0, -0.0, -30.0, -0.0, -0.0, -0.0], "time_s": 1.27, "units": "deg", "wall_s": 1.6}}
+{"step": 78, "call": {"part": "left_gripper", "mode": "absolute", "values": [0]}}
+{"step": 135, "result": {"part": "left_gripper", "state": [0.0], "status": "reached", "steps": 57, "target": [0.0], "time_s": 1.9, "units": "0=closed..1=open", "wall_s": 2.2}}
+{"step": 135, "call": {"part": "left_gripper", "mode": "absolute", "values": [1]}}
+{"step": 192, "result": {"part": "left_gripper", "state": [1.0], "status": "reached", "steps": 57, "target": [1.0], "time_s": 1.9, "units": "0=closed..1=open", "wall_s": 2.13}}
+{"step": 192, "call": {"part": "torso", "mode": "delta", "values": [5, 0, 0, 0]}}
+{"step": 207, "result": {"part": "torso", "state": [63.6, -82.9, -26.9, -0.0], "status": "reached", "steps": 15, "target": [63.6, -82.9, -26.9, -0.0], "time_s": 0.5, "units": "deg", "wall_s": 0.53}}
+{"step": 207, "call": {"part": "base", "mode": "delta", "values": [0.3, 0, 0]}}
+{"step": 261, "result": {"part": "base", "state": [0.281, 0.001, 0.3], "status": "reached", "steps": 54, "target": [0.3, 0.0, 0.0], "time_s": 1.8, "units": "[forward m, left m, turn_left deg]", "wall_s": 1.98}}
+{"step": 261, "call": {"part": "base", "mode": "delta", "values": [0, 0, 30]}}
+{"step": 304, "result": {"part": "base", "state": [-0.002, 0.0, 28.2], "status": "reached", "steps": 43, "target": [0.0, 0.0, 30.0], "time_s": 1.43, "units": "[forward m, left m, turn_left deg]", "wall_s": 1.56}}
+{"step": 304, "call": {"part": "base", "mode": "delta", "values": [0, 0.2, 0]}}
+{"step": 347, "result": {"part": "base", "state": [0.002, 0.181, -0.5], "status": "reached", "steps": 43, "target": [0.0, 0.2, 0.0], "time_s": 1.43, "units": "[forward m, left m, turn_left deg]", "wall_s": 1.55}}
+{"step": 347, "call": {"part": "left_arm", "mode": "absolute", "values": [0, 300, 0, 0, 0, 0, 0]}}
+{"step": 545, "result": {"clamped": [1], "hint": "some values were outside joint limits and were clamped", "limits": [[-8.0, 178.0]], "part": "left_arm", "state": [0.0, 178.0, 0.0, -0.0, 0.0, 0.0, 0.0], "status": "reached", "steps": 198, "target": [0.0, 178.0, 0.0, 0.0, 0.0, 0.0, 0.0], "time_s": 6.6, "units": "deg", "wall_s": 7.34}}

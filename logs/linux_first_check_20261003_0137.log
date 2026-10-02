@@ -1,0 +1,34 @@
+name, driver_version, memory.used [MiB]
+NVIDIA GeForce RTX 5070 Ti, 580.178.04, 306 MiB
+판 1 검은 프레임 {'robot:left_realsense_link:Camera:0': 0, 'robot:right_realsense_link:Camera:0': 0, 'robot:zed_link:Camera:0': 0} / 151
+== /home/juyoung/behavior-2026/outputs/linux_first_20261003_013739/zero_1
+  영상 turning_on_radio_301_0.mp4: 151 프레임, 검은 칸 왼손목 0 · 오른손목 0 · 머리 0
+  평가기 기록: 검정 {'robot:left_realsense_link:Camera:0': 0, 'robot:right_realsense_link:Camera:0': 0, 'robot:zed_link:Camera:0': 0} / 전체 {'robot:left_realsense_link:Camera:0': 151, 'robot:right_realsense_link:Camera:0': 151, 'robot:zed_link:Camera:0': 151}
+== /home/juyoung/behavior-2026/outputs/linux_first_20261003_013739/zero_1.log
+가장 높은 검은 비율 0.0% -> 통과
+obs_mean::robot::robot:left_realsense_link:Camera:0::rgb  다름(픽셀)       2.548e+02        0       0   501
+obs_mean::robot::robot:right_realsense_link:Camera:0::rgb 다름(픽셀)       2.549e+02        0       0   501
+obs_mean::robot::robot:zed_link:Camera:0::rgb             다름(픽셀)       2.549e+02        0       0   501
+robot_pose                                                다름           5.740e-05        0       0   501
+robot_qpos                                                다름           1.459e-04        0       0   501
+robot_qvel                                                다름           1.486e-01        0       0   501
+srv|hash::robot::robot:left_realsense_link:Camera:0::rgb  다름(픽셀)       5.010e+02        0       0   501
+srv|hash::robot::robot:right_realsense_link:Camera:0::rgb 다름(픽셀)       5.010e+02        0       0   501
+srv|hash::robot::robot:zed_link:Camera:0::rgb             다름(픽셀)       5.010e+02        0       0   501
+srv|val::robot::cam_rel_poses                             다름           2.861e-05        0       0   501
+srv|val::robot::proprio                                   다름           1.486e-01        0       0   501
+srv|val::task_id                                          비트 동일        0.000e+00        -       -   501
+terminated                                                비트 동일        0.000e+00        -       -   501
+truncated                                                 비트 동일        0.000e+00        -       -   501
+
+결과 JSON
+  turning_on_radio_301_0.json       success                                  False                 False  비트 동일
+  turning_on_radio_301_0.json       steps                                      501                   501  비트 동일
+  turning_on_radio_301_0.json       q_score                                    0.0                   0.0  비트 동일
+  turning_on_radio_301_0.json       agent_distance.base       0.006470457566507548 0.0064399677983715264  다름
+  turning_on_radio_301_0.json       agent_distance.left        0.32885492951481865    0.3288179766786925  다름
+  turning_on_radio_301_0.json       agent_distance.right        0.4425150075585407   0.44259939715448127  다름
+
+요약: 비트 동일 8, 허용오차 안 0, 다름 11, 비교 불가 0, JSON 다름 3
+픽셀(판정에서 뺌): 비트 동일 0, 허용오차 안 0, 다름 9
+결과: /home/juyoung/behavior-2026/outputs/linux_first_20261003_013739

@@ -1,0 +1,200 @@
+Cloning into '/home/juyoung/engine-deps/physx-107.3-omni'...
+Note: switching to '09ff24f3279b735e672ff27b155cbf49f6296f4d'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+Filtering content:   0% (2/500)Filtering content:   1% (5/500)Filtering content:   2% (10/500)Filtering content:   2% (11/500)Filtering content:   2% (12/500), 15.51 MiB | 493.00 KiB/sFiltering content:   2% (13/500), 17.88 MiB | 547.00 KiB/sFiltering content:   3% (15/500), 18.98 MiB | 485.00 KiB/sFiltering content:   3% (19/500), 21.25 MiB | 538.00 KiB/sFiltering content:   4% (20/500), 27.57 MiB | 651.00 KiB/sFiltering content:   4% (22/500), 27.93 MiB | 373.00 KiB/sFiltering content:   4% (23/500), 29.36 MiB | 382.00 KiB/sFiltering content:   5% (25/500), 30.08 MiB | 388.00 KiB/sFiltering content:   6% (30/500), 30.08 MiB | 388.00 KiB/sFiltering content:   6% (31/500), 30.08 MiB | 388.00 KiB/sFiltering content:   6% (32/500), 36.30 MiB | 451.00 KiB/sFiltering content:   6% (34/500), 36.65 MiB | 424.00 KiB/sFiltering content:   7% (35/500), 37.35 MiB | 396.00 KiB/sFiltering content:   8% (40/500), 37.35 MiB | 396.00 KiB/sFiltering content:   8% (41/500), 37.35 MiB | 396.00 KiB/sFiltering content:   9% (45/500), 39.92 MiB | 477.00 KiB/sFiltering content:   9% (46/500), 39.92 MiB | 477.00 KiB/sFiltering content:  10% (50/500), 40.71 MiB | 320.00 KiB/sFiltering content:  10% (53/500), 40.71 MiB | 320.00 KiB/sFiltering content:  11% (55/500), 45.95 MiB | 1.65 MiB/s  Filtering content:  11% (56/500), 45.95 MiB | 1.65 MiB/sFiltering content:  11% (59/500), 46.35 MiB | 1.76 MiB/sFiltering content:  12% (60/500), 46.41 MiB | 1.46 MiB/sFiltering content:  12% (61/500), 46.41 MiB | 1.46 MiB/sFiltering content:  13% (65/500), 46.53 MiB | 1.30 MiB/sFiltering content:  13% (66/500), 46.53 MiB | 1.30 MiB/sFiltering content:  13% (68/500), 46.80 MiB | 1.17 MiB/sFiltering content:  14% (70/500), 46.80 MiB | 1.17 MiB/sFiltering content:  15% (75/500), 46.99 MiB | 770.00 KiB/sFiltering content:  16% (80/500), 46.99 MiB | 770.00 KiB/sFiltering content:  16% (82/500), 46.99 MiB | 770.00 KiB/sFiltering content:  17% (85/500), 47.48 MiB | 484.00 KiB/sFiltering content:  18% (90/500), 47.48 MiB | 484.00 KiB/sFiltering content:  18% (93/500), 47.48 MiB | 484.00 KiB/sFiltering content:  19% (95/500), 47.89 MiB | 391.00 KiB/sFiltering content:  19% (99/500), 47.89 MiB | 391.00 KiB/sFiltering content:  20% (100/500), 48.10 MiB | 113.00 KiB/sFiltering content:  20% (103/500), 48.10 MiB | 113.00 KiB/sFiltering content:  21% (105/500), 48.24 MiB | 86.00 KiB/s Filtering content:  21% (107/500), 48.24 MiB | 86.00 KiB/sFiltering content:  22% (110/500), 48.37 MiB | 69.00 KiB/sFiltering content:  23% (115/500), 48.37 MiB | 69.00 KiB/sFiltering content:  23% (117/500), 48.63 MiB | 66.00 KiB/sFiltering content:  24% (120/500), 48.69 MiB | 56.00 KiB/sFiltering content:  24% (121/500), 48.75 MiB | 51.00 KiB/sFiltering content:  24% (123/500), 48.77 MiB | 48.00 KiB/sFiltering content:  25% (125/500), 48.81 MiB | 41.00 KiB/sFiltering content:  26% (130/500), 48.81 MiB | 41.00 KiB/sFiltering content:  27% (135/500), 48.81 MiB | 41.00 KiB/sFiltering content:  28% (140/500), 48.81 MiB | 41.00 KiB/sFiltering content:  29% (145/500), 48.81 MiB | 41.00 KiB/sFiltering content:  30% (150/500), 48.81 MiB | 41.00 KiB/sFiltering content:  30% (153/500), 48.81 MiB | 41.00 KiB/sFiltering content:  30% (154/500), 49.22 MiB | 46.00 KiB/sFiltering content:  31% (155/500), 49.23 MiB | 38.00 KiB/sFiltering content:  31% (159/500), 49.24 MiB | 40.00 KiB/sFiltering content:  32% (160/500), 49.26 MiB | 44.00 KiB/sFiltering content:  32% (163/500), 49.27 MiB | 40.00 KiB/sFiltering content:  33% (165/500), 49.28 MiB | 56.00 KiB/sFiltering content:  33% (167/500), 49.28 MiB | 49.00 KiB/sFiltering content:  34% (170/500), 49.28 MiB | 48.00 KiB/sFiltering content:  34% (171/500), 49.28 MiB | 48.00 KiB/sFiltering content:  34% (174/500), 49.29 MiB | 42.00 KiB/sFiltering content:  35% (175/500), 58.82 MiB | 130.00 KiB/sFiltering content:  35% (176/500), 90.73 MiB | 248.00 KiB/sFiltering content:  35% (179/500), 90.93 MiB | 249.00 KiB/sFiltering content:  36% (180/500), 90.93 MiB | 249.00 KiB/sFiltering content:  37% (185/500), 93.04 MiB | 262.00 KiB/sFiltering content:  37% (189/500), 93.04 MiB | 262.00 KiB/sFiltering content:  38% (190/500), 94.44 MiB | 272.00 KiB/sFiltering content:  39% (195/500), 94.44 MiB | 272.00 KiB/sFiltering content:  39% (197/500), 94.82 MiB | 274.00 KiB/sFiltering content:  40% (200/500), 94.82 MiB | 274.00 KiB/sFiltering content:  41% (205/500), 95.27 MiB | 279.00 KiB/sFiltering content:  42% (210/500), 95.57 MiB | 365.00 KiB/sFiltering content:  42% (213/500), 95.67 MiB | 863.00 KiB/sFiltering content:  43% (215/500), 95.76 MiB | 910.00 KiB/sFiltering content:  43% (216/500), 95.85 MiB | 526.00 KiB/sFiltering content:  43% (219/500), 95.93 MiB | 286.00 KiB/sFiltering content:  44% (220/500), 96.02 MiB | 234.00 KiB/sFiltering content:  44% (223/500), 96.10 MiB | 194.00 KiB/sFiltering content:  45% (225/500), 96.18 MiB | 177.00 KiB/sFiltering content:  45% (229/500), 96.33 MiB | 161.00 KiB/sFiltering content:  46% (230/500), 96.33 MiB | 161.00 KiB/sFiltering content:  46% (233/500), 96.49 MiB | 168.00 KiB/sFiltering content:  47% (235/500), 96.56 MiB | 164.00 KiB/sFiltering content:  47% (238/500), 96.64 MiB | 164.00 KiB/sFiltering content:  48% (240/500), 96.75 MiB | 176.00 KiB/sFiltering content:  48% (241/500), 96.82 MiB | 168.00 KiB/sFiltering content:  49% (245/500), 96.93 MiB | 168.00 KiB/sFiltering content:  50% (250/500), 97.11 MiB | 169.00 KiB/sFiltering content:  51% (255/500), 97.21 MiB | 165.00 KiB/sFiltering content:  51% (258/500), 97.39 MiB | 172.00 KiB/sFiltering content:  52% (260/500), 97.39 MiB | 172.00 KiB/sFiltering content:  53% (265/500), 97.55 MiB | 182.00 KiB/sFiltering content:  54% (270/500), 97.55 MiB | 182.00 KiB/sFiltering content:  55% (275/500), 97.71 MiB | 189.00 KiB/sFiltering content:  55% (277/500), 97.71 MiB | 189.00 KiB/sFiltering content:  56% (280/500), 98.02 MiB | 171.00 KiB/sFiltering content:  56% (281/500), 98.43 MiB | 172.00 KiB/sFiltering content:  57% (285/500), 98.53 MiB | 176.00 KiB/sFiltering content:  57% (287/500), 98.93 MiB | 190.00 KiB/sFiltering content:  58% (290/500), 99.16 MiB | 202.00 KiB/sFiltering content:  58% (292/500), 99.72 MiB | 239.00 KiB/sFiltering content:  58% (294/500), 99.81 MiB | 232.00 KiB/sFiltering content:  59% (295/500), 99.98 MiB | 223.00 KiB/sFiltering content:  59% (296/500), 99.98 MiB | 223.00 KiB/sFiltering content:  59% (298/500), 100.14 MiB | 218.00 KiB/sFiltering content:  60% (300/500), 100.31 MiB | 241.00 KiB/sFiltering content:  60% (302/500), 100.46 MiB | 265.00 KiB/sFiltering content:  61% (305/500), 100.76 MiB | 261.00 KiB/sFiltering content:  61% (306/500), 100.76 MiB | 261.00 KiB/sFiltering content:  62% (310/500), 100.90 MiB | 252.00 KiB/sFiltering content:  63% (315/500), 100.90 MiB | 252.00 KiB/sFiltering content:  63% (317/500), 101.50 MiB | 261.00 KiB/sFiltering content:  64% (320/500), 101.71 MiB | 284.00 KiB/sFiltering content:  64% (324/500), 101.71 MiB | 284.00 KiB/sFiltering content:  65% (325/500), 101.98 MiB | 327.00 KiB/sFiltering content:  66% (330/500), 102.12 MiB | 331.00 KiB/sFiltering content:  67% (335/500), 102.12 MiB | 331.00 KiB/sFiltering content:  68% (340/500), 102.71 MiB | 421.00 KiB/sFiltering content:  68% (341/500), 102.71 MiB | 421.00 KiB/sFiltering content:  69% (345/500), 102.86 MiB | 412.00 KiB/sFiltering content:  69% (347/500), 103.00 MiB | 426.00 KiB/sFiltering content:  70% (350/500), 103.18 MiB | 431.00 KiB/sFiltering content:  71% (355/500), 103.39 MiB | 440.00 KiB/sFiltering content:  72% (360/500), 103.39 MiB | 440.00 KiB/sFiltering content:  73% (365/500), 103.77 MiB | 403.00 KiB/sFiltering content:  74% (370/500), 103.77 MiB | 403.00 KiB/sFiltering content:  74% (374/500), 104.13 MiB | 452.00 KiB/sFiltering content:  75% (375/500), 104.13 MiB | 452.00 KiB/sFiltering content:  76% (380/500), 104.13 MiB | 452.00 KiB/sFiltering content:  77% (385/500), 104.42 MiB | 471.00 KiB/sFiltering content:  78% (390/500), 104.42 MiB | 471.00 KiB/sFiltering content:  79% (395/500), 104.42 MiB | 471.00 KiB/sFiltering content:  79% (396/500), 105.00 MiB | 295.00 KiB/sFiltering content:  79% (397/500), 105.00 MiB | 295.00 KiB/sFiltering content:  79% (398/500), 105.91 MiB | 288.00 KiB/sFiltering content:  80% (400/500), 106.64 MiB | 294.00 KiB/sFiltering content:  81% (405/500), 106.64 MiB | 294.00 KiB/sFiltering content:  82% (410/500), 106.64 MiB | 294.00 KiB/sFiltering content:  82% (411/500), 106.64 MiB | 294.00 KiB/sFiltering content:  83% (415/500), 110.10 MiB | 551.00 KiB/sFiltering content:  84% (420/500), 110.10 MiB | 551.00 KiB/sFiltering content:  85% (425/500), 110.10 MiB | 551.00 KiB/sFiltering content:  86% (430/500), 114.43 MiB | 876.00 KiB/sFiltering content:  87% (435/500), 114.43 MiB | 876.00 KiB/sFiltering content:  88% (440/500), 114.43 MiB | 876.00 KiB/sFiltering content:  89% (445/500), 114.43 MiB | 876.00 KiB/sFiltering content:  90% (450/500), 114.43 MiB | 876.00 KiB/sFiltering content:  90% (452/500), 114.43 MiB | 876.00 KiB/sFiltering content:  91% (455/500), 114.73 MiB | 881.00 KiB/sFiltering content:  92% (460/500), 114.73 MiB | 881.00 KiB/sFiltering content:  92% (462/500), 114.76 MiB | 837.00 KiB/sFiltering content:  93% (465/500), 114.76 MiB | 837.00 KiB/sFiltering content:  93% (468/500), 114.79 MiB | 808.00 KiB/sFiltering content:  94% (470/500), 114.79 MiB | 753.00 KiB/sFiltering content:  94% (474/500), 114.79 MiB | 753.00 KiB/sFiltering content:  95% (475/500), 114.80 MiB | 1.04 MiB/s  Filtering content:  95% (478/500), 114.80 MiB | 1014.00 KiB/sFiltering content:  96% (480/500), 114.80 MiB | 1014.00 KiB/sFiltering content:  96% (481/500), 114.80 MiB | 1014.00 KiB/sFiltering content:  97% (485/500), 114.82 MiB | 633.00 KiB/s Filtering content:  98% (490/500), 114.82 MiB | 633.00 KiB/sFiltering content:  99% (495/500), 114.82 MiB | 633.00 KiB/sFiltering content: 100% (500/500), 114.84 MiB | 54.00 KiB/s Filtering content: 100% (500/500), 124.71 MiB | 308.00 KiB/s, done.
+Encountered 5 file(s) that should have been pointers, but weren't:
+	omni/extensions/ux/source/omni.physx.supportui/resources/icons/inspector/commit.svg
+	omni/extensions/ux/source/omni.physx.supportui/resources/icons/inspector/discard.svg
+	omni/extensions/ux/source/omni.physx.supportui/resources/icons/inspector/new_window.svg
+	omni/extensions/ux/source/omni.physx.supportui/resources/icons/inspector/select_articulation.svg
+	omni/extensions/ux/source/omni.physx.supportui/resources/icons/inspector/sync_with_stage.svg
+91:	GENERATE_ARCH_CODE_LIST(SASS "120" PTX "120") # ENGINE_LOCAL_ARCH
+Creating packman packages cache at /home/juyoung/.cache/packman
+Fetching python@3.10.5-1-linux-x86_64.tar.gz from bootstrap.packman.nvidia.com ...
+Unpacking python
+Fetching packman-common@7.23.1.zip from bootstrap.packman.nvidia.com ...
+Unpacking ...
+Package successfully installed to /home/juyoung/.cache/packman/packman-common/7.23.1
+Running packman in preparation for cmake ...
+Package 'clang-physxmetadata' at version '4.0.0.32489833_1' is missing from local storage.
+Downloading from https://d4i3qtqj3r0z5.cloudfront.net/clang-physxmetadata%404.0.0.32489833_1.7z (21.33 MiB)
+No continuous progress report because this is not a proper terminal. Be patient ...
+This is taking a while. Estimated time of arrival is 62 seconds from now ...
+100% (speed 2.92 mb/s)
+Total of 61.36 seconds
+Package '7za' at version '22.01-1' is missing from local storage.
+Downloading from https://bootstrap.packman.nvidia.com/7za%4022.01-1.zip (3.376 MiB)
+No continuous progress report because this is not a proper terminal. Be patient ...
+100% (speed 227 mb/s)
+Total of 0.13 seconds
+Extracting: 7za@22.01-1.zip (7.343 MiB)
+No continuous progress report because this is not a proper terminal. Be patient ...
+100% (speed 2.62 gb/s)
+Total of 0.02 seconds
+Package successfully installed to /home/juyoung/.cache/packman/chk/7za/22.01-1
+No continuous progress report because this is not a proper terminal. Patience is a virtue ...
+Extracting: clang-physxmetadata@4.0.0.32489833_1.7z (21.33 MiB)
+No continuous progress report because this is not a proper terminal. Patience is a virtue ...
+
+100% (speed 1.17 gb/s)
+Total of 0.76 seconds
+Output size: 105.5 MiB
+Package successfully installed to /home/juyoung/.cache/packman/chk/clang-physxmetadata/4.0.0.32489833_1
+Package 'rapidjson' at version '1.1.0-67fac85-073453e1' is missing from local storage.
+Downloading from https://d4i3qtqj3r0z5.cloudfront.net/rapidjson%401.1.0-67fac85-073453e1.7z (626.7 KiB)
+No continuous progress report because this is not a proper terminal. Be patient ...
+100% (speed 94.8 mb/s)
+Total of 0.05 seconds
+No continuous progress report because this is not a proper terminal. Patience is a virtue ...
+Extracting: rapidjson@1.1.0-67fac85-073453e1.7z (626.7 KiB)
+No continuous progress report because this is not a proper terminal. Patience is a virtue ...
+
+100% (speed 501 mb/s)
+Total of 0.03 seconds
+Output size: 1.625 MiB
+Package successfully installed to /home/juyoung/.cache/packman/chk/rapidjson/1.1.0-67fac85-073453e1
+Using preset xml: /home/juyoung/engine-deps/physx-107.3-omni/physx/buildtools/presets/public/linux-carbonite.xml
+Target platform: linux using compiler: clang
+PM_PATHS: /home/juyoung/.cache/packman/chk/clang-physxmetadata/4.0.0.32489833_1;/home/juyoung/.cache/packman/chk/rapidjson/1.1.0-67fac85-073453e1
+Cmake: cmake
+GPU projects enabled: True (PX_GENERATE_GPU_PROJECTS=True, PX_GENERATE_GPU_PROJECTS_ONLY=False)
+Not searching for unused variables given on the command line.
+-- The C compiler identification is unknown
+-- The CXX compiler identification is unknown
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_C_COMPILER:
+
+    clang
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CC" or the CMake cache entry CMAKE_C_COMPILER to the full path to
+  the compiler, or to the compiler name if it is in the PATH.
+
+
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_CXX_COMPILER:
+
+    clang++
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CXX" or the CMake cache entry CMAKE_CXX_COMPILER to the full path
+  to the compiler, or to the compiler name if it is in the PATH.
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeError.log".
+Not searching for unused variables given on the command line.
+-- The C compiler identification is unknown
+-- The CXX compiler identification is unknown
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_C_COMPILER:
+
+    clang
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CC" or the CMake cache entry CMAKE_C_COMPILER to the full path to
+  the compiler, or to the compiler name if it is in the PATH.
+
+
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_CXX_COMPILER:
+
+    clang++
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CXX" or the CMake cache entry CMAKE_CXX_COMPILER to the full path
+  to the compiler, or to the compiler name if it is in the PATH.
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeError.log".
+Not searching for unused variables given on the command line.
+-- The C compiler identification is unknown
+-- The CXX compiler identification is unknown
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_C_COMPILER:
+
+    clang
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CC" or the CMake cache entry CMAKE_C_COMPILER to the full path to
+  the compiler, or to the compiler name if it is in the PATH.
+
+
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_CXX_COMPILER:
+
+    clang++
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CXX" or the CMake cache entry CMAKE_CXX_COMPILER to the full path
+  to the compiler, or to the compiler name if it is in the PATH.
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeError.log".
+Not searching for unused variables given on the command line.
+-- The C compiler identification is unknown
+-- The CXX compiler identification is unknown
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_C_COMPILER:
+
+    clang
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CC" or the CMake cache entry CMAKE_C_COMPILER to the full path to
+  the compiler, or to the compiler name if it is in the PATH.
+
+
+CMake Error at CMakeLists.txt:38 (project):
+  The CMAKE_CXX_COMPILER:
+
+    clang++
+
+  is not a full path and was not found in the PATH.
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CXX" or the CMake cache entry CMAKE_CXX_COMPILER to the full path
+  to the compiler, or to the compiler name if it is in the PATH.
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeError.log".
+make: *** No targets specified and no makefile found.  Stop.
+
+real	0m0.003s
+user	0m0.002s
+sys	0m0.000s

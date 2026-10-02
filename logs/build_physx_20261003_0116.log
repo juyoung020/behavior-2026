@@ -1,0 +1,204 @@
+91:	GENERATE_ARCH_CODE_LIST(SASS "120" PTX "120") # ENGINE_LOCAL_ARCH
+Running packman in preparation for cmake ...
+Using preset xml: /home/juyoung/engine-deps/physx-107.3-omni/physx/buildtools/presets/public/linux-carbonite.xml
+Target platform: linux using compiler: clang
+PM_PATHS: /home/juyoung/.cache/packman/chk/clang-physxmetadata/4.0.0.32489833_1;/home/juyoung/.cache/packman/chk/rapidjson/1.1.0-67fac85-073453e1
+Cmake: cmake
+GPU projects enabled: True (PX_GENERATE_GPU_PROJECTS=True, PX_GENERATE_GPU_PROJECTS_ONLY=False)
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - failed
+-- Check for working CXX compiler: /usr/bin/clang++
+-- Check for working CXX compiler: /usr/bin/clang++ - broken
+CMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:62 (message):
+  The C++ compiler
+
+    "/usr/bin/clang++"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeTmp
+    
+    Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_86113/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_86113.dir/build.make CMakeFiles/cmTC_86113.dir/build
+    gmake[1]: Entering directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeTmp'
+    Building CXX object CMakeFiles/cmTC_86113.dir/testCXXCompiler.cxx.o
+    /usr/bin/clang++    -MD -MT CMakeFiles/cmTC_86113.dir/testCXXCompiler.cxx.o -MF CMakeFiles/cmTC_86113.dir/testCXXCompiler.cxx.o.d -o CMakeFiles/cmTC_86113.dir/testCXXCompiler.cxx.o -c /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+    Linking CXX executable cmTC_86113
+    /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_86113.dir/link.txt --verbose=1
+    /usr/bin/clang++ CMakeFiles/cmTC_86113.dir/testCXXCompiler.cxx.o -o cmTC_86113 
+    /usr/bin/ld: cannot find -lstdc++: No such file or directory
+    clang: error: linker command failed with exit code 1 (use -v to see invocation)
+    gmake[1]: *** [CMakeFiles/cmTC_86113.dir/build.make:100: cmTC_86113] Error 1
+    gmake[1]: Leaving directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeTmp'
+    gmake: *** [Makefile:127: cmTC_86113/fast] Error 2
+    
+    
+
+  
+
+  CMake will not be able to correctly generate this project.
+Call Stack (most recent call first):
+  CMakeLists.txt:38 (project)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug/CMakeFiles/CMakeError.log".
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - failed
+-- Check for working CXX compiler: /usr/bin/clang++
+-- Check for working CXX compiler: /usr/bin/clang++ - broken
+CMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:62 (message):
+  The C++ compiler
+
+    "/usr/bin/clang++"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeTmp
+    
+    Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_060e9/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_060e9.dir/build.make CMakeFiles/cmTC_060e9.dir/build
+    gmake[1]: Entering directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeTmp'
+    Building CXX object CMakeFiles/cmTC_060e9.dir/testCXXCompiler.cxx.o
+    /usr/bin/clang++    -MD -MT CMakeFiles/cmTC_060e9.dir/testCXXCompiler.cxx.o -MF CMakeFiles/cmTC_060e9.dir/testCXXCompiler.cxx.o.d -o CMakeFiles/cmTC_060e9.dir/testCXXCompiler.cxx.o -c /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+    Linking CXX executable cmTC_060e9
+    /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_060e9.dir/link.txt --verbose=1
+    /usr/bin/clang++ CMakeFiles/cmTC_060e9.dir/testCXXCompiler.cxx.o -o cmTC_060e9 
+    /usr/bin/ld: cannot find -lstdc++: No such file or directory
+    clang: error: linker command failed with exit code 1 (use -v to see invocation)
+    gmake[1]: *** [CMakeFiles/cmTC_060e9.dir/build.make:100: cmTC_060e9] Error 1
+    gmake[1]: Leaving directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeTmp'
+    gmake: *** [Makefile:127: cmTC_060e9/fast] Error 2
+    
+    
+
+  
+
+  CMake will not be able to correctly generate this project.
+Call Stack (most recent call first):
+  CMakeLists.txt:38 (project)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked/CMakeFiles/CMakeError.log".
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - failed
+-- Check for working CXX compiler: /usr/bin/clang++
+-- Check for working CXX compiler: /usr/bin/clang++ - broken
+CMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:62 (message):
+  The C++ compiler
+
+    "/usr/bin/clang++"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeTmp
+    
+    Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_1f1c4/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_1f1c4.dir/build.make CMakeFiles/cmTC_1f1c4.dir/build
+    gmake[1]: Entering directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeTmp'
+    Building CXX object CMakeFiles/cmTC_1f1c4.dir/testCXXCompiler.cxx.o
+    /usr/bin/clang++    -MD -MT CMakeFiles/cmTC_1f1c4.dir/testCXXCompiler.cxx.o -MF CMakeFiles/cmTC_1f1c4.dir/testCXXCompiler.cxx.o.d -o CMakeFiles/cmTC_1f1c4.dir/testCXXCompiler.cxx.o -c /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+    Linking CXX executable cmTC_1f1c4
+    /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1f1c4.dir/link.txt --verbose=1
+    /usr/bin/clang++ CMakeFiles/cmTC_1f1c4.dir/testCXXCompiler.cxx.o -o cmTC_1f1c4 
+    /usr/bin/ld: cannot find -lstdc++: No such file or directory
+    clang: error: linker command failed with exit code 1 (use -v to see invocation)
+    gmake[1]: *** [CMakeFiles/cmTC_1f1c4.dir/build.make:100: cmTC_1f1c4] Error 1
+    gmake[1]: Leaving directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeTmp'
+    gmake: *** [Makefile:127: cmTC_1f1c4/fast] Error 2
+    
+    
+
+  
+
+  CMake will not be able to correctly generate this project.
+Call Stack (most recent call first):
+  CMakeLists.txt:38 (project)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile/CMakeFiles/CMakeError.log".
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - failed
+-- Check for working CXX compiler: /usr/bin/clang++
+-- Check for working CXX compiler: /usr/bin/clang++ - broken
+CMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:62 (message):
+  The C++ compiler
+
+    "/usr/bin/clang++"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeTmp
+    
+    Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_3cfe0/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_3cfe0.dir/build.make CMakeFiles/cmTC_3cfe0.dir/build
+    gmake[1]: Entering directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeTmp'
+    Building CXX object CMakeFiles/cmTC_3cfe0.dir/testCXXCompiler.cxx.o
+    /usr/bin/clang++    -MD -MT CMakeFiles/cmTC_3cfe0.dir/testCXXCompiler.cxx.o -MF CMakeFiles/cmTC_3cfe0.dir/testCXXCompiler.cxx.o.d -o CMakeFiles/cmTC_3cfe0.dir/testCXXCompiler.cxx.o -c /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+    Linking CXX executable cmTC_3cfe0
+    /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3cfe0.dir/link.txt --verbose=1
+    /usr/bin/clang++ CMakeFiles/cmTC_3cfe0.dir/testCXXCompiler.cxx.o -o cmTC_3cfe0 
+    /usr/bin/ld: cannot find -lstdc++: No such file or directory
+    clang: error: linker command failed with exit code 1 (use -v to see invocation)
+    gmake[1]: *** [CMakeFiles/cmTC_3cfe0.dir/build.make:100: cmTC_3cfe0] Error 1
+    gmake[1]: Leaving directory '/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeTmp'
+    gmake: *** [Makefile:127: cmTC_3cfe0/fast] Error 2
+    
+    
+
+  
+
+  CMake will not be able to correctly generate this project.
+Call Stack (most recent call first):
+  CMakeLists.txt:38 (project)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeOutput.log".
+See also "/home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release/CMakeFiles/CMakeError.log".
+make: *** No targets specified and no makefile found.  Stop.
+
+real	0m0.001s
+user	0m0.000s
+sys	0m0.001s

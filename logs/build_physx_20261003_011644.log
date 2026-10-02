@@ -1,0 +1,457 @@
+91:	GENERATE_ARCH_CODE_LIST(SASS "120" PTX "120") # ENGINE_LOCAL_ARCH
+Running packman in preparation for cmake ...
+Using preset xml: /home/juyoung/engine-deps/physx-107.3-omni/physx/buildtools/presets/public/linux-carbonite.xml
+Target platform: linux using compiler: clang
+PM_PATHS: /home/juyoung/.cache/packman/chk/clang-physxmetadata/4.0.0.32489833_1;/home/juyoung/.cache/packman/chk/rapidjson/1.1.0-67fac85-073453e1
+Cmake: cmake
+GPU projects enabled: True (PX_GENERATE_GPU_PROJECTS=True, PX_GENERATE_GPU_PROJECTS_ONLY=False)
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- The CUDA compiler identification is NVIDIA 13.2.86
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda-13.2/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Found CUDAToolkit: /usr/local/cuda-13.2/include (found version "13.2.86") 
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+Building for PUBLIC RELEASE
+PHYSX ROOT /home/juyoung/engine-deps/physx-107.3-omni/physx
+PhysX Build Platform: linux
+Using CXX Compiler: /usr/bin/clang++
+Added PhysX
+Added PhysX GPU
+Added PVDRuntime
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-debug
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- The CUDA compiler identification is NVIDIA 13.2.86
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda-13.2/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Found CUDAToolkit: /usr/local/cuda-13.2/include (found version "13.2.86") 
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+Building for PUBLIC RELEASE
+PHYSX ROOT /home/juyoung/engine-deps/physx-107.3-omni/physx
+PhysX Build Platform: linux
+Using CXX Compiler: /usr/bin/clang++
+Added PhysX
+Added PhysX GPU
+Added PVDRuntime
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-checked
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- The CUDA compiler identification is NVIDIA 13.2.86
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda-13.2/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Found CUDAToolkit: /usr/local/cuda-13.2/include (found version "13.2.86") 
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+Building for PUBLIC RELEASE
+PHYSX ROOT /home/juyoung/engine-deps/physx-107.3-omni/physx
+PhysX Build Platform: linux
+Using CXX Compiler: /usr/bin/clang++
+Added PhysX
+Added PhysX GPU
+Added PVDRuntime
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-profile
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- The CUDA compiler identification is NVIDIA 13.2.86
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda-13.2/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Found CUDAToolkit: /usr/local/cuda-13.2/include (found version "13.2.86") 
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+Building for PUBLIC RELEASE
+PHYSX ROOT /home/juyoung/engine-deps/physx-107.3-omni/physx
+PhysX Build Platform: linux
+Using CXX Compiler: /usr/bin/clang++
+Added PhysX
+Added PhysX GPU
+Added PVDRuntime
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/juyoung/engine-deps/physx-107.3-omni/physx/compiler/linux-carbonite-release
+[  1%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXBroadphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpubroadphase/src/CUDA/broadphase.cu.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/PhysXTask.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/task/src/TaskManager.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdString.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdAllocator.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpAABBManager.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/api/src/px_globals.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdAssert.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/SceneQuery.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/scenequery/src/SqCompoundPruner.cpp.o
+[  1%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpAABBManagerBase.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhase.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdFoundation.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/SceneQuery.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/scenequery/src/SqCompoundPruningPool.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcContactMethodImpl.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyArticulationMimicJoint.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyArticulationContactPrep.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcContactCache.cpp.o
+[  2%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/CUDA/MemCopyBalanced.cu.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdMathUtils.cpp.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseUpdate.cpp.o
+[  2%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/solverMultiBlock.cu.o
+[  2%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScActorCore.cpp.o
+[  2%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexHFMidphase.cu.o
+[  2%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdHelpers.cpp.o
+[  3%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCudaContextManager.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/cudamanager/src/CudaContextManager.cpp.o
+[  3%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/updateTransformAndBoundArray.cu.o
+[  3%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXBroadphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpubroadphase/src/CUDA/aggregate.cu.o
+[  3%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdTempAllocator.cpp.o
+[  3%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXArticulationGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpuarticulation/src/CUDA/articulationDirectGpuApi.cu.o
+[  3%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyAllocator.cpp.o
+[  3%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpMemBlockPool.cpp.o
+[  3%] Building CXX object sdk_source_bin/CMakeFiles/SceneQuery.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/scenequery/src/SqFactory.cpp.o
+[  4%] Building CXX object sdk_source_bin/CMakeFiles/SceneQuery.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/scenequery/src/SqManager.cpp.o
+[  4%] Building CXX object sdk_source_bin/CMakeFiles/SceneQuery.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/scenequery/src/SqQuery.cpp.o
+[  4%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpThreadContext.cpp.o
+[  5%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXBroadphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpubroadphase/src/PxgCudaBroadPhaseSap.cpp.o
+[  5%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXBroadphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpubroadphase/src/PxgBroadPhase.cpp.o
+[  5%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdLibraryFunctionsImpl.cpp.o
+[  5%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexHeightfield.cu.o
+[  5%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyFeatherstoneArticulation.cpp.o
+[  5%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdLog.cpp.o
+[  5%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScActorSim.cpp.o
+[  5%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/updateBodiesAndShapes.cu.o
+[  5%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/CUDA/radixSortImpl.cu.o
+/home/juyoung/engine-deps/physx-107.3-omni/physx/source/cudamanager/src/CudaContextManager.cpp:577:13: error: no matching function for call to 'cuCtxCreate_v4'
+                        status = cuCtxCreate(&mCtx, (unsigned int)flags, mDevHandle);
+                                 ^~~~~~~~~~~
+/usr/local/cuda-13.2/targets/x86_64-linux/include/cuda.h:90:45: note: expanded from macro 'cuCtxCreate'
+#define cuCtxCreate                         cuCtxCreate_v4
+                                            ^~~~~~~~~~~~~~
+/usr/local/cuda-13.2/targets/x86_64-linux/include/cuda.h:6461:18: note: candidate function not viable: requires 4 arguments, but 3 were provided
+CUresult CUDAAPI cuCtxCreate(CUcontext *pctx, CUctxCreateParams *ctxCreateParams, unsigned int flags, CUdevice dev);
+                 ^
+/usr/local/cuda-13.2/targets/x86_64-linux/include/cuda.h:90:45: note: expanded from macro 'cuCtxCreate'
+#define cuCtxCreate                         cuCtxCreate_v4
+                                            ^
+[  6%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpCacheStreamPair.cpp.o
+[  6%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdReaderImpl.cpp.o
+[  6%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyFeatherstoneForwardDynamic.cpp.o
+1 error generated.
+make[2]: *** [sdk_gpu_source_bin/CMakeFiles/PhysXCudaContextManager.dir/build.make:76: sdk_gpu_source_bin/CMakeFiles/PhysXCudaContextManager.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/cudamanager/src/CudaContextManager.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:684: sdk_gpu_source_bin/CMakeFiles/PhysXCudaContextManager.dir/all] Error 2
+make[1]: *** Waiting for unfinished jobs....
+[  7%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/CUDA/utility.cu.o
+[  7%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScGpuActorSim.cpp.o
+[  7%] Built target PhysXTask
+[  7%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXArticulationGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpuarticulation/src/CUDA/forwardDynamic2.cu.o
+[  7%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixAtomic.cpp.o
+[  8%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexMesh.cu.o
+[  8%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdWriterImpl.cpp.o
+[  8%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXBroadphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpubroadphase/src/PxgAABBManager.cpp.o
+[  9%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/solverMultiBlockTGS.cu.o
+[  9%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpFiltering.cpp.o
+[  9%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseABP.cpp.o
+[  9%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgCopyManager.cpp.o
+[  9%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcMaterialMethodImpl.cpp.o
+[  9%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseUpdate.cpp.o
+[ 10%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdFileReadStreamImpl.cpp.o
+[ 10%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationCore.cpp.o
+[ 11%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixMutex.cpp.o
+[ 11%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpAABBManagerBase.cpp.o
+[ 11%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdFileWriteStreamImpl.cpp.o
+[ 11%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixSync.cpp.o
+[ 11%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdMemoryStreamImpl.cpp.o
+[ 11%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdMemoryReadStreamImpl.cpp.o
+[ 11%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/geomutils/src/GuBounds.cpp.o
+[ 11%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/accumulateThresholdStream.cu.o
+[ 11%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixThread.cpp.o
+[ 11%] Building CXX object pvdruntime_bin/CMakeFiles/PVDRuntime.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/pvdruntime/src/OmniPvdMemoryWriteStreamImpl.cpp.o
+[ 11%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/particlesystem.cu.o
+[ 11%] Linking CXX shared library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPVDRuntime_64.so
+[ 12%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/softBody.cu.o
+[ 12%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpBatch.cpp.o
+[ 12%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixPrintString.cpp.o
+[ 12%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/softBodyGM.cu.o
+[ 12%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/geomutils/src/convex/GuConvexUtilsInternal.cpp.o
+[ 12%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixSList.cpp.o
+[ 12%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixSocket.cpp.o
+[ 12%] Built target PVDRuntime
+[ 13%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/geomutils/src/mesh/GuTetrahedronMeshUtils.cpp.o
+[ 13%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationJointCore.cpp.o
+[ 13%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/constraintBlockPrep.cu.o
+[ 14%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyFeatherstoneInverseDynamic.cpp.o
+[ 15%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixTime.cpp.o
+[ 15%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpCacheStreamPair.cpp.o
+[ 15%] Building CXX object sdk_source_bin/CMakeFiles/PhysXFoundation.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixFPU.cpp.o
+[ 16%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXArticulationGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpuarticulation/src/CUDA/internalConstraints2.cu.o
+[ 16%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/FEMClothConstraintPrep.cu.o
+[ 17%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpContactPrepShared.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationTendonCore.cpp.o
+[ 18%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXFoundation_static_64.a
+[ 18%] Built target PhysXFoundation
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationJointSim.cpp.o
+[ 18%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXArticulationGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpuarticulation/src/CUDA/inverseDynamic.cu.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/geomutils/src/GuConvexGeometry.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyConstraintPartition.cpp.o
+[ 18%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/FEMCloth.cu.o
+[ 18%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/constraintBlockPrePrep.cu.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpMemBlockPool.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseMBP.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXArticulationGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpuarticulation/src/PxgArticulationCore.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixAtomic.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyConstraintSetup.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgCudaBuffer.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/common/src/pipeline/PxcNpThreadContext.cpp.o
+[ 18%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/FEMClothExternalSolve.cu.o
+[ 18%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/artiConstraintPrep2.cu.o
+[ 18%] Built target SceneQuery
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseSap.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgCudaMemoryAllocator.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgHeapMemoryAllocator.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsCCD.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixMutex.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsContactManager.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixSync.cpp.o
+[ 18%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixThread.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationSim.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsContext.cpp.o
+[ 18%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationTendonJointCore.cpp.o
+[ 19%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixPrintString.cpp.o
+[ 19%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgKernelWrangler.cpp.o
+[ 19%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationTendonSim.cpp.o
+[ 20%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgMemCopyDispatcher.cpp.o
+[ 20%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixSList.cpp.o
+[ 20%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgMemoryManager.cpp.o
+[ 20%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/rigidDeltaAccum.cu.o
+[ 20%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseSapAux.cpp.o
+[ 20%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScArticulationMimicJointSim.cpp.o
+[ 20%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixSocket.cpp.o
+[ 21%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/diffuseParticles.cu.o
+[ 21%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixTime.cpp.o
+[ 21%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXCommonGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpucommon/src/PxgCommon.cpp.o
+[ 21%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXCommonGpu_static_64.a
+[ 21%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyConstraintSetupBlock.cpp.o
+[ 21%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXBroadphaseGpu_static_64.a
+[ 21%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/integration.cu.o
+[ 21%] Built target PhysXCommonGpu
+[ 21%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexMeshCorrelate.cu.o
+[ 21%] Built target PhysXBroadphaseGpu
+[ 21%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpBroadPhaseShared.cpp.o
+[ 21%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexMeshMidphase.cu.o
+[ 22%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelAABB.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevelaabb/src/BpFiltering.cpp.o
+[ 23%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsDefaultMemoryManager.cpp.o
+[ 23%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/unix/FdUnixFPU.cpp.o
+[ 23%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/isosurfaceExtraction.cu.o
+[ 23%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyContactPrep.cpp.o
+[ 23%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/anisotropy.cu.o
+[ 23%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdAllocator.cpp.o
+[ 23%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexMeshPostProcess.cu.o
+[ 23%] Built target LowLevelAABB
+[ 23%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/algorithms.cu.o
+[ 23%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/sparseGridStandalone.cu.o
+[ 24%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdString.cpp.o
+[ 24%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdTempAllocator.cpp.o
+[ 24%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexMeshOutput.cu.o
+[ 25%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScBroadphase.cpp.o
+[ 25%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdAssert.cpp.o
+[ 25%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdMathUtils.cpp.o
+[ 25%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScDeformableSurfaceCore.cpp.o
+[ 25%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/integrationTGS.cu.o
+[ 25%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsIslandSim.cpp.o
+[ 25%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScDeformableSurfaceSim.cpp.o
+[ 25%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/cudaGJKEPA.cu.o
+[ 25%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyContactPrep4.cpp.o
+[ 25%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXGpuDependencies.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/foundation/FdFoundation.cpp.o
+[ 26%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyDynamicsBase.cpp.o
+[ 27%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/convexCoreCollision.cu.o
+[ 27%] Built target PhysXGpuDependencies
+[ 27%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsNphaseImplementationContext.cpp.o
+[ 27%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/cudaSphere.cu.o
+[ 28%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/preIntegration.cu.o
+[ 28%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/CUDA/SDFConstruction.cu.o
+[ 28%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScDeformableVolumeCore.cpp.o
+[ 28%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/cudaBox.cu.o
+[ 28%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyDynamics.cpp.o
+[ 28%] Building CXX object sdk_source_bin/CMakeFiles/LowLevel.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowlevel/software/src/PxsSimpleIslandManager.cpp.o
+[ 28%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/compressOutputContacts.cu.o
+[ 28%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyFrictionCorrelation.cpp.o
+[ 28%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/preIntegrationTGS.cu.o
+[ 29%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/pairManagement.cu.o
+[ 29%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgBodySimManager.cpp.o
+[ 29%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/solver.cu.o
+[ 29%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSimulationCore.cpp.o
+[ 29%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgJointManager.cpp.o
+[ 29%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/cudaParticleSystem.cu.o
+[ 30%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/particleSystemMeshMidphase.cu.o
+[ 30%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/CUDA/constraintBlockPrepTGS.cu.o
+[ 30%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScDeformableVolumeSim.cpp.o
+[ 30%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgShapeSimManager.cpp.o
+[ 30%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyRigidBodyToSolverBody.cpp.o
+[ 30%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSimulationController.cpp.o
+[ 30%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgConstraintPartition.cpp.o
+[ 30%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgParticleSystemCore.cpp.o
+[ 30%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgCudaSolverCore.cpp.o
+[ 30%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DySolverConstraints.cpp.o
+[ 31%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgTGSCudaSolverCore.cpp.o
+[ 32%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgPBDParticleSystemCore.cpp.o
+[ 32%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/particleSystemHFMidPhaseCG.cu.o
+[ 32%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/softbodyMidPhase.cu.o
+[ 32%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/softbodyPrimitives.cu.o
+[ 32%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/softbodySoftbodyMidPhase.cu.o
+[ 32%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DySolverConstraintsBlock.cpp.o
+[ 32%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSoftBodyCore.cpp.o
+[ 32%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScFiltering.cpp.o
+[ 32%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgSolverCore.cpp.o
+[ 33%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScParticleSystemCore.cpp.o
+[ 33%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgDynamicsContext.cpp.o
+[ 33%] Built target LowLevel
+[ 33%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScParticleSystemSim.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DySolverControl.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScParticleSystemShapeCore.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyThreadContext.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScBodyCore.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScBodySim.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyThresholdTable.cpp.o
+[ 34%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScConstraintBreakage.cpp.o
+[ 34%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/softbodyHFMidPhase.cu.o
+[ 35%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScConstraintCore.cpp.o
+[ 35%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgTGSDynamicsContext.cpp.o
+[ 35%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyTGSDynamics.cpp.o
+[ 36%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/femClothMidPhase.cu.o
+[ 36%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgContext.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyTGSContactPrep.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScConstraintInteraction.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScConstraintSim.cpp.o
+[ 36%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSolverGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusolver/src/PxgSolver.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScElementInteractionMarker.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScElementSim.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DyTGSContactPrepBlock.cpp.o
+[ 36%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DySolverCore.cpp.o
+[ 36%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSoftBody.cpp.o
+[ 37%] Building CXX object sdk_source_bin/CMakeFiles/LowLevelDynamics.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/lowleveldynamics/src/DySleep.cpp.o
+[ 37%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/femClothPrimitives.cu.o
+[ 37%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/femClothHFMidPhase.cu.o
+[ 37%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgFEMClothCore.cpp.o
+[ 37%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/femClothClothMidPhase.cu.o
+[ 37%] Building CUDA object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/CUDA/trimeshCollision.cu.o
+[ 37%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgFEMCloth.cpp.o
+[ 37%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/PxgGeometryManager.cpp.o
+[ 37%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScInteraction.cpp.o
+[ 37%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScIterators.cpp.o
+[ 38%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScKinematics.cpp.o
+[ 38%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/PxgNarrowphaseCore.cpp.o
+[ 38%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgNonRigidCoreCommon.cpp.o
+[ 39%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/PxgNarrowphase.cpp.o
+[ 39%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgFEMCore.cpp.o
+[ 39%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScNPhaseCore.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgRadixSortCore.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/PxgNphaseImplementationContext.cpp.o
+[ 40%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScPhysics.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXNarrowphaseGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpunarrowphase/src/PxgShapeManager.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgAlgorithms.cpp.o
+[ 40%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScRigidCore.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgAnisotropy.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgParticleNeighborhood.cpp.o
+[ 40%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScRigidSim.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSmoothing.cpp.o
+[ 40%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSparseGridStandalone.cpp.o
+[ 41%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgIsosurfaceExtraction.cpp.o
+[ 41%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScScene.cpp.o
+[ 42%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScCCD.cpp.o
+[ 42%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScShapeCore.cpp.o
+[ 42%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgArrayConverter.cpp.o
+[ 42%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgSDFBuilder.cpp.o
+[ 42%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScShapeInteraction.cpp.o
+[ 42%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScShapeSim.cpp.o
+[ 43%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXSolverGpu_static_64.a
+[ 43%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScShapeSimBase.cpp.o
+[ 43%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScSimStats.cpp.o
+[ 44%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScSimulationController.cpp.o
+[ 44%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScSqBoundsManager.cpp.o
+[ 44%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScStaticCore.cpp.o
+[ 44%] Building CXX object sdk_gpu_source_bin/CMakeFiles/PhysXSimulationControllerGpu.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/gpusimulationcontroller/src/PxgDeformableSkinning.cpp.o
+[ 44%] Built target LowLevelDynamics
+[ 44%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScTriggerInteraction.cpp.o
+[ 44%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScVisualize.cpp.o
+[ 44%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScSleep.cpp.o
+[ 45%] Building CXX object sdk_source_bin/CMakeFiles/SimulationController.dir/home/juyoung/engine-deps/physx-107.3-omni/physx/source/simulationcontroller/src/ScPipeline.cpp.o
+[ 45%] Built target PhysXSolverGpu
+[ 45%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXSimulationControllerGpu_static_64.a
+[ 45%] Built target PhysXSimulationControllerGpu
+[ 45%] Built target SimulationController
+[ 45%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXNarrowphaseGpu_static_64.a
+[ 45%] Built target PhysXNarrowphaseGpu
+[ 45%] Linking CXX static library /home/juyoung/engine-deps/physx-107.3-omni/physx/bin/linux.x86_64/checked/libPhysXArticulationGpu_static_64.a
+[ 45%] Built target PhysXArticulationGpu
+make: *** [Makefile:136: all] Error 2
+
+real	3m45.129s
+user	10m3.602s
+sys	0m28.682s

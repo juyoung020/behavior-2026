@@ -1,0 +1,2 @@
+name, driver_version, memory.used [MiB]
+NVIDIA GeForce RTX 5070 Ti, 595.91.07, 456 MiB

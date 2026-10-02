@@ -1,0 +1,45 @@
+-- The CXX compiler identification is Clang 14.0.0
+-- The CUDA compiler identification is NVIDIA 13.2.86
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda-13.2/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Found CUDAToolkit: /usr/local/cuda-13.2/include (found version "13.2.86") 
+-- Looking for C++ include pthread.h
+-- Looking for C++ include pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/juyoung/engine-build/tests
+Unknown argument -k
+Usage: cmake --build <dir>             [options] [-- [native-options]]
+       cmake --build --preset <preset> [options] [-- [native-options]]
+Options:
+  <dir>          = Project binary directory to be built.
+  --preset <preset>, --preset=<preset>
+                 = Specify a build preset.
+  --list-presets
+                 = List available build presets.
+  --parallel [<jobs>], -j [<jobs>]
+                 = Build in parallel using the given number of jobs. 
+                   If <jobs> is omitted the native build tool's 
+                   default number is used.
+                   The CMAKE_BUILD_PARALLEL_LEVEL environment variable
+                   specifies a default parallel level when this option
+                   is not given.
+  --target <tgt>..., -t <tgt>... 
+                 = Build <tgt> instead of default targets.
+  --config <cfg> = For multi-configuration tools, choose <cfg>.
+  --clean-first  = Build target 'clean' first, then build.
+                   (To clean only, use --target 'clean'.)
+  --verbose, -v  = Enable verbose output - if supported - including
+                   the build commands to be executed. 
+  --             = Pass remaining options to the native tool.

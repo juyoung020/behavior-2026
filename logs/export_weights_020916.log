@@ -1,0 +1,15 @@
+restored 51 arrays
+wrote /home/juyoung/behavior-2026/data/pi05_native/pi05_radio.pi05w: 600 tensors, 6.26 GiB
+radio peak RSS 16090932 KB, 30.79 s
+restored 75 arrays
+wrote /home/juyoung/behavior-2026/data/pi05_native/pb2025_ckpt1.pi05w: 623 tensors, 6.35 GiB
+ckpt1 peak RSS 17051608 KB, 22.76 s
+restored 75 arrays
+wrote /home/juyoung/behavior-2026/data/pi05_native/pb2025_ckpt2.pi05w: 623 tensors, 6.35 GiB
+ckpt2 peak RSS 16545868 KB, 22.67 s
+restored 75 arrays
+wrote /home/juyoung/behavior-2026/data/pi05_native/pb2025_ckpt3.pi05w: 623 tensors, 6.35 GiB
+ckpt3 peak RSS 15900596 KB, 24.36 s
+restored 75 arrays
+wrote /home/juyoung/behavior-2026/data/pi05_native/pb2025_ckpt4.pi05w: 623 tensors, 6.35 GiB
+ckpt4 peak RSS 19630232 KB, 32.31 s

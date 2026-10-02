@@ -1,0 +1,126 @@
+[gpu_lock] 잡음: pi05_native (pi05 native: gpu cpuplant verify pbdump pbverify) ~ 02:31:52
+=== gpu 02:11:52
+Traceback (most recent call last):
+  File "/mnt/c/behavior-2026/src/pi05_native/tools/dump_reference.py", line 314, in <module>
+    main()
+  File "/mnt/c/behavior-2026/src/pi05_native/tools/dump_reference.py", line 115, in main
+    policy = policy_config.create_trained_policy(cfg, args.ckpt, default_prompt=prompt)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juyoung/openpi/src/openpi/policies/policy_config.py", line 46, in create_trained_policy
+    checkpoint_dir = download.maybe_download(str(checkpoint_dir))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juyoung/openpi/src/openpi/shared/download.py", line 59, in maybe_download
+    raise FileNotFoundError(f"File not found at {url}")
+FileNotFoundError: File not found at /home/juyoung/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio
+=== cpuplant 02:11:56
+Traceback (most recent call last):
+  File "/mnt/c/behavior-2026/src/pi05_native/tools/dump_reference.py", line 314, in <module>
+    main()
+  File "/mnt/c/behavior-2026/src/pi05_native/tools/dump_reference.py", line 115, in main
+    policy = policy_config.create_trained_policy(cfg, args.ckpt, default_prompt=prompt)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juyoung/openpi/src/openpi/policies/policy_config.py", line 46, in create_trained_policy
+    checkpoint_dir = download.maybe_download(str(checkpoint_dir))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juyoung/openpi/src/openpi/shared/download.py", line 59, in maybe_download
+    raise FileNotFoundError(f"File not found at {url}")
+FileNotFoundError: File not found at /home/juyoung/checkpoints/pi05_turning_on_radio/pi05_turn_on_the_radio
+=== verify 02:12:00
+cannot open /mnt/c/behavior-2026/data/pi05_native/ref/gpu_000.pi05d
+weights on GPU 5.05 GiB, activations 0.15 GiB
+=== pbdump 02:12:04
+[gpu] policy loaded in 11.2s on [CudaDevice(id=0)]
+[gpu] sample 0: stage 0 steps 20 |chain-official| 0.00622
+[gpu] sample 1: stage 1 steps 20 |chain-official| 0.00522
+[gpu] sample 2: stage 2 steps 20 |chain-official| 0.0654
+[gpu] sample 3: stage 3 steps 20 |chain-official| 0.115
+[gpu] bench infer median 116.8 ms min 116.2 ms
+=== pbverify 02:13:12
+PiBehavior weights on GPU 5.14 GiB, activations 0.15 GiB, steps 20, horizon 30
+sample 0: task 0 stage 0  predicted stage ours 0 jax 0
+  inpainting: max |first 4 actions - kept| = 1.370e-02
+sample 1: task 0 stage 1  predicted stage ours 1 jax 1
+  inpainting: max |first 4 actions - kept| = 2.199e-02
+sample 2: task 0 stage 2  predicted stage ours 2 jax 2
+  inpainting: max |first 4 actions - kept| = 1.729e-01
+sample 3: task 0 stage 3  predicted stage ours 4 jax 4
+  inpainting: max |first 4 actions - kept| = 7.014e-02
+
+point                                       rel_ours   rel_floor    max_ours   max_floor  eq_ours    ok
+host.state (normalized)                    0.000e+00         nan   0.000e+00         nan   1.0000    ok
+pre.x0 (images+task+state)                 9.789e-03         nan   2.500e+00         nan   0.1371    ok
+pre.l0.out                                 5.481e-03         nan   8.000e+00         nan   0.1095    ok
+pre.l1.out                                 5.552e-03         nan   8.000e+00         nan   0.1005    ok
+pre.l2.out                                 5.721e-03         nan   1.200e+01         nan   0.0927    ok
+pre.l3.out                                 5.763e-03         nan   1.200e+01         nan   0.0912    ok
+pre.l4.out                                 6.123e-03         nan   1.600e+01         nan   0.0866    ok
+pre.l5.out                                 6.578e-03         nan   1.600e+01         nan   0.0821    ok
+pre.l6.out                                 6.623e-03         nan   1.600e+01         nan   0.0783    ok
+pre.l7.out                                 7.153e-03         nan   1.600e+01         nan   0.0737    ok
+pre.l8.out                                 7.919e-03         nan   1.600e+01         nan   0.0690    ok
+pre.l9.out                                 8.879e-03         nan   1.600e+01         nan   0.0657    ok
+pre.l10.out                                1.045e-02         nan   1.600e+01         nan   0.0607    ok
+pre.l11.out                                1.297e-02         nan   2.000e+01         nan   0.0558    ok
+pre.l12.out                                1.654e-02         nan   1.600e+01         nan   0.0514    ok
+pre.l13.out                                2.381e-02         nan   5.600e+01         nan   0.0463    ok
+pre.l14.out                                2.952e-02         nan   5.760e+02         nan   0.0451    ok
+pre.l15.out                                2.864e-02         nan   1.856e+03         nan   0.0490    ok
+pre.l16.out                                2.348e-02         nan   1.920e+03         nan   0.0479    ok
+pre.l17.out                                2.328e-02         nan   1.792e+03         nan   0.0505    ok
+pre.base_final                             1.136e-02         nan   5.000e-01         nan   0.1416    ok
+pre.kv2.l0.k                               1.987e-02         nan   2.734e-01         nan   0.1212    ok
+pre.kv2.l0.v                               2.250e-02         nan   3.203e-01         nan   0.1354    ok
+pre.kv2.l17.k                              3.054e-02         nan   7.520e-01         nan   0.1062    ok
+pre.kv2.l17.v                              4.463e-02         nan   2.117e+00         nan   0.0807    ok
+suf.s0.v                                   8.927e-03         nan   7.812e-02         nan   0.2406    ok
+suf.s0.x                                   6.486e-04         nan   3.906e-03         nan   0.2802    ok
+suf.s1.v                                   8.449e-03         nan   6.250e-02         nan   0.2865    ok
+suf.s1.x                                   1.146e-03         nan   6.287e-03         nan   0.1875    ok
+suf.s2.v                                   8.572e-03         nan   7.812e-02         nan   0.2635    ok
+suf.s2.x                                   1.744e-03         nan   9.766e-03         nan   0.1448    ok
+suf.s3.v                                   9.439e-03         nan   1.172e-01         nan   0.2479    ok
+suf.s3.x                                   2.424e-03         nan   1.270e-02         nan   0.1083    ok
+suf.s4.v                                   1.104e-02         nan   9.375e-02         nan   0.2406    ok
+suf.s4.x                                   3.273e-03         nan   1.562e-02         nan   0.1104    ok
+suf.s5.v                                   1.370e-02         nan   1.250e-01         nan   0.2625    ok
+suf.s5.x                                   4.456e-03         nan   2.051e-02         nan   0.0885    ok
+suf.s6.v                                   1.391e-02         nan   1.357e-01         nan   0.2365    ok
+suf.s6.x                                   5.764e-03         nan   2.637e-02         nan   0.0823    ok
+suf.s7.v                                   1.528e-02         nan   1.406e-01         nan   0.2375    ok
+suf.s7.x                                   7.281e-03         nan   3.271e-02         nan   0.0698    ok
+suf.s8.v                                   1.622e-02         nan   1.562e-01         nan   0.2115    ok
+suf.s8.x                                   8.940e-03         nan   3.906e-02         nan   0.0771    ok
+suf.s9.v                                   1.336e-02         nan   2.461e-01         nan   0.2229    ok
+suf.s9.x                                   1.024e-02         nan   4.443e-02         nan   0.0740    ok
+suf.s10.v                                  1.272e-02         nan   1.797e-01         nan   0.1948    ok
+suf.s10.x                                  1.133e-02         nan   4.834e-02         nan   0.0698    ok
+suf.s11.v                                  1.464e-02         nan   2.891e-01         nan   0.2000    ok
+suf.s11.x                                  1.240e-02         nan   5.817e-02         nan   0.0646    ok
+suf.s12.v                                  1.490e-02         nan   1.406e-01         nan   0.1833    ok
+suf.s12.x                                  1.341e-02         nan   6.403e-02         nan   0.0542    ok
+suf.s13.v                                  1.682e-02         nan   1.406e-01         nan   0.1802    ok
+suf.s13.x                                  1.437e-02         nan   7.087e-02         nan   0.0667    ok
+suf.s14.v                                  1.770e-02         nan   1.562e-01         nan   0.1708    ok
+suf.s14.x                                  1.524e-02         nan   7.380e-02         nan   0.0573    ok
+suf.s15.v                                  1.884e-02         nan   2.031e-01         nan   0.1542    ok
+suf.s15.x                                  1.599e-02         nan   7.868e-02         nan   0.0594    ok
+suf.s16.v                                  2.072e-02         nan   2.812e-01         nan   0.1469    ok
+suf.s16.x                                  1.662e-02         nan   8.454e-02         nan   0.0594    ok
+suf.s17.v                                  2.353e-02         nan   4.980e-01         nan   0.1271    ok
+suf.s17.x                                  1.727e-02         nan   9.004e-02         nan   0.0792    ok
+suf.s18.v                                  8.744e-02         nan   1.629e+00         nan   0.0958    ok
+suf.s18.x                                  2.679e-02         nan   1.284e-01         nan   0.0458    ok
+suf.s19.v                                  1.325e-01         nan   2.254e+00         nan   0.0677    ok
+suf.s19.x                                  4.344e-02         nan   2.336e-01         nan   0.0437    ok
+actions_raw (normalized)                   5.317e-02   1.565e-02   2.580e-01   1.147e-01   0.0427  FAIL
+stage_logits                               7.290e-03         nan   6.250e-02         nan   0.6667    ok
+actions (robot units)                      9.011e-03         nan   1.080e-01         nan   0.0246    ok
+inp: correlated noise (JAX keys)           9.531e-05         nan   4.555e-04         nan   0.0000    ok
+inp: initial actions (model space)         0.000e+00         nan   0.000e+00         nan   1.0000    ok
+inp: raw same noise, no inpainting         1.213e-02         nan   5.518e-02         nan   0.0521    ok
+inp: raw with inpainting (JAX noise+x0)    2.581e-03         nan   4.854e-02         nan   0.0187    ok
+inpainting call, actions (robot units)     2.428e-03         nan   7.856e-03         nan   0.0000    ok
+graph forward (20 steps, 805 prefix tokens): median 94.90 ms, min 93.28 ms
+FAIL: 1 failing points (floor = other JAX run, else JAX per-layer vs fused)
+=== done 02:13:21
+[gpu_lock] 풀음
