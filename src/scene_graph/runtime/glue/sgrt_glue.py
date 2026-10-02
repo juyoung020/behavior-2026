@@ -93,9 +93,14 @@ class SceneMemory:
         L.sgrt_save.argtypes = [ctypes.c_void_p]
         L.sgrt_stats.argtypes = [ctypes.c_void_p] + [ctypes.c_void_p] * 5
         L.sgrt_destroy.argtypes = [ctypes.c_void_p]
-        L.sgrt_push_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
-        L.sgrt_get_pose_diag.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Diag)]
-        L.sgrt_get_stage_timing.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Stage), ctypes.c_int32]
+        # newer ABI (pose source, timing): an older libsgrt.so without these still works (no GT push, no timing)
+        self.has_pose = hasattr(L, "sgrt_push_pose")
+        self.has_timing = hasattr(L, "sgrt_get_stage_timing")
+        if self.has_pose:
+            L.sgrt_push_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+            L.sgrt_get_pose_diag.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Diag)]
+        if self.has_timing:
+            L.sgrt_get_stage_timing.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Stage), ctypes.c_int32]
         cfg = _Cfg(ENGINE.encode(), (ENGINE + ".names.txt").encode(), out_dir.encode(), kf_every, save_s, 0.25)
         err = ctypes.create_string_buffer(512)
         self.h = L.sgrt_create(ctypes.byref(cfg), err, 512)
@@ -109,7 +114,7 @@ class SceneMemory:
         self.keys = (f"{robot}::proprio", f"{robot}::{robot}:zed_link:Camera:0::rgb", f"{robot}::{robot}:zed_link:Camera:0::depth_linear")
         self.t = 0
         self.robot = None
-        self.use_gt = os.environ.get("SGRT_GT_POSE", "1") != "0"
+        self.use_gt = os.environ.get("SGRT_GT_POSE", "1") != "0" and self.has_pose
         self.gt_log = None
         if os.environ.get("SGRT_GT_LOG"):
             self.gt_log_path = os.environ["SGRT_GT_LOG"]
@@ -179,12 +184,16 @@ class SceneMemory:
         return self._cam
 
     def pose_diag(self):
+        if not self.has_pose:
+            return {}
         d = _Diag()
         self.L.sgrt_get_pose_diag(self.h, ctypes.byref(d))
         return dict(n=d.n, last_xy=d.last_xy, last_yaw_deg=math.degrees(d.last_yaw), max_xy=d.max_xy,
                     max_yaw_deg=math.degrees(d.max_yaw), rms_xy=d.rms_xy, rms_yaw_deg=math.degrees(d.rms_yaw))
 
     def timing(self):
+        if not self.has_timing:
+            return {}
         arr = (_Stage * 64)()
         n = self.L.sgrt_get_stage_timing(self.h, arr, 64)
         out = {arr[i].name.decode(): dict(n=arr[i].n, mean=arr[i].mean_us, p50=arr[i].p50_us, p99=arr[i].p99_us, max=arr[i].max_us)
