@@ -27,8 +27,7 @@ JAX-CPU vs JAX-GPU" at every point. Details and numbers (Korean): `docs/π05_네
 ## Build
 
 - Linux / WSL: `bash build_linux.sh [build_dir]` (CUDA 12.8+, g++). Produces `libpi05.a`, `pi05_verify`, `pi05_server`.
-- Windows: `build_windows.bat` (MSVC 2022 + CUDA 12.8 nvcc from the conda env `pi05build`). Produces
-  `build_win/_pi05native.pyd` for the evaluator's Python 3.11, `pi05_verify.exe`, `tok_test.exe`.
+- Windows (no longer used; Linux is the only work machine): `archive/src/vla/pi05_native/build_windows.bat`.
 
 Only sm_120 (RTX 50xx) is compiled by default; set `PI05_ARCH` (Linux) for other GPUs.
 
@@ -40,7 +39,8 @@ tools/wsl_py.sh tools/export_weights.py --ckpt <ckpt dir> --asset turning_on_rad
 # check against JAX dumps
 pi05_verify --weights W.pi05w --ref data/pi05_native/ref --tag gpu --floor cpu --floor-single cpu_planted --check
 # evaluator, in-process
-powershell -File glue/run_eval_native.ps1 [-MaxSteps 600] [-Video]
+python glue/run_eval_native.py --weights data/pi05_native/pi05_radio.pi05w -- --task-name turning_on_radio ...
+# (Windows launcher run_eval_native.ps1 moved to archive/)
 # submission-style server
 pi05_server --weights W.pi05w --port 8000
 ```

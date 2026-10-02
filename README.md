@@ -24,18 +24,17 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     ovdet/            open-vocabulary detector (YOLOE, TensorRT, C API; AGPL-3.0)
   agent/              ② high-level planning
     planner/          planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
-    probe/            instruction-format probes (Rust)
   vla/                ③ low-level action (π0.5)
     pi05_native/      π0.5 inference engine, hand-written C++/CUDA
     pi05_train/       π0.5 training step in C++/CUDA
     fasttrain/        training data pipeline: NVDEC + fused CUDA kernels, Rust indexer
-    comet/            patches for the 2025 2nd-place codebase (openpi-comet)
   sim/                simulator, evaluation and integration
     engine/           our own GPU simulator engine; layer 0 = PhysX 5.6.1 oracle replay (C++)
     fasteval/         evaluator acceleration: chunked-replay policy server, instrumentation
     integ/            evaluator ↔ planner ↔ scenemap link (simlink, Rust)
     configs/          evaluator robot configs
 tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …)
+archive/              modules the current pipeline no longer uses, kept as they were (archive/README.md: what, why, how to revive)
   setup/              one-time install/download scripts
 refs/                 reference repos (2025 top teams) — submodules
 docs/                 documentation (Korean); raw/ = verbatim copies of official pages

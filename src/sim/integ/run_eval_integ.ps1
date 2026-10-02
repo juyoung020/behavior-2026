@@ -56,7 +56,7 @@ try {
     "gpu_used_mib_windows_wsl_ready=$usedReady" | Out-File -Append -Encoding utf8 "$out\vram_windows.txt"
     "WSL 준비 ($([int]((Get-Date) - $t0).TotalSeconds) s), 평가기 시작 전 GPU 사용 $usedReady MiB"
     if ($usedReady -ge $VramWarnMiB) { "경고: 평가기 밖 GPU 사용 $usedReady MiB >= $VramWarnMiB — 검은 화면 (A) 위험(plan 3절)" }
-    $sampler = Start-Process powershell -ArgumentList @('-ExecutionPolicy', 'Bypass', '-File', 'C:\behavior-2026\tools\gpu_mem_sampler.ps1',
+    $sampler = Start-Process powershell -ArgumentList @('-ExecutionPolicy', 'Bypass', '-File', 'C:\behavior-2026\archive\tools\gpu_mem_sampler.ps1',
                                                           '-Out', "$out\gpu_mem.csv", '-Seconds', '1800', '-Every', '2') -PassThru -WindowStyle Hidden
     # ---- 평가기 ----
     $evalArgs = @('--task-name', $Task, '--mode', 'public_test', '--instance-indices', "$Instance", '--num-envs', '1',
