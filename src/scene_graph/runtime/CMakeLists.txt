@@ -31,3 +31,7 @@ enable_testing()
 add_executable(test_crop tests/test_crop.cpp)
 target_link_libraries(test_crop sgrt_crop)
 add_test(NAME crop COMMAND test_crop)
+
+# 실제 엔진·프레임으로 sgrt 끝까지(검출 → best view·구름 → 저장)
+add_executable(sgrt_frames tools/sgrt_frames.cpp)
+target_link_libraries(sgrt_frames sgrt CUDA::cudart_static)
