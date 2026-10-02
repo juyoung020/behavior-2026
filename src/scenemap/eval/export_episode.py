@@ -3,7 +3,7 @@
 
   python export_episode.py <LeRobot 에피소드> [--stride 3] [--lag 1] [--out ~/scenemap_eval/ep_{ep}.bin]
 
-짝짓기: 깊이 프레임 t 에 proprio·robot2cam·정답 행 t-lag(평가기: 영상 k = 장면 k-1, meridian 12.9).
+짝짓기: 깊이 프레임 t 에 proprio·robot2cam·정답 행 t-lag(평가기: 영상 k = 장면 k-1).
 깊이는 640×480(demo_player 판, 가운데 4:3)을 4 px 간격으로 뽑은 160×120 mm(u16). 내부 파라미터도 1/4.
 
 형식(리틀 엔디언)

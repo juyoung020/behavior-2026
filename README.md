@@ -18,7 +18,6 @@ Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C
 BEHAVIOR-1K/          challenge framework (StanfordVL, tag v3.9.3-post1) — submodule, never modified
   datasets/           simulator assets, task instances, decryption key (not in git)
 data/                 2026 challenge demos (LeRobot v3): metadata + task 0 only (not in git)
-deprecated/           retired approaches (old meridian scene-graph stack), reference only
 src/
   agent/              high-level planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
   pi05_native/        π0.5 inference engine, hand-written C++/CUDA (in progress)

@@ -1,4 +1,4 @@
-//! simlink — 평가기(Windows) ↔ WSL 통합 노드. ROS 없음(옛 ROS 판은 deprecated/integ_ros/).
+//! simlink — 평가기(Windows) ↔ WSL 통합 노드. ROS 없음.
 //!
 //! 한 프로세스에서 두 일을 한다(docs/통합_실시간.md):
 //! 1. **계획기 호스트**: `bagent::link`(전송층) + Core·Decider(그대로). 평가기 안 파이썬 접착부가 TCP 하나로 붙는다.

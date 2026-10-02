@@ -22,6 +22,3 @@
 [submodule "refs/openpi-comet_bushuyeu"]
 	path = refs/openpi-comet_bushuyeu
 	url = https://github.com/bushuyeu/openpi-comet.git
-[submodule "meridian_ws/src/meridian_graphcore/third_party/spark_dsg"]
-	path = deprecated/meridian_ws/src/meridian_graphcore/third_party/spark_dsg
-	url = https://github.com/MIT-SPARK/Spark-DSG.git

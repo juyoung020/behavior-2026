@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """BEHAVIOR 2026 학습 데모(LeRobot v3) 읽기 — scenemap 채점 도구용(실행 경로에는 안 씀).
-deprecated/meridian/demo_player.py 에서 데이터 읽기 부분만 옮겨 온 것(ROS 재생 없음).
+시연 데이터 읽기 전용(ROS 재생 없음).
 
 헤드 zed 깊이: gray12le → OmniGibson obs_utils.dequantize_depth(log, min 0.01, max 10, shift 3.5) → m.
 640×480 판 = 가운데 720×540 을 자르고 최근접 축소(W, H, FX..CY 가 그 판의 내부 파라미터).
@@ -12,7 +12,7 @@ import subprocess
 import numpy as np
 import pyarrow.parquet as pq
 
-ROOT = '/mnt/c/behavior-2026/data/2026-challenge-demos'
+ROOT = os.path.join(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..')), 'data', '2026-challenge-demos')
 CAM = 'zed_link_camera_0'
 SRC = 720
 CROP_Y0, CROP_H = 90, 540            # 720x720 → 720x540 (4:3)

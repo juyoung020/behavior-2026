@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BEHAVIOR 2026 시연 한 에피소드의 정답 물체(학습·개발용 — 평가 때는 쓰지 않는다). deprecated/meridian/eval/gt_scene.py 에서 옮겨 옴.
+"""BEHAVIOR 2026 시연 한 에피소드의 정답 물체(학습·개발용 — 평가 때는 쓰지 않는다).
 
 정답 = 그 에피소드의 과제 인스턴스:
   datasets/2026-challenge-task-instances/scenes/<scene>/json/<scene>_task_<task>_0_0_template-partial_rooms.json
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-ROOT = '/mnt/c/behavior-2026' if os.path.isdir('/mnt/c/behavior-2026') else 'C:/behavior-2026'
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # 저장소 루트
 INST = f'{ROOT}/BEHAVIOR-1K/datasets/2026-challenge-task-instances/scenes'
 ASSETS = f'{ROOT}/BEHAVIOR-1K/datasets/behavior-1k-assets/objects'
 DEMOS = f'{ROOT}/data/2026-challenge-demos'

@@ -2,7 +2,7 @@
 """ovdet against Ultralytics' own YOLOE prediction (FP32 PyTorch, CPU) on the same frames: every Ultralytics detection
 is matched to the ovdet detection of the same class with the highest box IoU. Offline check (needs ultralytics).
 
-  ~/meridian_export_venv/bin/python ref_check.py --engine ~/meridian_models/x86_sm120/yoloe-11s-task.plan \
+  ~/ovdet_export_venv/bin/python ref_check.py --engine ~/ovdet_models/x86_sm120/yoloe-11s-task.plan \
       --model yoloe-11s-seg --episode 0 --frames 300 600 900
 Reports per frame: counts, matched share, box IoU and mask IoU (input resolution) of the matches.
 """
@@ -37,7 +37,7 @@ def main():
     det = E.Detector(lambda k: L, f'x={engine}')
     det.set_prompt(names)
     from ultralytics import YOLOE
-    os.chdir(os.path.expanduser('~/meridian_models/yoloe'))
+    os.chdir(os.path.expanduser('~/ovdet_models/yoloe'))
     model = YOLOE(f'{a.model}.pt')
     model.set_classes(names, model.get_text_pe(names))
     ep = E.dp.load_episode(E.dp.ROOT, a.episode)

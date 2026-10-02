@@ -1,5 +1,5 @@
 //! 오도메트리: base_qvel(로봇 기준 vx, vy, wz) 을 30 Hz 로 적분한 이번 판 출발점 기준 위치.
-//! 옛 meridian `demo_player.py` `camera_poses()`(deprecated/meridian) 와 **같은 식**(전진 오일러, 프레임 i 는 i-1 의 속도로 갱신)
+//! `src/scenemap/eval/demo_data.py` `camera_poses()` 와 **같은 식**(전진 오일러, 프레임 i 는 i-1 의 속도로 갱신)
 //! 을 써서 씬그래프 좌표와 맞춘다. 로봇 전역 위치(시뮬레이터 정답)는 평가 때 금지라 쓰지 않는다.
 
 use serde::{Deserialize, Serialize};

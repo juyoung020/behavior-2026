@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # WSL Ubuntu 22.04 준비: 사용자, 기본 도구, uv, openpi(π0.5 서버), Isaac-GR00T.
 # root 로 실행: wsl -d Ubuntu-22.04 -u root -- bash /mnt/c/behavior-2026/tools/setup/setup_wsl.sh
-# ROS 2 Humble 단계는 meridian(폐기 09-30) 전용이라 뺐다 — 옛 판은 deprecated/tools_setup/setup_wsl_ros2.sh.
+# ROS 2 Humble 단계는 쓰지 않아 뺐다.
 set -euo pipefail
 LOG=/mnt/c/behavior-2026/logs/wsl_setup_$(date +%Y%m%d_%H%M).log
 exec > >(tee -a "$LOG") 2>&1

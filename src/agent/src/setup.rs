@@ -85,10 +85,6 @@ pub fn build_graph(a: &Args) -> Box<dyn SceneGraph> {
                 Box::new(NullGraph)
             }
         },
-        m if m.starts_with("meridian") => {
-            eprintln!("--graph meridian 은 폐기(2026-09-30, deprecated/) — --graph scenemap 을 쓴다. 그래프 없이");
-            Box::new(NullGraph)
-        }
         u if u.starts_with("http") => Box::new(HttpGraph::new(u, a.num("graph-timeout-s", 5))),
         path => match StaticGraph::load(path) {
             Ok(g) => Box::new(g),

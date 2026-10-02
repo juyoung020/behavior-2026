@@ -28,11 +28,11 @@ reference resolution, step budgets and instruction rendering. Deciders: `LlmDeci
 | `relay.rs` | Relay: cut-through vs. hold, planner threads, ping handling while planning, latency stats |
 | `ws.rs` | Hand-written RFC 6455: handshake (`/healthz`), frames, mask rotation, vectored writes, `poll(2)`, `TCP_QUICKACK` |
 | `msgpack.rs` / `wire.rs` | Zero-copy scan of masked msgpack; observation keys, `base_qvel`, grippers, images, injected suffix |
-| `session.rs` / `odom.rs` / `monitor.rs` | Per-environment odometry (same integration as `src/meridian/demo_player.py`), five boundary triggers |
+| `session.rs` / `odom.rs` / `monitor.rs` | Per-environment odometry (same integration as `camera_poses()` in `src/scenemap/eval/demo_data.py`), five boundary triggers |
 | `planner.rs` | `Core`, `Decider`, `LlmDecider`, `PriorDecider`, automatic evidence, deterministic fallback |
 | `tools.rs` | Tool schemas and execution: `issue_command`, `continue_current`, `finish`, `graph_query`, `resolve_reference`, `look`, `robot_state`, `goal_status`, `set_plan`, `remember` |
 | `context.rs` / `memory.rs` / `plan.rs` | Single system message context, recent-turn window + summaries after the decision, checklist |
-| `graph.rs` | meridian `scene_server` client (TCP JSON lines, `127.0.0.1:7791`), static/shared graphs, object memory |
+| `graph.rs` | `SceneQuery` / `ScenemapGraph` (in-process scenemap, `--graph scenemap`), HTTP and static-file (`{"objects": [...]}`) graphs, object memory |
 | `catalog.rs` / `bddl.rs` / `vocab.rs` / `instruction.rs` | Task cards (`assets/tasks.json`: prompts, limits, BDDL, top demo step orders, step budgets), 35-skill vocabulary, 4 instruction formats, π0.5 token budget |
 | `llm.rs` / `http.rs` / `codec.rs` | Chat Completions (explicit deterministic sampling), hand-written HTTP, `curl` for HTTPS, replay/fake LLMs, local-server up/down hooks; base64, SHA-1 |
 | `trace.rs` / `replay.rs` | JSONL execution records, timeline, single-file HTML player, replay verification |
@@ -44,12 +44,12 @@ reference resolution, step budgets and instruction rendering. Deciders: `LlmDeci
 
 ```bash
 export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/cargo-target/agent
-cd /mnt/c/behavior-2026/src/agent
+cd ~/behavior-2026/src/agent
 cargo test --release                                  # 40 tests
 cargo run --release -- sim --scenario trash --llm oracle
 set -a; . ~/.config/behavior-2026/kau.env; set +a     # API key via environment only
 cargo run --release -- sim --scenario radio --llm kau --no-images
-cargo run --release -- relay --listen 0.0.0.0:8000 --upstream 127.0.0.1:8100 --mode agent --llm kau --graph meridian
+cargo run --release -- relay --listen 0.0.0.0:8000 --upstream 127.0.0.1:8100 --mode agent --llm kau --graph scenemap   # scenemap only inside simlink; elsewhere falls back to no graph
 ```
 
 Runs are written to `runs/` (git-ignored).

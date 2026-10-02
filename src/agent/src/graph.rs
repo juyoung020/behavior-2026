@@ -1,7 +1,7 @@
 //! 씬그래프 조회와 에이전트 쪽 물체 기억.
 //!
 //! 물체 지도는 scenemap(2D SLAM + YOLOE 검출 물체 지도, C++/CUDA, 같은 프로세스 C ABI — docs/scenemap_설계.md)이 만든다.
-//! 계획기는 [`SceneQuery`] 로 묻고, [`ScenemapGraph`] 가 그것을 [`SceneGraph`] 자리에 끼운다(옛 meridian TCP 질의는 deprecated/agent/).
+//! 계획기는 [`SceneQuery`] 로 묻고, [`ScenemapGraph`] 가 그것을 [`SceneGraph`] 자리에 끼운다.
 //! 좌표계는 이번 판 출발점 기준 오도메트리("map") — 중계기 [`crate::odom`] 과 같은 식이다.
 //!
 //! 그래프가 아직 없으면 [`StaticGraph`](JSON 파일/가짜 세계)로 대신한다.
@@ -43,7 +43,7 @@ pub struct Node {
 }
 
 impl Node {
-    /// 물체 JSON → Node. scenemap 질의 결과를 JSON 으로 저장한 파일(`{"objects": [...]}`)과 옛 meridian scene_server 응답 파일을
+    /// 물체 JSON → Node. scenemap 질의 결과를 JSON 으로 저장한 파일(`{"objects": [...]}`)과 외부 물체 표 JSON 파일을
     /// 읽는다(필드: id, name|category, score|category_score, structural, position, extent, room, handled, original_position,
     /// n_obs|num_observations).
     pub fn from_json(v: &serde_json::Value) -> Option<Node> {
@@ -288,7 +288,7 @@ impl StaticGraph {
     pub fn load(path: &str) -> Result<StaticGraph, String> {
         let t = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(&t).map_err(|e| format!("{path}: {e}"))?;
-        // 물체 표 JSON({"objects": [...]}: scenemap 질의 저장·옛 meridian 응답)도 그대로 읽는다
+        // 물체 표 JSON({"objects": [...]}: scenemap 질의 저장·외부 물체 표)도 그대로 읽는다
         if let Some(objs) = v.get("objects").and_then(|o| o.as_array()) {
             return Ok(StaticGraph { nodes: objs.iter().filter_map(Node::from_json).collect(), name: format!("file:{path}") });
         }

@@ -9,7 +9,6 @@ state 한 행 = 그 스텝의 시뮬레이터 상태를 이어 붙인 것. 물�
 이고 uuid = md5(이름) % 1e8 을 float32 로(OmniGibson get_uuid, scripts/learning/update_lerobot_base_qvel.py 와 같은 방법).
 행마다 열 위치가 바뀔 수 있어(물체 수·상태 크기) 행마다 uuid 를 찾는다. LeRobot 프레임 t = state 행 t(행동 t 직전).
 
-(deprecated/meridian/eval/gt_traj.py 에서 옮겨 옴)
   python gt_traj.py <LeRobot 에피소드>   # 요약: 로봇 이동 거리, 물체별 이동량
 """
 import glob
@@ -20,7 +19,7 @@ import sys
 
 import numpy as np
 
-ROOT = '/mnt/c/behavior-2026' if os.path.isdir('/mnt/c/behavior-2026') else 'C:/behavior-2026'
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # 저장소 루트
 DEMOS = f'{ROOT}/data/2026-challenge-demos'
 RAW = f'{ROOT}/data/2026-challenge-rawdata'
 
@@ -143,7 +142,7 @@ MARKS = (1, 2, 5, 10, 20, 50, 100)
 
 
 def errors(rel, est, dist):
-    """정답(rel)·추정(est) 자세 (N,3) 의 위치·yaw 오차. 이동 거리 MARKS 지점·끝·최대 행과 프레임별 오차(deprecated pose_error.py)."""
+    """정답(rel)·추정(est) 자세 (N,3) 의 위치·yaw 오차. 이동 거리 MARKS 지점·끝·최대 행과 프레임별 오차."""
     pe = np.linalg.norm(rel[:, :2] - est[:, :2], axis=1)
     ye = np.degrees(np.abs((rel[:, 2] - est[:, 2] + np.pi) % (2 * np.pi) - np.pi))
     rows = []

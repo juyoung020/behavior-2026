@@ -5,13 +5,10 @@ Every frame is decoded once (demo_player: 640 x 480 RGB, depth), its ground trut
 2-px grid -> map points with the ground-truth camera pose -> gt_scene.label = GT object per pixel) and every detector
 runs on it through the C API (ctypes; the library itself needs no Python).
 
-  ~/meridian_export_venv/bin/python ovdet_eval.py --episodes 0:0:40:5 200:0:0:15 \
-      --det y11l=~/meridian_models/x86_sm120/yoloe-11l-task.plan \
-      --det fastsam=~/meridian_models/x86_sm120/fastsam.plan,clip=...clip_image.plan,text=...text_emb.bin \
+  ~/ovdet_export_venv/bin/python ovdet_eval.py --episodes 0:0:40:5 200:0:0:15 \
+      --det y11l=~/ovdet_models/x86_sm120/yoloe-11l-task.plan \
       --out ~/ovdet_eval/result.json
-A detector with clip=/text= is the retired FastSAM + CLIP path (deprecated/ovdet_fastsam, --lib-fastsam).
-Ground truth and frame decoding reuse the retired meridian evaluation modules (deprecated/meridian: demo_player,
-gt_scene, gt_traj) until scenemap's evaluation has its own.
+Ground truth and frame decoding use scenemap's evaluation modules (src/scenemap/eval: demo_data, gt_scene, gt_traj).
 
 Metrics (per (frame, GT object) instance; an object is visible with >= --min-px labelled grid pixels):
   found      : some detection with mask IoU >= 0.5 against the object
@@ -32,12 +29,11 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, '/mnt/c/behavior-2026/deprecated/meridian')
-sys.path.insert(0, '/mnt/c/behavior-2026/deprecated/meridian/eval')
-import demo_player as dp  # noqa: E402
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # repository root
+sys.path.insert(0, os.path.join(ROOT, 'src', 'scenemap', 'eval'))
+import demo_data as dp  # noqa: E402
 import gt_scene  # noqa: E402
 
-ROOT = '/mnt/c/behavior-2026'
 PROMPTS = f'{ROOT}/src/ovdet/config/task_prompts.txt'
 CATMAP = f'{ROOT}/BEHAVIOR-1K/bddl3/bddl/generated_data/category_mapping.csv'
 # prompt names of scene structures -> GT asset categories they stand for (their synsets differ from the prompt word)
@@ -59,11 +55,6 @@ _TAIL = [('device', C.c_int32), ('conf_th', C.c_float), ('nms_iou', C.c_float), 
 
 class Cfg(C.Structure):          # src/ovdet
     _fields_ = [('seg_engine', C.c_char_p), ('names', C.c_char_p)] + _TAIL
-
-
-class CfgFs(C.Structure):        # deprecated/ovdet_fastsam
-    _fields_ = [('seg_engine', C.c_char_p), ('names', C.c_char_p), ('clip_engine', C.c_char_p),
-                ('text_emb', C.c_char_p)] + _TAIL
 
 
 class Img(C.Structure):
@@ -99,24 +90,17 @@ def norm(s):
 
 
 class Detector:
-    def __init__(self, libs, spec):
+    def __init__(self, L, spec):
         name, rest = spec.split('=', 1)
         parts = rest.split(',')
         kv = dict(p.split('=', 1) for p in parts[1:])
-        fs = 'clip' in kv
-        L = libs('fastsam' if fs else 'ovdet')
         self.L, self.name = L, name
-        cfg = CfgFs() if fs else Cfg()
+        cfg = Cfg()
         L.ovd_default_config(C.byref(cfg))
         self._keep = [os.path.expanduser(parts[0]).encode()]
         cfg.seg_engine = self._keep[0]
-        if fs:
-            self._keep += [os.path.expanduser(kv['clip']).encode(), os.path.expanduser(kv['text']).encode()]
-            cfg.clip_engine, cfg.text_emb = self._keep[1], self._keep[2]
-            cfg.conf_th, cfg.small_conf = 0.4, 0.85   # the FastSAM setting of the meridian frontend
-        else:
-            self._keep.append((os.path.expanduser(parts[0]) + '.names.txt').encode())
-            cfg.names = self._keep[-1]
+        self._keep.append((os.path.expanduser(parts[0]) + '.names.txt').encode())
+        cfg.names = self._keep[-1]
         for k in ('conf_th', 'small_conf', 'nms_iou', 'mask_iou'):
             if k in kv:
                 setattr(cfg, k, float(kv[k]))
@@ -200,9 +184,8 @@ def gt_grid(gt, depth, R, t, step):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--lib', default='~/ovdet_build/libovdet.so')
-    ap.add_argument('--lib-fastsam', default='~/ovdet_fastsam_build/libovdet_fastsam.so')
     ap.add_argument('--episodes', nargs='+', default=['0:0:40:5', '200:0:0:15'], help='episode:start_s:dur_s(0=all):every')
-    ap.add_argument('--det', action='append', required=True, help='name=engine[,clip=..,text=..,prompt=task|all,conf_th=..]')
+    ap.add_argument('--det', action='append', required=True, help='name=engine[,prompt=task|all,conf_th=..]')
     ap.add_argument('--step', type=int, default=2)
     ap.add_argument('--min-px', type=int, default=20, help='visible: labelled grid pixels')
     ap.add_argument('--small-px', type=int, default=1500, help='small: full-resolution pixels')
@@ -210,13 +193,8 @@ def main():
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
     from gt_traj import GtTraj, camera_poses_from_base
-    cache = {}
-
-    def libs(kind):
-        if kind not in cache:
-            cache[kind] = load_lib(a.lib, Cfg) if kind == 'ovdet' else load_lib(a.lib_fastsam, CfgFs)
-        return cache[kind]
-    dets = [Detector(libs, s) for s in a.det]
+    lib = load_lib(a.lib, Cfg)
+    dets = [Detector(lib, s) for s in a.det]
     vocab_all = [l.strip() for l in open(os.path.expanduser(a.vocab_names), encoding='utf-8')
                  if l.strip() and not l.startswith('#')]
     syn = synset_keys()

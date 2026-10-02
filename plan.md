@@ -5,7 +5,7 @@
 ## 0. 핵심 아이디어
 
 **동적 3D 씬그래프 + AI 에이전트(또는 강화학습) + VLA 의 결합.**
-- 동적 씬그래프(scenemap, 새로 만듦): 2D SLAM 지도 + YOLOE 로 찾은 물체를 깊이로 3D 위치에 등록·갱신 → 기억. (옛 meridian 은 `deprecated/` 로 폐기, 09-30 사용자 결정)
+- 동적 씬그래프(scenemap, 새로 만듦): 2D SLAM 지도 + YOLOE 로 찾은 물체를 깊이로 3D 위치에 등록·갱신 → 기억.
 - AI 에이전트(Qwen): 그 그래프로 긴 계획·단계 추적·실패 복구. 결정기는 LLM 과 분리돼 있어 강화학습 결정기로 바꿔 끼울 수 있다.
 - VLA(π0.5): 지금 단계 지시 + 카메라로 행동.
 - 구현 원칙: **병목 제로.** C++/CUDA 를 손으로(라이브러리는 뜻밖의 병목), 조율은 Rust, PyTorch 안 씀.
@@ -62,7 +62,7 @@
 - 대회 환경 기준(평가 수치·엔진 정답지·렌더 비교), 재학습, 대량 평가에 필요. 10-02 부터 작업 PC 가 리눅스(Ubuntu 22.04.5, RTX 4090 24 GB) — [docs/Linux_설치.md](docs/Linux_설치.md).
 
 ### 4.4 위치 추정 (평가 때는 GT 금지 → 실시간 추정)
-- 실측(원본 HDF5 GT, 13 에피소드): **base_qvel 적분만으로는 크게 틀어진다** — 이동 10 m 에서 중앙 1.16 m(최대 2.9 m), 에피소드 끝 중앙 1.6 m(최대 9.7 m), yaw 최대 166°. 기록 각속도가 실제 회전보다 크다(비율 0.88~0.97, 에피소드마다 다름). `deprecated/meridian/eval/odom_error.py` (새 스택으로 옮기는 중).
+- 실측(원본 HDF5 GT, 13 에피소드): **base_qvel 적분만으로는 크게 틀어진다** — 이동 10 m 에서 중앙 1.16 m(최대 2.9 m), 에피소드 끝 중앙 1.6 m(최대 9.7 m), yaw 최대 166°. 기록 각속도가 실제 회전보다 크다(비율 0.88~0.97, 에피소드마다 다름).
 - 대응: 깊이 기반 보정(keyframe 깊이 점 → 정적 지도 point-to-plane, 평면 3자유도) CPU 시제품 → 손 CUDA. 카메라 외부 자세(robot2cam)는 정확해 그대로. 통합 쪽 위치 추정기는 교체 가능한 자리로.
 
 ### 4.5 평가량·보험
@@ -75,7 +75,7 @@
 | π0.5 네이티브 엔진 | 평가기 안 radio 600 스텝 동작 확인. 1위 체크포인트 4개 내보내기 끝. 이 PC 에선 아직 안 돌림(빌드에 CUDA 12.8+ · sm_89 필요, 속도는 이 PC 에서 다시 잴 것). 다음: 새 커널 검증 → radio 공식 제한시간 한 판 → 1위 모델 보험 평가(과제 0~49) | `src/pi05_native/`, `docs/π05_네이티브엔진.md` |
 | 시뮬 엔진(포팅 평가기) | 자유 강체·SSE 흉내(572만 비교)·볼록 접촉(56만 점)·BDDL 판정(100과제) PhysX/공식과 비트 동일. 풀이·관절체·조인트·렌더 작성 중. 리눅스 공식 물리 기록은 이 PC 에서 다시 | `src/engine/`, `docs/엔진_자체구현.md` |
 | 원본 평가기·검은 화면 | 리눅스 PC 에서 검은 프레임 0(10-02), 검출은 유지. 실험 실행기 리눅스판 필요 | `tools/black_frame_check.py`, `docs/평가기_가속설계.md` |
-| 인지(scenemap) | meridian 폐기(`deprecated/`), 새로 만듦: 2D SLAM(후보 3개 비교 중) + 물체 지도 + 계획기 질의. 검출기는 YOLOE(AGPL, 제출물 공개 허용 — 사용자 결정) | `src/scenemap/`, `src/ovdet/`, `docs/scenemap_설계.md` |
+| 인지(scenemap) | 새로 만듦: 2D SLAM(후보 3개 비교 중) + 물체 지도 + 계획기 질의. 검출기는 YOLOE(AGPL, 제출물 공개 허용 — 사용자 결정) | `src/scenemap/`, `src/ovdet/`, `docs/scenemap_설계.md` |
 | 상위 에이전트 | Rust 완성(시험 40개, 가짜 세계 성공, 중계기 바이트 동일, 숫자 명령 금지) | `src/agent/`, `docs/에이전트_설계.md` |
 | 학습 데이터 파이프라인 | **끝.** torch 없는 네이티브 로더, 원래와 비트 동일, 264~289 표본/초(원래 36.1 → 약 7~8 배). **학습 자체는 보류** | `src/fasttrain/`, `docs/학습환경_가속.md` |
 | 지시 형식 실험 | radio·pt50 끝(3절), 문서 완료 | `docs/실험_지시형식_오프라인.md` |
@@ -84,7 +84,7 @@ GPU 1장(24 GB)을 나눠 쓴다 — 시뮬레이터 실행은 한 번에 하나
 
 ## 6. 정한 것
 
-- 연결: π0.5 + scenemap 은 단계 지시로. 인지 스택은 새로 만든 scenemap(2D SLAM + YOLOE 물체 지도, 사용자 팀 robot-programming-team 의 plan·model_selection 을 따름). meridian 은 폐기(`deprecated/`).
+- 연결: π0.5 + scenemap 은 단계 지시로. 인지 스택은 새로 만든 scenemap(2D SLAM + YOLOE 물체 지도, 사용자 팀 robot-programming-team 의 plan·model_selection 을 따름).
 - 계획기 LLM: 지금은 KAU API(`qwen3.5-9b`), 키는 `~/.config/behavior-2026/kau.env`(저장소 밖). 제출용은 로컬 Qwen(GPU). 결정론 설정(temperature 0, seed)을 요청마다 명시.
 - 지시: 모호하지 않게, 숫자 명령 금지, π0.5 문장 90 토큰 이내.
 - 언어: C++/CUDA 손으로 + Rust 조율, 파이썬은 공식 파이썬 프로세스 접착부·일회성 도구만, PyTorch 금지. 에이전트 프레임워크 금지(OpenAI 호환 API 원형을 직접).

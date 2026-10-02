@@ -2,7 +2,7 @@
 """YOLOE ONNX (export_yoloe.py) -> TensorRT FP16 plan (4 GiB workspace), <onnx>.names.txt copied next to it.
 GPU: run under the shared GPU lock (src/engine/scripts/gpu_lock.sh).
 
-  ~/meridian_venv/bin/python build_engines.py ~/meridian_models/onnx/yoloe-11l-all.onnx ... --out ~/meridian_models/x86_sm120
+  ~/ovdet_venv/bin/python build_engines.py ~/ovdet_models/onnx/yoloe-11l-all.onnx ... --out ~/ovdet_models/x86_sm120
 """
 import argparse
 import shutil
@@ -35,7 +35,7 @@ def build(onnx_path, out_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('onnx', nargs='+')
-    ap.add_argument('--out', default=str(Path.home() / 'meridian_models' / 'x86_sm120'))
+    ap.add_argument('--out', default=str(Path.home() / 'ovdet_models' / 'x86_sm120'))
     a = ap.parse_args()
     for o in map(Path, a.onnx):
         dst = Path(a.out) / (o.stem + '.plan')

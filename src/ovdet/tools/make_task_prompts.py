@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Task prompt table of the open-vocabulary segmenter: every challenge task -> its BDDL object categories, plus the
-scene structures ('_scene'). Names are the category vocabulary's (make_category_vocab.py), so each is a class of the
+scene structures ('_scene'). Names are the category vocabulary's (config/vocab_all.txt), so each is a class of the
 YOLOE 'all' engine.
 
   python make_task_prompts.py   # -> src/ovdet/config/task_prompts.txt
@@ -9,8 +9,8 @@ import json
 import os
 import re
 
-ROOT = '/mnt/c/behavior-2026' if os.path.isdir('/mnt/c/behavior-2026') else 'C:/behavior-2026'
-OUT = f'{ROOT}/meridian_ws/src/meridian_frontend/src/ovdet/config/task_prompts.txt'
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # repository root
+OUT = f'{ROOT}/src/ovdet/config/task_prompts.txt'
 SCENE = ['wall', 'floor', 'ceiling', 'door', 'window', 'rug', 'curtain', 'picture frame', 'lamp', 'plant',
          'staircase', 'railing', 'baseboard', 'light switch', 'electric outlet', 'radiator', 'sofa', 'shelf']
 

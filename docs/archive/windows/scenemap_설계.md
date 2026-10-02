@@ -4,7 +4,7 @@
 
 - 근거는 사용자 팀 저장소 `juyoung020/robot-programming-team` 의 [docs/plan.md], [docs/model_selection.md] 다(09-30 판).
   - 이 문서는 그 선택을 **BEHAVIOR 2026 대회 환경에 맞춘 것**이다. 다른 점만 1절 표에 적는다.
-- meridian 에서 검증한 규칙은 가져오고 코드는 새로 짠다(2절). 근거는 [meridian_통합설계.md](../../archive/meridian_통합설계.md) 12절, [통합_실시간.md](통합_실시간.md) 2절이다.
+- meridian 에서 검증한 규칙은 가져오고 코드는 새로 짠다(2절). 근거는 meridian_통합설계.md 12절, [통합_실시간.md](통합_실시간.md) 2절이다.
 - 추정은 "(추정)"으로 적는다.
 
 ## 0. 한눈에

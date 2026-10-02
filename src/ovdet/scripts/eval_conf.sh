@@ -2,8 +2,8 @@
 # Confidence sweep of the YOLOE heads (GPU lock), ep0 40 s + ep200: bash eval_conf.sh
 set -e
 T=$(cd "$(dirname "$0")/.." && pwd)
-M=~/meridian_models/x86_sm120
-PY=~/meridian_export_venv/bin/python
+M=~/ovdet_models/x86_sm120
+PY=~/ovdet_export_venv/bin/python
 source $T/../engine/scripts/gpu_lock.sh
 gpu_lock_acquire ovdet "ovdet: YOLOE confidence sweep (ep0 40 s + ep200)" 25 10
 trap 'gpu_lock_release ovdet' EXIT

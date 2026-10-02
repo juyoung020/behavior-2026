@@ -3,8 +3,8 @@
 (images 1x3x1024x1024 -> output0 1x(4+nc+32)x21504, output1 1x32x256x256). Offline tool (Ultralytics, AGPL-3.0); the
 detector itself runs the TensorRT engine without Python.
 
-  ~/meridian_export_venv/bin/python export_yoloe.py --model yoloe-11s-seg --vocab task:turning_on_radio,picking_up_trash \
-      --out ~/meridian_models/onnx/yoloe-11s-task.onnx
+  ~/ovdet_export_venv/bin/python export_yoloe.py --model yoloe-11s-seg --vocab task:turning_on_radio,picking_up_trash \
+      --out ~/ovdet_models/onnx/yoloe-11s-task.onnx
   --vocab all   = config/vocab_all.txt (100 tasks' BDDL objects + 18 scene structures, 272 names)
   --vocab task:<t1>,<t2>  = those tasks' BDDL object categories + the 18 scene structures
 Writes <out>.names.txt (class order). CPU only.
@@ -14,7 +14,7 @@ import os
 import re
 import shutil
 
-ROOT = '/mnt/c/behavior-2026'
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))   # repository root
 VOCAB = f'{ROOT}/src/ovdet/config/vocab_all.txt'
 SCENE = ['wall', 'floor', 'ceiling', 'door', 'window', 'rug', 'curtain', 'picture frame', 'lamp', 'plant',
          'staircase', 'railing', 'baseboard', 'light switch', 'electric outlet', 'radiator', 'sofa', 'shelf']
@@ -48,7 +48,7 @@ def main():
             names += [n for n in task_names(t) if n not in names]
         names += [n for n in SCENE if n not in names]
     from ultralytics import YOLOE
-    wdir = os.path.expanduser('~/meridian_models/yoloe')
+    wdir = os.path.expanduser('~/ovdet_models/yoloe')
     os.makedirs(wdir, exist_ok=True)
     os.chdir(wdir)                                         # weights and MobileCLIP land here
     model = YOLOE(f'{a.model}.pt')

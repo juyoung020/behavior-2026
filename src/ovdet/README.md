@@ -49,8 +49,8 @@ The engine is built once with a whole vocabulary: every task's BDDL objects plus
 A prompt switches classes on and off. YOLOE's class scores are independent sigmoids per class, so the result equals an engine exported with only the prompt's names. `config/task_prompts.txt` lists each task's names, plus the `_scene` line.
 
 ```
-~/meridian_export_venv/bin/python tools/export_yoloe.py --model yoloe-11l-seg --vocab all --out ~/meridian_models/onnx/yoloe-11l-all.onnx   # CPU, Ultralytics
-~/meridian_venv/bin/python tools/build_engines.py ~/meridian_models/onnx/yoloe-11l-all.onnx                                              # GPU lock
+~/ovdet_export_venv/bin/python tools/export_yoloe.py --model yoloe-11l-seg --vocab all --out ~/ovdet_models/onnx/yoloe-11l-all.onnx   # CPU, Ultralytics
+~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx/yoloe-11l-all.onnx                                              # GPU lock
 ```
 
 ## Build (Linux / WSL; CUDA 12.8, TensorRT 10)
@@ -71,9 +71,9 @@ The Windows host has no TensorRT SDK installed, so the library is built and run 
 Ground truth works as follows:
 
 1. Depth pixels on a 2-px grid are placed in the map with the ground-truth camera pose.
-2. Each point is labelled by `gt_scene` with the GT object whose box contains it.
+2. Each point is labelled by `gt_scene` (`src/scenemap/eval/`) with the GT object whose box contains it.
 
-The FastSAM + CLIP row runs the retired `deprecated/ovdet_fastsam` library.
+The earlier FastSAM + CLIP comparison row has been retired; its numbers remain in `docs/ovdet_검출기.md`.
 
 The results and the reasoning behind the choice are in `docs/ovdet_검출기.md`.
 
@@ -94,7 +94,7 @@ Done:
 
 - The library and its C API, output in the `sm_detections` format.
 - The Linux build.
-- The FastSAM path, moved to `deprecated/ovdet_fastsam`.
+- The FastSAM + CLIP path, compared and retired.
 - The detector comparison, including a confidence sweep. The recommendation is YOLOE-11m, the 272-name engine, `conf_th` 0.10. Details are in `docs/ovdet_검출기.md`.
 - The AGPL notes.
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# WSL 쪽 통합 한 판: simlink(계획기 + scenemap 같은 프로세스) 하나. ROS·meridian 없음(옛 판은 deprecated/integ_ros/).
+# WSL 쪽 통합 한 판: simlink(계획기 + scenemap 같은 프로세스) 하나. ROS 없음.
 #   MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 -u juyoung -- bash /mnt/c/behavior-2026/src/integ/wsl_stack.sh \
 #       <출력 폴더(/mnt/c/...)> [scene 1|0] [llm kau|oracle|none] [simlink 인자 ...]
 # 순서: VRAM 기록 → simlink(--once) → 준비 표시 파일 → 평가기(Windows)가 붙어 한 판 → 연결이 끝나면 simlink 종료 → 끝 표시 파일.
