@@ -137,6 +137,37 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
   (void)ify;
   // 2. 분류
   const int nb = p.bins;
+  // 화소 방위 칸·수평 배율 캐시: 카메라 쪽 수평 성분 (a, b)·z = (점 − 카메라) 이라 방위는 깊이와 무관.
+  // 머리 회전 행렬 원소가 2e-4 안(≈ 0.01°, 방위 칸 0.5° 의 2 %)으로 같으면 다시 씀
+  {
+    const float key[16] = {T[0], T[1], T[2], T[4], T[5], T[6], d.fx, d.fy, d.cx, d.cy, float(d.w), float(d.h), float(d.step), float(nb),
+                           0, 0};
+    bool same = W->pvalid && W->pbin.size() == ng;
+    for (int k = 0; k < 14 && same; ++k) same = std::fabs(key[k] - W->pkey[k]) <= (k < 6 ? 2e-4f : 0.f);
+    if (!same) {
+      W->pbin.resize(ng);
+      W->phs2.resize(ng);
+      const float bsc = nb / (2.f * float(M_PI));
+      for (int j = 0; j < gh; ++j) {
+        const float yn = (j * d.step - d.cy) / d.fy;
+        for (int i = 0; i < gw; ++i) {
+          const float xn = (i * d.step - d.cx) * ifx;
+          const float a = T[0] * xn + T[1] * yn + T[2], bq = T[4] * xn + T[5] * yn + T[6];
+          int k = int((fastAtan2(bq, a) + float(M_PI)) * bsc);
+          k = k < 0 ? 0 : (k >= nb ? nb - 1 : k);
+          W->pbin[size_t(j) * gw + i] = int16_t(k);
+          W->phs2[size_t(j) * gw + i] = a * a + bq * bq;
+        }
+      }
+      std::copy(key, key + 16, W->pkey);
+      W->pvalid = true;
+      ++W->n_cache_miss;
+    } else {
+      ++W->n_cache_hit;
+    }
+  }
+  const int16_t* pbin = W->pbin.data();
+  const float* phs2 = W->phs2.data();
   W->hit_r.assign(nb, std::numeric_limits<float>::infinity());
   W->hx.resize(nb);
   W->hy.resize(nb);
@@ -159,6 +190,16 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
       bb0[i] = std::fmin(bb0[i], std::fmin(c.a[i], c.b[i]) - c.r);
       bb1[i] = std::fmax(bb1[i], std::fmax(c.a[i], c.b[i]) + c.r);
     }
+  const size_t ncap = b.caps.size();
+  float cbox[6 * 64];
+  const size_t ncap_box = std::min<size_t>(ncap, 64);
+  for (size_t ci = 0; ci < ncap_box; ++ci) {
+    const Capsule& c = b.caps[ci];
+    for (int i = 0; i < 3; ++i) {
+      cbox[ci * 6 + i] = std::fmin(c.a[i], c.b[i]) - c.r;
+      cbox[ci * 6 + 3 + i] = std::fmax(c.a[i], c.b[i]) + c.r;
+    }
+  }
   // 맞추기 칸 해시(세대 번호로 비움 — 지우기 없음)
   constexpr size_t kH = 1 << 14;
   if (W->hkey.size() != kH) {
@@ -186,8 +227,12 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
       if (r2 < self2) continue;
       bool self = false;
       if (px >= bb0[0] && px <= bb1[0] && py >= bb0[1] && py <= bb1[1] && pz >= bb0[2] && pz <= bb1[2])
-        for (const Capsule& c : b.caps)
+        for (size_t ci = 0; ci < ncap_box; ++ci) {   // 캡슐마다 상자로 먼저 거름
+          const float* q = &cbox[ci * 6];
+          if (px < q[0] || px > q[3] || py < q[1] || py > q[4] || pz < q[2] || pz > q[5]) continue;
+          const Capsule& c = b.caps[ci];
           if (segDist2(px, py, pz, c.a, c.b) < c.r * c.r) { self = true; break; }
+        }
       for (int s = 0; s < 2 && !self; ++s) {
         if (any_caps) {
           if (dist2(px, py, pz, b.eef[s]) < eef2) self = true;
@@ -207,10 +252,9 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
       }
       // 레이저 한 줄(띠 안 가장 가까운 것) · 바닥 빈칸
       if (pz <= p.band_hi) {
-        const float rx = px - T[3], ry = py - T[7];
-        int k = int((fastAtan2(ry, rx) + float(M_PI)) * bin_scale);
-        k = k < 0 ? 0 : (k >= nb ? nb - 1 : k);
-        const float rr2 = rx * rx + ry * ry;   // 칸마다 거리²로 비교, 끝에서 한 번 sqrt
+        const int k = pbin[c0];
+        const float zz = Zo[c0];
+        const float rr2 = zz * zz * phs2[c0];   // 칸마다 거리²로 비교, 끝에서 한 번 sqrt
         if (pz < p.band_lo) {
           if (rr2 > floor_r[k]) floor_r[k] = rr2;
         } else if (rr2 < hit_r[k]) {

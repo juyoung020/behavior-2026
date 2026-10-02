@@ -20,20 +20,27 @@ void VoxelIndex::reserve(size_t n) {
   while (cap < 2 * n) cap <<= 1;
   if (cap <= keys_.size()) return;
   std::vector<uint64_t> ok;
-  std::vector<uint32_t> ov;
+  std::vector<uint32_t> ov, og;
   ok.swap(keys_);
   ov.swap(vals_);
+  og.swap(gen_);
+  const uint32_t oc = cur_;
   keys_.assign(cap, kEmpty);
   vals_.assign(cap, 0);
+  gen_.assign(cap, 0);
+  cur_ = 1;
   n_ = 0;
   uint32_t dummy;
   for (size_t i = 0; i < ok.size(); ++i)
-    if (ok[i] != kEmpty) insert(ok[i], ov[i], &dummy);
+    if (og[i] == oc) insert(ok[i], ov[i], &dummy);
 }
 
 void VoxelIndex::clear() {
-  if (n_) std::fill(keys_.begin(), keys_.end(), kEmpty);
   n_ = 0;
+  if (++cur_ == 0) {   // 세대 한 바퀴: 진짜로 비움
+    std::fill(gen_.begin(), gen_.end(), 0u);
+    cur_ = 1;
+  }
 }
 
 void VoxelIndex::grow() { reserve(std::max<size_t>(32, n_ * 2)); }
@@ -42,7 +49,8 @@ bool VoxelIndex::insert(uint64_t key, uint32_t val, uint32_t* old) {
   if (keys_.empty() || 2 * (n_ + 1) > keys_.size()) grow();
   const size_t mask = keys_.size() - 1;
   for (size_t i = hash64(key) & mask;; i = (i + 1) & mask) {
-    if (keys_[i] == kEmpty) {
+    if (gen_[i] != cur_) {
+      gen_[i] = cur_;
       keys_[i] = key;
       vals_[i] = val;
       ++n_;
@@ -55,7 +63,6 @@ bool VoxelIndex::insert(uint64_t key, uint32_t val, uint32_t* old) {
   }
 }
 
-// 축마다 21 비트(±2^20 칸 = 0.02 m 칸이면 ±21 km)
 uint64_t voxelKey(float x, float y, float z, float inv) {
   auto q = [&](float v) { return uint64_t(int64_t(std::floor(v * inv)) + (1 << 20)) & 0x1FFFFF; };
   return q(x) | q(y) << 21 | q(z) << 42;

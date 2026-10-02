@@ -66,6 +66,12 @@ struct ScanWork {
   uint32_t gen = 0;
   struct Acc { float x, y, nx, ny; int n; };
   std::vector<Acc> acc;
+  // 화소마다 방위 칸·수평 거리 배율²(카메라 회전·내부 파라미터에만 달림 — 머리가 그대로면 keyframe 사이에 다시 씀)
+  std::vector<int16_t> pbin;
+  std::vector<float> phs2;
+  float pkey[16] = {0};
+  bool pvalid = false;
+  int n_cache_hit = 0, n_cache_miss = 0;
 };
 
 // 로봇에 붙어 같이 움직이는 것(들고 있는 물체·팔 등) 걸러내기.

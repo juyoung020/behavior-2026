@@ -13,7 +13,7 @@
 
 namespace scenemap {
 
-// uint64 → uint32 열린 주소 해시(복셀 번호 → 점 번호). 지우기 없음(다시 만듦)
+// uint64 → uint32 열린 주소 해시(복셀 번호 → 점 번호). 지우기 없음(다시 만듦), 비우기는 세대 번호로 O(1)
 class VoxelIndex {
  public:
   void reserve(size_t n);
@@ -26,6 +26,8 @@ class VoxelIndex {
   void grow();
   std::vector<uint64_t> keys_;
   std::vector<uint32_t> vals_;
+  std::vector<uint32_t> gen_;     // 칸이 이 세대(cur_)면 차 있음 — clear 는 세대만 올림(O(1))
+  uint32_t cur_ = 1;
   size_t n_ = 0;
 };
 

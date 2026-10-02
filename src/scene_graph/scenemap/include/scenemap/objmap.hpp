@@ -150,6 +150,10 @@ class ObjectMap {
   std::vector<uint8_t> kinds_;
   uint32_t next_id_ = 1;
   bool closed_[2] = {false, false};
+  // update 작업 버퍼(keyframe 마다 재사용)
+  std::vector<double> wx_, wy_, wz_, wzc_, wzs_;
+  std::vector<int32_t> wpu_, wpv_, wcol_;
+  VoxelIndex wseen_;
 };
 
 }  // namespace scenemap

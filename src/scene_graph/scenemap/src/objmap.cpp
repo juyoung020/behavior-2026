@@ -20,6 +20,32 @@ double pct(std::vector<double>& v, double q) {
   return v[k];
 }
 
+// 10·50·90 백분위 한 번에(pct 세 번과 같은 값): 중앙값으로 나눈 뒤 아래쪽·위쪽에서만 찾음 — 3n → 약 2n
+void pct3(std::vector<double>& v, double* lo, double* med, double* hi) {
+  const size_t n = v.size(), last = n - 1;
+  auto at = [&](double q) { return std::min(last, size_t(q * last + 0.5)); };
+  const size_t k5 = at(0.5), k1 = at(0.1), k9 = at(0.9);
+  std::nth_element(v.begin(), v.begin() + k5, v.end());
+  *med = v[k5];
+  if (k1 < k5) std::nth_element(v.begin(), v.begin() + k1, v.begin() + k5);
+  *lo = v[k1];
+  if (k9 > k5) std::nth_element(v.begin() + k5 + 1, v.begin() + k9, v.end());
+  *hi = v[k9];
+}
+
+// 백분위에 쓰는 점 수 한도: 넘으면 고른 간격으로 골라 out 에(아니면 그대로 복사)
+constexpr size_t kPctMax = 2048;
+void subsample(const std::vector<double>& v, std::vector<double>* out) {
+  const size_t n = v.size();
+  if (n <= kPctMax) { out->assign(v.begin(), v.end()); return; }
+  out->resize(kPctMax);
+  for (size_t i = 0; i < kPctMax; ++i) (*out)[i] = v[(i * n) / kPctMax];
+}
+
+double d2(const double* a, const double* b) {
+  return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
+}
+
 double dist3(const double* a, const double* b) {
   return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
 }
@@ -148,13 +174,19 @@ void ObjectMap::update(const ObjFrame& f) {
   assoc_.assign(D && D->n > 0 ? D->n : 0, DetAssoc{});
   points_.clear();
   const float inv_vox = float(1.0 / std::max(1e-3, p_.voxel));
-  VoxelIndex seen;
+  VoxelIndex& seen = wseen_;
   const int st = std::max(1, p_.step);
   if (D && D->n > 0) {
     const float sxu = D->img_w > 0 ? float(f.w) / D->img_w : 1.f;   // 검출 영상 화소 ↔ 깊이 화소(크기가 다르면)
     const float syv = D->img_h > 0 ? float(f.h) / D->img_h : 1.f;
-    std::vector<double> X, Y, Z, ZC, ZS;
-    std::vector<int32_t> PU, PV;
+    std::vector<double>& X = wx_;
+    std::vector<double>& Y = wy_;
+    std::vector<double>& Z = wz_;
+    std::vector<double>& ZC = wzc_;
+    std::vector<double>& ZS = wzs_;
+    std::vector<int32_t>& PU = wpu_;
+    std::vector<int32_t>& PV = wpv_;
+    const size_t words = (size_t(D->mask_w) * D->mask_h + 31) / 32;
     for (int k = 0; k < D->n; ++k) {
       if (kindOf(D->cls[k]) == kKindStructure) continue;   // 벽·바닥·문 등: 격자만(물체 아님)
       X.clear(); Y.clear(); Z.clear(); ZC.clear(); PU.clear(); PV.clear();
@@ -164,41 +196,64 @@ void ObjectMap::update(const ObjFrame& f) {
       const int v0 = std::max(0, int(b[1] * syv) - 1), v1 = std::min(f.h - 1, int(b[3] * syv) + 1);
       const double box_px = double(std::max(0, u1 - u0 + 1)) * std::max(0, v1 - v0 + 1);
       const int sk = std::max(st, int(std::ceil(std::sqrt(box_px / std::max(1, p_.max_pts)))));
-      for (int v = v0; v <= v1; v += sk)
-        for (int u = u0; u <= u1; u += sk) {
+      // 열마다 마스크 칸 i·검출 화소 x 를 한 번만(안쪽 고리에 나눗셈 없음)
+      wcol_.clear();
+      for (int u = u0; u <= u1; u += sk) {
+        const float xi = (u + 0.5f) / sxu;
+        wcol_.push_back(int(std::floor((xi - D->mask_ox) / D->mask_sx)));
+        wcol_.push_back(int32_t(xi));
+      }
+      const uint32_t* bits = D->mask_bits + size_t(k) * words;
+      const int MW = D->mask_w, MH = D->mask_h;
+      auto bit = [&](int i, int j) -> bool {
+        if (i < 0 || j < 0 || i >= MW || j >= MH) return false;
+        const size_t c = size_t(j) * MW + i;
+        return (bits[c >> 5] >> (c & 31)) & 1u;
+      };
+      for (int v = v0; v <= v1; v += sk) {
+        const float yi = (v + 0.5f) / syv;
+        const int j = int(std::floor((yi - D->mask_oy) / D->mask_sy));
+        if (j < 1 || j >= MH - 1) continue;
+        const float* drow = f.depth_m ? f.depth_m + size_t(v) * f.w : nullptr;
+        const uint16_t* drow16 = f.depth_m ? nullptr : f.depth_mm + size_t(v) * f.w;
+        int ci = 0;
+        for (int u = u0; u <= u1; u += sk, ci += 2) {
           // 깊이 화소 중심 → 검출 영상 화소 → 마스크 칸, 1 칸 깎기(네 이웃도 마스크)
-          const float xi = (u + 0.5f) / sxu, yi = (v + 0.5f) / syv;
-          const int i = int(std::floor((xi - D->mask_ox) / D->mask_sx)), j = int(std::floor((yi - D->mask_oy) / D->mask_sy));
-          if (!maskBit(D, k, i, j) || !maskBit(D, k, i - 1, j) || !maskBit(D, k, i + 1, j) || !maskBit(D, k, i, j - 1) ||
-              !maskBit(D, k, i, j + 1))
-            continue;
-          const float z = depthAt(u, v);
+          const int i = wcol_[ci];
+          if (!bit(i, j) || !bit(i - 1, j) || !bit(i + 1, j) || !bit(i, j - 1) || !bit(i, j + 1)) continue;
+          const float z = drow ? drow[u] : drow16[u] * 1e-3f;
           if (!(z > p_.zmin && z < p_.zmax)) continue;
           const double xc = (u - f.cx) / f.fx * z, yc = (v - f.cy) / f.fy * z;
           const double px = T[0] * xc + T[1] * yc + T[2] * z + T[3];
           const double py = T[4] * xc + T[5] * yc + T[6] * z + T[7];
           const double pz = T[8] * xc + T[9] * yc + T[10] * z + T[11];
           X.push_back(px); Y.push_back(py); Z.push_back(pz); ZC.push_back(z);
-          PU.push_back(int32_t(xi)); PV.push_back(int32_t(yi));
+          PU.push_back(wcol_[ci + 1]); PV.push_back(int32_t(yi));
         }
+      }
       if (int(X.size()) < p_.min_points) continue;
       // 깊이 이상값(마스크 가장자리로 뒤 벽·바닥이 비침): 카메라 깊이 중앙값 ± max(k·1.4826·MAD, floor) 밖 점 버림
-      ZS = ZC;
+      // 깊이 중앙값·MAD: 점이 kPctMax 넘으면 고른 간격 표본으로(백분위 오차 ≪ 칸 크기, 계산 약 1/3)
+      subsample(ZC, &ZS);
       const double zmed = pct(ZS, 0.5);
       for (double& z : ZS) z = std::fabs(z - zmed);
       const double band = std::max(p_.mad_k * 1.4826 * pct(ZS, 0.5), p_.mad_floor);
       int near_hand = 0;
+      const double hand2 = p_.hand_r * p_.hand_r, chand2 = p_.cloud_hand_r * p_.cloud_hand_r, body2 = p_.body_r * p_.body_r;
       size_t w = 0;
       Obs o;
       seen.clear();
+      o.cxyz.reserve(3 * X.size());
+      o.cpx.reserve(2 * X.size());
       for (size_t i = 0; i < X.size(); ++i) {
         if (std::fabs(ZC[i] - zmed) > band) continue;
         const double pp[3] = {X[i], Y[i], Z[i]};
-        const double dh = std::min(dist3(pp, f.eef[0]), dist3(pp, f.eef[1]));
-        if (dh < p_.hand_r) ++near_hand;
+        const double dh2 = std::min(d2(pp, f.eef[0]), d2(pp, f.eef[1]));
+        if (dh2 < hand2) ++near_hand;
         // 구름 후보: 손·몸 가까운 점은 빼고, 이 관측 안에서 복셀마다 처음 점 하나
         uint32_t old;
-        if (dh >= p_.cloud_hand_r && std::hypot(X[i] - f.base_xy[0], Y[i] - f.base_xy[1]) >= p_.body_r &&
+        const double bx = X[i] - f.base_xy[0], by = Y[i] - f.base_xy[1];
+        if (dh2 >= chand2 && bx * bx + by * by >= body2 &&
             seen.insert(voxelKey(float(X[i]), float(Y[i]), float(Z[i]), inv_vox), 0, &old)) {
           o.cxyz.insert(o.cxyz.end(), {float(X[i]), float(Y[i]), float(Z[i])});
           o.cpx.insert(o.cpx.end(), {PU[i], PV[i]});
@@ -218,8 +273,9 @@ void ObjectMap::update(const ObjFrame& f) {
       o.n = np;
       std::vector<double>* ax[3] = {&X, &Y, &Z};
       for (int a = 0; a < 3; ++a) {
-        o.pos[a] = pct(*ax[a], 0.5);
-        const double lo = pct(*ax[a], 0.1), hi = pct(*ax[a], 0.9);
+        double lo, hi;
+        subsample(*ax[a], &ZS);
+        pct3(ZS, &lo, &o.pos[a], &hi);
         o.ext[a] = hi - lo;
         o.lo[a] = lo;
         o.hi[a] = hi;
