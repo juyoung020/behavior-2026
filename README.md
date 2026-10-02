@@ -2,7 +2,7 @@
 
 **Idea: a dynamic 2D scene graph + an AI agent (or RL planner) + a VLA, combined.**
 
-- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every object found by an open-vocabulary YOLOE detector at an xyz position: the detector gives the object's center, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
+- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every object found by an open-vocabulary YOLOE detector at an xyz position: the detector's segmentation mask gives the object's centroid, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
 - The agent uses that graph for long-horizon planning, step tracking and failure recovery.
 - The VLA (π0.5) turns the current step instruction plus the three cameras into actions.
 
