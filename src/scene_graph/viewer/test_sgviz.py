@@ -26,6 +26,31 @@ def _obj(name, pos, dims, md):
     return a
 
 
+def write_ply(path, xyz, rgb):
+    """binary_little_endian PLY, float x,y,z + uchar red,green,blue (runtime format)."""
+    n = len(xyz)
+    hdr = ("ply\nformat binary_little_endian 1.0\ncomment sgviz test\n"
+           f"element vertex {n}\nproperty float x\nproperty float y\nproperty float z\n"
+           "property uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n")
+    dt = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                   ("red", "u1"), ("green", "u1"), ("blue", "u1")])
+    a = np.zeros(n, dt)
+    a["x"], a["y"], a["z"] = xyz.T
+    a["red"], a["green"], a["blue"] = rgb.T
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(hdr.encode("ascii"))
+        f.write(a.tobytes())
+    os.replace(tmp, path)
+
+
+def cup_points(center, n=200, seed=0):
+    rng = np.random.default_rng(seed)
+    xyz = (np.asarray(center) + rng.uniform(-0.04, 0.04, (n, 3))).astype(np.float32)
+    rgb = np.tile(np.array([[200, 30, 30]], np.uint8), (n, 1))
+    return xyz, rgb
+
+
 def write_dir(d, cup_pos=(1.0, 0.5, 0.8), with_edge=True):
     os.makedirs(os.path.join(d, "objects"), exist_ok=True)
     G = dsg.DynamicSceneGraph()
@@ -37,8 +62,11 @@ def write_dir(d, cup_pos=(1.0, 0.5, 0.8), with_edge=True):
                _obj("cup", cup_pos, (0.08, 0.08, 0.1),
                     {"state": "moved", "n_obs": 7, "score": 0.6, "first_pos": [0.2, 0.1, 0.8],
                      "structural": False, "handled": False,
+                     "points": {"path": "objects/O2_points.ply", "n": 200, "voxel": 0.01,
+                                "stamp": 12.4},
                      "rgbd": {"rgb": "objects/O2_rgb.png", "depth": "objects/O2_depth.png",
-                              "stamp": 12.4, "box_px": [10, 12, 30, 40], "mask_area": 410,
+                              "mask": "objects/O2_mask.png",
+                              "stamp": 12.4, "box_px": [110, 112, 130, 140], "mask_area": 410,
                               "depth_m": 1.234, "cam_T": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]}}))
     G.add_node(dsg.DsgLayers.OBJECTS, dsg.NodeSymbol("O", 3),
                _obj("floor", (0.0, 0.0, 0.0), (30.0, 20.0, 0.5),
@@ -51,12 +79,17 @@ def write_dir(d, cup_pos=(1.0, 0.5, 0.8), with_edge=True):
     G.metadata.set({"stamp": 12.5, "robot_pose": [0.1, -0.2, 0.5], "grid": "map.pgm"})
     G.save(os.path.join(d, "scene.json"))
 
-    rgb = np.zeros((48, 64, 3), np.uint8)
-    rgb[..., 0] = 200
+    # crops are exactly box_px sized (28 rows x 20 cols), like the runtime writes
+    rgb = np.full((28, 20, 3), 200, np.uint8)
     Image.fromarray(rgb).save(os.path.join(d, "objects", "O2_rgb.png"))
-    depth = (np.arange(48 * 64, dtype=np.uint16).reshape(48, 64) % 3000) + 500
-    depth[0, :] = 0
+    depth = np.full((28, 20), 3000, np.uint16)          # background 3 m
+    depth[6:22, 4:16] = 1200 + np.arange(12, dtype=np.uint16) * 10  # cup 1.20-1.31 m
+    depth[0, :] = 0                                     # invalid row
     Image.fromarray(depth).save(os.path.join(d, "objects", "O2_depth.png"))
+    mask = np.zeros((28, 20), np.uint8)
+    mask[6:22, 4:16] = 255
+    Image.fromarray(mask).save(os.path.join(d, "objects", "O2_mask.png"))
+    write_ply(os.path.join(d, "objects", "O2_points.ply"), *cup_points(cup_pos))
 
     pgm = np.full((20, 30), 205, np.uint8)
     pgm[5:15, 5:25] = 254
@@ -78,7 +111,7 @@ def main():
         assert cup.name == "cup" and cup.label == "cup#2" and cup.sym == "O2"
         assert cup.state == "moved" and cup.n_obs == 7 and abs(cup.score - 0.6) < 1e-9
         assert cup.first_pos == (0.2, 0.1, 0.8) and abs(cup.last_seen - 12.5) < 1e-6
-        assert cup.rgbd["box_px"] == [10, 12, 30, 40] and cup.rgbd["depth_m"] == 1.234
+        assert cup.rgbd["box_px"] == [110, 112, 130, 140] and cup.rgbd["depth_m"] == 1.234
         assert sc.objects[1].rgbd is None and sc.objects[1].structural
         assert list(sc.edges) == [(2, 1)] and sc.edges[(2, 1)].relation == "on"
         assert sgviz.relations_of(sc, 2) == ["on table#1"]
@@ -90,13 +123,36 @@ def main():
         fl = sgviz._box_segments(sc.objects[3], 2.0)
         assert np.ptp(fl[..., 0]) <= 2.0 + 1e-5 and np.ptp(fl[..., 1]) <= 2.0 + 1e-5
 
-        # images (lazy cache, crop + depth colorize)
-        cache = sgviz.ImageCache()
-        rgb = cache.get(os.path.join(d, cup.rgbd["rgb"]), "rgb", cup.rgbd["box_px"])
-        dep = cache.get(os.path.join(d, cup.rgbd["depth"]), "depth", cup.rgbd["box_px"])
-        assert rgb.shape == (44, 36, 3) and rgb.dtype == np.uint8, rgb.shape  # 20x28 + 8 margin
-        assert dep.shape == (44, 36, 3) and dep.dtype == np.uint8 and dep.max() > 0
-        assert cache.get(os.path.join(d, "objects/missing.png"), "rgb", None) is None
+        # PLY reader (binary from the runtime format; ascii too)
+        xyz, prgb = sgviz.read_ply(os.path.join(d, "objects", "O2_points.ply"))
+        exyz, ergb = cup_points((1.0, 0.5, 0.8))
+        assert xyz.shape == (200, 3) and np.allclose(xyz, exyz) and (prgb == ergb).all()
+        with open(os.path.join(d, "a.ply"), "w") as f:
+            f.write("ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\n"
+                    "property float y\nproperty float z\nend_header\n0 0 0\n1 2 3\n")
+        axyz, argb = sgviz.read_ply(os.path.join(d, "a.ply"))
+        assert axyz.shape == (2, 3) and argb is None and axyz[1, 2] == 3
+        assert cup.points["voxel"] == 0.01 and sc.objects[1].points is None
+
+        # crop panel: RGB with mask outline, grayscale depth (near bright) + stats
+        crop = sgviz.CropCache().get(d, cup.rgbd)
+        # panel upscales small crops by an integer factor (28 px -> x8 = 224 rows)
+        assert crop["rgb"].shape == (224, 160, 3), crop["rgb"].shape
+        r, dep = crop["rgb"][::8, ::8], crop["depth"][::8, ::8]
+        assert crop["mask"] and r.shape == (28, 20, 3) and dep.shape == (28, 20, 3)
+        assert tuple(r[14, 10]) == (200, 200, 200)       # inside mask untouched
+        assert r[2, 2, 0] < 150                           # outside dimmed
+        assert tuple(r[6, 8]) == (255, 210, 0)            # outline
+        assert (dep[..., 0] == dep[..., 1]).all() and (dep[..., 1] == dep[..., 2]).all()  # gray
+        assert dep[14, 4, 0] > dep[14, 15, 0]             # nearer column brighter
+        assert dep[10, 1, 0] < 100 and dep[0, 5, 0] == 0  # outside mask dark, invalid black
+        mn, md, mx = crop["stats"]
+        assert abs(mn - 1.20) < 1e-6 and abs(mx - 1.31) < 1e-6 and 1.2 < md < 1.31
+        no = sgviz.CropCache().get(d, {"rgb": "objects/missing.png"})
+        assert no["rgb"] is None and no["depth"] is None
+        # full-frame image + box -> cropped (8 px margin); exact-size crop -> untouched
+        assert sgviz.maybe_crop(np.zeros((100, 100)), [10, 12, 30, 40]).shape == (44, 36)
+        assert sgviz.maybe_crop(np.zeros((28, 20)), [110, 112, 130, 140]).shape == (28, 20)
 
         # map
         meta = sgviz.read_map_yaml(os.path.join(d, "map.yaml"))
@@ -144,15 +200,29 @@ def server_check(d):
         assert sorted(df.added) == [1, 2, 3] and df.edges_added == [(2, 1)]
         assert v.poll_once() is None  # unchanged mtime -> no work
         assert set(v._node_handles) == {1, 2, 3} and set(v._edge_handles) == {(2, 1)}
+        names = lambda oid: sorted(h.name.rsplit("/", 1)[1] for h in v._node_handles[oid])
+        assert "points" in names(2) and "bbox" not in names(2), names(2)
+        assert "points" not in names(1) and "bbox" not in names(1)  # boxes default off
+        v.g_boxes.value = True
+        v._redraw_all()
+        assert "bbox" in names(1) and "bbox" not in names(2)  # box only without points
+        v.g_boxes.value = False
+        v._redraw_all()
+        assert v._refresh_points() == []
+        write_ply(os.path.join(d, "objects", "O2_points.ply"), *cup_points((1.0, 0.5, 0.8), n=50, seed=1))
+        assert v._refresh_points() == [2]
+        assert v._refresh_points() == []
         assert "cup#2" in v.g_select.options
         v.select(2)
         assert v.g_select.value == "cup#2"
         txt = v.g_info.content
         for frag in ("cup", "moved", "n_obs | 7", "first_pos", "on table#1", "box_px", "1.234"):
             assert frag in txt, (frag, txt)
-        assert v.g_rgb.visible and v.g_depth.visible
+        assert v.g_rgb.visible and v.g_depth.visible and v.g_dstats.visible
+        assert "1.200 / " in v.g_dstats.content and "inside mask" in v.g_dstats.content
+        assert "200 pts" in txt
         v.select(1)
-        assert not v.g_rgb.visible  # table has no rgbd
+        assert not v.g_rgb.visible and not v.g_dstats.visible  # table has no rgbd
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
             assert r.status == 200
     finally:

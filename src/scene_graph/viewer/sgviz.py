@@ -66,6 +66,7 @@ class ObjInfo:
     bbox_center: Optional[Tuple[float, float, float]] = None
     bbox_corners: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
     rgbd: Optional[Dict[str, Any]] = None
+    points: Optional[Dict[str, Any]] = None  # {"path", "n", "voxel", "stamp"}
     metadata: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -75,7 +76,7 @@ class ObjInfo:
     def draw_sig(self):
         """Fields that affect the 3D drawing."""
         return (self.name, self.pos, self.state, self.structural, self.is_active,
-                self.first_pos, self.bbox_dims, self.bbox_center)
+                self.first_pos, self.bbox_dims, self.bbox_center, repr(self.points))
 
     def full_sig(self):
         return (self.draw_sig(), self.n_obs, self.score, self.last_seen,
@@ -160,6 +161,7 @@ def scene_from_graph(G: dsg.DynamicSceneGraph) -> Scene:
             structural=bool(md.get("structural", False)),
             handled=bool(md.get("handled", False)),
             rgbd=md.get("rgbd") if isinstance(md.get("rgbd"), dict) else None,
+            points=md.get("points") if isinstance(md.get("points"), dict) else None,
             metadata=md,
         )
         bb = getattr(a, "bounding_box", None)
@@ -275,29 +277,158 @@ def map_texture(pgm: np.ndarray, meta: Dict[str, Any]) -> np.ndarray:
     return rgb
 
 
-def colorize_depth(depth: np.ndarray) -> np.ndarray:
-    """uint16 mm (or float m) depth -> RGB uint8 (turbo-like ramp, 0 = black)."""
+_PLY_TYPES = {
+    "char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1",
+    "short": "i2", "int16": "i2", "ushort": "u2", "uint16": "u2",
+    "int": "i4", "int32": "i4", "uint": "u4", "uint32": "u4",
+    "float": "f4", "float32": "f4", "double": "f8", "float64": "f8",
+}
+
+
+def read_ply(path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """Minimal PLY vertex reader (binary little/big endian or ascii; numpy only).
+
+    Returns (xyz float32 [N,3], rgb uint8 [N,3] or None). Elements after
+    "vertex" (faces etc.) are ignored.
+    """
+    with open(path, "rb") as f:
+        if f.readline().strip() != b"ply":
+            raise ValueError("not a PLY file")
+        fmt, n, props, cur, before = None, 0, [], None, 0
+        while True:
+            line = f.readline()
+            if not line:
+                raise ValueError("PLY header without end_header")
+            tok = line.decode("ascii", "replace").split()
+            if not tok or tok[0] in ("comment", "obj_info"):
+                continue
+            if tok[0] == "format":
+                fmt = tok[1]
+            elif tok[0] == "element":
+                cur = tok[1]
+                if cur == "vertex":
+                    n = int(tok[2])
+                elif n == 0:
+                    before += 1  # an element before vertex: unsupported layout
+            elif tok[0] == "property" and cur == "vertex":
+                if tok[1] == "list":
+                    raise ValueError("list property in vertex element")
+                props.append((tok[2], _PLY_TYPES[tok[1]]))
+            elif tok[0] == "end_header":
+                break
+        if before:
+            raise ValueError("elements before vertex are not supported")
+        names = [p[0] for p in props]
+        if fmt == "ascii":
+            data = np.loadtxt(f, max_rows=n, ndmin=2)
+            col = {nm: data[:, i] for i, nm in enumerate(names)}
+        else:
+            end = "<" if fmt == "binary_little_endian" else ">"
+            dt = np.dtype([(nm, end + t) for nm, t in props])
+            buf = f.read(dt.itemsize * n)
+            if len(buf) < dt.itemsize * n:
+                raise ValueError("truncated PLY")
+            arr = np.frombuffer(buf, dtype=dt, count=n)
+            col = {nm: arr[nm] for nm in names}
+    xyz = np.stack([col["x"], col["y"], col["z"]], axis=1).astype(np.float32)
+    rgb = None
+    for keys in (("red", "green", "blue"), ("r", "g", "b")):
+        if all(k in col for k in keys):
+            rgb = np.stack([col[k] for k in keys], axis=1)
+            if rgb.dtype.kind == "f":
+                rgb = rgb * (255.0 if rgb.max() <= 1.0 else 1.0)
+            rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+            break
+    ok = np.all(np.isfinite(xyz), axis=1)
+    return xyz[ok], (rgb[ok] if rgb is not None else None)
+
+
+class PointCache:
+    """(path, mtime_ns, size)-keyed cache of object point clouds."""
+
+    def __init__(self, maxlen: int = 512):
+        self._d: Dict[str, Tuple[Tuple[int, int], Tuple[np.ndarray, Optional[np.ndarray]]]] = {}
+        self._maxlen = maxlen
+
+    @staticmethod
+    def file_key(path: str) -> Optional[Tuple[int, int]]:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def get(self, path: str):
+        """-> (key, (xyz, rgb)) or (None, None) if missing/unreadable."""
+        key = self.file_key(path)
+        if key is None:
+            return None, None
+        hit = self._d.get(path)
+        if hit is not None and hit[0] == key:
+            return key, hit[1]
+        try:
+            pts = read_ply(path)
+        except Exception as ex:  # half-written -> try again on a later poll
+            print(f"[sgviz] ply read failed {path}: {ex}", file=sys.stderr)
+            return None, None
+        if len(self._d) >= self._maxlen and path not in self._d:
+            self._d.pop(next(iter(self._d)))
+        self._d[path] = (key, pts)
+        return key, pts
+
+
+def _erode(m: np.ndarray) -> np.ndarray:
+    e = m.copy()
+    e[1:, :] &= m[:-1, :]
+    e[:-1, :] &= m[1:, :]
+    e[:, 1:] &= m[:, :-1]
+    e[:, :-1] &= m[:, 1:]
+    return e
+
+
+def rgb_overlay(rgb: np.ndarray, mask: Optional[np.ndarray]) -> np.ndarray:
+    """RGB crop with the segment shown: outside dimmed, inside kept, yellow outline."""
+    if mask is None:
+        return rgb
+    out = rgb.astype(np.float32)
+    out[~mask] = out[~mask] * 0.45 + 30.0
+    edge = mask & ~_erode(mask)
+    edge |= np.roll(edge, 1, axis=1)  # 2 px wide
+    out[edge] = (255, 210, 0)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def depth_gray(depth: np.ndarray, mask: Optional[np.ndarray] = None):
+    """Depth crop -> grayscale RGB (near bright, far dark) + stats in metres.
+
+    Range is a robust 2-98 percentile of valid depth inside the mask (whole crop
+    when no mask). Pixels outside the mask are dimmed; invalid (0) is black.
+    Input: uint16 mm, or float metres. Returns (rgb uint8, (min, median, max) m or None).
+    """
     d = depth.astype(np.float32)
     if d.ndim == 3:
         d = d[..., 0]
-    valid = d > 0
+    if depth.dtype.kind in "ui":
+        d = d * 1e-3
+    valid = np.isfinite(d) & (d > 0)
+    sel = valid & mask if mask is not None else valid
+    if not sel.any():
+        sel = valid
     rgb = np.zeros(d.shape + (3,), np.uint8)
-    if not valid.any():
-        return rgb
-    lo, hi = np.percentile(d[valid], [2, 98])
-    if hi <= lo:
-        hi = lo + 1.0
+    if not sel.any():
+        return rgb, None
+    vals = d[sel]
+    lo, hi = np.percentile(vals, [2, 98])
+    if hi - lo < 1e-3:
+        lo, hi = lo - 0.05, hi + 0.05
     t = np.clip((d - lo) / (hi - lo), 0.0, 1.0)
-    # piecewise "jet": near = red, far = blue
-    t = 1.0 - t
-    r = np.clip(1.5 - np.abs(4 * t - 3), 0, 1)
-    g = np.clip(1.5 - np.abs(4 * t - 2), 0, 1)
-    b = np.clip(1.5 - np.abs(4 * t - 1), 0, 1)
-    rgb[..., 0] = (r * 255).astype(np.uint8)
-    rgb[..., 1] = (g * 255).astype(np.uint8)
-    rgb[..., 2] = (b * 255).astype(np.uint8)
-    rgb[~valid] = 0
-    return rgb
+    g = 255.0 - 200.0 * t  # near 255, far 55
+    if mask is not None:
+        g = np.where(mask, g, g * 0.35)
+    g = np.where(valid, g, 0.0)
+    rgb[:] = g.astype(np.uint8)[..., None]
+    stats = (float(vals.min()), float(np.median(vals)), float(vals.max()))
+    return rgb, stats
 
 
 def maybe_crop(img: np.ndarray, box_px, margin: int = 8) -> np.ndarray:
@@ -306,6 +437,8 @@ def maybe_crop(img: np.ndarray, box_px, margin: int = 8) -> np.ndarray:
         return img
     h, w = img.shape[:2]
     x0, y0, x1, y1 = (int(round(v)) for v in box_px)
+    if (x1 - x0, y1 - y0) == (w, h):
+        return img  # stored image is exactly the box crop
     if not (0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h):
         return img  # already a crop (box is in full-frame coords)
     if (x1 - x0) * (y1 - y0) > 0.8 * w * h:
@@ -324,44 +457,84 @@ def _read_image(path: str) -> np.ndarray:
         return np.array(im.convert("RGB"))
 
 
-def _fit(img: np.ndarray, max_side: int = 320) -> np.ndarray:
+def _fit(img: np.ndarray, max_side: int = 320, min_side: int = 240) -> np.ndarray:
+    """Downsample big crops; upscale small ones (nearest, integer) so the panel shows them."""
     h, w = img.shape[:2]
     s = max(h, w)
+    if s < min_side:
+        k = max(1, min(8, max_side // s))
+        return np.repeat(np.repeat(img, k, axis=0), k, axis=1) if k > 1 else img
     if s <= max_side:
         return img
     step = int(math.ceil(s / max_side))
     return img[::step, ::step]
 
 
-class ImageCache:
-    """Lazy (path, mtime)-keyed cache of display-ready crops."""
+class CropCache:
+    """Lazy cache of the panel images for one rgbd record (keyed by file mtimes)."""
 
     def __init__(self, maxlen: int = 64):
-        self._d: Dict[Tuple[str, float, str, str], np.ndarray] = {}
+        self._d: Dict[Any, Dict[str, Any]] = {}
         self._maxlen = maxlen
 
-    def get(self, path: str, kind: str, box_px) -> Optional[np.ndarray]:
-        try:
-            mt = os.stat(path).st_mtime
-        except OSError:
-            return None
-        key = (path, mt, kind, repr(box_px))
+    def get(self, root: str, rgbd: Dict[str, Any]) -> Dict[str, Any]:
+        """-> {"rgb": img|None, "depth": img|None, "stats": (min,med,max)|None, "mask": bool}"""
+        paths = {k: os.path.join(root, rgbd[k]) for k in ("rgb", "depth", "mask")
+                 if isinstance(rgbd.get(k), str)}
+        key = [repr(rgbd.get("box_px"))]
+        for k in sorted(paths):
+            fk = PointCache.file_key(paths[k])
+            key.append((k, fk))
+            if fk is None:
+                paths.pop(k)
+        key = tuple(key)
         if key in self._d:
             return self._d[key]
+        box = rgbd.get("box_px")
+        out: Dict[str, Any] = {"rgb": None, "depth": None, "stats": None, "mask": False}
+        rgb = dep = None
         try:
-            img = _read_image(path)
-        except Exception:
-            return None
-        img = maybe_crop(img, box_px)
-        if kind == "depth":
-            img = colorize_depth(img)
-        elif img.ndim == 2:
-            img = np.repeat(img[..., None], 3, axis=2).astype(np.uint8)
-        img = _fit(np.ascontiguousarray(img))
+            if "rgb" in paths:
+                rgb = maybe_crop(_read_image(paths["rgb"]), box)
+                if rgb.ndim == 2:
+                    rgb = np.repeat(rgb[..., None], 3, axis=2).astype(np.uint8)
+            if "depth" in paths:
+                dep = maybe_crop(_read_image(paths["depth"]), box)
+        except Exception as ex:
+            print(f"[sgviz] crop read failed: {ex}", file=sys.stderr)
+            return out  # not cached: retry on next selection/update
+        mask_rgb = mask_dep = None
+        if "mask" in paths:
+            ref = rgb if rgb is not None else dep
+            try:
+                if ref is not None:
+                    full = _read_image(paths["mask"])
+                    full = full if full.ndim == 2 else full[..., 0]
+                    full = maybe_crop(full, box)
+                    from PIL import Image as _I
+
+                    def fit_mask(shape):
+                        im = _I.fromarray(full.astype(np.uint8))
+                        if im.size != (shape[1], shape[0]):
+                            im = im.resize((shape[1], shape[0]), _I.NEAREST)
+                        return np.array(im) >= 128
+
+                    mask_rgb = fit_mask(rgb.shape) if rgb is not None else None
+                    mask_dep = fit_mask(dep.shape) if dep is not None else None
+                    out["mask"] = True
+            except Exception as ex:
+                print(f"[sgviz] mask read failed: {ex}", file=sys.stderr)
+        if rgb is not None:
+            # scale first so the outline stays thin on upscaled small crops
+            m = _fit(mask_rgb) if mask_rgb is not None else None
+            out["rgb"] = np.ascontiguousarray(rgb_overlay(_fit(rgb), m))
+        if dep is not None:
+            img, stats = depth_gray(dep, mask_dep)
+            out["depth"], out["stats"] = _fit(np.ascontiguousarray(img)), stats
         if len(self._d) >= self._maxlen:
             self._d.pop(next(iter(self._d)))
-        self._d[key] = img
-        return img
+        self._d[key] = out
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -401,7 +574,9 @@ class SgViewer(ViserRenderer):
         self.lock = threading.RLock()
         self.scene: Optional[Scene] = None
         self.selected: Optional[int] = None
-        self.images = ImageCache()
+        self.crops = CropCache()
+        self.points = PointCache()
+        self._points_key: Dict[int, Any] = {}  # oid -> file key of the drawn cloud
         self._scene_mtime = None
         self._map_hash = None
         self._map_handle = None
@@ -419,15 +594,21 @@ class SgViewer(ViserRenderer):
         self.g_status = gui.add_markdown("waiting for scene.json ...")
         with gui.add_folder("Display", expand_by_default=False):
             self.g_labels = gui.add_checkbox("Labels", True)
-            self.g_boxes = gui.add_checkbox("Bounding boxes", True)
+            self.g_points = gui.add_checkbox("Segment points", True)
+            self.g_pcolor = gui.add_dropdown("Point colour", ["true colour", "state colour"],
+                                             initial_value="true colour")
+            self.g_psize = gui.add_number("Point size x voxel", 1.0, min=0.2, max=5.0, step=0.1)
+            self.g_markers = gui.add_checkbox("Centre markers", True)
+            self.g_boxes = gui.add_checkbox("Boxes (objects w/o points)", False)
             self.g_edges = gui.add_checkbox("Support edges", True)
             self.g_trails = gui.add_checkbox("Moved trails", True)
             self.g_struct = gui.add_checkbox("Structural objects", True)
             self.g_gone = gui.add_checkbox("Gone objects", True)
             self.g_map = gui.add_checkbox("Occupancy map", True)
-            self.g_size = gui.add_number("Node radius", 0.06, min=0.01, max=0.5, step=0.01)
+            self.g_size = gui.add_number("Node radius (no points)", 0.06, min=0.01, max=0.5, step=0.01)
             self.g_maxbox = gui.add_number("Max box side [m]", 2.0, min=0.1, max=20.0, step=0.1)
-        for h in (self.g_labels, self.g_boxes, self.g_edges, self.g_trails,
+        for h in (self.g_labels, self.g_points, self.g_pcolor, self.g_psize, self.g_markers,
+                  self.g_boxes, self.g_edges, self.g_trails,
                   self.g_struct, self.g_gone, self.g_size, self.g_maxbox):
             h.on_update(lambda _: self._redraw_all())
         self.g_map.on_update(lambda _: self._map_visibility())
@@ -437,7 +618,8 @@ class SgViewer(ViserRenderer):
             self.g_info = gui.add_markdown("Click a node or pick one above.")
             blank = np.zeros((2, 2, 3), np.uint8)
             self.g_rgb = gui.add_image(blank, label="RGB crop", visible=False)
-            self.g_depth = gui.add_image(blank, label="Depth crop", visible=False)
+            self.g_depth = gui.add_image(blank, label="Depth crop (near bright)", visible=False)
+            self.g_dstats = gui.add_markdown("", visible=False)
         self.g_select.on_update(lambda _: self._on_dropdown())
 
     def _options(self) -> List[str]:
@@ -485,6 +667,7 @@ class SgViewer(ViserRenderer):
             self.g_info.content = "Click a node or pick one above."
             self.g_rgb.visible = False
             self.g_depth.visible = False
+            self.g_dstats.visible = False
             return
         f3 = lambda v: "-" if v is None else "(" + ", ".join(f"{x:.3f}" for x in v) + ")"
         rels = relations_of(sc, o.id)
@@ -501,6 +684,10 @@ class SgViewer(ViserRenderer):
             f"| bbox | {f3(o.bbox_dims)} |",
             f"| relations | {'; '.join(rels) if rels else '-'} |",
         ]
+        if o.points:
+            n = o.points.get("n", "?")
+            vx = o.points.get("voxel")
+            lines.append(f"| points | {n} pts, voxel {vx} m, stamp {o.points.get('stamp', '-')} |")
         rgbd = o.rgbd or {}
         if rgbd:
             lines.append(f"| rgbd stamp | {rgbd.get('stamp', '-')} |")
@@ -511,15 +698,22 @@ class SgViewer(ViserRenderer):
                 lines.append(f"| mask_area | {rgbd.get('mask_area')} |")
         self.g_info.content = "\n".join(lines)
 
-        box = rgbd.get("box_px")
+        crop = self.crops.get(self.dir, rgbd) if rgbd else {}
         for kind, handle in (("rgb", self.g_rgb), ("depth", self.g_depth)):
-            rel = rgbd.get(kind)
-            img = self.images.get(os.path.join(self.dir, rel), kind, box) if rel else None
+            img = crop.get(kind)
             if img is None:
                 handle.visible = False
             else:
                 handle.image = img
                 handle.visible = True
+        st = crop.get("stats")
+        if st is not None and self.g_depth.visible:
+            where = "inside mask" if crop.get("mask") else "whole crop"
+            self.g_dstats.content = (f"depth min / median / max = **{st[0]:.3f} / {st[1]:.3f} / "
+                                     f"{st[2]:.3f} m** ({where})")
+            self.g_dstats.visible = True
+        else:
+            self.g_dstats.visible = False
 
     # ---------------- drawing ----------------
     def _visible(self, o: ObjInfo) -> bool:
@@ -536,8 +730,15 @@ class SgViewer(ViserRenderer):
             except Exception:
                 pass
 
+    def _points_path(self, o: ObjInfo) -> Optional[str]:
+        p = (o.points or {}).get("path")
+        if not isinstance(p, str) or not p:
+            return None
+        return p if os.path.isabs(p) else os.path.join(self.dir, p)
+
     def _draw_node(self, o: ObjInfo):
         self._remove_node(o.id)
+        self._points_key.pop(o.id, None)
         if not self._visible(o):
             return
         sc = self.server.scene
@@ -546,15 +747,45 @@ class SgViewer(ViserRenderer):
         opacity = 0.35 if o.state == "gone" else None
         r = float(self.g_size.value)
         hs: List[Any] = []
-        sph = sc.add_icosphere(f"{base}/node", radius=r, color=col, position=o.pos,
-                               subdivisions=2, opacity=opacity)
-        sph.on_click(lambda _ev, oid=o.id: self.select(oid))
-        hs.append(sph)
+
+        # segment shape (true-colour points) is the object's representation
+        top_z = o.pos[2]
+        has_pts = False
+        path = self._points_path(o)
+        if path is not None:
+            key, pts = self.points.get(path)
+            self._points_key[o.id] = key  # None = missing/unreadable -> retried in poll
+            if pts is not None and len(pts[0]) > 0 and self.g_points.value:
+                xyz, rgb = pts
+                c = xyz.mean(axis=0)
+                if rgb is None or self.g_pcolor.value == "state colour":
+                    colors = np.tile(np.asarray(col, np.uint8), (len(xyz), 1))
+                else:
+                    colors = rgb
+                if o.state == "gone":
+                    colors = (colors.astype(np.float32) * 0.4 + 140 * 0.6).astype(np.uint8)
+                vox = float((o.points or {}).get("voxel") or 0.02)
+                hs.append(sc.add_point_cloud(
+                    f"{base}/points", (xyz - c).astype(np.float32), colors,
+                    point_size=max(1e-3, vox * float(self.g_psize.value)),
+                    point_shape="square", position=tuple(float(v) for v in c)))
+                top_z = float(xyz[:, 2].max())
+                has_pts = True
+            elif pts is not None and len(pts[0]) > 0:
+                has_pts = True  # points hidden by toggle: still no box
+
+        # centre marker: needed for clicking (point clouds are not clickable)
+        if not has_pts or self.g_markers.value:
+            rad = 0.02 if has_pts else r
+            sph = sc.add_icosphere(f"{base}/node", radius=rad, color=col, position=o.pos,
+                                   subdivisions=2, opacity=opacity)
+            sph.on_click(lambda _ev, oid=o.id: self.select(oid))
+            hs.append(sph)
         if self.g_labels.value:
-            hs.append(sc.add_label(f"{base}/label", o.label,
-                                   position=(o.pos[0], o.pos[1], o.pos[2] + 1.8 * r),
+            z = max(top_z, o.pos[2]) + (0.04 if has_pts else 1.8 * r)
+            hs.append(sc.add_label(f"{base}/label", o.label, position=(o.pos[0], o.pos[1], z),
                                    anchor="bottom-center", font_screen_scale=0.8))
-        if self.g_boxes.value:
+        if self.g_boxes.value and not has_pts:
             seg = _box_segments(o, float(self.g_maxbox.value))
             if seg is not None:
                 hs.append(sc.add_line_segments(f"{base}/bbox", seg, col, thickness=1.5,
@@ -565,9 +796,26 @@ class SgViewer(ViserRenderer):
                 hs.append(sc.add_line_segments(
                     f"{base}/trail", np.array([[fp, o.pos]], float), STATE_COLORS["moved"],
                     thickness=3.0, thickness_units="screen"))
-                hs.append(sc.add_icosphere(f"{base}/first", radius=0.5 * r, color=(180, 180, 180),
+                hs.append(sc.add_icosphere(f"{base}/first", radius=0.03, color=(180, 180, 180),
                                            position=tuple(fp), subdivisions=1, opacity=0.6))
         self._node_handles[o.id] = hs
+
+    def _refresh_points(self) -> List[int]:
+        """Redraw objects whose PLY file appeared/changed after the node was drawn."""
+        if self.scene is None:
+            return []
+        todo = []
+        for oid, o in self.scene.objects.items():
+            path = self._points_path(o)
+            if path is None or oid not in self._node_handles:
+                continue
+            if PointCache.file_key(path) != self._points_key.get(oid):
+                todo.append(oid)
+        if todo:
+            with self.server.atomic():
+                for oid in todo:
+                    self._draw_node(self.scene.objects[oid])
+        return todo
 
     def _remove_edge(self, k):
         for h in self._edge_handles.pop(k, []):
@@ -604,7 +852,7 @@ class SgViewer(ViserRenderer):
             return
         o = sc.objects[self.selected]
         self._sel_handle = self.server.scene.add_icosphere(
-            "/selection", radius=2.2 * float(self.g_size.value), color=(255, 220, 0),
+            "/selection", radius=0.12, color=(255, 220, 0),
             position=o.pos, subdivisions=2, wireframe=True)
 
     def _redraw_all(self):
@@ -738,6 +986,8 @@ class SgViewer(ViserRenderer):
         while True:
             try:
                 self.poll_once()
+                with self.lock:
+                    self._refresh_points()
             except Exception as ex:
                 print(f"[sgviz] update error: {ex!r}", file=sys.stderr)
             time.sleep(self.poll)
