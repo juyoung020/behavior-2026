@@ -35,6 +35,8 @@ target_link_libraries(map_timeline scenemap ZLIB::ZLIB)
 # sgrt 기록(SGRT_RECORD) 재생: 자세 모드 비교·단계별 µs(tools/sm_bench.cpp)
 add_executable(sm_bench tools/sm_bench.cpp)
 target_link_libraries(sm_bench scenemap)
+add_executable(stage_bench tools/stage_bench.cpp)
+target_link_libraries(stage_bench scenemap)
 add_executable(capi_replay tools/capi_replay.cpp)
 target_link_libraries(capi_replay scenemap)
 

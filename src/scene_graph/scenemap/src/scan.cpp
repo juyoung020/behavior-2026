@@ -15,6 +15,20 @@ static inline float dist2(float ax, float ay, float az, const float* b) {
   return dx * dx + dy * dy + dz * dz;
 }
 
+// atan2 근사(최대 오차 약 1e-5 rad — 방위 칸 0.5° = 8.7e-3 rad 보다 훨씬 작음). 칸 경계에 걸친 점만 이웃 칸으로 갈 수 있음
+static inline float fastAtan2(float y, float x) {
+  const float ax = std::fabs(x), ay = std::fabs(y);
+  const float mx = std::fmax(ax, ay), mn = std::fmin(ax, ay);
+  if (mx == 0.f) return 0.f;
+  const float a = mn / mx, s = a * a;
+  // 7차 최소 최대 다항식(atan on [0,1])
+  float r = ((((-0.0117212f * s + 0.05265332f) * s - 0.11643287f) * s + 0.19354346f) * s - 0.33262347f) * s + 0.99997726f;
+  r *= a;
+  if (ay > ax) r = 1.57079637f - r;
+  if (x < 0) r = 3.14159274f - r;
+  return y < 0 ? -r : r;
+}
+
 static inline float segDist2(float px, float py, float pz, const float* a, const float* b) {
   const float ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
   const float l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
@@ -194,15 +208,13 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
       // 레이저 한 줄(띠 안 가장 가까운 것) · 바닥 빈칸
       if (pz <= p.band_hi) {
         const float rx = px - T[3], ry = py - T[7];
-        int k = int((std::atan2(ry, rx) + float(M_PI)) * bin_scale);
+        int k = int((fastAtan2(ry, rx) + float(M_PI)) * bin_scale);
         k = k < 0 ? 0 : (k >= nb ? nb - 1 : k);
-        const float rr2 = rx * rx + ry * ry;
+        const float rr2 = rx * rx + ry * ry;   // 칸마다 거리²로 비교, 끝에서 한 번 sqrt
         if (pz < p.band_lo) {
-          const float r = std::sqrt(rr2);
-          if (r > floor_r[k]) floor_r[k] = r;
-        } else {
-          const float r = std::sqrt(rr2);
-          if (r < hit_r[k]) { hit_r[k] = r; hx[k] = px; hy[k] = py; }
+          if (rr2 > floor_r[k]) floor_r[k] = rr2;
+        } else if (rr2 < hit_r[k]) {
+          hit_r[k] = rr2; hx[k] = px; hy[k] = py;
         }
       }
       // 맞추기 점: 수직면 쪽
@@ -254,6 +266,8 @@ void makeScan(const DepthView& d, const BodyState& b, const ScanParams& p, Scan2
   if (want_sig) out->sig.assign(nb, 0);
   const float isc = want_sig ? 1.f / sig_cell : 0.f;
   for (int k = 0; k < nb; ++k) {
+    if (std::isfinite(hit_r[k])) hit_r[k] = std::sqrt(hit_r[k]);
+    if (floor_r[k] > 0) floor_r[k] = std::sqrt(floor_r[k]);
     if (std::isfinite(hit_r[k])) {
       out->hx.push_back(hx[k]);
       out->hy.push_back(hy[k]);
