@@ -9,7 +9,7 @@
 Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C++/CUDA, Rust for orchestration). No PyTorch in our execution paths.
 
 - Plan and decision log: [plan.md](plan.md)
-- Research notes, rules and run logs (Korean): [docs/](docs/README.md)
+- Research notes, rules and run logs (Korean): [docs/](../../README.md)
 - Deadline: 2026-10-16 AoE (KST 10-17 20:59)
 
 ## Repository layout
@@ -38,15 +38,29 @@ plan.md               plan and decisions
 
 ## Environments
 
-**Linux PC (`ad17-MS-7E01`, `~/behavior-2026`)** — the only work machine
-- Ubuntu 22.04.5, RTX 4090 24 GB (sm_89), NVIDIA driver 580.178.04-open (535 failed), CUDA toolkit 11.8 only so far. Details: [docs/Linux_설치.md](docs/Linux_설치.md).
-- conda env `behavior`: Isaac Sim 5.1, OmniGibson (eval), torch 2.7.0+cu128, warp-lang 1.12.0.
-- Official evaluator: `conda activate behavior` → `python -m omnigibson.eval.eval ...`.
-- First check (`tools/setup/linux_first_check.sh`): 5 zero-action runs + 2 replays, 0 black frames.
-- Not here yet: `~/openpi`, secrets in `~/.config/behavior-2026/` (see .env.example). The π0.5 radio checkpoint is being downloaded to `~/checkpoints/zips/pi05_turning_on_radio`.
+**Windows (`C:\behavior-2026`)**
+- conda env `behavior`: Python 3.11, Isaac Sim 5.1, OmniGibson (eval), BDDL, JoyLo.
+- Official evaluator: `conda activate behavior` → `python -m omnigibson.eval.eval ...`, or use `tools/run_eval_radio.ps1`.
+
+**WSL (`Ubuntu-22.04`, user `juyoung`)**
+
+```
+~/openpi                 π0.5 reference server (wensi-ai/openpi, behavior branch)
+~/openpi-comet           2025 2nd-place code adapted to the 2026 evaluator (our changes: src/comet/patches, applied by tools/setup/setup_comet_wsl.sh)
+~/checkpoints/           π0.5 radio, GR00T N1.7 radio, 2025 1st-place submission, Comet pt50
+~/engine-deps/           PhysX 5.6.1 source + build (engine oracle)
+~/.config/behavior-2026/ secrets (KAU API key), never committed — see .env.example
+```
+
+**Linux (`ad17-MS-7E01`, RTX 4090, Ubuntu 22.04.5)**
+- Official evaluator on Linux: conda env `behavior` (Isaac Sim 5.1, torch 2.7.0+cu128, warp-lang 1.12.0), NVIDIA driver 580.178.04-open (535 failed — see [docs/Linux_설치.md](../../Linux_설치.md)).
+- First check (`tools/setup/linux_first_check.sh`): 5 zero-action runs + 2 replays, 0 black frames — black-frame issue (B) does not occur on Linux, so submission runs use this PC.
 
 ## Setup notes
 
 - Submodules: `git submodule update --init` (BEHAVIOR-1K, refs, Spark-DSG).
 - Commits carry no Claude co-author lines: `.claude/settings.json` turns attribution off, and `tools/git-hooks/commit-msg` strips any that slip through. Run once per clone: `git config core.hooksPath tools/git-hooks`.
-- Data, assets, keys, model weights and videos are not in git. Download scripts live in `tools/setup/`, and install notes in [docs/Linux_설치.md](docs/Linux_설치.md) (Windows-era notes: [docs/archive/windows/README_최상위.md](docs/archive/windows/README_최상위.md)).
+- Data, assets, keys, model weights and videos are not in git. Download scripts live in `tools/setup/`, and install notes in [docs/설치기록.md](설치기록.md).
+- Known issue on this Windows PC: if another process holds more than about 5 GiB of GPU memory, Isaac Sim 5.1 returns all-black RGB to the policy (depth is fine). See plan.md §4.0.
+  - Do not run the π0.5 server on the same GPU as the simulator.
+  - `tools/black_frame_check.py` flags invalid runs.

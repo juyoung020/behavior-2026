@@ -1,9 +1,9 @@
-# 리눅스 설치 — Ubuntu 22.04 + Isaac Sim 5.1 + BEHAVIOR-1K v3.9.3-post1
+# 작업 PC 환경 — Ubuntu 22.04 + RTX 4090 + Isaac Sim 5.1 + BEHAVIOR-1K v3.9.3-post1
 
-> **실제 상황(10-02 갱신)**: 아래 0~4 절은 Windows PC(RTX 5070 Ti)에 듀얼 부팅하려던 **계획**이다. 실제로는 **다른 PC(RTX 4090)** 에
-> 리눅스 공식 평가기를 깔아 돌리고 있다 → 바로 아래 "실제 리눅스 PC" 절이 현재 사실이다. 0 절(디스크 공간)·2 절(Blackwell 드라이버)은 이 PC 에 해당 없음.
+프로젝트는 이 리눅스 PC 한 대에서 한다(2026-10-02 부터). 주최 측 성능 측정 장비도 "Ubuntu 22.04.5 LTS"([raw/site_challenge_evaluation.md](raw/site_challenge_evaluation.md)).
+지난 계획·기록은 [archive/windows/Linux_설치.md](archive/windows/Linux_설치.md).
 
-## 실제 리눅스 PC (2026-10-01~02)
+## 1. PC
 
 | 항목 | 값 |
 |---|---|
@@ -11,111 +11,48 @@
 | OS | Ubuntu 22.04.5 LTS, 커널 6.8.0-138-generic, Secure Boot 꺼짐 |
 | GPU | RTX 4090 24 GB (Ada, sm_89) 한 장 |
 | 드라이버 | **580.178.04 (`nvidia-driver-580-open`)** — 10-02 에 535.309 에서 올림 |
-| RAM · 디스크 | 31 GB · `/` 432 GB (10-02 남은 공간 144 GB) |
+| CUDA 툴킷 | `/usr/local/cuda-11.8` 만 있음 (네이티브 엔진 빌드에는 12.8+ 필요 — 남은 일) |
+| RAM · 디스크 | 31 GB · `/` 432 GB (10-02 남은 공간 약 140 GB) |
 | BEHAVIOR-1K | `bd049de` (v3.9.3-post1, 공식 압축본과 파일 단위 동일 — `refs/BEHAVIOR-1K_v3.9.3-post1_official/`) |
 | conda `behavior` | isaacsim 5.1.0.0, torch 2.7.0+cu128, warp-lang 1.12.0 |
+| 재부팅 자동 시작 | crontab `@reboot ~/.local/bin/claude-boot.sh` → tmux 세션 `claude`(창 `main` = `claude -c`, `rc` = `claude rc`), 기록 `~/.local/state/claude-boot.log` |
 
-겪은 것(시간순, 기록: `outputs/linux_try_*`, `outputs/linux_first_*`, `logs/linux_dl/`)
-1. 10-01: `import omnigibson` 이 `warp` 없음으로 실패 → `warp-lang==1.12.0` 설치(Windows 와 같은 처리, [설치기록.md](설치기록.md) 51 줄).
+## 2. 설치 순서
+
+1. `bash tools/setup/linux_setup.sh driver` → 재부팅 → `nvidia-smi` 확인. 드라이버는 **580 계열**(535 는 아래 3 절의 오류).
+2. `bash tools/setup/linux_setup.sh base` → 새 셸 → `gh auth login`.
+3. `bash tools/setup/linux_setup.sh repos` (우리 저장소 + BEHAVIOR-1K `bd049de` = v3.9.3-post1).
+4. `bash tools/setup/linux_setup.sh behavior` — 공식 `./setup.sh --new-env --omnigibson --bddl --joylo --dataset --eval`
+   (+ 약관 동의 인자 `--accept-conda-tos --accept-nvidia-eula --accept-dataset-tos`). 이어서 `pip install av "numpy<2"`(검은 프레임 검사 도구가 씀).
+5. `import omnigibson` 이 `warp` 를 요구하면 `pip install warp-lang==1.12.0`(OmniGibson `primitives` 옵션과 같은 버전).
+6. `bash tools/setup/linux_setup.sh check` → `bash tools/setup/linux_first_check.sh 3` (4 절).
+- git 신원: `juyoung020 <151780134+juyoung020@users.noreply.github.com>`. 커밋 훅: `git config core.hooksPath tools/git-hooks`.
+- 복호화 키(`BEHAVIOR-1K/datasets/omnigibson.key`)·토큰(`~/.config/behavior-2026/`)은 커밋하지 않는다.
+
+## 3. 겪은 것 (기록: `outputs/linux_try_*`, `outputs/linux_first_*`, `logs/linux_dl/`)
+
+1. 10-01: `import omnigibson` 이 `warp` 없음으로 실패 → `warp-lang==1.12.0` 설치.
 2. 10-01~02, **드라이버 535**: 매번 Isaac Sim 이 "The currently installed NVIDIA graphics driver is unsupported or has known issues" 경고.
    판마다 실패 모양이 달랐다 — 판 시작 전 조용히 종료, 리셋에서 카메라 RGB 관측이 비어 `Observation space does not match`,
    평가기 생성 중 warp 오류(`wp.matrix(pos, rot, scale)` 가 warp 1.12 에서 없어짐, Isaac Sim fabric 코드).
 3. 10-02 **드라이버 580.178.04-open 으로 올림**(apt, 535 패키지는 580 을 가리키는 전환용으로 바뀜) → 재부팅 뒤 **같은 warp 1.12 그대로 정상 동작**.
    위 2 의 오류들은 535 드라이버 탓으로 본다(warp 오류가 드라이버에 따라 갈린 이유는 확인 못 함 — 추정).
-4. 재부팅 자동 시작: crontab `@reboot ~/.local/bin/claude-boot.sh` → tmux 세션 `claude`(창 `main` = `claude -c`, `rc` = `claude rc`), 기록 `~/.local/state/claude-boot.log`.
+4. 10-02 π0.5 radio 체크포인트(Google Drive, [베이스라인.md](베이스라인.md))를 이 PC 로 받는 중 — Drive 속도 약 1 MB/s, DNS 일시 실패로 끊긴 적 있음(`logs/linux_dl/gdrive_pi05.log`).
 
+## 4. 첫 확인 (`tools/setup/linux_first_check.sh N`)
 
-작성: 2026-09-30 · 목적: 이 PC 의 Windows 에서 생기는 검은 프레임 (B)(RTX 가 카메라 영상 한 칸을 3 스텝 주기로 비움, [평가기_가속설계.md](평가기_가속설계.md) 5.2.2)를
-피해, **렌더가 되는 리눅스에서 공식 평가기를 돌려** 제출용 결과를 뽑는다. 주최 측 성능 측정 장비도 "Ubuntu 22.04.5 LTS"([raw/site_challenge_evaluation.md](raw/site_challenge_evaluation.md)).
-표기: (추정) = 설치 전이라 확인 못 한 것. 스크립트: `tools/setup/linux_setup.sh`, `linux_import_from_windows.sh`, `linux_first_check.sh`.
+radio 인스턴스 0, **0 행동 150 스텝 × N 판**(영상 저장), 판마다 검은 프레임 수(`black_frames.json`) + `tools/black_frame_check.py --max-ratio 0`, 이어서 기준 행동열 재생 비교.
 
-## 0. 먼저 막히는 것 — 디스크 공간 (사용자 결정 필요)
+결과(10-02, `outputs/linux_first_20261002_143938/`, `outputs/linux_first_20261002_145840/`)
+- 0 행동 5 판: 카메라 3 대 모두 검은 프레임 **0/151**, 판 정상 종료(0 행동이라 success 0).
+- 행동열 재생 2 판(501 스텝): 검은 프레임 **0/501**, `black_frame_check.py --max-ratio 0` 통과.
+- **판정: 이 PC 에서는 검은 프레임 (B) 가 나지 않는다.** 검출기(`--black-guard`, `black_frame_check.py`)는 제출 판 증거로 계속 켠다.
+- GUI 실행(창 띄움, 10-02 `outputs/linux_gui_20261002_151040/`): 501 스텝 정상, 검은 프레임 0.
 
-이 PC 디스크는 **Samsung 990 EVO Plus 1 TB 한 장**이고, Windows C: 가 거의 전부(998 GB)를 쓰며 **남은 공간 약 24 GB** 다(09-30 측정). 리눅스 파티션을 만들 자리가 없다.
+## 5. 확인할 것
 
-리눅스에 필요한 공간(대략)
-
-| 항목 | 크기 |
-|---|---|
-| Ubuntu 22.04 + 드라이버·도구 | 약 25 GB |
-| conda `behavior` 환경(Isaac Sim 5.1 pip 휠 25 개 + torch 등) | 약 25 GB (추정) |
-| BEHAVIOR-1K datasets(에셋 3.9.0·로봇 에셋·2026 인스턴스·키) | 34.7 + 1.2 GB |
-| π0.5 체크포인트(radio) + 네이티브 가중치 | 17 + 6.3 GB |
-| 결과(영상·기록, 1,000 판) + 여유 | 50 GB 이상 |
-| **합계** | **최소 약 160 GB, 권장 250 GB** |
-
-선택지
-1. **Windows 쪽 공간을 비우고 C: 를 줄인다**(디스크 관리 > 볼륨 축소). 큰 것: WSL 디스크 `ext4.vhdx` **212 GB**(`C:\Users\user one\AppData\Local\wsl\{5e74…}`), Docker Desktop WSL 디스크, 다른 프로젝트 데이터.
-   예: WSL 안의 안 쓰는 것을 지우고 `wsl --shutdown` 뒤 vhdx 압축(Optimize-VHD / diskpart compact) → C: 250 GB 축소. 축소가 막히면(움직일 수 없는 파일) 페이지 파일·시스템 복원을 잠시 끈다.
-2. **외장 또는 두 번째 NVMe SSD** 에 설치(가장 안전 — Windows 파티션을 안 건드림). 메인보드 M.2 빈 슬롯이 있는지 확인.
-3. 리눅스 USB 라이브 부팅으로 먼저 (B) 가 리눅스에서 안 나는지만 확인(설치 없이 1 판) — 공간·시간이 모자랄 때 판정만.
-
-→ **어느 쪽으로 할지 사용자 결정**. 아래 절차는 파티션(또는 새 SSD)이 준비됐다고 본다.
-
-Windows 쪽 준비(확인됨): 최대 절전 끔(`powercfg /a`), 빠른 시작 끔(`HiberbootEnabled` = 0) → 리눅스에서 NTFS 를 읽기 전용으로 붙일 수 있다. BitLocker 를 쓰면 복구 키를 미리 적어 둔다.
-Secure Boot 상태는 권한 문제로 못 읽었다 — 켜져 있으면 드라이버 설치 때 MOK 등록이 필요하다(3절).
-
-## 1. 설치 순서 한눈에
-
-1. Ubuntu 22.04.5 LTS 설치(USB, "다른 것" 으로 빈 공간에 ext4 `/` + EFI 는 기존 것 공유). 부팅 순서는 GRUB.
-2. `bash tools/setup/linux_setup.sh driver` → 재부팅(MOK 등록) → `nvidia-smi` 확인.
-3. `bash tools/setup/linux_setup.sh base` → 새 셸 → `gh auth login`.
-4. `bash tools/setup/linux_setup.sh repos` (우리 저장소 + BEHAVIOR-1K `bd049de` = v3.9.3-post1).
-5. `sudo bash tools/setup/linux_import_from_windows.sh mount` → `… datasets` → `… data` (Windows 쪽 데이터 복사, 4 절).
-6. `bash tools/setup/linux_setup.sh behavior` (공식 setup.sh, 데이터셋은 5 에서 옮겼으므로 `--dataset` 빼고).
-7. `bash tools/setup/linux_setup.sh check` → `bash tools/setup/linux_first_check.sh 3` (5 절).
-(1~4 는 이 저장소가 아직 리눅스에 없으므로, 처음엔 USB 나 Windows 파티션(`/mnt/win/behavior-2026/tools/setup/`)에서 스크립트를 부른다.)
-
-## 2. NVIDIA 드라이버 (RTX 5070 Ti = Blackwell)
-
-- Blackwell(RTX 50) 은 리눅스에서 **open 커널 모듈** 드라이버만 지원하고 R570 이상이 필요하다(추정 — NVIDIA 공지 기준). 스크립트는 `nvidia-driver-580-open`.
-- 근거: 2025 상위팀 포크의 하드웨어 기록(리눅스) "The RTX 5090 runs the benchmark on driver 580.173.02. It gives a segmentation fault on driver 595.84." — **580 계열, 595 피하기**.
-  같은 기록: "The RTX 5090 still needs a torch build with sm_120 kernels. Use torch 2.7.0+cu128." (공식 setup.sh 가 cu128 torch 를 깐다 — `check` 단계에서 확인.)
-- Isaac Sim 5.1 문서의 리눅스 권장 드라이버 번호는 설치 전에 확인 못 함(추정: 580 계열). 설치 뒤 `nvidia-smi` 의 Driver Version 을 [설치기록.md](설치기록.md) 에 적는다.
-- Secure Boot 켜짐이면 설치 중 정한 비밀번호로 재부팅 때 "Enroll MOK".
-
-## 3. 공식 평가기 설치
-
-- 공식 명령(평가 문서): `./setup.sh --new-env --omnigibson --bddl --joylo --dataset --eval` → conda 환경 `behavior`, Isaac Sim 5.1 pip, OmniGibson[eval], bddl3, joylo.
-- 스크립트는 약관 동의 인자(`--accept-conda-tos --accept-nvidia-eula --accept-dataset-tos`)를 붙이고, 데이터셋은 Windows 에서 복사하므로 `--dataset` 을 뺀다.
-  데이터셋을 새로 받고 싶으면 `--dataset` 을 붙이면 된다(약 35 GB 내려받기).
-- 이어서 `pip install av "numpy<2"`(검은 프레임 검사 도구가 씀). 우리 도구(`tools/eval_instrumented.py`, `exp_run.ps1` 의 리눅스판은 아직 없음)는 파이썬이라 그대로 돈다.
-
-## 4. Windows·WSL 에서 가져올 것
-
-| 무엇 | Windows 위치 | 리눅스 위치 | 방법 |
-|---|---|---|---|
-| 우리 저장소 | GitHub `juyoung020/behavior-2026`(비공개) | `~/behavior-2026` | `gh repo clone` (repos 단계) |
-| BEHAVIOR-1K | `C:\behavior-2026\BEHAVIOR-1K` (bd049de) | `~/behavior-2026/BEHAVIOR-1K` | GitHub 에서 같은 커밋 clone |
-| datasets + 복호화 키 `omnigibson.key` | `C:\behavior-2026\BEHAVIOR-1K\datasets` | 같은 상대 경로 | `linux_import_from_windows.sh datasets` (NTFS 읽기 전용 → rsync) |
-| π0.5 네이티브 가중치·데모 메타 | `C:\behavior-2026\data\pi05_native`, `data\2026-challenge-demos\meta` | `~/behavior-2026/data/` | `… data` |
-| 재생 기준 판(nf_a) | `C:\behavior-2026\outputs\eval_turning_on_radio_20260929_195500_nf_a` | `~/behavior-2026/outputs/` | `… data` |
-| π0.5 체크포인트·openpi | WSL `~/checkpoints`, `~/openpi` (ext4.vhdx 안) | `~/checkpoints` | `… wsl`(vhdx 를 qemu-nbd 로 읽기 전용) → `… ckpts`. openpi 는 새로 clone·`uv sync` 가 깔끔 |
-| 키·토큰 | WSL `~/.config/behavior-2026/kau.env` 등 | 같은 경로 | 손으로 복사(저장소에 넣지 않는다) |
-
-- Windows 파티션은 **항상 읽기 전용**으로 붙인다(스크립트가 `-o ro`). 복호화 키는 datasets 안에 있다(키 파일은 커밋 금지).
-- git 신원: `juyoung020 <151780134+juyoung020@users.noreply.github.com>` (repos 단계가 설정).
-
-## 5. 첫 확인
-
-`bash tools/setup/linux_first_check.sh 3`
-1. radio 인스턴스 0, **0 행동 150 스텝 × 3 판**(영상 저장), 판마다 검은 프레임 수(`black_frames.json`) + `tools/black_frame_check.py --max-ratio 0`.
-   판정: 3 판 모두 0 이면 리눅스에서는 (B) 가 없다고 본다(Windows 에서는 판의 약 60% 에서 났다). 더 확실히 하려면 5 판.
-2. Windows 기록과 같은 행동열(nf_a, 500 스텝) 재생 → `tools/trace_compare.py` 로 물리·판정·JSON 차이를 적는다(OS·드라이버가 달라 비트 동일이 아닐 수 있다 — 기록만).
-3. 그 다음: π0.5 로 radio 한 판(공식 제한시간) → 제출 패키지 도구 흐름 확인. 리눅스용 실행기(`exp_run` 은 PowerShell)는 필요하면 bash 판을 만든다.
-
-## 6. 확인할 것(설치 뒤)
-
-- [x] `nvidia-smi` 드라이버 번호 — RTX 4090, 580.178.04 (10-02)
+- [x] `nvidia-smi` — RTX 4090, 580.178.04
 - [ ] `vulkaninfo --summary`
-- [x] torch 2.7.0+cu128 (4090 은 sm_89 라 sm_120 확인은 해당 없음)
-- [x] 첫 확인 결과 기록 — 아래 "첫 확인 결과"
-
-### 첫 확인 결과 (10-02, `outputs/linux_first_20261002_143938/`)
-- ① 0 행동 radio 1 판(151 스텝): 검은 프레임 카메라 3 대 모두 **0/151**. 판 정상 종료(success 0/1, 0 행동이라 당연).
-- ② Windows nf_a 행동열 재생(501 스텝): 검은 프레임 **0/501**. 판정(success False·q_score 0.0·steps 501) Windows 와 같음,
-  물리는 robot_qpos 최대 1.75e-4·qvel 0.17 차이, JSON 의 agent_distance.left/right 가 소수 넷째 자리에서 다름(`compare_vs_windows.txt`) — plan.md 3 절의 "Windows 공식 ≠ Linux 공식" 측정과 같은 크기.
-- 같은 날 두 번째 실행(`outputs/linux_first_20261002_145840/`): 0 행동 3 판 모두 카메라 3 대 **0/151**, nf_a 재생 **0/501**,
-  `black_frame_check.py --max-ratio 0` 통과(가장 높은 검은 비율 0.0%). 재생 비교는 첫 실행과 같은 값(판정 같음, qpos 최대 1.75e-4).
-- **판정: 0 행동 5 판 연속 + 재생 2 판 모두 검은 프레임 0 → 이 리눅스 PC(RTX 4090, 드라이버 580)에서는 (B) 가 나지 않는다.**
-  (B) 는 Windows 쪽(Windows PC 의 Isaac Sim 렌더 경로) 문제로 본다. 제출용·비트 기준 평가는 이 PC 에서 한다.
+- [x] torch 2.7.0+cu128
+- [ ] CUDA 12.8 툴킷 설치 → 네이티브 π0.5 엔진 `src/pi05_native/build_linux.sh` 를 sm_89 로 빌드(`PI05_ARCH="-gencode arch=compute_89,code=sm_89"`)
+- [ ] π0.5 radio 체크포인트 → 정책으로 radio 한 판(공식 제한시간)

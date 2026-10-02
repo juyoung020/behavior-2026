@@ -3,11 +3,11 @@
 조사일: 2026-09-29
 
 출처
-- 2026 공지: https://behavior.stanford.edu/challenge/updates.html → [raw/site_challenge_updates.md](raw/site_challenge_updates.md) (로컬 원본 `BEHAVIOR-1K/docs/challenge/updates.md` 와 같은 내용)
-- 코드 릴리스 노트: https://github.com/StanfordVL/BEHAVIOR-1K/releases → [raw/gh_StanfordVL_BEHAVIOR-1K_releases.md](raw/gh_StanfordVL_BEHAVIOR-1K_releases.md)
-- HF 토론: [raw/hf_disc_behavior-1k_2026-challenge-demos_2.md](raw/hf_disc_behavior-1k_2026-challenge-demos_2.md), [raw/hf_disc_behavior-1k_2026-challenge-demos_1.md](raw/hf_disc_behavior-1k_2026-challenge-demos_1.md)
-- 2025 공지(규칙 해석 참고): [raw/site_challenge_archive_2025_updates.md](raw/site_challenge_archive_2025_updates.md), [raw/site_challenge_archive_2025_index.md](raw/site_challenge_archive_2025_index.md)
-- 사이트 FAQ·알려진 문제: https://behavior.stanford.edu/other/faq.html → [raw/site_other_faq.md](raw/site_other_faq.md), https://behavior.stanford.edu/other/known_issues.html → [raw/site_other_known_issues.md](raw/site_other_known_issues.md)
+- 2026 공지: https://behavior.stanford.edu/challenge/updates.html → [raw/site_challenge_updates.md](../../raw/site_challenge_updates.md) (로컬 원본 `BEHAVIOR-1K\docs\challenge\updates.md` 와 같은 내용)
+- 코드 릴리스 노트: https://github.com/StanfordVL/BEHAVIOR-1K/releases → [raw/gh_StanfordVL_BEHAVIOR-1K_releases.md](../../raw/gh_StanfordVL_BEHAVIOR-1K_releases.md)
+- HF 토론: [raw/hf_disc_behavior-1k_2026-challenge-demos_2.md](../../raw/hf_disc_behavior-1k_2026-challenge-demos_2.md), [raw/hf_disc_behavior-1k_2026-challenge-demos_1.md](../../raw/hf_disc_behavior-1k_2026-challenge-demos_1.md)
+- 2025 공지(규칙 해석 참고): [raw/site_challenge_archive_2025_updates.md](../../raw/site_challenge_archive_2025_updates.md), [raw/site_challenge_archive_2025_index.md](../../raw/site_challenge_archive_2025_index.md)
+- 사이트 FAQ·알려진 문제: https://behavior.stanford.edu/other/faq.html → [raw/site_other_faq.md](../../raw/site_other_faq.md), https://behavior.stanford.edu/other/known_issues.html → [raw/site_other_known_issues.md](../../raw/site_other_known_issues.md)
 - 대회 공식 FAQ 페이지는 없다(`challenge/faq.html` 404). 질문은 Discord `#support`, 공지는 `#announcements` (채널 이름은 [가이드.md](가이드.md) 기준).
 
 표기: "따옴표" = 원문 그대로. 나머지는 요약.
@@ -94,7 +94,7 @@ A. "RGB + depth + proprioception". 정답 분할·물체 상태·목표 물체 p
 A. 원문 "Additional components like SLAM or LLM-based querying are also permitted, provided the policy follows the challenge-track observation restrictions during evaluation." 방법 제한 없음("There are no restrictions on the type of policy used.").
 
 **Q. SAM·CLIP 같은 학습된 인식 모델은?**
-A. 이름으로 언급한 문장은 없다. 금지는 "ground-truth segmentation"(시뮬레이터 정답)이고 정책 구성은 자유라 허용으로 해석되나, 확정은 Discord. (예전 문서에 원문처럼 적혔던 『External perception models (e.g., SAM, CLIP) are permitted』 는 페이지에 없는 문장이었다 — [대회규칙_팀_meridian.md](archive/대회규칙_팀_meridian.md) 의 정정 참고)
+A. 이름으로 언급한 문장은 없다. 금지는 "ground-truth segmentation"(시뮬레이터 정답)이고 정책 구성은 자유라 허용으로 해석되나, 확정은 Discord. (예전 문서에 원문처럼 적혔던 『External perception models (e.g., SAM, CLIP) are permitted』 는 페이지에 없는 문장이었다 — [대회규칙_팀_meridian.md](../../archive/대회규칙_팀_meridian.md) 의 정정 참고)
 
 **Q. 학습 때 정답 정보를 써도 되나?**
 A. 된다. 원문 "You are allowed to use privileged information during training (e.g. other observation modalities, task info, etc.), so long as you are not using it during challenge-track evaluation."
@@ -120,8 +120,8 @@ A. 원문 "After we freeze the leaderboard upon submission deadline, we will eva
 **Q. 어떤 GPU 로 재평가하나?**
 A. 원문 "The submitted model should run on a single 24GB VRAM GPU. Final evaluation will use GPUs such as RTX 3090, A5000, and TitanRTX."
 
-**Q. 설치 요구사항은?**
-A. 설치 문서 요구사항 원문: "Ubuntu 22.04+", "RAM: 32GB+", "GPU: NVIDIA RTX 2070+", "VRAM: 8GB+". 이 PC 는 Ubuntu 22.04.5 + RTX 4090 → [Linux_설치.md](Linux_설치.md).
+**Q. 윈도우에서 돌아가나?**
+A. 설치 문서 요구사항 원문: "Ubuntu 22.04+ / Windows 10+", "RAM: 32GB+", "GPU: NVIDIA RTX 2070+", "VRAM: 8GB+". 이 PC 는 Windows 에서 평가기, WSL 에서 π0.5 서버를 돌린다 → [설치기록.md](설치기록.md).
 
 ## 4. 사이트 FAQ·알려진 문제 중 관련 있는 것 (요약)
 

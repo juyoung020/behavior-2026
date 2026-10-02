@@ -1,10 +1,10 @@
 # scenemap — 새 인지 스택 설계 (2D SLAM · 물체 지도 · 계획기 질의)
 
-작성 2026-09-30. 상태: **설계(구현 전)**. 코드는 `src/scenemap/` 에 새로 둔다. meridian(`meridian_ws/`)은 지우지 않고 참고용으로 둔다.
+작성 2026-09-30. 상태: **설계(구현 전)**. 코드는 `src\scenemap\` 에 새로 둔다. meridian(`meridian_ws\`)은 지우지 않고 참고용으로 둔다.
 
 - 근거는 사용자 팀 저장소 `juyoung020/robot-programming-team` 의 [docs/plan.md], [docs/model_selection.md] 다(09-30 판).
   - 이 문서는 그 선택을 **BEHAVIOR 2026 대회 환경에 맞춘 것**이다. 다른 점만 1절 표에 적는다.
-- meridian 에서 검증한 규칙은 가져오고 코드는 새로 짠다(2절). 근거는 [meridian_통합설계.md](archive/meridian_통합설계.md) 12절, [통합_실시간.md](통합_실시간.md) 2절이다.
+- meridian 에서 검증한 규칙은 가져오고 코드는 새로 짠다(2절). 근거는 [meridian_통합설계.md](../../archive/meridian_통합설계.md) 12절, [통합_실시간.md](통합_실시간.md) 2절이다.
 - 추정은 "(추정)"으로 적는다.
 
 ## 0. 한눈에
@@ -16,7 +16,7 @@
 | 같은 물체 판단(DA) | 직접. 같은 이름끼리 위치로 비교, 부족하면 색 분포 | 같음 | 설계 |
 | 지도 갱신 | 직접. 바뀐 부분만(DovSG·Khronos 참고) | 같음 + 들고 있는 물체 처리(meridian 12.12 규칙) | 설계 |
 | 저장·보기 | Spark-DSG + 뷰어, 계획기에는 JSON | 같음. Spark-DSG C++ 라이브러리로 저장(ROS 없음), 뷰어는 `spark-dsg visualize`(오프라인 도구) | 설계 |
-| 계획 | Qwen3.5-9B API | 같음(`src/agent`, KAU API) | 동작 중 |
+| 계획 | Qwen3.5-9B API | 같음(`src\agent`, KAU API) | 동작 중 |
 | 행동 | π0.5 | 같음(네이티브 C++/CUDA 엔진, 평가기 프로세스 안) | 동작 중 |
 
 ## 1. 대회에 맞춰 다른 점
@@ -24,7 +24,7 @@
 | 항목 | 팀 문서(리모) | 대회(BEHAVIOR 2026, R1Pro) | 그래서 scenemap 은 |
 |---|---|---|---|
 | 거리 센서 | 2D 라이다 EAI X2L | **라이다 없음.** 머리 zed RGB-D 720², 손목 RealSense 480² | 머리 깊이에서 높이 띠를 잘라 **가상 레이저 스캔**을 만든다(3.1) |
-| 계산기 | Jetson Nano 4 GB 에 전부 | Jetson 제약 없음. 대신 **평가기 GPU(이 PC 24 GB, 대회 서버 24 GB 추정)를 시뮬레이터·π0.5 와 나눠 씀** | GPU 는 신경망(YOLOE TensorRT)만 필수. SLAM·물체 지도는 CPU 로 충분한지 먼저 재고(목표 keyframe 당 수 ms), 필요한 곳만 손 CUDA |
+| 계산기 | Jetson Nano 4 GB 에 전부 | Jetson 제약 없음. 대신 **평가기 GPU(16 GB, 대회 서버 24 GB 추정)를 시뮬레이터·π0.5 와 나눠 씀** | GPU 는 신경망(YOLOE TensorRT)만 필수. SLAM·물체 지도는 CPU 로 충분한지 먼저 재고(목표 keyframe 당 수 ms), 필요한 곳만 손 CUDA |
 | 실행 틀 | ROS 2 노드 | **ROS 없음.** C++/CUDA 라이브러리(C ABI) + Rust 조율 | simlink(Rust)가 같은 프로세스에서 부른다. 평가기 프로세스 안에 올릴 수도 있게 C ABI 로만 드러낸다 |
 | 파이썬 | 학습·외부 도구만 | 같음 | 실행 경로에 파이썬 없음. 채점 도구만 파이썬 |
 | 카메라 외부 자세 | 캘리브레이션 | 평가 규칙상 시뮬레이터 카메라 자세 금지 | **proprio 관절값 + R1Pro URDF 순기구학**(meridian 규칙, 오차 0.003 mm) |
@@ -47,7 +47,7 @@
 ## 3. 구성
 
 ```
-평가기          ── TCP(요약 + keyframe 영상) ──▶ simlink(Rust)
+평가기(Windows) ── TCP(요약 + keyframe 영상) ──▶ simlink(Rust, WSL)
                                                      │  (같은 프로세스, C ABI)
                                                      ▼
             ┌──────────────── libscenemap (C++/CUDA) ────────────────┐
@@ -60,7 +60,7 @@
 ```
 
 - **언어·틀**: 핵심은 C++20 라이브러리 `libscenemap`(CUDA 는 필요한 곳만). 드러내는 것은 C ABI 헤더 하나(`scenemap.h`)다.
-  - Rust 쪽은 `scenemap-sys`(FFI) + 얇은 안전 래퍼 크레이트다. simlink 가 부르고, 계획기(`src/agent`)는 같은 프로세스에서 질의한다.
+  - Rust 쪽은 `scenemap-sys`(FFI) + 얇은 안전 래퍼 크레이트다. simlink 가 부르고, 계획기(`src\agent`)는 같은 프로세스에서 질의한다.
   - 평가기 프로세스 안에 올려야 하면 같은 C ABI 를 그대로 쓴다.
 - **스레드**: 호출자 스레드 하나(simlink 의 관측 스레드)에서 `push_frame` → `update` 순서로 돈다. 질의는 스냅숏(읽기 전용 사본, 원자 교체)이라 계획기 스레드가 막지 않는다.
 - **GPU 메모리 목표**: YOLOE 엔진 + 버퍼 합 1 GB 안(추정, 재서 정함). SLAM·물체 지도는 CPU 메모리(수십 MB).
@@ -202,7 +202,7 @@ int  sm_snapshot(sm_ctx*, sm_snapshot_t** out);   // 읽기 전용 스냅숏(참
 ```
 
 - simlink 가 이미 받는 것(평가기 원 텐서: RGBA u8, 깊이 f32 m, proprio 61)을 그대로 넘긴다. 자르기·축소는 scenemap 안에서 한다(ROS 계약의 640×480 은 더 이상 필요 없음).
-- 카메라 외부 자세는 scenemap 이 proprio 로 직접 계산한다(순기구학 코드는 `src/agent/src/fk.rs` 와 같은 상수, C++ 로 새로).
+- 카메라 외부 자세는 scenemap 이 proprio 로 직접 계산한다(순기구학 코드는 `src\agent\src\fk.rs` 와 같은 상수, C++ 로 새로).
 
 - **09-30 구현**: `src/scenemap/include/scenemap.h` 에 통합 담당 제안(`src/integ/scenemap_stub/sm_api.h`, 00d745b)의 이름·형을 그대로 옮기고 `src/scenemap/src/capi.cpp` 로 구현했다(두 헤더는 같은 가드 `SM_API_H`).
   - 지금 되는 것: 자세(slam2d, 스냅숏 때 아직 영상 짝이 안 된 proprio 까지 적분해 최신 stamp 로), 상태, 격자(`sm_snap_map`), `sm_snap_reachable`(8방향 A*, 점유 ≥ 65 % 를 0.30 m 부풀림, 모르는 칸 1.5배, 목표 0.6 m 안 도착, 지도 밖이면 직선 거리).
@@ -235,7 +235,7 @@ typedef struct {
 
 ### 4.3 계획기 ↔ scenemap
 
-- Rust 트레이트 `SceneQuery`(3.3 표) — `src/agent` 의 지금 meridian TCP 질의 자리를 바꾼다. 계획기 쪽 필드 이름은 지금 JSON(`objects`, `position`, `position_robot`, `moved`, `handled`, `room`)을 유지해 계획기 수정을 줄인다.
+- Rust 트레이트 `SceneQuery`(3.3 표) — `src\agent` 의 지금 meridian TCP 질의 자리를 바꾼다. 계획기 쪽 필드 이름은 지금 JSON(`objects`, `position`, `position_robot`, `moved`, `handled`, `room`)을 유지해 계획기 수정을 줄인다.
 
 ## 5. 정확도 평가(채점 도구를 새 스택에 맞게 옮김)
 
@@ -266,7 +266,7 @@ typedef struct {
 5. slam2d 남은 것: 짧은 판 204·205 가 C 보다 1~2 cm 나쁨(3.1.1). 루프 닫기는 안 넣음(끝 5 cm) — objmap 채점에서 긴 판 물체 위치가 틀리면 다시 본다.
 6. Spark-DSG 저장(submodule 을 src/scenemap/third_party 로 새로 둘지 — 저장·뷰어가 필요해질 때 판단), 방 나누기.
 
-재현: `~/scenemap_eval/`(ep_*.bin·ep_*_det.bin 입력은 남겨 둠, `export_episode.py`·`export_gtdet.py` 로 다시 만들 수 있음), 빌드 `cmake src/scenemap` → `slam2d_eval`·`objmap_eval`·`capi_replay`·`test_fk`. 기준선 C 결과 `~/meridian_eval/odom/py_C_*.npz`·`py_long_*.npz`.
+재현: WSL `~/scenemap_eval/`(ep_*.bin·ep_*_det.bin 입력은 남겨 둠, `export_episode.py`·`export_gtdet.py` 로 다시 만들 수 있음), 빌드 `cmake src/scenemap` → `slam2d_eval`·`objmap_eval`·`capi_replay`·`test_fk`. 기준선 C 결과 `~/meridian_eval/odom/py_C_*.npz`·`py_long_*.npz`.
 
 ## 7. 아직 모르는 것
 

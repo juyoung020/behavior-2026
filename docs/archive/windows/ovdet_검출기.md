@@ -8,7 +8,7 @@ scenemap 이 부르는 검출기다. 코드는 `src/ovdet`(README 영어), 형�
 |---|---|
 | C API·CUDA 구현 | **끝**. 입력은 RGB·BGR·RGBA u8(호스트·GPU)이고, 출력은 4.2 `sm_detections` 필드 그대로다(복사 없음, 다음 호출 전까지 유효). |
 | 처리 단계 | letterbox → 프롬프트 클래스 최대값 → 정렬 → 탐욕 NMS(고정점) → 프로토 격자 마스크 비트 → 면적 문 → 마스크 중복 제거 |
-| 빌드 | Linux 에서 `scripts/build_linux.sh` 로 빌드한다(제출 Docker 도 Linux). |
+| 빌드 | Linux·WSL 에서 `scripts/build_linux.sh` 로 빌드한다. Windows 에는 TensorRT SDK 가 없어서 빌드하지 않는다(제출 Docker 는 Linux). |
 | FastSAM+CLIP 경로 | `deprecated/ovdet_fastsam` 으로 뺐다. 기본 빌드는 YOLOE 만 싣는다. 비교표용으로 한 번만 돌렸다. |
 | 검출기 단위 비교표 | **끝**(아래 2절). YOLO-World 는 넣지 않았다(3절). |
 | AGPL | 사용자 결정(09-30): 제출물 소스를 AGPL 로 공개한다. `src/ovdet/README.md` 에 라이선스 절을, `docs/제출지침.md` 에 체크 항목을 넣었다. |
