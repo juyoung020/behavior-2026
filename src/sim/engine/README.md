@@ -9,10 +9,12 @@ The engine itself is hand-written C++ (then CUDA) and does not link PhysX.
 
 | Path | What |
 |---|---|
-| `core/` | The engine (header-only, no PhysX). `pmath.h` math with PhysX-identical operation order; `rigid.h` free rigid bodies (TGS no-constraint path, sleep) |
+| `core/` | The engine (no PhysX), one folder per module (`common/ articulation/ contact/ joints/ solver/ scene/ omni/ particles/ render/`). `common/pmath.h` math with PhysX-identical operation order; `common/body.h` + `solver/free_body.h` free rigid bodies (TGS no-constraint path, sleep) |
+| `cuda/` | CUDA kernels per module (`articulation/ contact/ joints/ omni/ render/`) |
 | `tests/` | Layer-1 tests: engine vs PhysX oracle, bitwise. Only test binaries link PhysX |
 | `replay/` | Layer-0 oracle: rebuild a recorded OmniPVD (`.ovd`) scene with our PhysX build and replay it bit-for-bit (`ovd_replay`), plus `ovd_dump`, `ovd_diff`, `ovd_selftest` |
 | `capture/` | Record the official evaluator (OVD + convex hulls + omni filter tables + side log of non-OVD calls) without modifying it |
+| `eval/` | Ported evaluator: official evaluator arguments and result JSON with this engine as the simulator (`ported_eval.py --backend engine` or `dummy`) |
 | `scripts/` | Build PhysX / tools on Linux, count per-task physics needs from BDDL |
 
 Status (2026-09-29)
@@ -25,7 +27,8 @@ Build (Linux, Ubuntu 22.04, clang 14, CUDA 12.8), from the repo root. `build_rep
 ```
 bash src/sim/engine/scripts/build_physx.sh linux-carbonite checked   # ~/engine-deps (not in git)
 bash src/sim/engine/scripts/build_replay.sh checked                   # ~/engine-build/replay-checked
-cmake -S src/sim/engine/tests -B ~/engine-build/tests -DCMAKE_CXX_COMPILER=clang++ && cmake --build ~/engine-build/tests
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+cmake -S src/sim/engine/tests -B ~/engine-build/tests -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CUDA_HOST_COMPILER=g++ && cmake --build ~/engine-build/tests -j
 ```
 
 Never commit decrypted assets or anything extracted from scenes (`dumps/`, `*.ovd` are git-ignored).
