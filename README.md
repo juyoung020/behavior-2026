@@ -1,3 +1,5 @@
+![scene graph viewer: objects / places / rooms, robot GT trajectory](docs/img/cover.png)
+
 # behavior-2026 — BEHAVIOR Challenge 2026 workspace
 
 **Idea: a dynamic 2D scene graph + an AI agent (or RL planner) + a VLA, combined.**
