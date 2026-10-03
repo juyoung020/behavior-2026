@@ -43,7 +43,7 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     ovdet/            open-vocabulary detector (YOLOE, TensorRT, C API; AGPL-3.0)
     clip/             sgclip: object crop → SigLIP 2 image embedding (TensorRT), label table lookup, vectors and name cache in the memory folder (C++/CUDA; in progress)
     runtime/          sgrt: one C ABI that runs object memory inside the evaluator/robot process (scenemap + ovdet, periodic save) (C++/CUDA)
-    spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + places + rooms; scenemap builds it first. Changes: OUR_CHANGES.md
+    spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + rooms (places are computed in the backend); scenemap builds it first. Changes: OUR_CHANGES.md
     da/               data association: merges the per-frame segments of one object into a single object (C++, built into scenemap)
     sgview/           live memory viewer in the browser (Rust server + three.js, no Python / Spark-DSG)
     viewer/           sgviz: the old Python viewer (Spark-DSG + viser), to be removed
