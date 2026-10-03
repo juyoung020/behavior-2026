@@ -117,15 +117,36 @@ WallExtractor::WallExtractor() : p_(new Impl) {}
 WallExtractor::~WallExtractor() = default;
 void WallExtractor::reset() { p_.reset(new Impl); segs_.clear(); }
 
-const std::vector<WallSeg>& WallExtractor::update(const WallGrid& g, int y_lo, int y_hi, double min_len, double max_thick,
-                                                  double overlap) {
+const std::vector<WallSeg>& WallExtractor::update(const WallGrid& g, int y_lo, int y_hi, const std::vector<WallRect>* ignore,
+                                                  double min_len, double max_thick, double overlap) {
   std::vector<WallSeg>& out = segs_;
   out.clear();
   if (g.w <= 0 || g.h <= 0) return out;
   const int min_run = std::max(1, int(std::lround(min_len / g.res)));
   Impl& I = *p_;
   // 격자 y(아래→위) 행 y_lo..y_hi 가 바뀜 → 파이썬 행 순서(위→아래)로 옮겨 그 행만 다시 비트로. y_lo > y_hi 면 전부.
+  static const std::vector<WallRect> kNone;
+  const std::vector<WallRect>& ig = ignore ? *ignore : kNone;
+  const bool ig_changed = !(ig == last_ignore_);   // 영역이 바뀌면 그 둘레 행이 달라지므로 전부 다시
+  if (ig_changed) { y_lo = 0; y_hi = -1; last_ignore_ = ig; }
   I.bits.build(g, y_lo > y_hi ? 0 : g.h - 1 - y_hi, y_lo > y_hi ? g.h - 1 : g.h - 1 - y_lo);
+  if (!ig.empty()) {
+    // 무시 영역 안의 점유 비트를 지운다(다시 만든 행만이 아니라 영역 전체 — 안 만든 행은 이미 지워져 있으니 같은 결과)
+    Bits& B = I.bits;
+    for (const WallRect& r : ig) {
+      const int cx0 = std::max(0, int(std::floor((r.x0 - g.ox) / g.res))), cx1 = std::min(g.w - 1, int(std::floor((r.x1 - g.ox) / g.res)));
+      const int cy0 = std::max(0, int(std::floor((r.y0 - g.oy) / g.res))), cy1 = std::min(g.h - 1, int(std::floor((r.y1 - g.oy) / g.res)));
+      for (int y = cy0; y <= cy1; ++y) {
+        uint64_t* row = &B.v[size_t(g.h - 1 - y) * B.nw];
+        for (int x = cx0; x <= cx1;) {
+          const int k = x >> 6, b0 = x & 63, n = std::min(64 - b0, cx1 - x + 1);
+          const uint64_t mask = (n == 64 ? ~uint64_t(0) : ((uint64_t(1) << n) - 1)) << b0;
+          row[k] &= ~mask;
+          x += n;
+        }
+      }
+    }
+  }
   const Bits& bits = I.bits;
   auto emit = [&](const Group& gr, bool transpose) {
     if ((gr.r1 - gr.r0 + 1) * g.res > max_thick) return;
@@ -192,9 +213,9 @@ const std::vector<WallSeg>& WallExtractor::update(const WallGrid& g, int y_lo, i
   return out;
 }
 
-std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len, double max_thick, double overlap) {
+std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len, double max_thick, double overlap, const std::vector<WallRect>* ignore) {
   WallExtractor e;
-  return e.update(g, 0, -1, min_len, max_thick, overlap);
+  return e.update(g, 0, -1, ignore, min_len, max_thick, overlap);
 }
 
 void rayDistances(const WallGrid& g, const double pose[3], float* out, int n, double max_range) {

@@ -7,8 +7,8 @@
 //                              속성 = 여유(장애물까지 m), frontier(가장 가까운 막힘이 모름). 변 = 직선 시야가 빈칸인 이웃,
 //                              무게 = 변을 따라 가장 작은 여유(Hydra 병목 무게)
 //   4 ROOMS                    방 'R'<id>(rooms.hpp), 방–방 변 = 문(위치·폭)
-//   5 BUILDINGS                건물 'B'0 하나
-//   층 사이: 물체 → 가장 가까운 place, place → 방, 방 → 건물, agent → 가장 가까운 place, 방 → 물체.
+//   (Map_Vla: 건물 층은 없다. 뷰어는 물체·방 2층만 그리고 place 는 그리지 않는다 — place·frontier 는 이동·탐색(move_robot, explore)이 쓰는 백엔드 계산.)
+//   층 사이: 물체 → 가장 가까운 place, place → 방, agent → 가장 가까운 place, 방 → 물체.
 //   물체끼리 관계(on/in/near)는 만들지 않는다(Map_Vla) — 위치·상자 메타데이터로 소비자가 추론. 물체의 부모: 방, place.
 // 갱신(Hydra 앞단처럼 활성 창만): 격자 보이는 값이 바뀐 상자(+2 m)만 다시 계산 — place 를 지우고 다시 고르고(가까운 옛 id 는
 //   다시 씀), 그 둘레 변만 다시 잇는다. 물체·agent 는 keyframe 마다 바뀐 것만. 방은 방 나눔이 바뀔 때만.

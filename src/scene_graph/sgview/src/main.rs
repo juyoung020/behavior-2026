@@ -8,8 +8,9 @@
 //!
 //! GET /                      the page
 //! GET /api/view?v=<ver>      {"v": ver, "map_v": ver, "view": <view.json>} or {"unchanged": true} (poll; ver = mtime+size)
-//! GET /api/map               PGM pixels (row 0 = max y), size in X-W / X-H headers
+//! GET /api/map[?since=<ver>] PGM pixels (row 0 = max y); with since only the changed rows (X-Y0/X-Y1/X-Full)
 //! GET /api/walls?x=&y=&yaw=  {"segments": [[ax,ay,bx,by]..], "state": [56 floats], "pose": [x,y,yaw]}
+//! GET /api/depth?path=<rel>  16-bit grey PNG → u16 little-endian pixels (X-W / X-H)
 //! GET /file/<relative path>  any file below the memory dir (PNG crops, PLY points)
 use std::collections::HashMap;
 use std::fs;
@@ -25,14 +26,85 @@ const ORBIT_JS: &[u8] = include_bytes!("../assets/OrbitControls.js");
 
 const WALL_STATE_LEN: usize = 56;
 
+/// Non-interlaced 8/16-bit grey or 8-bit RGB(A) PNG → (w, h, channels, bytes per sample, raw samples big-endian as stored).
+fn decode_png(b: &[u8]) -> Option<(usize, usize, usize, usize, Vec<u8>)> {
+    use std::io::Read;
+    if b.len() < 33 || &b[..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    let (mut w, mut h, mut depth, mut ctype, mut interlace) = (0usize, 0usize, 0u8, 0u8, 0u8);
+    let mut idat = Vec::new();
+    let mut i = 8;
+    while i + 8 <= b.len() {
+        let len = u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) as usize;
+        let ty = &b[i + 4..i + 8];
+        let data = b.get(i + 8..i + 8 + len)?;
+        match ty {
+            b"IHDR" => {
+                w = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+                h = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+                depth = data[8];
+                ctype = data[9];
+                interlace = data[12];
+            }
+            b"IDAT" => idat.extend_from_slice(data),
+            b"IEND" => break,
+            _ => {}
+        }
+        i += 12 + len;
+    }
+    let ch = match ctype {
+        0 => 1,
+        2 => 3,
+        6 => 4,
+        _ => return None,
+    };
+    if interlace != 0 || (depth != 8 && depth != 16) || w == 0 || h == 0 {
+        return None;
+    }
+    let bps = (depth / 8) as usize;
+    let bpp = ch * bps;
+    let stride = w * bpp;
+    let mut raw = Vec::with_capacity((stride + 1) * h);
+    flate2::read::ZlibDecoder::new(&idat[..]).read_to_end(&mut raw).ok()?;
+    if raw.len() < (stride + 1) * h {
+        return None;
+    }
+    let mut out = vec![0u8; stride * h];
+    for y in 0..h {
+        let f = raw[y * (stride + 1)];
+        let line = &raw[y * (stride + 1) + 1..(y + 1) * (stride + 1)];
+        for x in 0..stride {
+            let a = if x >= bpp { out[y * stride + x - bpp] as i32 } else { 0 };
+            let up = if y > 0 { out[(y - 1) * stride + x] as i32 } else { 0 };
+            let c = if x >= bpp && y > 0 { out[(y - 1) * stride + x - bpp] as i32 } else { 0 };
+            let p = match f {
+                0 => 0,
+                1 => a,
+                2 => up,
+                3 => (a + up) / 2,
+                4 => {
+                    let pp = a + up - c;
+                    let (pa, pb, pc) = ((pp - a).abs(), (pp - up).abs(), (pp - c).abs());
+                    if pa <= pb && pa <= pc { a } else if pb <= pc { up } else { c }
+                }
+                _ => return None,
+            };
+            out[y * stride + x] = (line[x] as i32 + p) as u8;
+        }
+    }
+    Some((w, h, ch, bps, out))
+}
+
 extern "C" {
-    fn sgv_wall_segments(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, out: *mut f64, cap: i32) -> i32;
+    fn sgv_wall_segments(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, ignore: *const f64, n_ignore: i32, out: *mut f64, cap: i32) -> i32;
     fn sgv_wall_state(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, segs: *const f64, n: i32, pose: *const f64, out: *mut f32);
 }
 
 /// Occupancy grid in scenemap layout (row 0 = min y; −1 unknown, 0..100 occupied %), plus its wall segments.
 struct WallMap {
     ver: String,
+    ig_key: String,
     w: i32,
     h: i32,
     res: f64,
@@ -42,9 +114,17 @@ struct WallMap {
     segs: Vec<f64>, // ax ay bx by …
 }
 
+/// Recent map.pgm versions (newest last): a client that has version V gets only the rows that changed since V.
+struct MapHist {
+    vers: Vec<(String, Arc<Pgm>)>,
+}
+const MAP_HIST: usize = 8;
+
 struct State {
     dir: PathBuf,
     walls: Mutex<Option<Arc<WallMap>>>,
+    view: Mutex<(String, Arc<String>)>,   // view.json text by version: several clients/polls read the file once
+    maps: Mutex<MapHist>,
 }
 
 fn file_ver(p: &Path) -> Option<String> {
@@ -53,7 +133,7 @@ fn file_ver(p: &Path) -> Option<String> {
     Some(format!("{}-{}", t, m.len()))
 }
 
-struct Pgm {
+pub struct Pgm {
     w: usize,
     h: usize,
     px: Vec<u8>,
@@ -113,13 +193,57 @@ fn read_yaml(p: &Path) -> (f64, f64, f64) {
     (res, ox, oy)
 }
 
+/// view.json text of the current version (cached; `None` while the file is missing or mid-write).
+fn load_view(st: &State) -> Option<(String, Arc<String>)> {
+    let vp = st.dir.join("view.json");
+    let ver = file_ver(&vp)?;
+    let mut c = st.view.lock().unwrap();
+    if c.0 != ver {
+        let t = fs::read_to_string(&vp).ok()?;
+        if !(t.trim_start().starts_with('{') && t.trim_end().ends_with('}')) {
+            return None;
+        }
+        *c = (ver, Arc::new(t));
+    }
+    Some((c.0.clone(), c.1.clone()))
+}
+
+/// Footprints (x0 y0 x1 y1) of free-standing objects from view.json: bottom below 0.4 m, not room-sized, not gone, +0.1 m.
+/// Their occupied cells are furniture (sofa, table …), not walls. Wall-mounted things (frames, lamps) start higher and are left alone.
+fn furniture_rects(st: &State) -> Vec<f64> {
+    let text = match load_view(st) {
+        Some((_, t)) => t,
+        None => return Vec::new(),
+    };
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for o in v["objects"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        if o["state"] == "gone" {
+            continue;
+        }
+        let (p, e) = (&o["pos"], &o["extent"]);
+        let g = |a: &serde_json::Value, i: usize| a[i].as_f64().unwrap_or(0.0);
+        let (hx, hy, hz) = (g(e, 0) / 2.0, g(e, 1) / 2.0, g(e, 2) / 2.0);
+        if g(p, 2) - hz > 0.4 || hx * 2.0 > 5.0 || hy * 2.0 > 5.0 {
+            continue;
+        }
+        out.extend_from_slice(&[g(p, 0) - hx - 0.1, g(p, 1) - hy - 0.1, g(p, 0) + hx + 0.1, g(p, 1) + hy + 0.1]);
+    }
+    out
+}
+
 /// The wall map of the current `map.pgm` (cached by mtime+size; segments are recomputed only when the map file changes).
 fn wall_map(st: &State) -> Option<Arc<WallMap>> {
     let pgm_path = st.dir.join("map.pgm");
     let ver = file_ver(&pgm_path)?;
+    let ig = furniture_rects(st);
+    let ig_key = format!("{:?}", ig);
     let mut g = st.walls.lock().unwrap();
     if let Some(w) = g.as_ref() {
-        if w.ver == ver {
+        if w.ver == ver && w.ig_key == ig_key {
             return Some(w.clone());
         }
     }
@@ -136,15 +260,51 @@ fn wall_map(st: &State) -> Option<Arc<WallMap>> {
         }
     }
     let mut buf = vec![0f64; 4 * 512];
-    let mut n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, buf.as_mut_ptr(), 512) } as usize;
+    let mut n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, ig.as_ptr(), (ig.len() / 4) as i32, buf.as_mut_ptr(), 512) } as usize;
     if n > 512 {
         buf = vec![0f64; 4 * n];
-        n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, buf.as_mut_ptr(), n as i32) } as usize;
+        n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, ig.as_ptr(), (ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32) } as usize;
     }
     buf.truncate(4 * n);
-    let wm = Arc::new(WallMap { ver, w: w as i32, h: h as i32, res, ox, oy, cells, segs: buf });
+    let wm = Arc::new(WallMap { ver, ig_key, w: w as i32, h: h as i32, res, ox, oy, cells, segs: buf });
     *g = Some(wm.clone());
     Some(wm)
+}
+
+/// Current map pixels (version-cached; history kept for delta updates).
+fn current_map(st: &State) -> Option<(String, Arc<Pgm>)> {
+    let ver = file_ver(&st.dir.join("map.pgm"))?;
+    let mut h = st.maps.lock().unwrap();
+    if let Some((v, p)) = h.vers.last() {
+        if *v == ver {
+            return Some((v.clone(), p.clone()));
+        }
+    }
+    let p = Arc::new(read_pgm(&st.dir.join("map.pgm"))?);
+    h.vers.push((ver.clone(), p.clone()));
+    if h.vers.len() > MAP_HIST {
+        h.vers.remove(0);
+    }
+    Some((ver, p))
+}
+
+/// Rows [y0, y1] (PGM row order) that differ between `old` and `new`, None if the shapes differ or nothing changed.
+fn changed_rows(old: &Pgm, new: &Pgm) -> Option<(usize, usize)> {
+    if old.w != new.w || old.h != new.h {
+        return None;
+    }
+    let w = new.w;
+    let mut first = None;
+    let mut last = 0;
+    for y in 0..new.h {
+        if old.px[y * w..(y + 1) * w] != new.px[y * w..(y + 1) * w] {
+            if first.is_none() {
+                first = Some(y);
+            }
+            last = y;
+        }
+    }
+    first.map(|f| (f, last))
 }
 
 fn json_f64s(v: &[f64]) -> String {
@@ -208,11 +368,29 @@ fn respond(s: &mut TcpStream, code: u16, ctype: &str, extra: &str, body: &[u8]) 
     let _ = s.write_all(body);
 }
 
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if b[i] == b'+' { b' ' } else { b[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
 fn parse_query(q: &str) -> HashMap<String, String> {
     q.split('&')
         .filter_map(|kv| {
             let mut it = kv.splitn(2, '=');
-            Some((it.next()?.to_string(), it.next().unwrap_or("").to_string()))
+            Some((it.next()?.to_string(), percent_decode(it.next().unwrap_or(""))))
         })
         .collect()
 }
@@ -261,19 +439,51 @@ fn handle(mut s: TcpStream, st: Arc<State>) {
             if q.get("v").map(|v| v == &ver).unwrap_or(false) {
                 return respond(&mut s, 200, "application/json", "", b"{\"unchanged\":true}");
             }
-            match fs::read_to_string(&vp) {
-                Ok(t) if t.trim_start().starts_with('{') && t.trim_end().ends_with('}') => {
-                    let map_v = file_ver(&st.dir.join("map.pgm")).unwrap_or_default();
-                    let body = format!("{{\"v\":\"{}\",\"map_v\":\"{}\",\"view\":{}}}", ver, map_v, t);
-                    respond(&mut s, 200, "application/json", "", body.as_bytes())
-                }
-                _ => respond(&mut s, 200, "application/json", "", b"{\"waiting\":true}"), // mid-write: next poll
-            }
+            let text = match load_view(&st) {
+                Some((_, t)) => t,
+                None => return respond(&mut s, 200, "application/json", "", b"{\"waiting\":true}"), // mid-write: next poll
+            };
+            let map_v = file_ver(&st.dir.join("map.pgm")).unwrap_or_default();
+            let body = format!("{{\"v\":\"{}\",\"map_v\":\"{}\",\"view\":{}}}", ver, map_v, text);
+            respond(&mut s, 200, "application/json", "", body.as_bytes())
         }
-        "/api/map" => match read_pgm(&st.dir.join("map.pgm")) {
-            Some(p) => respond(&mut s, 200, "application/octet-stream", &format!("X-W: {}\r\nX-H: {}\r\n", p.w, p.h), &p.px),
+        // full map, or with ?since=<map_v> only the rows changed since that version (X-Y0..X-Y1, PGM row order; X-Full: 0)
+        "/api/map" => match current_map(&st) {
+            Some((ver, cur)) => {
+                let mut y0 = 0;
+                let mut y1 = cur.h.saturating_sub(1);
+                let mut full = 1;
+                if let Some(since) = q.get("since") {
+                    let old = st.maps.lock().unwrap().vers.iter().find(|(v, _)| v == since).map(|(_, p)| p.clone());
+                    if let Some(old) = old {
+                        match changed_rows(&old, &cur) {
+                            Some((a, b)) => { y0 = a; y1 = b; full = 0; }
+                            None if old.w == cur.w && old.h == cur.h => { full = 0; y0 = 1; y1 = 0; } // identical pixels
+                            None => {}
+                        }
+                    }
+                }
+                let hdr = format!("X-W: {}\r\nX-H: {}\r\nX-Y0: {}\r\nX-Y1: {}\r\nX-Full: {}\r\nX-Ver: {}\r\n", cur.w, cur.h, y0, y1, full, ver);
+                let body: &[u8] = if y0 > y1 { &[] } else { &cur.px[y0 * cur.w..(y1 + 1) * cur.w] };
+                respond(&mut s, 200, "application/octet-stream", &hdr, body)
+            }
             None => respond(&mut s, 404, "text/plain", "", b"no map"),
         },
+        // 16-bit grey PNG (depth in mm) → little-endian u16 pixels; the page can't read 16-bit PNGs from a canvas
+        "/api/depth" => {
+            let rel = q.get("path").map(|s| s.as_str()).unwrap_or("");
+            match safe_join(&st.dir, rel).and_then(|p| fs::read(p).ok()).and_then(|b| decode_png(&b)) {
+                Some((w, h, 1, bps, px)) => {
+                    let mut out = Vec::with_capacity(w * h * 2);
+                    for i in 0..w * h {
+                        let v = if bps == 2 { u16::from_be_bytes([px[2 * i], px[2 * i + 1]]) } else { px[i] as u16 };
+                        out.extend_from_slice(&v.to_le_bytes());
+                    }
+                    respond(&mut s, 200, "application/octet-stream", &format!("X-W: {}\r\nX-H: {}\r\n", w, h), &out)
+                }
+                _ => respond(&mut s, 404, "text/plain", "", b"not a grey png"),
+            }
+        }
         "/api/walls" => match walls_json(&st, &q) {
             Some(j) => respond(&mut s, 200, "application/json", "", j.as_bytes()),
             None => respond(&mut s, 404, "text/plain", "", b"no map"),
@@ -307,7 +517,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let st = Arc::new(State { dir, walls: Mutex::new(None) });
+    let st = Arc::new(State { dir, walls: Mutex::new(None), view: Mutex::new((String::new(), Arc::new(String::new()))), maps: Mutex::new(MapHist { vers: Vec::new() }) });
     let l = TcpListener::bind((bind.as_str(), port)).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}:{}: {}", bind, port, e);
         std::process::exit(1);
@@ -315,6 +525,7 @@ fn main() {
     let _ = SystemTime::now();
     eprintln!("sgview: http://localhost:{}  (memory dir {})", port, st.dir.display());
     for c in l.incoming().flatten() {
+        let _ = c.set_nodelay(true);
         let st = st.clone();
         std::thread::spawn(move || handle(c, st));
     }

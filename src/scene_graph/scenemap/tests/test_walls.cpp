@@ -90,6 +90,30 @@ int main(int argc, char** argv) {
     auto ti1 = clk::now();
     std::printf("incremental update (11 dirty rows): %.2f us\n", std::chrono::duration<double, std::micro>(ti1 - ti0).count() / K);
   }
+
+  // 소파처럼 길고 얇은 덩어리: 무시 영역이 없으면 벽으로 잡히고, 영역을 주면 빠진다. 벽(영역 밖)은 그대로.
+  {
+    std::vector<int8_t> c3(size_t(w) * h, 0);
+    auto fill = [&](double x0, double y0, double x1, double y1) {
+      for (int y = int(y0 / 0.05); y < int(y1 / 0.05); ++y) for (int x = int(x0 / 0.05); x < int(x1 / 0.05); ++x) c3[size_t(y) * w + x] = 100;
+    };
+    fill(2.0, 2.0, 12.0, 2.15);     // 벽 10 m
+    fill(5.0, 6.0, 6.8, 6.4);       // 소파 1.8 × 0.4 m
+    WallGrid g3{c3.data(), w, h, 0.05, 0.0, 0.0};
+    const auto plain = wallSegments(g3);
+    std::vector<WallRect> ig = {{4.9, 5.9, 6.9, 6.5}};
+    const auto masked = wallSegments(g3, kMinLen, kMaxThick, 0.6, &ig);
+    auto near_sofa = [](const std::vector<WallSeg>& v) { int n = 0; for (auto& s : v) if (s.ay > 5.5 && s.ay < 7.0) ++n; return n; };
+    if (plain.size() != 2 || near_sofa(plain) != 1) { std::printf("FAIL plain: expected wall + sofa, got %zu segments\n", plain.size()); ++bad; }
+    if (masked.size() != 1 || near_sofa(masked) != 0) { std::printf("FAIL masked: expected only the wall, got %zu segments\n", masked.size()); ++bad; }
+    // 증분 갱신기도 같은 결과(영역이 처음 생기고, 사라질 때 모두)
+    WallExtractor ex;
+    ex.update(g3, 0, -1);
+    auto r1 = ex.update(g3, 0, -1, &ig);
+    if (r1.size() != 1) { std::printf("FAIL extractor with ignore: %zu\n", r1.size()); ++bad; }
+    auto r2 = ex.update(g3, 0, 0, nullptr);
+    if (r2.size() != 2) { std::printf("FAIL extractor ignore removed: %zu\n", r2.size()); ++bad; }
+  }
   std::printf(bad ? "FAIL (%d)\n" : "OK\n", bad);
   return bad ? 1 : 0;
 }

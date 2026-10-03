@@ -119,6 +119,8 @@ struct sm_ctx {
   scenemap::WallExtractor walls;
   std::shared_ptr<const std::vector<scenemap::WallSeg>> wallsp;
   int walls_x0 = 0, walls_y0 = 0;
+  std::vector<scenemap::WallRect> walls_rects;
+  uint64_t walls_grid_ver = ~0ull;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
   Timings tm;
@@ -350,6 +352,8 @@ int sm_reset(sm_ctx* c) {
   c->grid8_ver = ~0ull;
   c->walls.reset();
   c->wallsp.reset();
+  c->walls_rects.clear();
+  c->walls_grid_ver = ~0ull;
   c->graph.reset();
   c->obj_meta.clear();
   c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
@@ -396,9 +400,9 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
 
 namespace {
 // 스냅숏·그래프가 쓰는 격자 사본(보이는 값이 바뀌었을 때만 새로). mu 아래
-void refreshGrid8(sm_ctx* c) {
+bool refreshGrid8(sm_ctx* c) {
   const OccGrid& gr = c->slam.grid();
-  if (c->grid8 && c->grid8_ver == gr.cellsVersion() && c->grid8_w == gr.width() && c->grid8_h == gr.height()) return;
+  if (c->grid8 && c->grid8_ver == gr.cellsVersion() && c->grid8_w == gr.width() && c->grid8_h == gr.height()) return false;
   const auto tg = TClock::now();
   auto v = std::make_shared<std::vector<int8_t>>(size_t(gr.width()) * gr.height());
   gr.export8(v->data());
@@ -406,32 +410,47 @@ void refreshGrid8(sm_ctx* c) {
   c->grid8_ver = gr.cellsVersion();
   c->grid8_w = gr.width();
   c->grid8_h = gr.height();
-  {
-    // 격자 크기·원점이 같으면 바뀐 행만, 아니면 전부 다시(처음·격자가 넓어짐)
-    int dx0, dy0, dx1, dy1;
-    const bool d = c->slam.gridMut().takeDirty(&dx0, &dy0, &dx1, &dy1, 2);
-    const bool same = c->wallsp && c->walls_x0 == gr.x0() && c->walls_y0 == gr.y0();
-    scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
-    int ylo = 0, yhi = -1;
-    if (same && d) { ylo = dy0 - gr.y0(); yhi = dy1 - gr.y0(); }
-    else if (same) { ylo = 1; yhi = 0; }   // 바뀐 칸 없음(크기만 같음) — 아래에서 건너뜀
-    if (!(same && !d)) {
-      c->wallsp = std::make_shared<const std::vector<scenemap::WallSeg>>(c->walls.update(wg, ylo, yhi));
-      c->walls_x0 = gr.x0(); c->walls_y0 = gr.y0();
-      static const bool check = std::getenv("SM_WALLS_CHECK") != nullptr;   // 진단: 증분 결과를 처음부터 계산한 것과 비교
-      if (check) {
-        const auto full = scenemap::wallSegments(wg);
-        const auto& inc = *c->wallsp;
-        bool same = full.size() == inc.size();
-        for (size_t i = 0; same && i < full.size(); ++i)
-          same = full[i].ax == inc[i].ax && full[i].ay == inc[i].ay && full[i].bx == inc[i].bx && full[i].by == inc[i].by;
-        static int n = 0, bad = 0;
-        ++n; if (!same) ++bad;
-        if (!same || n % 50 == 0) std::fprintf(stderr, "[walls-check] updates %d mismatches %d (segments %zu vs %zu)\n", n, bad, inc.size(), full.size());
-      }
-    }
-  }
   c->addT(kStSnapGrid, usBetween(tg, TClock::now()));
+  return true;
+}
+
+// 벽 선분(walls.hpp): 격자가 바뀌었거나 바닥 가구 영역이 바뀌었을 때만, 바뀐 행만 다시 계산. 스냅숏은 결과를 나눠 쓴다. mu 아래
+// 벽 추출에서 빼는 영역 = 바닥에 놓인 확정 물체(소파·탁자 …)의 바닥 면적 + 0.1 m. 벽에 걸린 것(액자·조명, 바닥이 0.4 m 위)은 안 뺀다.
+void refreshWalls(sm_ctx* c) {
+  const OccGrid& gr = c->slam.grid();
+  const bool grid_changed = c->walls_grid_ver != c->grid8_ver;   // 다른 곳(그래프 갱신)이 격자 사본을 먼저 새로 만들었어도 놓치지 않게 버전으로 본다
+  std::vector<scenemap::WallRect> rects;
+  for (const MapObject& o : c->om.objects()) {
+    if (!o.confirmed || o.held_by >= 0 || o.state == SM_GONE) continue;
+    if (o.lo[2] > 0.4) continue;
+    const double dx = o.hi[0] - o.lo[0], dy = o.hi[1] - o.lo[1];
+    if (dx > 5.0 || dy > 5.0) continue;   // 방 크기 덩어리는 물체가 아니라 벽·바닥 오인식
+    rects.push_back({o.lo[0] - 0.1, o.lo[1] - 0.1, o.hi[0] + 0.1, o.hi[1] + 0.1});
+  }
+  const bool rects_changed = !(rects == c->walls_rects);
+  const bool same = c->wallsp && c->walls_x0 == gr.x0() && c->walls_y0 == gr.y0();
+  if (same && !grid_changed && !rects_changed) return;
+  int dx0, dy0, dx1, dy1;
+  const bool d = c->slam.gridMut().takeDirty(&dx0, &dy0, &dx1, &dy1, 2);
+  scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
+  int ylo = 0, yhi = -1;   // 전부
+  if (same && d) { ylo = dy0 - gr.y0(); yhi = dy1 - gr.y0(); }
+  else if (same) { ylo = 1; yhi = 0; }   // 바뀐 칸 없음 — 영역만 바뀌었으면 update 가 전부 다시
+  c->wallsp = std::make_shared<const std::vector<scenemap::WallSeg>>(c->walls.update(wg, ylo, yhi, &rects));
+  c->walls_rects = std::move(rects);
+  c->walls_x0 = gr.x0(); c->walls_y0 = gr.y0();
+  c->walls_grid_ver = c->grid8_ver;
+  static const bool check = std::getenv("SM_WALLS_CHECK") != nullptr;   // 진단: 증분 결과를 처음부터 계산한 것과 비교
+  if (check) {
+    const auto full = scenemap::wallSegments(wg, scenemap::kMinLen, scenemap::kMaxThick, 0.6, &c->walls_rects);
+    const auto& inc = *c->wallsp;
+    bool eq = full.size() == inc.size();
+    for (size_t i = 0; eq && i < full.size(); ++i)
+      eq = full[i].ax == inc[i].ax && full[i].ay == inc[i].ay && full[i].bx == inc[i].bx && full[i].by == inc[i].by;
+    static int n = 0, bad = 0;
+    ++n; if (!eq) ++bad;
+    if (!eq || n % 50 == 0) std::fprintf(stderr, "[walls-check] updates %d mismatches %d (segments %zu vs %zu, ignore %zu)\n", n, bad, inc.size(), full.size(), c->walls_rects.size());
+  }
 }
 
 // keyframe 뒤 장면 그래프: agent, (검출이 있었으면) 물체, 주기마다 바뀐 격자 둘레 place. mu 아래
@@ -733,6 +752,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->w = gr.width();
     s->h = gr.height();
     refreshGrid8(c);
+    refreshWalls(c);
     s->cellsp = c->grid8;
     s->wallsp = c->wallsp;
     {

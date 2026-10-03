@@ -22,6 +22,9 @@ constexpr double kMaxRange = 4.0; // [m]
 constexpr int kStateLen = kSectors + kSegments * 5;
 
 struct WallSeg { double ax, ay, bx, by; };   // 지도 좌표 [m]
+// 벽으로 치지 않을 영역(바닥에 놓인 가구·물체의 바닥 면적, 지도 좌표 [m]). 이 안의 점유 칸은 벽 선분 추출에서 빈 칸으로 본다.
+// 소파·탁자처럼 길고 얇은 덩어리가 벽으로 잡히는 것을 막는다. 광선 거리(rayDistances)는 장애물 거리라서 그대로 쓴다.
+struct WallRect { double x0, y0, x1, y1; bool operator==(const WallRect& o) const { return x0 == o.x0 && y0 == o.y0 && x1 == o.x1 && y1 == o.y1; } };
 
 struct WallGrid {
   const int8_t* cells;
@@ -31,7 +34,7 @@ struct WallGrid {
 
 // 점유 칸에서 축에 맞는(가로·세로) 벽 중심선. 기울어진 벽은 못 찾는다(실내 직교 배치 전제).
 std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len = kMinLen, double max_thick = kMaxThick,
-                                  double overlap = 0.6);
+                                  double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr);
 
 // 실시간 갱신용: 비트 격자와 작업 버퍼를 들고 있다가, 격자에서 바뀐 행만 다시 비트로 만든다.
 // update(g, y_lo, y_hi): 격자 행 y(아래→위, sm_grid 의 y) y_lo..y_hi(끝 포함)가 바뀌었다. y_lo > y_hi 면 전부(처음·격자 크기가 바뀜).
@@ -42,8 +45,9 @@ class WallExtractor {
   ~WallExtractor();
   WallExtractor(const WallExtractor&) = delete;
   WallExtractor& operator=(const WallExtractor&) = delete;
-  const std::vector<WallSeg>& update(const WallGrid& g, int y_lo, int y_hi, double min_len = kMinLen,
-                                     double max_thick = kMaxThick, double overlap = 0.6);
+  // ignore: 벽으로 치지 않을 영역. 이전 호출과 다르면 전부 다시 만든다(몇 µs).
+  const std::vector<WallSeg>& update(const WallGrid& g, int y_lo, int y_hi, const std::vector<WallRect>* ignore = nullptr,
+                                     double min_len = kMinLen, double max_thick = kMaxThick, double overlap = 0.6);
   void reset();
   const std::vector<WallSeg>& segments() const { return segs_; }
 
@@ -51,6 +55,7 @@ class WallExtractor {
   struct Impl;
   std::unique_ptr<Impl> p_;
   std::vector<WallSeg> segs_;
+  std::vector<WallRect> last_ignore_;
 };
 
 // 로봇 자세 (x, y, yaw) 에서 n 개 광선의 첫 점유 칸까지 거리 [m], 없으면 max_range
