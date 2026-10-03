@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "scenemap/walls.hpp"
 #include "scenemap/bestview.hpp"
 #include "scenemap/dsg_save.hpp"
 #include "scenemap/fk.hpp"
@@ -114,6 +115,10 @@ struct sm_ctx {
   std::shared_ptr<const std::vector<int8_t>> grid8;
   uint64_t grid8_ver = ~0ull;
   int grid8_w = 0, grid8_h = 0;
+  // 벽 선분(walls.hpp): 격자 사본이 새로 만들어질 때 바뀐 행만 다시 계산해 둔다. 스냅숏은 이 결과를 나눠 쓴다
+  scenemap::WallExtractor walls;
+  std::shared_ptr<const std::vector<scenemap::WallSeg>> wallsp;
+  int walls_x0 = 0, walls_y0 = 0;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
   Timings tm;
@@ -150,6 +155,7 @@ struct sm_snapshot_t {
   double res = 0.05, ox = 0, oy = 0;
   int w = 0, h = 0;
   std::vector<sm_object> objs;
+  std::shared_ptr<const std::vector<scenemap::WallSeg>> wallsp;   // 벽 선분(격자와 같은 시점)
   std::shared_ptr<const std::vector<int8_t>> cellsp;   // 격자(i8) — 바뀌지 않았으면 이전 스냅숏과 같은 배열
   const int8_t* cells() const { return cellsp ? cellsp->data() : nullptr; }
   std::vector<std::string> names;   // objs[i].name 이 가리키는 문자열(스냅숏 수명 동안)
@@ -342,6 +348,8 @@ int sm_reset(sm_ctx* c) {
   c->diag_s2xy = c->diag_s2yaw = 0;
   c->grid8.reset();
   c->grid8_ver = ~0ull;
+  c->walls.reset();
+  c->wallsp.reset();
   c->graph.reset();
   c->obj_meta.clear();
   c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
@@ -398,6 +406,31 @@ void refreshGrid8(sm_ctx* c) {
   c->grid8_ver = gr.cellsVersion();
   c->grid8_w = gr.width();
   c->grid8_h = gr.height();
+  {
+    // 격자 크기·원점이 같으면 바뀐 행만, 아니면 전부 다시(처음·격자가 넓어짐)
+    int dx0, dy0, dx1, dy1;
+    const bool d = c->slam.gridMut().takeDirty(&dx0, &dy0, &dx1, &dy1, 2);
+    const bool same = c->wallsp && c->walls_x0 == gr.x0() && c->walls_y0 == gr.y0();
+    scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
+    int ylo = 0, yhi = -1;
+    if (same && d) { ylo = dy0 - gr.y0(); yhi = dy1 - gr.y0(); }
+    else if (same) { ylo = 1; yhi = 0; }   // 바뀐 칸 없음(크기만 같음) — 아래에서 건너뜀
+    if (!(same && !d)) {
+      c->wallsp = std::make_shared<const std::vector<scenemap::WallSeg>>(c->walls.update(wg, ylo, yhi));
+      c->walls_x0 = gr.x0(); c->walls_y0 = gr.y0();
+      static const bool check = std::getenv("SM_WALLS_CHECK") != nullptr;   // 진단: 증분 결과를 처음부터 계산한 것과 비교
+      if (check) {
+        const auto full = scenemap::wallSegments(wg);
+        const auto& inc = *c->wallsp;
+        bool same = full.size() == inc.size();
+        for (size_t i = 0; same && i < full.size(); ++i)
+          same = full[i].ax == inc[i].ax && full[i].ay == inc[i].ay && full[i].bx == inc[i].bx && full[i].by == inc[i].by;
+        static int n = 0, bad = 0;
+        ++n; if (!same) ++bad;
+        if (!same || n % 50 == 0) std::fprintf(stderr, "[walls-check] updates %d mismatches %d (segments %zu vs %zu)\n", n, bad, inc.size(), full.size());
+      }
+    }
+  }
   c->addT(kStSnapGrid, usBetween(tg, TClock::now()));
 }
 
@@ -701,6 +734,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->h = gr.height();
     refreshGrid8(c);
     s->cellsp = c->grid8;
+    s->wallsp = c->wallsp;
     {
       const Scan2& sc = c->slam.lastScan();
       const Pose2 sp = c->slam.lastScanPose();
@@ -896,6 +930,30 @@ int sm_snap_map(const sm_snapshot_t* s, sm_grid* out) {
   out->height = s->h;
   out->cells = s->cells();
   return 0;
+}
+
+// 벽 선분은 스냅숏을 만들 때(refreshGrid8) 격자와 함께 갱신돼 있다 — 여기서는 읽기만
+namespace {
+scenemap::WallGrid wallView(const sm_snapshot_t* s) { return {s->cells(), s->w, s->h, s->res, s->ox, s->oy}; }
+}  // namespace
+
+int sm_snap_wall_state(const sm_snapshot_t* s, const double pose[3], float out[SM_WALL_STATE_LEN]) {
+  if (!s || !out || !s->cells() || s->w <= 0 || s->h <= 0) return -1;
+  const double p[3] = {pose ? pose[0] : s->pose.x, pose ? pose[1] : s->pose.y, pose ? pose[2] : s->pose.yaw};
+  if (!s->wallsp) return -1;
+  scenemap::wallStateVector(wallView(s), *s->wallsp, p, out);
+  return 0;
+}
+
+int sm_snap_wall_segments(const sm_snapshot_t* s, double* out, int cap) {
+  if (!s || !s->cells() || s->w <= 0 || s->h <= 0) return -1;
+  if (!s->wallsp) return -1;
+  const auto& segs = s->wallsp;
+  for (int i = 0; out && i < cap && i < int(segs->size()); ++i) {
+    const auto& w = (*segs)[i];
+    out[4 * i] = w.ax; out[4 * i + 1] = w.ay; out[4 * i + 2] = w.bx; out[4 * i + 3] = w.by;
+  }
+  return int(segs->size());
 }
 
 // 격자 위 8방향 A*. 점유(≥ 65 %) 칸을 로봇 반경 0.30 m 만큼 부풀려 막는다. 모르는 칸은 지나갈 수 있되 1.5 배 비용.

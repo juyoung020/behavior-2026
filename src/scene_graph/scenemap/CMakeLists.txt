@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp
+add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp
             src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp)
 target_include_directories(scenemap PUBLIC include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
@@ -94,3 +94,7 @@ endif()
 add_test(NAME scene_json COMMAND test_scene_json)
 add_executable(rooms_pgm tools/rooms_pgm.cpp)
 target_link_libraries(rooms_pgm scenemap)
+
+add_executable(test_walls tests/test_walls.cpp)
+target_link_libraries(test_walls scenemap)
+add_test(NAME walls COMMAND test_walls ${WALLS_REF_CELLS} ${WALLS_REF_JSON})

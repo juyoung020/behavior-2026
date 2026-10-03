@@ -49,7 +49,7 @@ class OccGrid {
   std::vector<int8_t> export8() const;
   void export8(int8_t* out) const;   // width·height 칸
   // 바뀐 영역: 지난 takeDirty 뒤 보이는 값(export8)이 바뀐 칸의 경계 상자(전역 칸 좌표, 끝 포함). 없으면 false. 부를 때마다 비움.
-  bool takeDirty(int* ix0, int* iy0, int* ix1, int* iy1, int consumer = 0);   // consumer 0 = C ABI(sm_take_dirty), 1 = 장면 그래프
+  bool takeDirty(int* ix0, int* iy0, int* ix1, int* iy1, int consumer = 0);   // consumer 0 = C ABI(sm_take_dirty), 1 = 장면 그래프, 2 = 벽 추출(WallExtractor)
   uint64_t version() const { return version_; }
   // 보이는 값이 바뀔 때마다 +1(격자 모양이 바뀌어도 +1) — 스냅숏 격자 사본을 다시 만들지 판단
   uint64_t cellsVersion() const { return cells_ver_; }
@@ -88,8 +88,8 @@ class OccGrid {
   uint64_t version_ = 0;          // insert 마다 +1
   uint64_t cells_ver_ = 0;
   bool cells_changed_ = false;
-  bool dirty_[2] = {false, false};
-  int db_[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+  bool dirty_[3] = {false, false, false};
+  int db_[3][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
   // insert 작업 버퍼(재사용): 점의 칸·map 좌표
   std::vector<int32_t> wc_;
   std::vector<float> wf_;

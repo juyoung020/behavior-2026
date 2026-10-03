@@ -47,7 +47,7 @@ void OccGrid::ensure(int ix0, int iy0, int ix1, int iy1) {
 inline void OccGrid::mark(int ix, int iy, int8_t old_c8, int8_t new_c8) {
   if (old_c8 == new_c8) return;
   cells_changed_ = true;
-  for (int k = 0; k < 2; ++k) {
+  for (int k = 0; k < 3; ++k) {
     int* b = db_[k];
     if (!dirty_[k]) { b[0] = b[2] = ix; b[1] = b[3] = iy; dirty_[k] = true; continue; }
     b[0] = std::min(b[0], ix); b[1] = std::min(b[1], iy); b[2] = std::max(b[2], ix); b[3] = std::max(b[3], iy);
@@ -191,7 +191,7 @@ float OccGrid::prob(int ix, int iy) const {
 }
 
 bool OccGrid::takeDirty(int* ix0, int* iy0, int* ix1, int* iy1, int consumer) {
-  const int k = consumer ? 1 : 0;
+  const int k = consumer < 0 ? 0 : consumer > 2 ? 2 : consumer;
   if (!dirty_[k]) return false;
   *ix0 = db_[k][0]; *iy0 = db_[k][1]; *ix1 = db_[k][2]; *iy1 = db_[k][3];
   dirty_[k] = false;

@@ -91,6 +91,12 @@ int     sm_snap_find(const sm_snapshot_t*, const char* name, uint32_t* ids, floa
 int     sm_snap_near(const sm_snapshot_t*, const double p[3], double r, uint32_t* ids, int cap);        /* 가까운 순 */
 /* 격자: cells[y·width + x] 는 칸 (x, y), 칸 왼쪽 아래 모서리 = origin + (x, y)·resolution. −1 모름, 0..100 점유 % */
 int     sm_snap_map(const sm_snapshot_t*, sm_grid* out);
+/* 벽(2D): 격자에서 축에 맞는 벽 선분을 뽑아 로봇 좌표 수치로. 격자가 바뀐 스냅숏에서만 다시 계산(같은 격자 배열이면 캐시) — 실시간 SLAM 갱신에 맞춤.
+   벡터 배치(float32, 길이 SM_WALL_STATE_LEN = 16 + 8·5): [0..16) 정면부터 반시계 16방향의 첫 점유 칸까지 거리/4 m(1.0 = 없음),
+   [16 + 5j .. +5) 가까운 순 j번째 벽 선분 ax ay bx by(m/4 m, ±1 로 자름) valid. pose = {x, y, yaw}(map), NULL = 스냅숏의 로봇 자세. 0 성공. */
+#define SM_WALL_STATE_LEN 56
+int     sm_snap_wall_state(const sm_snapshot_t*, const double pose[3], float out[SM_WALL_STATE_LEN]);
+int     sm_snap_wall_segments(const sm_snapshot_t*, double* out /* 선분당 ax ay bx by (map, m) */, int cap_segments);   /* 개수(cap 보다 클 수 있음) */
 double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const double to[2]);  /* 경로 길이 m, < 0 = 못 감 */
 
 #endif /* SM_API_H */
