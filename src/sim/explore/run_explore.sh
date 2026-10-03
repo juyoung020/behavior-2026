@@ -7,7 +7,8 @@ set -u
 POL=$1; TASK=$2; TAG=${3:-}; shift 3 2>/dev/null || shift $#
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)            # behavior-2026
-SUPER=$(cd "$REPO/../.." && pwd)              # robot-agent
+SUPER=${ROBOT_AGENT:-$(cd "$REPO/../.." && pwd)}   # robot-agent (behavior-2026 을 서브모듈 밖에서 돌리면 ROBOT_AGENT=~/robot-agent)
+[ -x "$SUPER/src/agent/skills/explore/target/release/explore" ] || SUPER=$HOME/robot-agent
 TS=$(date +%Y%m%d_%H%M%S)
 OUT=$REPO/outputs/explore_${TS}_${TASK}_${POL}${TAG:+_$TAG}
 PORT=${PORT:-8771}
@@ -24,6 +25,7 @@ conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_POSE=${SGRT_POSE:-slam}   # 실제 로봇과 같게 slam(오도메트리 + 스캔 맞추기). 정답 자세 확인용은 SGRT_POSE=gt
 export SGRT_LIB=${SGRT_LIB:-$HOME/sgrt_build_explore/libsgrt.so}
+if [ -n "${SGRT_STREAM:-}" ] && ! strings "$SGRT_LIB" | grep -q SGRT_STREAM; then echo "[run] $SGRT_LIB 에 SGRT_STREAM 이 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi   # 뷰어가 조용히 비는 실수 방지
 cd "$OUT"
 python "$HERE/run_explore.py" --listen 127.0.0.1:$PORT --out "$OUT" -- --task-name "$TASK" --mode public_test \
   --instance-indices 0 --num-envs 1 --max-steps $MAXSTEPS --headless \
