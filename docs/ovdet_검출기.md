@@ -97,5 +97,5 @@ scenemap 이 부르는 검출기다. 코드는 `src/scene_graph/ovdet`(README �
 2. `tools/ref_check.py` 로 Ultralytics FP32 원본과 대조한다(3 프레임, CPU).
 3. coffee_table→floor 가 정답 라벨 문제인지 확인한다(정답 상자 아래 바닥 점).
 4. 권고 설정(11m·0.10)을 `ovd_default_config` 에 넣을지는 scenemap 쪽 채점(물체 위치·DA)을 보고 정한다.
-5. scenemap 연결(`sm_push_image` 안에서 `ovd_detect`)은 scenemap 담당이 한다. 필요하면 머리·손목 카메라마다 핸들을 따로 둔다.
+5. scenemap 연결은 `src/scene_graph/runtime`(sgrt)이 한다(키프레임마다 머리 RGB 로 `ovd_detect` → scenemap). 필요하면 머리·손목 카메라마다 핸들을 따로 둔다.
 6. YOLO-World 상자 전용 비교(선택).

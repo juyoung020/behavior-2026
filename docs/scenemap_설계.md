@@ -1,6 +1,6 @@
 # scenemap — 새 인지 스택 설계 (2D SLAM · 물체 지도 · 계획기 질의)
 
-작성 2026-09-30. 상태: **설계(구현 전)**. 코드는 `src/scenemap/` 에 새로 둔다.
+작성 2026-09-30. 상태: **설계(구현 전)**. 코드는 `src/scene_graph/scenemap/` 에 새로 둔다.
 
 - 근거는 사용자 팀 저장소 `juyoung020/robot-programming-team` 의 [docs/plan.md], [docs/model_selection.md] 다(09-30 판).
   - 이 문서는 그 선택을 **BEHAVIOR 2026 대회 환경에 맞춘 것**이다. 다른 점만 1절 표에 적는다.
@@ -67,7 +67,7 @@
 
 ### 3.1 ① slam2d — 깊이 가상 스캔 + 2D 점유 격자 + 스캔 매칭
 
-코드: `src/scenemap/`(C++20, 외부 의존 없음) — `scan`(깊이 → 스캔), `grid`(점유 격자), `slam2d`(예측·맞추기·문턱), `fk`(R1Pro 순기구학). 채점: `src/scenemap/eval/`, 재생 도구 `tools/slam2d_eval`.
+코드: `src/scene_graph/scenemap/`(C++20, 외부 의존 없음) — `scan`(깊이 → 스캔), `grid`(점유 격자), `slam2d`(예측·맞추기·문턱), `fk`(R1Pro 순기구학). 채점: `src/scene_graph/scenemap/eval/`, 재생 도구 `tools/slam2d_eval`.
 
 - **스캔**(keyframe 마다, 머리 깊이 4 px 간격, 0.3~8 m, k-1 짝의 순기구학 카메라 자세)
   - 로봇 몸 빼기: 순기구학 팔 뼈대(팔 받침–관절 1..7–그리퍼–손끝) 캡슐 r 0.09~0.10 m, 몸통 캡슐 0.18 m, 베이스 반경 0.55 m, 팔 끝 0.35 m 구.
@@ -151,7 +151,7 @@
 
 #### 3.2.1 진행(09-30, 멈춘 지점)
 
-코드: `src/scenemap/include/scenemap/objmap.hpp`, `src/objmap.cpp`(규칙 요약은 헤더 첫머리). 입력은 4.2 약속 `sm_detections` 그대로.
+코드: `src/scene_graph/scenemap/include/scenemap/objmap.hpp`, `src/objmap.cpp`(규칙 요약은 헤더 첫머리). 입력은 4.2 약속 `sm_detections` 그대로.
 **C ABI(`capi.cpp`)에는 아직 안 붙였다** — `sm_snap_objects/find/near` 는 0 개를 돌려준다.
 
 - 위에 적은 설계에서 바뀐 것(재 보고 고침)
@@ -446,15 +446,15 @@ int  sm_snapshot(sm_ctx*, sm_snapshot_t** out);   // 읽기 전용 스냅숏(참
 ```
 
 - simlink 가 이미 받는 것(평가기 원 텐서: RGBA u8, 깊이 f32 m, proprio 61)을 그대로 넘긴다. 자르기·축소는 scenemap 안에서 한다(ROS 계약의 640×480 은 더 이상 필요 없음).
-- 카메라 외부 자세는 scenemap 이 proprio 로 직접 계산한다(순기구학 코드는 `src/agent/src/fk.rs` 와 같은 상수, C++ 로 새로).
+- 카메라 외부 자세는 scenemap 이 proprio 로 직접 계산한다(순기구학 코드는 `src/agent/planner/src/fk.rs` 와 같은 상수, C++ 로 새로).
 
-- **09-30 구현**: `src/scenemap/include/scenemap.h` 에 통합 담당 제안(`src/integ/scenemap_stub/sm_api.h`, 00d745b)의 이름·형을 그대로 옮기고 `src/scenemap/src/capi.cpp` 로 구현했다(두 헤더는 같은 가드 `SM_API_H`).
+- **09-30 구현**: `src/scene_graph/scenemap/include/scenemap.h` 에 통합 담당 제안(`src/sim/integ/scenemap_stub/sm_api.h`, 00d745b)의 이름·형을 그대로 옮기고 `src/scene_graph/scenemap/src/capi.cpp` 로 구현했다(두 헤더는 같은 가드 `SM_API_H`).
   - 지금 되는 것: 자세(slam2d, 스냅숏 때 아직 영상 짝이 안 된 proprio 까지 적분해 최신 stamp 로), 상태, 격자(`sm_snap_map`), `sm_snap_reachable`(8방향 A*, 점유 ≥ 65 % 를 0.30 m 부풀림, 모르는 칸 1.5배, 목표 0.6 m 안 도착, 지도 밖이면 직선 거리).
   - 아직: 물체(`sm_snap_objects/find/near` 는 0 개) — objmap 이 붙으면 채운다. `sm_create` 의 설정 JSON 은 아직 읽지 않는다(기본값).
   - 짝짓기: 영상 stamp 까지 쌓인 proprio 를 적분하고, stamp 가 같은(없으면 그 앞 가장 가까운) proprio 의 순기구학으로 카메라 자세를 만든다. 깊이 표본 간격 = 가로 160 점 안팎(720 → 4 px).
   - 검증: `tools/capi_replay`(ep200 을 C ABI 로 넣음) — slam2d_eval 과 keyframe 자세 차 5e-16 m, 스냅숏 평균 81 µs, A* 0.4 ms. simlink 를 `SCENEMAP_LIB_DIR=<빌드 폴더>` 로 libscenemap.a 에 링크해 `cargo test` 통과(따로 둔 target 폴더).
 
-### 4.2 검출기(YOLOE) 출력 — 약속(확정 09-30, `src/ovdet/include/ovdet.h` 와 `src/scenemap/include/scenemap.h` 가 같은 정의를 `SM_DETECTIONS_DEFINED` 가드로 가짐)
+### 4.2 검출기(YOLOE) 출력 — 약속(확정 09-30, `src/scene_graph/ovdet/include/ovdet.h` 와 `src/scene_graph/scenemap/include/scenemap.h` 가 같은 정의를 `SM_DETECTIONS_DEFINED` 가드로 가짐)
 
 ```c
 typedef struct {
@@ -510,7 +510,7 @@ typedef struct {
 5. slam2d 남은 것: 짧은 판 204·205 가 C 보다 1~2 cm 나쁨(3.1.1). 루프 닫기는 안 넣음(끝 5 cm) — objmap 채점에서 긴 판 물체 위치가 틀리면 다시 본다.
 6. Spark-DSG 저장(submodule 을 src/scenemap/third_party 로 새로 둘지 — 저장·뷰어가 필요해질 때 판단), 방 나누기.
 
-재현: `~/scenemap_eval/`(ep_*.bin·ep_*_det.bin 입력은 남겨 둠, `export_episode.py`·`export_gtdet.py` 로 다시 만들 수 있음), 빌드 `cmake src/scenemap` → `slam2d_eval`·`objmap_eval`·`capi_replay`·`test_fk`.
+재현: `~/scenemap_eval/`(ep_*.bin·ep_*_det.bin 입력은 남겨 둠, `export_episode.py`·`export_gtdet.py` 로 다시 만들 수 있음), 빌드 `cmake src/scene_graph/scenemap` → `slam2d_eval`·`objmap_eval`·`capi_replay`·`test_fk`.
 
 ## 7. 아직 모르는 것
 
