@@ -23,7 +23,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const THREE_JS: &[u8] = include_bytes!("../assets/three.min.js");
 const ORBIT_JS: &[u8] = include_bytes!("../assets/OrbitControls.js");
-const LINES_JS: &[u8] = include_bytes!("../assets/lines.js");   // three.js Line2 (thick anti-aliased lines)
 
 const WALL_STATE_LEN: usize = 56;
 
@@ -430,7 +429,6 @@ fn handle(mut s: TcpStream, st: Arc<State>) {
     match path {
         "/" | "/index.html" => respond(&mut s, 200, "text/html; charset=utf-8", "", INDEX_HTML.as_bytes()),
         "/three.min.js" => respond(&mut s, 200, "application/javascript", "", THREE_JS),
-        "/lines.js" => respond(&mut s, 200, "application/javascript", "", LINES_JS),
         "/OrbitControls.js" => respond(&mut s, 200, "application/javascript", "", ORBIT_JS),
         "/api/view" => {
             let vp = st.dir.join("view.json");
