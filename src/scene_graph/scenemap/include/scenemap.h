@@ -302,7 +302,8 @@ int sm_reset_timing(sm_ctx*);
  * 변 rel: 층 사이(부모 → 자식: 건물→방, 방→place, 방→물체, place→물체, place→agent), place–place(weight = 병목 여유 m),
  * 방–방 문(weight = 폭 m, pos = 자리), 물체 on/in(a 가 b 위·안), near, agent 앞뒤. */
 enum { SM_GL_OBJECTS = 0, SM_GL_AGENTS = 1, SM_GL_PLACES = 2, SM_GL_ROOMS = 3, SM_GL_BUILDINGS = 4, SM_GL_ALL = -1 };
-enum { SM_REL_PARENT = 0, SM_REL_PLACE = 1, SM_REL_DOOR = 2, SM_REL_ON = 3, SM_REL_IN = 4, SM_REL_NEAR = 5, SM_REL_AGENT = 6 };
+/* Edge kinds. Numbers 3, 4, 5 were the object-object prepositions on / in / near; they were removed (Map_Vla) and the numbers stay unused so the others keep their values. */
+enum { SM_REL_PARENT = 0, SM_REL_PLACE = 1, SM_REL_DOOR = 2, SM_REL_AGENT = 6 };
 typedef struct {
   uint64_t id;
   int32_t layer, partition;    /* Spark-DSG 층 번호(2·3·4·5)·partition(agent = 'a') */

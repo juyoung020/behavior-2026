@@ -404,7 +404,8 @@ void refreshGrid8(sm_ctx* c) {
 // keyframe 뒤 장면 그래프: agent, (검출이 있었으면) 물체, 주기마다 바뀐 격자 둘레 place. mu 아래
 void updateGraph(sm_ctx* c, double stamp, bool objects) {
   const auto t0 = TClock::now();
-  c->graph.updateAgent(stamp, c->slam.pose());
+  // GT mode: the trajectory comes straight from the pushed GT poses (sm_push_pose), not from the SLAM/odometry pose sampled at keyframes.
+  if (c->pose_mode != SM_POSE_GT) c->graph.updateAgent(stamp, c->slam.pose());
   if (objects) {
     std::vector<ObjIn> v;
     for (const MapObject& o : c->om.objects()) {
@@ -1132,6 +1133,9 @@ int sm_push_pose(sm_ctx* c, const sm_pose2* p) {
   std::lock_guard<std::mutex> g(c->mu);
   if (!c->gtq.empty() && p->stamp < c->gtq.back().stamp - 1e-9) c->gtq.clear();   // 시각이 되돌아감(새 판)
   c->gtq.push_back(*p);
+  // The robot trajectory (AGENTS layer) follows the GT pose directly: every pushed pose goes through the same keyframe thresholds
+  // (GraphParams agent_xy / agent_yaw / agent_s), with no image or proprio needed in between.
+  if (c->pose_mode == SM_POSE_GT) c->graph.updateAgent(p->stamp, Pose2{p->x, p->y, p->yaw});
   // 적분·짝짓기에 쓸 만큼만(가장 오래 기다리는 proprio·영상보다 2 s 앞까지)
   const double keep = (c->have_used ? c->last_used.stamp : p->stamp) - 2.0;
   while (c->gtq.size() > 2 && c->gtq[1].stamp < keep) c->gtq.pop_front();

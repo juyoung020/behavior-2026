@@ -9,7 +9,7 @@
 //   4 ROOMS                    방 'R'<id>(rooms.hpp), 방–방 변 = 문(위치·폭)
 //   5 BUILDINGS                건물 'B'0 하나
 //   층 사이: 물체 → 가장 가까운 place, place → 방, 방 → 건물, agent → 가장 가까운 place, 방 → 물체.
-//   물체끼리: on(바닥이 아래 물체 윗면에·xy 겹침) / in(중심이 큰 물체 상자 안) / near(중심 0.6 m 안).
+//   물체끼리 관계(on/in/near)는 만들지 않는다(Map_Vla) — 위치·상자 메타데이터로 소비자가 추론. 물체의 부모: 방, place.
 // 갱신(Hydra 앞단처럼 활성 창만): 격자 보이는 값이 바뀐 상자(+2 m)만 다시 계산 — place 를 지우고 다시 고르고(가까운 옛 id 는
 //   다시 씀), 그 둘레 변만 다시 잇는다. 물체·agent 는 keyframe 마다 바뀐 것만. 방은 방 나눔이 바뀔 때만.
 // 읽기: publish() 가 바뀌었을 때만 바뀌지 않는 사본(GraphView)을 만들고 스냅숏이 포인터만 나눠 씀.
@@ -34,9 +34,6 @@ enum GRel : int32_t {
   kRelGeneric = 0,   // 층 사이(부모 → 자식)
   kRelPlace = 1,     // place–place(무게 = 병목 여유)
   kRelDoor = 2,      // 방–방(무게 = 문 폭)
-  kRelOn = 3,        // a 가 b 위에
-  kRelIn = 4,        // a 가 b 안에
-  kRelNear = 5,      // 가까움
   kRelAgent = 6,     // agent 앞뒤
 };
 
@@ -86,7 +83,6 @@ struct GraphParams {
   double frontier_tol = 0.15;   // 여유 + 이것 반지름 원 위에 모름이 있으면 frontier
   double period_s = 0.5;        // place 다시 계산 최소 간격(시뮬 s)
   double agent_xy = 0.5, agent_yaw = 30 * M_PI / 180, agent_s = 10.0;
-  double near_r = 0.6;
 };
 
 struct ObjIn {                  // 물체 층 입력(확정 물체)

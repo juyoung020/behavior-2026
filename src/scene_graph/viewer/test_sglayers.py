@@ -17,9 +17,9 @@ from sglayers import LayerView, parse_layers  # noqa: E402
 
 def view(n_places=5, clear=0.5):
     nodes = [{"id": f"p{i}", "kind": "place", "pos": [i * 1.0, 0.0], "clear": clear, "frontier": i == 0} for i in range(n_places)]
-    nodes += [{"id": "a0", "kind": "agent", "pos": [0, 0], "yaw": 0, "t": 0}, {"id": "B0", "kind": "building", "pos": [2, 0]}]
+    nodes += [{"id": "a0", "kind": "agent", "pos": [0, 0], "yaw": 0, "t": 0}]
     edges = [[f"p{i}", f"p{i + 1}", "place", clear] for i in range(n_places - 1)]
-    edges += [["R1", "p0", "parent", 1], ["B0", "R1", "parent", 1], ["p1", "O3", "parent", 1], ["O3", "O4", "on", 1], ["p0", "a0", "parent", 1]]
+    edges += [["R1", "p0", "parent", 1], ["p1", "O3", "parent", 1], ["O3", "O4", "on", 1], ["p0", "a0", "parent", 1]]
     return {"objects": [{"id": 3, "pos": [1, 0, 0.8], "name": "cup", "state": "seen"}, {"id": 4, "pos": [1, 0, 0.4], "name": "table", "state": "seen"}],
             "rooms": [{"id": 1, "centroid": [2, 0], "name": "kitchen", "color": [200, 100, 50]}],
             "graph": {"nodes": nodes, "edges": edges}}
@@ -27,7 +27,7 @@ def view(n_places=5, clear=0.5):
 
 def main():
     L = parse_layers(view())
-    assert len(L["nodes"]) == 10 and len(L["edges"]) == 9, (len(L["nodes"]), len(L["edges"]))
+    assert len(L["nodes"]) == 9 and len(L["edges"]) == 8, (len(L["nodes"]), len(L["edges"]))
     d = tempfile.mkdtemp()
     srv = viser.ViserServer(port=8093, verbose=False)
     lv = LayerView(srv, d)
@@ -35,10 +35,11 @@ def main():
     json.dump(view(), open(p, "w"))
     assert lv.poll()
     names = set(lv._handles)
-    for want in ("/graph/place_nodes", "/graph/room_nodes", "/graph/building_nodes", "/graph/object_nodes", "/graph/agent_nodes",
-                 "/graph/edges_place", "/graph/edges_inter", "/graph/edges_on"):
+    for want in ("/graph/place_nodes", "/graph/room_nodes", "/graph/object_nodes", "/graph/agent_nodes",
+                 "/graph/edges_place", "/graph/edges_inter"):
         assert want in names, (want, names)
-    assert lv.z_of(L["nodes"]["p0"]) < lv.z_of(L["nodes"]["R1"]) < lv.z_of(L["nodes"]["B0"])
+    assert "/graph/edges_on" not in names, "object-object prepositions in old files must not be drawn"
+    assert lv.z_of(L["nodes"]["p0"]) < lv.z_of(L["nodes"]["R1"])
     before = dict(lv._handles)
     assert not lv.poll()  # unchanged file: nothing
     time.sleep(0.01)

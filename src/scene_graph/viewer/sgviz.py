@@ -20,6 +20,7 @@ import json
 import hashlib
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -32,6 +33,7 @@ import numpy as np
 # `python sgviz.py` puts this folder on sys.path; nothing here may shadow
 # `viser` or `spark_dsg` (Spark-DSG's own python dir contains a viser.py).
 import spark_dsg as dsg
+import walls2d  # occupancy map -> 2D wall segments -> robot-frame numbers (this folder)
 from spark_dsg.viser import BOUNDING_BOX_EDGE_INDICES, ViserRenderer
 
 STATE_COLORS = {
@@ -41,7 +43,10 @@ STATE_COLORS = {
     "gone": (140, 140, 140),
 }
 DEFAULT_COLOR = (200, 60, 200)
-RELATION_COLORS = {"on": (90, 60, 200), "in": (200, 40, 120)}
+WALL_LINE_COLOR = (0, 200, 255)  # cyan: orange is already the "moved" colour (trails)
+# Ceiling / wall detection by head noun (names are open-vocabulary and noisy): "wall mounted tv" is NOT a wall.
+CEILING_RE = re.compile(r"(?:^|\s)(?:ceilings?|roofs?)$", re.I)
+WALL_RE = re.compile(r"(?:^|\s)(?:walls?|baseboards?|wainscoting|drywall)$", re.I)
 
 
 # --------------------------------------------------------------------------
@@ -67,6 +72,7 @@ class ObjInfo:
     bbox_center: Optional[Tuple[float, float, float]] = None
     bbox_corners: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
     rgbd: Optional[Dict[str, Any]] = None
+    room: str = ""  # parent room (ROOMS layer -> OBJECTS layer edge), "" = none
     points: Optional[Dict[str, Any]] = None  # {"path", "n", "voxel", "stamp"}
     metadata: Dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -99,27 +105,11 @@ class ObjInfo:
 
 
 @dataclass
-class EdgeInfo:
-    source: int  # object
-    target: int  # support
-    relation: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def key(self) -> Tuple[int, int]:
-        return (self.source, self.target)
-
-    def sig(self):
-        return (self.relation, repr(sorted(self.metadata.items())))
-
-
-@dataclass
 class Scene:
     stamp: float = 0.0
     robot_pose: Optional[Tuple[float, float, float]] = None
     grid: Optional[str] = None
     objects: Dict[int, ObjInfo] = field(default_factory=dict)
-    edges: Dict[Tuple[int, int], EdgeInfo] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -189,12 +179,14 @@ def scene_from_graph(G: dsg.DynamicSceneGraph) -> Scene:
             pass
         sc.objects[oid] = info
 
-    for e in layer.edges:
-        s, t = dsg.NodeSymbol(e.source), dsg.NodeSymbol(e.target)
-        md = _meta(e.info)
-        ei = EdgeInfo(int(s.category_id), int(t.category_id),
-                      str(md.get("relation", "")), md)
-        sc.edges[ei.key] = ei
+    # room -> object parent edges (the only object link the graph keeps; no on/in/near between objects)
+    if G.has_layer(dsg.DsgLayers.ROOMS):
+        room_name = {int(n.id.category_id): str(getattr(n.attributes, "name", "") or n.id.str())
+                     for n in G.get_layer(dsg.DsgLayers.ROOMS).nodes}
+        for ie in G.interlayer_edges:
+            ps, ch = dsg.NodeSymbol(ie.source), dsg.NodeSymbol(ie.target)
+            if ps.category == "R" and ch.category == "O" and int(ch.category_id) in sc.objects:
+                sc.objects[int(ch.category_id)].room = room_name.get(int(ps.category_id), ps.str())
     return sc
 
 
@@ -209,13 +201,9 @@ class Diff:
     redraw: List[int] = field(default_factory=list)   # geometry changed
     changed: List[int] = field(default_factory=list)  # any field changed (superset of redraw)
     removed: List[int] = field(default_factory=list)
-    edges_added: List[Tuple[int, int]] = field(default_factory=list)
-    edges_changed: List[Tuple[int, int]] = field(default_factory=list)
-    edges_removed: List[Tuple[int, int]] = field(default_factory=list)
 
     def empty(self) -> bool:
-        return not (self.added or self.changed or self.removed or self.edges_added
-                    or self.edges_changed or self.edges_removed)
+        return not (self.added or self.changed or self.removed)
 
 
 def diff_scenes(old: Optional[Scene], new: Scene) -> Diff:
@@ -231,32 +219,7 @@ def diff_scenes(old: Optional[Scene], new: Scene) -> Diff:
             if p.full_sig() != o.full_sig():
                 d.changed.append(oid)
     d.removed = [oid for oid in oo if oid not in new.objects]
-    oe = old.edges if old else {}
-    for k, e in new.edges.items():
-        if k not in oe:
-            d.edges_added.append(k)
-        elif oe[k].sig() != e.sig():
-            d.edges_changed.append(k)
-    d.edges_removed = [k for k in oe if k not in new.edges]
     return d
-
-
-def relations_of(scene: Scene, oid: int) -> List[str]:
-    out = []
-    for (s, t), e in scene.edges.items():
-        rel = e.relation or "-"
-        if s == oid:
-            tn = scene.objects[t].label if t in scene.objects else f"#{t}"
-            out.append(f"{rel} {tn}")
-        elif t == oid:
-            sn = scene.objects[s].label if s in scene.objects else f"#{s}"
-            out.append(f"{sn} {rel} this")
-    return out
-
-
-# --------------------------------------------------------------------------
-# Map / images
-# --------------------------------------------------------------------------
 
 
 def read_map_yaml(path: str) -> Dict[str, Any]:
@@ -659,11 +622,17 @@ class SgViewer(ViserRenderer):
         self._map_handle = None
         self._robot = None
         self._node_handles: Dict[int, List[Any]] = {}
-        self._edge_handles: Dict[Tuple[int, int], List[Any]] = {}
         self._sel_handle = None
         self._camera_set = False
         self.picker = PickIndex()
         self._suppress_dropdown = False
+        self._occ = None            # occupied mask of the current map (PGM row order)
+        self._res = 0.05
+        self._origin = (0.0, 0.0)
+        self._wall_segs = None      # (N, 4) map-frame wall segments from the occupancy map
+        self._wall_handles: List[Any] = []
+        self._wall_vec = None       # last wall state vector
+        self._wall_pose = None
         self._build_gui()
         from sglayers import LayerView  # Hydra-style stacked graph layers (view.json "graph")
         self.layers = LayerView(self.server, self.dir)
@@ -680,18 +649,28 @@ class SgViewer(ViserRenderer):
             self.g_psize = gui.add_number("Point size x voxel", 1.0, min=0.2, max=5.0, step=0.1)
             self.g_markers = gui.add_checkbox("Centre markers", False)
             self.g_boxes = gui.add_checkbox("Boxes (objects w/o points)", False)
-            self.g_edges = gui.add_checkbox("Support edges", True)
+            self.g_roomlbl = gui.add_checkbox("Room in label", False)
+            self.g_minobs = gui.add_number("Min observations", 3, min=1, max=200, step=1)
             self.g_trails = gui.add_checkbox("Moved trails", True)
             self.g_struct = gui.add_checkbox("Structural objects", True)
+            self.g_noceil = gui.add_checkbox("Hide ceiling", True)
+            self.g_ceilz = gui.add_number("Ceiling cut height [m]", 2.1, min=0.5, max=6.0, step=0.05)
+            self.g_walls2d = gui.add_checkbox("Walls as 2D lines", True)
             self.g_gone = gui.add_checkbox("Gone objects", True)
             self.g_map = gui.add_checkbox("Occupancy map", True)
             self.g_size = gui.add_number("Node radius (no points)", 0.06, min=0.01, max=0.5, step=0.01)
             self.g_maxbox = gui.add_number("Max box side [m]", 2.0, min=0.1, max=20.0, step=0.1)
         for h in (self.g_labels, self.g_points, self.g_pcolor, self.g_psize, self.g_markers,
-                  self.g_boxes, self.g_edges, self.g_trails,
-                  self.g_struct, self.g_gone, self.g_size, self.g_maxbox):
+                  self.g_boxes, self.g_trails,
+                  self.g_struct, self.g_gone, self.g_size, self.g_maxbox,
+                  self.g_noceil, self.g_ceilz, self.g_walls2d, self.g_roomlbl, self.g_minobs):
             h.on_update(lambda _: self._redraw_all())
         self.g_map.on_update(lambda _: self._map_visibility())
+
+        with gui.add_folder("Wall state (2D walls -> numbers)", expand_by_default=True):
+            self.g_wstate = gui.add_markdown("waiting for the map ...")
+            self.g_wsave = gui.add_button("Save wall state (.json)")
+        self.g_wsave.on_click(lambda _: self._save_wall_state())
 
         with gui.add_folder("Object", expand_by_default=True):
             self.g_select = gui.add_dropdown("Select", ["(none)"], initial_value="(none)")
@@ -799,7 +778,6 @@ class SgViewer(ViserRenderer):
             self.g_dstats.visible = False
             return
         f3 = lambda v: "-" if v is None else "(" + ", ".join(f"{x:.3f}" for x in v) + ")"
-        rels = relations_of(sc, o.id)
         lines = [
             f"**{o.display_name}** #{o.id} (`{o.sym}`)",
             "",
@@ -811,7 +789,7 @@ class SgViewer(ViserRenderer):
             f"| score | {o.score:.3f} |",
             f"| last seen | {o.last_seen:.2f} s (now {sc.stamp:.2f}) |",
             f"| bbox | {f3(o.bbox_dims)} |",
-            f"| relations | {'; '.join(rels) if rels else '-'} |",
+            f"| room | {o.room or '-'} |",
         ]
         nm = o.names
         if nm:
@@ -861,6 +839,12 @@ class SgViewer(ViserRenderer):
     def _visible(self, o: ObjInfo) -> bool:
         if o.structural and not self.g_struct.value:
             return False
+        if self.g_noceil.value and (CEILING_RE.search(o.display_name) or o.pos[2] > float(self.g_ceilz.value)):
+            return False
+        if self.g_walls2d.value and WALL_RE.search(o.display_name):
+            return False  # drawn as 2D lines from the occupancy map instead
+        if o.n_obs < int(self.g_minobs.value):
+            return False  # seen only once or twice: usually a stray segment
         if o.state == "gone" and not self.g_gone.value:
             return False
         return True
@@ -900,6 +884,13 @@ class SgViewer(ViserRenderer):
             self._points_key[o.id] = key  # None = missing/unreadable -> retried in poll
             if pts is not None and len(pts[0]) > 0 and self.g_points.value:
                 xyz, rgb = pts
+                if self.g_noceil.value:
+                    keep = xyz[:, 2] <= float(self.g_ceilz.value)
+                    if not keep.any():
+                        return  # the whole segment is above the ceiling cut
+                    if not keep.all():
+                        xyz = xyz[keep]
+                        rgb = rgb[keep] if rgb is not None else None
                 c = xyz.mean(axis=0)
                 if rgb is None or self.g_pcolor.value == "state colour":
                     colors = np.tile(np.asarray(col, np.uint8), (len(xyz), 1))
@@ -933,7 +924,7 @@ class SgViewer(ViserRenderer):
                 self.picker.set_sphere(o.id, o.pos, 1.5 * r)
         if self.g_labels.value:
             z = max(top_z, o.pos[2]) + (0.04 if has_pts else 1.8 * r)
-            hs.append(sc.add_label(f"{base}/label", o.label, position=(o.pos[0], o.pos[1], z),
+            hs.append(sc.add_label(f"{base}/label", o.label + (f" [{o.room}]" if (self.g_roomlbl.value and o.room) else ""), position=(o.pos[0], o.pos[1], z),
                                    anchor="bottom-center", font_screen_scale=0.8))
         if self.g_boxes.value and not has_pts:
             seg = _box_segments(o, float(self.g_maxbox.value))
@@ -967,32 +958,6 @@ class SgViewer(ViserRenderer):
                     self._draw_node(self.scene.objects[oid])
         return todo
 
-    def _remove_edge(self, k):
-        for h in self._edge_handles.pop(k, []):
-            try:
-                h.remove()
-            except Exception:
-                pass
-
-    def _draw_edge(self, e: EdgeInfo):
-        self._remove_edge(e.key)
-        objs = self.scene.objects
-        if not self.g_edges.value or e.source not in objs or e.target not in objs:
-            return
-        a, b = objs[e.source], objs[e.target]
-        if not (self._visible(a) and self._visible(b)):
-            return
-        col = RELATION_COLORS.get(e.relation, (60, 60, 60))
-        sc = self.server.scene
-        name = f"/edges/O{e.source}_O{e.target}"
-        hs = [sc.add_line_segments(f"{name}/line", np.array([[a.pos, b.pos]], float), col,
-                                   thickness=2.0, thickness_units="screen")]
-        if e.relation:
-            mid = tuple((np.asarray(a.pos) + np.asarray(b.pos)) / 2)
-            hs.append(sc.add_label(f"{name}/label", e.relation, position=mid,
-                                   anchor="center-center", font_screen_scale=0.7))
-        self._edge_handles[e.key] = hs
-
     def _draw_selection(self):
         if self._sel_handle is not None:
             self._sel_handle.remove()
@@ -1014,9 +979,66 @@ class SgViewer(ViserRenderer):
             with self.server.atomic():
                 for o in self.scene.objects.values():
                     self._draw_node(o)
-                for e in self.scene.edges.values():
-                    self._draw_edge(e)
                 self._draw_selection()
+            self._draw_walls2d()
+
+    # ---------------- walls as 2D + wall state ----------------
+    def _draw_walls2d(self):
+        for h in self._wall_handles:
+            try:
+                h.remove()
+            except Exception:
+                pass
+        self._wall_handles = []
+        segs = self._wall_segs
+        if not self.g_walls2d.value or segs is None or len(segs) == 0:
+            return
+        seg3 = np.zeros((len(segs), 2, 3), float)
+        seg3[:, 0, :2] = segs[:, 0:2]
+        seg3[:, 1, :2] = segs[:, 2:4]
+        seg3[:, :, 2] = 0.03
+        self._wall_handles.append(self.server.scene.add_line_segments(
+            "/walls2d", seg3, WALL_LINE_COLOR, thickness=4.0, thickness_units="screen"))
+
+    def _update_wall_state(self, pose):
+        if self._occ is None or self._wall_segs is None or pose is None:
+            return
+        self._wall_pose = tuple(float(v) for v in pose[:3])
+        vec = walls2d.wall_state_vector(self._occ, self._res, self._origin, self._wall_segs, self._wall_pose)
+        self._wall_vec = vec
+        n, k, R = walls2d.N_SECTORS, walls2d.K_SEGMENTS, walls2d.MAX_RANGE
+        rays = (vec[:n] * R)
+        segs = vec[n:].reshape(k, 5)
+        rows = [f"| {j} | {s[0]*R:+.2f} | {s[1]*R:+.2f} | {s[2]*R:+.2f} | {s[3]*R:+.2f} |"
+                for j, s in enumerate(segs) if s[4] > 0][:5]
+        self.g_wstate.content = (
+            f"pose (map) x {pose[0]:.2f}  y {pose[1]:.2f}  yaw {pose[2]:.2f}  \n"
+            f"wall segments in map: **{len(self._wall_segs)}**  |  state vector length **{len(vec)}**  \n"
+            f"ray distance [m] ({n} sectors from straight ahead, CCW, max {R:.0f}):  \n"
+            + " ".join(f"{d:.1f}" for d in rays)
+            + "  \n\nnearest wall segments, robot frame [m]:  \n| # | ax | ay | bx | by |\n|---|---|---|---|---|\n"
+            + "\n".join(rows))
+
+    def _save_wall_state(self):
+        if self._wall_vec is None:
+            return
+        import json
+        out_dir = os.environ.get("SGVIZ_STATE_DIR") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "outputs", "wall_state")
+        out_dir = os.path.abspath(out_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        tag = os.path.basename(os.path.dirname(self.dir.rstrip("/"))) or "memory"
+        stamp = self.scene.stamp if self.scene is not None else 0.0
+        base = os.path.join(out_dir, f"{tag}_t{stamp:.1f}")
+        with open(base + ".json", "w") as f:
+            json.dump({"memory_dir": self.dir, "stamp": stamp, "pose": list(self._wall_pose),
+                       "resolution": self._res, "origin": list(self._origin),
+                       "n_sectors": walls2d.N_SECTORS, "k_segments": walls2d.K_SEGMENTS,
+                       "max_range": walls2d.MAX_RANGE,
+                       "segments_map_frame": self._wall_segs.tolist(),
+                       "state_vector": self._wall_vec.tolist()}, f)
+        np.save(base + ".npy", self._wall_vec)
+        self.g_wstate.content += f"  \n\nsaved: `{base}.json` / `.npy`"
 
     def _draw_robot(self, pose):
         if pose is None:
@@ -1064,6 +1086,10 @@ class SgViewer(ViserRenderer):
         res = float(meta.get("resolution", 0.05))
         ox, oy = (meta.get("origin") or [0.0, 0.0])[:2]
         H, W = pgm.shape
+        self._occ = walls2d.occupied_mask(pgm)
+        self._res, self._origin = res, (float(ox), float(oy))
+        self._wall_segs = walls2d.wall_segments(self._occ, res, self._origin)
+        self._draw_walls2d()
         tex = map_texture(pgm, meta)
         # viser image planes have row 0 at local -Y; PGM row 0 is max-y.
         tex = np.ascontiguousarray(np.flipud(tex))
@@ -1085,19 +1111,11 @@ class SgViewer(ViserRenderer):
                     for oid in d.added + d.redraw:
                         self._draw_node(new.objects[oid])
                     moved = set(d.redraw) | set(d.removed) | set(d.added)
-                    for k in d.edges_removed:
-                        self._remove_edge(k)
-                    redo = set(d.edges_added) | set(d.edges_changed)
-                    redo |= {k for k in new.edges if k[0] in moved or k[1] in moved}
-                    for k in redo:
-                        self._draw_edge(new.edges[k])
                     if self.selected is not None and self.selected in moved:
                         self._draw_selection()
             if d.added or d.removed:
                 self._set_dropdown()
-            if self.selected is not None and (self.selected in d.changed or d.removed
-                                              or d.edges_added or d.edges_removed
-                                              or d.edges_changed):
+            if self.selected is not None and (self.selected in d.changed or d.removed):
                 if self.selected not in new.objects:
                     self.selected = None
                     self._set_dropdown()
@@ -1105,14 +1123,16 @@ class SgViewer(ViserRenderer):
                 self._render_panel()
             self._draw_robot(new.robot_pose)
             self._update_map(new.grid)
+            self._update_wall_state(new.robot_pose)
             n_moved = sum(o.state == "moved" for o in new.objects.values())
             self.g_status.content = (
                 f"`{self.dir}`  \nstamp **{new.stamp:.1f} s** | objects {len(new.objects)} "
-                f"(moved {n_moved}) | edges {len(new.edges)}" + (f"  \n{self._explore_line}" if getattr(self, "_explore_line", None) else ""))
+                f"(moved {n_moved})" + (f"  \n{self._explore_line}" if getattr(self, "_explore_line", None) else ""))
             if not self._camera_set and new.robot_pose is not None:
                 x, y, _ = new.robot_pose
-                self.server.initial_camera.position = (x - 3.0, y - 3.0, 4.0)
-                self.server.initial_camera.look_at = (x + 1.0, y, 0.5)
+                # Map_Vla: the stacked Hydra layers float at z = 4 .. 10 m, so start further back and higher to see house + graph
+                self.server.initial_camera.position = (x - 9.0, y - 9.0, 9.0)
+                self.server.initial_camera.look_at = (x + 1.0, y + 1.0, 4.0)
                 self._camera_set = True
             return d
 

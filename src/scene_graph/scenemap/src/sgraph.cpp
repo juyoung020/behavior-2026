@@ -14,7 +14,6 @@ using Clk = std::chrono::steady_clock;
 double usSince(Clk::time_point t) { return std::chrono::duration<double, std::micro>(Clk::now() - t).count(); }
 
 constexpr int kObjLayer = 2, kPlaceLayer = 3, kRoomLayer = 4, kBuildLayer = 5, kAgentPart = 'a';
-constexpr uint64_t kBuilding = nodeSym('B', 0);
 
 int layerOrder(const GNode& n) {
   if (n.layer == kObjLayer) return n.partition == kAgentPart ? 1 : 0;
@@ -93,7 +92,7 @@ void SceneGraph::addEdge(uint64_t a, uint64_t b, float w, int rel, const float* 
   if (a == b || !nodes_.count(a) || !nodes_.count(b)) return;
   auto& va = adj_[a];
   for (const GEdge& e : va)
-    if (e.rel == rel && ((e.a == a && e.b == b) || (rel != kRelOn && rel != kRelIn && e.a == b && e.b == a))) return;
+    if (e.rel == rel && ((e.a == a && e.b == b) || (e.a == b && e.b == a))) return;
   GEdge e;
   e.a = a; e.b = b; e.weight = w; e.rel = rel;
   if (pos) { e.pos[0] = pos[0]; e.pos[1] = pos[1]; }
@@ -142,32 +141,8 @@ void SceneGraph::updateObjects(const std::vector<ObjIn>& objs) {
     if (n.layer == kObjLayer && n.partition == 0 && std::find(keep.begin(), keep.end(), id) == keep.end()) gone.push_back(id);
   for (uint64_t id : gone) erase(id), any = true;
   if (any) {
-    // 물체 관계: on / in / near
-    std::vector<const GNode*> os;
-    for (uint64_t id : keep) os.push_back(&nodes_[id]);
-    for (const GNode* n : os) eraseEdgesOf(n->id, (1 << kRelOn) | (1 << kRelIn) | (1 << kRelNear));
-    // 짝마다 관계 하나(on > in > near): a 가 b 위 / b 안
-    auto rel = [&](const GNode* a, const GNode* b) {
-      const double m = 0.05;
-      const bool xy_in = a->pos[0] > b->lo[0] - m && a->pos[0] < b->hi[0] + m && a->pos[1] > b->lo[1] - m && a->pos[1] < b->hi[1] + m;
-      if (!xy_in) return -1;
-      if (std::fabs(a->lo[2] - b->hi[2]) < 0.10 && a->pos[2] > b->pos[2]) return int(kRelOn);
-      const double va = (a->hi[0] - a->lo[0]) * (a->hi[1] - a->lo[1]) * std::max(0.01, a->hi[2] - a->lo[2]);
-      const double vb = (b->hi[0] - b->lo[0]) * (b->hi[1] - b->lo[1]) * std::max(0.01, b->hi[2] - b->lo[2]);
-      if (va < vb && a->pos[2] > b->lo[2] && a->pos[2] < b->hi[2]) return int(kRelIn);
-      return -1;
-    };
-    for (size_t i = 0; i < os.size(); ++i)
-      for (size_t k = i + 1; k < os.size(); ++k) {
-        const GNode *a = os[i], *b = os[k];
-        if (a->state == SM_GONE || b->state == SM_GONE) continue;
-        int r = rel(a, b);
-        if (r >= 0) { addEdge(a->id, b->id, 1.f, r); continue; }
-        r = rel(b, a);
-        if (r >= 0) { addEdge(b->id, a->id, 1.f, r); continue; }
-        if (std::hypot(a->pos[0] - b->pos[0], a->pos[1] - b->pos[1]) < p_.near_r && std::fabs(a->pos[2] - b->pos[2]) < 0.5)
-          addEdge(a->id, b->id, 1.f, kRelNear);
-      }
+    // 물체끼리 관계(on/in/near 전치사 규칙)는 만들지 않는다(Map_Vla): 물체마다 위치·상자가 메타데이터로 남으므로 '위에 있다/안에 있다'는
+    // 소비자(LLM)가 추론한다. 그래프에 남는 물체 연결은 부모 쪽뿐이다: 방 → 물체(updateRooms), place → 물체(linkObjectsToPlaces).
     linkObjectsToPlaces();
   }
   us_objects = usSince(t0);
@@ -478,10 +453,8 @@ void SceneGraph::updateRooms(const std::shared_ptr<const RoomSeg>& rs, const std
     for (const auto& [id, n] : nodes_)
       if (n.layer == kRoomLayer || n.layer == kBuildLayer) rm.push_back(id);
     for (uint64_t id : rm) erase(id);
+    // Map_Vla: three layers only (OBJECTS, PLACES, ROOMS). The single BUILDINGS node 'B0' (and building -> room edges) is no longer made.
     if (rs && !rs->rooms.empty()) {
-      GNode& b = upsert(kBuilding, kBuildLayer, 0);
-      b.name = "building";
-      double cx = 0, cy = 0, A = 0;
       for (size_t k = 0; k < rs->rooms.size(); ++k) {
         const RoomGeom& r = rs->rooms[k];
         GNode& n = upsert(nodeSym('R', r.id), kRoomLayer, 0);
@@ -491,12 +464,7 @@ void SceneGraph::updateRooms(const std::shared_ptr<const RoomSeg>& rs, const std
         n.stamp = r.area_m2;   // 넓이(저장 메타데이터)
         n.name = k < names.size() ? names[k] : "room " + std::to_string(r.id);
         ++n.ver;
-        cx += r.centroid[0] * r.area_m2; cy += r.centroid[1] * r.area_m2; A += r.area_m2;
       }
-      b.pos[0] = b.lo[0] = b.hi[0] = A > 0 ? cx / A : 0;
-      b.pos[1] = b.lo[1] = b.hi[1] = A > 0 ? cy / A : 0;
-      ++b.ver;
-      for (const RoomGeom& r : rs->rooms) addEdge(kBuilding, nodeSym('R', r.id), 1.f, kRelGeneric);
       for (const RoomDoor& d : rs->doors) {
         const float pos[2] = {float(d.pos[0]), float(d.pos[1])};
         addEdge(nodeSym('R', d.a), nodeSym('R', d.b), float(d.width), kRelDoor, pos);

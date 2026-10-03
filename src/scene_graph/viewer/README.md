@@ -64,3 +64,17 @@ scene.json 의 mtime 을 0.25 s 마다 보고, 바뀐 노드·간선만 다시 �
 - spark_dsg 의 `ViserRenderer.draw()`(GraphHandle) 는 viser 1.x 에서 없어진 API
   (`server.add_folder` 등)를 써서 그대로는 안 돈다. 그래서 서버 소유만 물려받고 그리기는 여기서 한다.
 - 예전 Rust 시제품(sgview)은 지웠다. 이미 빌드된 `target/` 은 git 무시 대상으로 남아 있다.
+
+## Map_Vla 에서 추가한 것 (천장 숨김 · 2D 벽 · 벽 state)
+
+원본(팀 `behavior-2026`)에 더한 부분이다. 원래 동작은 체크를 끄면 그대로 나온다.
+- **Hide ceiling** (기본 켬) + **Ceiling cut height [m]** (기본 2.1): 이 높이보다 위의 세그먼트 점을 그리지 않고, 중심이 그보다 높은 물체와 이름이 `ceiling(s)`/`roof`로 끝나는 물체는 통째로 뺀다. 이름만으로는 열린 어휘 라벨이 흔들려서 높이 기준이 주력이다.
+- **Walls as 2D lines** (기본 켬): 이름이 `wall(s)`/`baseboard`/`wainscoting`/`drywall`로 끝나는 물체(`wall mounted tv`는 해당 안 됨)의 3D 점을 빼고, 점유 지도에서 뽑은 벽 선분을 바닥에 하늘색 선으로 그린다(주황은 이동 궤적 색).
+- **Wall state (2D walls -> numbers)** 패널: 로봇 기준 수치(길이 56). 레이아웃은 `walls2d.py` 맨 위 설명이 기준이다.
+  - 앞쪽부터 반시계로 16개 방향의 첫 점유 칸까지 거리(÷4 m), 가장 가까운 벽 선분 8개의 로봇 프레임 끝점 + 유효 표시.
+  - 단추로 `outputs/wall_state/<이름>_t<시각>.json/.npy` 저장(`SGVIZ_STATE_DIR`로 바꿈). 헤드리스: `python walls2d.py <memory_dir> [--pose x y yaw] [--out f.json]`.
+- 한계: 벽 선분은 축에 평행한 선만 뽑는다(기울어진 벽은 놓침). 이 지도에서는 점유 칸의 약 59%가 선분 0.15 m 안에 든다. 파이썬 개발 도구이고, 학습·추론 경로에는 같은 레이아웃의 네이티브 버전(`sm_grid` 위 C++)을 만들어야 한다.
+- **Object relations shown** (기본 `none`): 옛 `scene.json`에 들어 있는 물체끼리 `on/in/near` 간선을 그릴지 정한다. 새 `scenemap`은 이 간선을 만들지 않는다(방 → 물체만). `Max 'in' container side`는 옛 파일에서 덩어리 상자가 만든 `in` 간선을 거른다. `Min observations`(기본 3)는 두 번 이하 본 물체를 숨긴다.
+- **방 → 물체**: 물체 패널에 `room` 행이 나오고, `Room in label`을 켜면 라벨에 `[room N]`이 붙는다.
+- **Show graph layers**(Hydra 층 쌓기, 공중에 뜬 그래프)는 기본 켜짐이고 높이는 물체 4 m, 장소 6 m, 방 8 m, 건물 10 m(간격 2 m)이다. 복잡했던 것은 `in` 관계선이라 `Object relations (old files)`만 기본 꺼짐이다.
+- **frontier는 뷰어에 표시하지 않는다.** frontier는 탐사 스킬이 쓰는 내부 계산 값이고, Hydra의 파이썬·Spark-DSG 뷰어도 따로 그리지 않는다. 장소는 여유 거리 색으로만 칠하고 패널에도 frontier 개수를 적지 않는다(계산은 `scenemap`에 그대로 있음).

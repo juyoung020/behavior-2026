@@ -113,9 +113,8 @@ def main():
         assert cup.first_pos == (0.2, 0.1, 0.8) and abs(cup.last_seen - 12.5) < 1e-6
         assert cup.rgbd["box_px"] == [110, 112, 130, 140] and cup.rgbd["depth_m"] == 1.234
         assert sc.objects[1].rgbd is None and sc.objects[1].structural
-        assert list(sc.edges) == [(2, 1)] and sc.edges[(2, 1)].relation == "on"
-        assert sgviz.relations_of(sc, 2) == ["on table#1"]
-        assert sgviz.relations_of(sc, 1) == ["cup#2 on this"]
+        # the fixture still writes an old-style object-object "on" edge: it is ignored (no object relations are used any more)
+        assert not hasattr(sc, "edges") and not hasattr(sgviz, "relations_of")
 
         # boxes: real one kept, absurd floor clamped
         seg = sgviz._box_segments(sc.objects[2], 2.0)
@@ -161,24 +160,23 @@ def main():
         assert tuple(tex[10, 0]) == (0, 0, 0) and tuple(tex[6, 6]) == (254, 254, 254)
         assert tuple(tex[0, 0]) == (150, 150, 165)
 
-        # diff: identical -> empty; move cup + drop edge -> redraw cup, edge removed
+        # diff: identical -> empty; move cup -> redraw cup
         assert sgviz.diff_scenes(sc, sgviz.load_scene(d)).empty()
         d0 = sgviz.diff_scenes(None, sc)
-        assert sorted(d0.added) == [1, 2, 3] and d0.edges_added == [(2, 1)]
+        assert sorted(d0.added) == [1, 2, 3]
         write_dir(d, cup_pos=(1.5, 0.5, 0.8), with_edge=False)
         sc2 = sgviz.load_scene(d)
         df = sgviz.diff_scenes(sc, sc2)
         assert df.redraw == [2] and df.changed == [2] and not df.added and not df.removed, df
-        assert df.edges_removed == [(2, 1)]
 
-        # no rgbd / no edges / no metadata at all must not crash
+        # no rgbd / no metadata at all must not crash
         G = dsg.DynamicSceneGraph()
         a = dsg.ObjectNodeAttributes()
         a.position = np.zeros(3)
         G.add_node(dsg.DsgLayers.OBJECTS, dsg.NodeSymbol("O", 9), a)
         s3 = sgviz.scene_from_graph(G)
         assert s3.objects[9].state == "seen" and s3.objects[9].bbox_dims is None
-        assert s3.robot_pose is None and not s3.edges
+        assert s3.robot_pose is None
 
         server_check(d)
 
@@ -248,11 +246,11 @@ def server_check(d):
         port = so.getsockname()[1]
     v = sgviz.SgViewer(d, ip="127.0.0.1", port=port)
     try:
-        write_dir(d)  # back to the version with the edge
+        write_dir(d)  # back to the version with the (ignored) old edge
         df = v.poll_once()
-        assert sorted(df.added) == [1, 2, 3] and df.edges_added == [(2, 1)]
+        assert sorted(df.added) == [1, 2, 3]
         assert v.poll_once() is None  # unchanged mtime -> no work
-        assert set(v._node_handles) == {1, 2, 3} and set(v._edge_handles) == {(2, 1)}
+        assert set(v._node_handles) == {1, 2, 3} and not hasattr(v, "_edge_handles")
         names = lambda oid: sorted(h.name.rsplit("/", 1)[1] for h in v._node_handles[oid])
         assert "points" in names(2) and "bbox" not in names(2), names(2)
         assert "points" not in names(1) and "bbox" not in names(1)  # boxes default off
@@ -269,7 +267,7 @@ def server_check(d):
         v.select(2)
         assert v.g_select.value == "cup#2"
         txt = v.g_info.content
-        for frag in ("cup", "moved", "n_obs | 7", "first_pos", "on table#1", "box_px", "1.234"):
+        for frag in ("cup", "moved", "n_obs | 7", "first_pos", "box_px", "1.234"):
             assert frag in txt, (frag, txt)
         assert v.g_rgb.visible and v.g_depth.visible and v.g_dstats.visible
         assert "1.200 / " in v.g_dstats.content and "inside mask" in v.g_dstats.content

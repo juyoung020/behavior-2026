@@ -1,16 +1,17 @@
 """Hydra-style stacked scene-graph layers for sgviz (viser).
 
-Reads the compact graph in view.json ("graph": agent/place/building nodes and every edge, "rooms", "objects")
+Reads the compact graph in view.json ("graph": agent/place nodes and every edge, "rooms", "objects")
 written by scenemap (docs/scenemap_설계.md 3.5) and draws it the way Hydra's figures do: the map and object
 clouds stay at their true height, the graph layers float above, stacked by height:
 
     z = 0            occupancy map, object point clouds (drawn by sgviz itself)
     z = obj_z        OBJECTS layer nodes (+ best-view thumbnails) and the AGENTS trajectory
-    z = base         PLACES (coloured by clearance, frontier places magenta) + place-place edges
+    z = base         PLACES (coloured by clearance) + place-place edges
     z = base + h     ROOMS (room colour) + door edges
-    z = base + 2h    BUILDING
 
-Inter-layer edges are thin lines (object->place, place->room, room->building, room->object, place->agent).
+Map_Vla: three layers (objects, places, rooms); the BUILDING layer was dropped (old files that still have one are not drawn).
+
+Inter-layer edges are thin lines (object->place, place->room, room->object, place->agent).
 Every layer is one point cloud and every edge type one line-segment set; each is re-sent only when its
 content hash changes (no full re-upload per refresh). Thumbnails are re-sent only when the PNG changes.
 """
@@ -30,9 +31,6 @@ EDGE_COLORS = {
     "door": (230, 120, 20),
     "agent": (40, 110, 230),
     "inter": (150, 150, 150),
-    "on": (90, 60, 200),
-    "in": (200, 40, 120),
-    "near": (120, 180, 120),
 }
 
 
@@ -88,16 +86,21 @@ class LayerView:
             self.g_agents = gui.add_checkbox("Agent trajectory", True)
             self.g_places = gui.add_checkbox("Places", True)
             self.g_rooms = gui.add_checkbox("Rooms", True)
-            self.g_build = gui.add_checkbox("Building", True)
             self.g_intra = gui.add_checkbox("Intra-layer edges", True)
             self.g_inter = gui.add_checkbox("Inter-layer edges", True)
-            self.g_rel = gui.add_checkbox("Object relations (on/in/near)", True)
-            self.g_objz = gui.add_number("Objects layer z [m]", 1.6, min=0.0, max=10.0, step=0.1)
-            self.g_base = gui.add_number("Places layer z [m]", 3.0, min=0.0, max=20.0, step=0.1)
-            self.g_h = gui.add_slider("Layer spacing [m]", min=0.3, max=5.0, step=0.1, initial_value=1.5)
+            self.g_objz = gui.add_number("Objects layer z [m]", 4.0, min=0.0, max=10.0, step=0.1)
+            self.g_base = gui.add_number("Places layer z [m]", 6.0, min=0.0, max=20.0, step=0.1)
+            self.g_h = gui.add_slider("Layer spacing [m]", min=0.3, max=5.0, step=0.1, initial_value=2.0)
             self.g_thumb = gui.add_number("Thumbnail size [m]", 0.35, min=0.05, max=2.0, step=0.05)
-        for h in (self.g_on, self.g_objs, self.g_thumbs, self.g_agents, self.g_places, self.g_rooms, self.g_build, self.g_intra,
-                  self.g_inter, self.g_rel, self.g_objz, self.g_base, self.g_h, self.g_thumb):
+            # Map_Vla: legend
+            gui.add_markdown(
+                "**Legend** (z: objects 4 m, places 6 m, rooms 8 m)  \n"
+                "Objects (have image / points): 🟩 seen · 🟧 moved · 🟦 held · ⬜ gone  \n"
+                "Places = free-space skeleton, **no image**: red→yellow→blue = clearance 0→1 m  \n"
+                "Rooms: one colour each, big spheres  \n"
+                "Lines: dark = place–place, grey = parent–child (object→place→room)")
+        for h in (self.g_on, self.g_objs, self.g_thumbs, self.g_agents, self.g_places, self.g_rooms, self.g_intra,
+                  self.g_inter, self.g_objz, self.g_base, self.g_h, self.g_thumb):
             h.on_update(lambda _: self.redraw())
 
     # ---------------- geometry ----------------
@@ -119,7 +122,7 @@ class LayerView:
         if not self.g_on.value:
             return False
         return {"object": self.g_objs.value, "agent": self.g_agents.value, "place": self.g_places.value,
-                "room": self.g_rooms.value, "building": self.g_build.value}.get(kind, True)
+                "room": self.g_rooms.value}.get(kind, False)
 
     # ---------------- drawing (each handle re-sent only on change) ----------------
     def _put(self, name: str, sig: str, make):
@@ -147,7 +150,7 @@ class LayerView:
         nodes, edges = L["nodes"], L["edges"]
         with self.server.atomic():
             # node clouds per layer
-            for kind, size in (("object", 0.10), ("agent", 0.08), ("place", 0.12), ("room", 0.30), ("building", 0.45)):
+            for kind, size in (("object", 0.10), ("agent", 0.08), ("place", 0.12), ("room", 0.30)):
                 ns = [n for n in nodes.values() if n["kind"] == kind]
                 name = f"/graph/{kind}_nodes"
                 if not ns or not self._shown(kind):
@@ -155,9 +158,9 @@ class LayerView:
                     continue
                 pts = np.array([self.xyz(n) for n in ns], np.float32)
                 if kind == "place":
+                    # Map_Vla: frontier is an internal planning flag (explore), not something to draw. Hydra's own python/Spark-DSG
+                    # viewers do not draw it either; places are coloured by clearance only.
                     col = clearance_color([n.get("clear", 0) for n in ns])
-                    fr = np.array([bool(n.get("frontier")) for n in ns])
-                    col[fr] = LAYER_COLORS["frontier"]
                 elif kind == "room":
                     col = np.array([n.get("color", (200, 200, 200)) for n in ns], np.uint8)
                 elif kind == "object":
@@ -168,9 +171,9 @@ class LayerView:
                 sig = _hash(pts.round(3).tobytes(), col.tobytes(), size)
                 self._put(name, sig, lambda pts=pts, col=col, size=size: sc.add_point_cloud(
                     name, pts, col, point_size=size, point_shape="circle"))
-            # labels for rooms / building (few)
+            # labels for rooms (few)
             for n in nodes.values():
-                if n["kind"] not in ("room", "building"):
+                if n["kind"] != "room":
                     continue
                 name = f"/graph/label_{n['id']}"
                 if not self._shown(n["kind"]):
@@ -188,10 +191,8 @@ class LayerView:
                     continue
                 same = na["kind"] == nb["kind"] or {na["kind"], nb["kind"]} == {"object", "agent"}
                 if rel in ("on", "in", "near"):
-                    if not self.g_rel.value:
-                        continue
-                    key = rel
-                elif same:
+                    continue  # object-object prepositions are not used (old files may still contain them)
+                if same:
                     if not self.g_intra.value:
                         continue
                     key = rel if rel in EDGE_COLORS else "place"
@@ -207,7 +208,7 @@ class LayerView:
                     self._drop(name)
                     continue
                 arr = np.array(seg, np.float32)
-                thick = 0.02 if key in ("place", "door", "agent", "on", "in") else 0.008
+                thick = 0.02 if key in ("place", "door", "agent") else 0.008
                 self._put(name, _hash(arr.round(3).tobytes(), thick), lambda name=name, arr=arr, key=key, thick=thick:
                           sc.add_line_segments(name, arr, colors=EDGE_COLORS[key], thickness=thick))
             self._draw_thumbs(nodes)
@@ -271,9 +272,8 @@ class LayerView:
             return ""
         from collections import Counter
         c = Counter(n["kind"] for n in self.layers["nodes"].values())
-        fr = sum(1 for n in self.layers["nodes"].values() if n.get("frontier"))
-        return (f"graph: objects {c['object']}, agents {c['agent']}, places {c['place']} (frontier {fr}), rooms {c['room']}, "
-                f"building {c['building']}, edges {len(self.layers['edges'])}")
+        return (f"graph: objects {c['object']}, agents {c['agent']}, places {c['place']}, rooms {c['room']}, "
+                f"edges {len(self.layers['edges'])}")
 
 
 def _quat_axis(axis, ang) -> Tuple[float, float, float, float]:

@@ -296,7 +296,7 @@ bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
   sceneRooms(in, g);
   g.metadata.add({{"stamp", in.stamp}, {"robot_pose", {in.pose[0], in.pose[1], in.pose[2]}}, {"grid", "map.pgm"}});
   const fs::path tmp = path.string() + ".tmp.json";
-  g.save(tmp, false);
+  g.save(tmp);
   std::error_code ec;
   fs::rename(tmp, path, ec);
   return !ec;
@@ -371,7 +371,7 @@ void objectNode(J& j, const SaveInput& in, const SaveOut& ok, int i) {
   j.raw(b.state != SM_GONE ? "\"is_active\":true," : "\"is_active\":false,");
   j.raw("\"is_predicted\":false,\"last_update_time_ns\":");
   j.unum(uint64_t(std::max(0.0, b.last_seen) * 1e9));
-  j.raw(",\"mesh_connections\":[],\"metadata\":{\"first_pos\":");
+  j.raw(",\"metadata\":{\"first_pos\":");
   j.vec3(b.first_pos);
   j.raw(",\"handled\":");
   j.raw(b.handled ? "true" : "false");
@@ -515,45 +515,26 @@ void graphNode(J& j, const GNode& n) {
     return;
   }
   if (n.layer == 3) {   // PlaceNodeAttributes(2D: z 0, distance = 여유)
-    j.raw(n.state ? "\"active_frontier\":true," : "\"active_frontier\":false,");
-    j.raw("\"anti_frontier\":false,");
+    // Map_Vla: trimmed place schema — only the semantic base + distance (the frontier flag and the GVD/mesh fields are gone)
     const double z[3] = {0, 0, 0};
     bbox(j, z, z, false);
     j.raw(kColor);
-    j.raw("\"deformation_connections\":[],\"distance\":");
+    j.raw("\"distance\":");
     j.num(n.clearance);
-    j.raw(",\"frontier_scale\":[0.0,0.0,0.0],\"is_active\":true,\"is_predicted\":false,\"last_update_time_ns\":");
+    j.raw(",\"is_active\":true,\"is_predicted\":false,\"last_update_time_ns\":");
     j.unum(uint64_t(std::max(0.0, n.stamp) * 1e9));
-    j.raw(",\"mesh_vertex_labels\":[],\"metadata\":{\"frontier\":");
-    j.raw(n.state ? "true" : "false");
-    j.raw("},\"name\":\"\",\"need_cleanup\":false,\"num_basis_points\":0,\"num_frontier_voxels\":0,\"orientation\":");
-    j.raw(kIdentQ);
-    j.raw(",\"pcl_mesh_connections\":[],\"position\":");
+    j.raw(",\"metadata\":{},\"name\":\"\",\"position\":");
     const double p[3] = {n.pos[0], n.pos[1], 0};
     j.vec3(p);
-    j.raw(",\"real_place\":true,");
+    j.raw(",");
     j.raw(kNoFeat);
-    j.raw("\"type\":\"PlaceNodeAttributes\",\"voxblox_mesh_connections\":[]");
+    j.raw("\"type\":\"PlaceNodeAttributes\"");
     nodeTail(j, n.id, 3, 0);
-    return;
   }
-  // 건물: SemanticNodeAttributes
-  const double z[3] = {0, 0, 0};
-  bbox(j, z, z, false);
-  j.raw(kColor);
-  j.raw("\"is_active\":false,\"is_predicted\":false,\"last_update_time_ns\":0,\"metadata\":{},\"name\":");
-  j.str(n.name);
-  j.raw(",\"position\":");
-  const double p[3] = {n.pos[0], n.pos[1], 0};
-  j.vec3(p);
-  j.raw(",");
-  j.raw(kNoFeat);
-  j.raw("\"type\":\"SemanticNodeAttributes\"");
-  nodeTail(j, n.id, n.layer, n.partition);
 }
 
 const char* relName(int r) {
-  static const char* n[] = {"parent", "place", "door", "on", "in", "near", "agent"};
+  static const char* n[] = {"parent", "place", "door", "?", "?", "?", "agent"};
   return r >= 0 && r < 7 ? n[r] : "?";
 }
 
@@ -586,7 +567,7 @@ bool sceneJsonFast(const SaveInput& in, const SaveOut& ok, const fs::path& path,
     for (const RoomGeom& r : in.rooms->rooms) have[nodeSym('R', r.id)] = 1;
   if (in.graph)
     for (const GNode& n : in.graph->nodes)
-      if (n.partition == 'a' || n.layer == 3 || n.layer == 5) have[n.id] = 1;
+      if (n.partition == 'a' || n.layer == 3) have[n.id] = 1;
   if (in.graph) {
     std::unordered_map<uint64_t, char> pairs;   // Spark-DSG 는 한 쌍에 변 하나
     for (const GEdge& e : in.graph->edges) {
@@ -610,7 +591,7 @@ bool sceneJsonFast(const SaveInput& in, const SaveOut& ok, const fs::path& path,
           m.num(e.weight);
         }
       }
-      edge(e.a, e.b, e.rel == kRelGeneric || e.rel == kRelOn || e.rel == kRelIn || e.rel == kRelNear || e.rel == kRelAgent ? 1.0 : e.weight,
+      edge(e.a, e.b, e.rel == kRelGeneric || e.rel == kRelAgent ? 1.0 : e.weight,
            e.rel == kRelPlace || e.rel == kRelDoor, meta);
     }
   } else {
@@ -625,18 +606,15 @@ bool sceneJsonFast(const SaveInput& in, const SaveOut& ok, const fs::path& path,
       }
   }
   // 층
-  bool has_agents = false, has_places = false, has_build = false;
+  bool has_agents = false;
   if (in.graph)
     for (const GNode& n : in.graph->nodes) {
       has_agents |= n.partition == 'a';
-      has_places |= n.layer == 3;
-      has_build |= n.layer == 5;
     }
-  (void)has_places; (void)has_build;
   j.raw("],\"layer_keys\":[{\"layer\":2,\"partition\":0},");
   if (has_agents) j.raw("{\"layer\":2,\"partition\":97},");
-  j.raw("{\"layer\":3,\"partition\":0},{\"layer\":4,\"partition\":0},{\"layer\":5,\"partition\":0}],");
-  j.raw("\"layer_names\":{\"AGENTS\":{\"layer\":2,\"partition\":0},\"BUILDINGS\":{\"layer\":5,\"partition\":0},"
+  j.raw("{\"layer\":3,\"partition\":0},{\"layer\":4,\"partition\":0}],");
+  j.raw("\"layer_names\":{\"AGENTS\":{\"layer\":2,\"partition\":97},"   /* agents live in partition 'a' (97); the original wrote 0 = the OBJECTS layer */
         "\"OBJECTS\":{\"layer\":2,\"partition\":0},\"PLACES\":{\"layer\":3,\"partition\":0},\"ROOMS\":{\"layer\":4,\"partition\":0}},");
   j.raw("\"metadata\":{\"grid\":\"map.pgm\",\"robot_pose\":");
   j.vec3(in.pose);
@@ -650,7 +628,7 @@ bool sceneJsonFast(const SaveInput& in, const SaveOut& ok, const fs::path& path,
     for (size_t k = 0; k < in.rooms->rooms.size(); ++k) { sep(); roomNode(j, in, k); }
   if (in.graph)
     for (const GNode& n : in.graph->nodes) {
-      if (!(n.partition == 'a' || n.layer == 3 || n.layer == 5)) continue;
+      if (!(n.partition == 'a' || n.layer == 3)) continue;
       sep();
       if (in.json_cache) {   // 바뀌지 않은 노드는 지난 조각 그대로
         auto& slot = in.json_cache->nodes[n.id];
@@ -685,7 +663,7 @@ std::string graphJson(const SaveInput& in) {
   J j{o};
   bool first = true;
   for (const GNode& n : in.graph->nodes) {
-    const char* kind = n.partition == 'a' ? "agent" : n.layer == 3 ? "place" : n.layer == 5 ? "building" : nullptr;
+    const char* kind = n.partition == 'a' ? "agent" : n.layer == 3 ? "place" : nullptr;
     if (!kind) continue;
     if (!first) o += ",";
     first = false;
@@ -697,7 +675,7 @@ std::string graphJson(const SaveInput& in) {
     o += "\",\"pos\":[";
     j.num(n.pos[0]); o += ","; j.num(n.pos[1]);
     o += "]";
-    if (n.layer == 3) { o += ",\"clear\":"; j.num(n.clearance); o += n.state ? ",\"frontier\":true" : ",\"frontier\":false"; }
+    if (n.layer == 3) { o += ",\"clear\":"; j.num(n.clearance); }
     if (n.partition == 'a') { o += ",\"yaw\":"; j.num(n.yaw); o += ",\"t\":"; j.num(n.stamp); }
     o += "}";
   }
