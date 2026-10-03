@@ -1,6 +1,10 @@
 #include "scenemap/objmap.hpp"
 
+#include "da/merge.hpp"
+
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <tuple>
 
@@ -443,6 +447,20 @@ void ObjectMap::update(const ObjFrame& f) {
   objs_.erase(std::remove_if(objs_.begin(), objs_.end(),
                              [&](const MapObject& m) { return !m.confirmed && f.stamp - m.last_seen > p_.prune_s; }),
               objs_.end());
+  // 6. 중복 병합(da): 한 프레임에 일부만 보였거나 마스크가 쪼개져 따로 확정된 같은 물체를 하나로
+  static const bool no_merge = std::getenv("SM_NO_MERGE") != nullptr;   // A/B 비교용
+  static const bool log_merge = std::getenv("SM_MERGE_LOG") != nullptr;
+  if (p_.merge && !no_merge) {
+    da::MergeParams mp;
+    mp.overlap_min = p_.merge_overlap;
+    mp.min_ext = p_.merge_min_ext;
+    for (const da::MergeResult& r : da::mergeDuplicates(objs_, mp, p_, f.stamp, &kinds_)) {
+      if (log_merge) std::fprintf(stderr, "[da] t=%.1f merge keep O%u drop O%u overlap %.2f\n", f.stamp, r.keep, r.drop, r.overlap);
+      for (DetAssoc& as : assoc_) if (as.obj_id == r.drop) as.obj_id = r.keep;
+      for (ObsPoints& op : points_) if (op.obj_id == r.drop) op.obj_id = r.keep;
+      for (const MapObject& m : objs_) if (m.id == r.keep) { event(f.stamp, m, 7); break; }
+    }
+  }
 }
 
 }  // namespace scenemap

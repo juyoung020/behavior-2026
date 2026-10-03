@@ -53,12 +53,16 @@ struct ObjParams {
   int cloud_cap = 4000;
   double cloud_hand_r = 0.10;
   double body_r = 0.30;
+  // 병합(da/merge.hpp): 확정된 같은 이름 물체끼리 상자가 이만큼(축별 겹침 비율의 곱) 겹치면 하나로
+  bool merge = true;
+  double merge_overlap = 0.35;
+  double merge_min_ext = 0.05;
 };
 
 struct ObjEvent {
   double t;
   uint32_t id;
-  int kind;                       // 0 새 후보, 1 확정, 2 옮겨짐, 3 사라짐, 4 들기, 5 놓기, 6 다시 보임
+  int kind;                       // 0 새 후보, 1 확정, 2 옮겨짐, 3 사라짐, 4 들기, 5 놓기, 6 다시 보임, 7 병합(id = 남은 물체)
   double pos[3];
 };
 

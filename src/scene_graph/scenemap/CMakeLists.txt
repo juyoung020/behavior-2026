@@ -8,21 +8,21 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp
+add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp ../da/src/merge.cpp
             src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp)
-target_include_directories(scenemap PUBLIC include)
+target_include_directories(scenemap PUBLIC include ../da/include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
 target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)
-# Spark-DSG(저장, scene.json). 우리 사본 third_party/spark_dsg 를 먼저 쓰고(병목을 고치려고 가져옴, OUR_CHANGES.md),
+# Spark-DSG(저장, scene.json). 우리 수정본 src/scene_graph/spark_dsg 를 먼저 쓰고(병목을 고치려고 가져옴, OUR_CHANGES.md),
 # 없으면 설치본(~/.local). 둘 다 없으면 view.json·map.pgm 만 쓴다.
-set(SM_SPARK_DSG_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../third_party/spark_dsg")
+set(SM_SPARK_DSG_DIR "${CMAKE_CURRENT_LIST_DIR}/../spark_dsg")
 if(NOT TARGET spark_dsg::spark_dsg AND EXISTS "${SM_SPARK_DSG_DIR}/CMakeLists.txt")
   set(SPARK_DSG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(SPARK_DSG_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
   set(SPARK_DSG_BUILD_ZMQ OFF CACHE BOOL "" FORCE)
   set(_sm_bt ${BUILD_TESTING})
   set(BUILD_TESTING OFF)
-  add_subdirectory("${SM_SPARK_DSG_DIR}" "${CMAKE_BINARY_DIR}/third_party/spark_dsg" EXCLUDE_FROM_ALL)
+  add_subdirectory("${SM_SPARK_DSG_DIR}" "${CMAKE_BINARY_DIR}/spark_dsg" EXCLUDE_FROM_ALL)
   set(BUILD_TESTING ${_sm_bt})
 endif()
 if(TARGET spark_dsg::spark_dsg)
@@ -98,3 +98,7 @@ target_link_libraries(rooms_pgm scenemap)
 add_executable(test_walls tests/test_walls.cpp)
 target_link_libraries(test_walls scenemap)
 add_test(NAME walls COMMAND test_walls ${WALLS_REF_CELLS} ${WALLS_REF_JSON})
+
+add_executable(test_da_merge ../da/tests/test_merge.cpp)
+target_link_libraries(test_da_merge scenemap)
+add_test(NAME da_merge COMMAND test_da_merge)

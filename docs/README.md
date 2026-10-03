@@ -16,7 +16,7 @@
 |---|---|
 | [archive/README.md](../archive/README.md) | 지금 파이프라인에서 안 쓰는 모듈: 무엇을, 왜 옮겼고, 어떻게 되살리나 |
 | [tools/README.md](../tools/README.md) | 실행·측정·검증 스크립트, 옛 Windows·WSL → 리눅스판 표 |
-| [third_party/spark_dsg/OUR_CHANGES.md](../third_party/spark_dsg/OUR_CHANGES.md) | 가져온 Spark-DSG 사본(v1.1.3, BSD-3)에서 바꾼 것 |
+| [src/scene_graph/spark_dsg/OUR_CHANGES.md](../src/scene_graph/spark_dsg/OUR_CHANGES.md) | 가져온 Spark-DSG 사본(v1.1.3, BSD-3)에서 바꾼 것 |
 | [robot-agent docs/clip_candidates.md](https://github.com/juyoung020/robot-agent/blob/main/docs/clip_candidates.md) | 팀 저장소: CLIP 류 임베딩 모델 후보·측정(`src/scene_graph/clip` 의 근거) |
 | [robot-agent training/README.md](https://github.com/juyoung020/robot-agent/blob/main/training/README.md) | 팀 저장소: 로봇에 올릴 작은 모델 학습(임베딩 증류·라벨 표) |
 

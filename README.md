@@ -20,7 +20,7 @@ Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C
 - [docs/scenemap_설계.md](docs/scenemap_설계.md) — object memory design: 2D SLAM, object map, planner queries, pose source
 - [archive/README.md](archive/README.md) — modules the current pipeline no longer uses: what, why, how to revive
 - [tools/README.md](tools/README.md) — Linux runners, old Windows/WSL → Linux table
-- [third_party/spark_dsg/OUR_CHANGES.md](third_party/spark_dsg/OUR_CHANGES.md) — what we changed in our Spark-DSG copy
+- [src/scene_graph/spark_dsg/OUR_CHANGES.md](src/scene_graph/spark_dsg/OUR_CHANGES.md) — what we changed in our Spark-DSG copy
 - Team repo (robot-agent): [docs/clip_candidates.md](https://github.com/juyoung020/robot-agent/blob/main/docs/clip_candidates.md) (image–text embedding candidates), [training/README.md](https://github.com/juyoung020/robot-agent/blob/main/training/README.md) (training the small models that `scene_graph/clip` runs)
 
 ## Decisions
@@ -43,7 +43,10 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     ovdet/            open-vocabulary detector (YOLOE, TensorRT, C API; AGPL-3.0)
     clip/             sgclip: object crop → SigLIP 2 image embedding (TensorRT), label table lookup, vectors and name cache in the memory folder (C++/CUDA; in progress)
     runtime/          sgrt: one C ABI that runs object memory inside the evaluator/robot process (scenemap + ovdet, periodic save) (C++/CUDA)
-    viewer/           sgviz: live memory viewer in the browser (Spark-DSG + viser, Python)
+    spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + rooms; scenemap builds it first. Changes: OUR_CHANGES.md
+    da/               data association: merges the per-frame segments of one object into a single object (C++, built into scenemap)
+    sgview/           live memory viewer in the browser (Rust server + three.js, no Python / Spark-DSG)
+    viewer/           sgviz: the old Python viewer (Spark-DSG + viser), to be removed
   agent/              ② high-level planning
     planner/          planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
   vla/                ③ low-level action (π0.5)
@@ -57,8 +60,6 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     explore/          one simulator run of the explore skill (evaluator side) + 8080 viewer launcher
     move_robot/       simulator side of the move_robot tool (calls robot-agent's Rust crate via ctypes)
     configs/          evaluator robot configs
-third_party/
-  spark_dsg/          our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3); scenemap builds it first. Changes: OUR_CHANGES.md
 tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …) (tools/README.md: Linux runners, old Windows/WSL → Linux table)
   setup/              one-time install/download scripts
   git-hooks/          commit-msg hook (strips Claude co-author lines)
@@ -83,6 +84,6 @@ plan.md               plan and decisions
 
 ## Setup notes
 
-- Submodules: `git submodule update --init` (BEHAVIOR-1K, refs). Spark-DSG is no longer a submodule; it is vendored in `third_party/spark_dsg/`.
+- Submodules: `git submodule update --init` (BEHAVIOR-1K, refs). Spark-DSG is no longer a submodule; it is vendored in `src/scene_graph/spark_dsg/`.
 - Commits carry no Claude co-author lines: `.claude/settings.json` turns attribution off, and `tools/git-hooks/commit-msg` strips any that slip through. Run once per clone: `git config core.hooksPath tools/git-hooks`.
 - Data, assets, keys, model weights and videos are not in git. Download scripts live in `tools/setup/`, and install notes in [docs/Linux_설치.md](docs/Linux_설치.md) (Windows-era notes: [docs/archive/windows/README_최상위.md](docs/archive/windows/README_최상위.md)).
