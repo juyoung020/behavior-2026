@@ -103,7 +103,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 host.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const isDark = matchMedia("(prefers-color-scheme: dark)").matches;
-scene.background = new THREE.Color(isDark ? 0x101014 : 0xdde1e8);   // the white map must stand out
+scene.background = new THREE.Color(isDark ? 0x16161a : 0xf4f4f6);
 THREE.Object3D.DefaultUp.set(0, 0, 1);
 const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
 camera.up.set(0, 0, 1);
@@ -145,10 +145,10 @@ const plyCache = new Map();         // id -> {stamp, geom, n}
 const thumbCache = new Map();       // url -> THREE.Texture
 const texLoader = new THREE.TextureLoader();
 
-// Round, softly edged points whose size is in world units (perspective-correct); `rim` darkens the border so nodes read as discs.
+// Round, softly edged flat points whose size is in world units (perspective-correct).
 const pointUniforms = { scale:{ value:600 } };
 function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opacity = 1 }) {
-  // rim > 0: node style — a lit sphere (diffuse + specular) with soft edge shading; rim = 0: flat disc (point clouds).
+  // Flat discs (no lighting): the colour is exactly the node/state colour, so the map stays the emphasised element.
   // Coverage is analytic and symmetric around the true radius (the point quad is padded by 1.5 px), so the outline is smooth
   // at any size instead of being cut at the quad edge.
   return new THREE.ShaderMaterial({
@@ -165,24 +165,6 @@ function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opaci
         if (cov <= 0.0) discard;
         vec3 base = ${vertexColors ? "vC" : "uColor"};
         vec3 c = base;
-        if (uRim > 0.0) {
-          // shading in linear light: sky/ground hemisphere ambient + wrapped diffuse from the upper left + soft broad and tight
-          // highlights + a faint sky-coloured fresnel rim; darker toward the lower limb like ambient occlusion
-          float z = sqrt(max(0.0, 1.0 - min(r2, 1.0)));
-          vec3 n = vec3(q.x, -q.y, z);
-          vec3 lin = pow(base, vec3(2.2));
-          vec3 L = normalize(vec3(-0.50, 0.65, 0.58));
-          float ndl = dot(n, L);
-          float wrap = pow(clamp(ndl * 0.5 + 0.5, 0.0, 1.0), 1.6);
-          float hemi = mix(0.30, 0.78, n.y * 0.5 + 0.5);
-          float ao = 1.0 - 0.30 * smoothstep(0.35, 1.0, r) * (1.0 - (n.y * 0.5 + 0.5));
-          vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
-          float nh = max(dot(n, H), 0.0);
-          float spec = pow(nh, 60.0) * 0.55 + pow(nh, 10.0) * 0.08;
-          float fres = pow(1.0 - z, 3.0);
-          vec3 col = lin * (hemi * 0.55 + wrap * 0.85) * ao + vec3(spec) + vec3(0.55, 0.65, 0.85) * fres * 0.20;
-          c = pow(col, vec3(1.0 / 2.2));
-        }
         gl_FragColor = vec4(c, uOpacity * cov);
       }`,
     transparent:true, depthWrite:opacity >= 1 });
@@ -206,8 +188,8 @@ function paintRows(px, y0, y1) {   // px = PGM rows y0..y1; texture row 0 = min 
     const src = (r - y0) * w, dst = (h - 1 - r) * w * 4;
     for (let x = 0; x < w; x++) {
       const v = px[src + x], o = dst + x * 4;
-      if (v === 205) { rgba[o] = rgba[o+1] = rgba[o+2] = 0; rgba[o+3] = 0; }   // unknown: transparent, only what the robot has mapped is drawn
-      else { rgba[o] = rgba[o+1] = rgba[o+2] = v; rgba[o+3] = 255; }
+      if (v === 205) { rgba[o] = 140; rgba[o+1] = 148; rgba[o+2] = 170; } else { rgba[o] = rgba[o+1] = rgba[o+2] = v; }
+      rgba[o+3] = 255;
     }
   }
 }
@@ -224,7 +206,7 @@ async function loadMap() {
     const tex = new THREE.DataTexture(rgba, w, h, THREE.RGBAFormat);
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     const res = g.resolution;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * res, h * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide, transparent:true, depthWrite:false }));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * res, h * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
     mesh.position.set(g.origin[0] + w * res / 2, g.origin[1] + h * res / 2, 0);
     gMap.add(mesh);
     mapState = { w, h, rgba, tex, mesh, ver, key };
@@ -637,6 +619,9 @@ function fitView(top) {
 }
 $("b_top").onclick = () => fitView(true); $("b_fit").onclick = () => fitView(false);
 addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return; if (e.key === "t") fitView(true); if (e.key === "f") fitView(false); });
+
+// faint floor grid under the map
+const grid = new THREE.GridHelper(80, 80, isDark ? 0x3a3a46 : 0xcfcfd8, isDark ? 0x2a2a34 : 0xe2e2e8); grid.rotation.x = Math.PI / 2; grid.position.z = -0.02; scene.add(grid);
 
 // ---------------- polling ----------------
 function status() {
