@@ -290,6 +290,8 @@ Hydra 가 더 나은·싼 것과 우리 판단(재서 정함):
 
 ### 3.5 ⑤ 살아 있는 장면 그래프 — Hydra 식 층(10-03)
 
+> **Map_Vla 변경 (10-03)**: 아래 표의 물체끼리 관계 `on / in / near`는 **만들지 않는다.** 물체마다 위치·상자가 메타데이터로 남으므로 "위에 있다 / 안에 있다"는 소비자(LLM)가 추론한다. 원래 규칙은 `in`에 컨테이너 크기 제한이 없어서, 합쳐진 덩어리 상자(`ceiling fan` 3.9×3.2×2.4 m) 하나가 물체 32개를 "안"으로 끌어들였다(한 장면에서 `in` 786개, 간선 903개 중 87%). 남는 물체 연결은 부모 쪽뿐이다: **방 → 물체**, place → 물체. 코드: `src/sgraph.cpp`(`updateObjects`), 시험 `tests/test_relations.cpp`. `scenemap.h`의 `SM_REL_ON/IN/NEAR`(3, 4, 5)는 번호만 남겨 둠(ABI).
+
 코드: `scenemap/include/scenemap/sgraph.hpp`, `src/sgraph.cpp`(갱신), `src/capi.cpp`(keyframe 뒤 갱신·C ABI), `src/dsg_save.cpp`(scene.json 직접 쓰기). 시험: `tests/test_posemap.cpp` testGraph, 뷰어 `viewer/sglayers.py`·`test_sglayers.py`.
 
 물체를 저장할 때만 노드로 만들던 것을, 판 내내 살아 있는 그래프로 바꿨다. keyframe 마다 바뀐 곳만 고치고, 스냅숏은 그때의 바뀌지 않는 사본(GraphView)을 포인터로 나눠 쓴다.
@@ -330,6 +332,8 @@ Hydra 가 더 나은·싼 것과 우리 판단(재서 정함):
 | 질의 | 오프라인·ROS | 같은 프로세스 C ABI(스냅숏), place 길 찾기 |
 
 ### 3.6 자세 원천·격자 넣기 정책·단계별 시간(10-03)
+
+> **Map_Vla 변경 (10-03)**: `SGRT_POSE=gt`(`SM_POSE_GT`)에서 **로봇 궤적(AGENTS 층)은 `sm_push_pose`로 들어온 정답 자세로 직접 갱신한다.** 전에는 영상 keyframe 때만 `slam.pose()`로 agent 노드를 만들었는데, GT 모드의 `slam.pose()`는 같은 시각(±1e-4 s)의 정답이 있을 때만 정답으로 덮고 그 밖에는 속도 적분으로 이어 가서 궤적이 정답 자세가 아니었다. 이제 GT 모드에서는 push 한 번마다 같은 문턱(0.5 m · 30° · 10 s)으로 agent 노드를 만들고, keyframe 쪽 갱신은 건너뛴다. 코드: `src/capi.cpp`(`sm_push_pose`, `updateGraph`), 시험 `tests/test_gt_traj.cpp`(영상·proprio 없이 정답 자세만으로 노드 위치 오차 0).
 
 - **자세 원천**(`sm_set_pose_mode`, sgrt `SGRT_POSE=slam|odom|gt`)
   - `slam`(기본, 실제 로봇·대회 제출): base_qvel 적분 + 스캔 맞추기(3.1). map = 판 시작 베이스 프레임.
