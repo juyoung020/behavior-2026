@@ -22,11 +22,9 @@ endif()
 option(BUILD_SHARED_LIBS "Build shared libs" ON)
 option(SPARK_DSG_BUILD_EXAMPLES "Build examples" ON)
 option(SPARK_DSG_BUILD_PYTHON "Build python bindings" OFF)
-option(SPARK_DSG_BUILD_ZMQ "Build zmq message interface" ON)
 
 set(FIND_MODE REQUIRED)
 if(DEFINED SKBUILD AND "${SKBUILD}" GREATER 0)
-  set(SPARK_DSG_BUILD_ZMQ OFF)
   set(FIND_MODE QUIET)
 endif()
 
@@ -68,17 +66,6 @@ if(NOT ${Eigen3_FOUND})
   target_include_directories(Eigen3::Eigen INTERFACE "${eigen_SOURCE_DIR}")
 endif()
 
-set(SPARK_DSG_USE_ZMQ 0)
-if(SPARK_DSG_BUILD_ZMQ)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(zmq libzmq)
-  if(zmq_FOUND)
-    set(SPARK_DSG_USE_ZMQ 1)
-  else()
-    message(WARNING "ZMQ not found! Disabling ZMQ interface")
-  endif()
-endif()
-
 configure_file(cmake/spark_dsg_version.h.in include/spark_dsg_version.h)
 
 add_library(
@@ -93,7 +80,6 @@ add_library(
   src/edge_container.cpp
   src/labelspace.cpp
   src/layer_view.cpp
-  src/mesh.cpp
   src/metadata.cpp
   src/node_attributes.cpp
   src/node_symbol.cpp
@@ -103,8 +89,6 @@ add_library(
   src/scene_graph_node.cpp
   src/scene_graph_types.cpp
   src/scene_graph_utilities.cpp
-  src/traversability_boundary.cpp
-  src/zmq_interface.cpp
   src/serialization/attribute_serialization.cpp
   src/serialization/binary_conversions.cpp
   src/serialization/binary_serialization.cpp
@@ -112,7 +96,6 @@ add_library(
   src/serialization/graph_binary_serialization.cpp
   src/serialization/graph_json_serialization.cpp
   src/serialization/json_conversions.cpp
-  src/serialization/mesh_serialization.cpp
   src/serialization/versioning.cpp
 )
 
@@ -124,12 +107,6 @@ target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen nlohmann_json::nlohma
 
 if(NOT BUILD_SHARED_LIBS)
   set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE 1)
-endif()
-
-if(SPARK_DSG_BUILD_ZMQ AND zmq_FOUND)
-  find_package(Threads REQUIRED)
-  target_link_libraries(${PROJECT_NAME} PRIVATE ${zmq_LIBRARIES} Threads::Threads)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${zmq_INCLUDE_DIRS})
 endif()
 
 add_library(spark_dsg::${PROJECT_NAME} ALIAS ${PROJECT_NAME})

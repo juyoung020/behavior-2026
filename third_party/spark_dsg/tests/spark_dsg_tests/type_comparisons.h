@@ -136,17 +136,7 @@ inline bool operator==(const DynamicSceneGraph& lhs, const DynamicSceneGraph& rh
     return false;
   }
 
-  const auto lhs_mesh = lhs.mesh();
-  const auto rhs_mesh = rhs.mesh();
-  if (!lhs_mesh && !rhs_mesh) {
-    return true;
-  }
-
-  if (!lhs_mesh || !rhs_mesh) {
-    return false;
-  }
-
-  return *lhs_mesh == *rhs_mesh;
+  return true;
 }
 
 }  // namespace spark_dsg

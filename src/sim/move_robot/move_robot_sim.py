@@ -54,6 +54,11 @@ class MoveRobotLib:
         L.mr_busy.restype = ctypes.c_int
         L.mr_busy.argtypes = [ctypes.c_void_p]
         L.mr_reset.argtypes = [ctypes.c_void_p]
+        # GT pose input (Map_Vla): older libmove_robot.so builds do not export it
+        self.has_gt_pose = hasattr(L, "mr_set_gt_pose")
+        if self.has_gt_pose:
+            L.mr_set_gt_pose.restype = ctypes.c_int
+            L.mr_set_gt_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double]
         L.mr_take_result.restype = ctypes.c_ssize_t
         L.mr_take_result.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
         L.mr_tool_definition.restype = ctypes.c_char_p
@@ -72,6 +77,10 @@ class MoveRobotLib:
             for i in range(n):
                 self.prop[i] = float(proprio[i])
         return self.L.mr_tick(self.h, self.prop, n, self.act)
+
+    def set_gt_pose(self, x: float, y: float, yaw: float) -> int:
+        """GT base pose in the map frame for the NEXT tick only (replaces base_qvel integration there). -1 if the lib is old."""
+        return self.L.mr_set_gt_pose(self.h, x, y, yaw) if self.has_gt_pose else -1
 
     def command(self, args) -> int:
         """0 started, 1 finished at once (read or error: take_result)"""

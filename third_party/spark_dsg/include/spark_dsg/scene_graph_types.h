@@ -78,22 +78,14 @@ struct LayerKey {
 
 //! @brief Common layer names
 struct DsgLayers {
-  //! Pre-Object node layer (static)
-  inline constexpr static const char* SEGMENTS = "SEGMENTS";
   //! Object node layer (static)
   inline constexpr static const char* OBJECTS = "OBJECTS";
   //! Agents layer (dynamic)
   inline constexpr static const char* AGENTS = "AGENTS";
   //! Places node layer
   inline constexpr static const char* PLACES = "PLACES";
-  //! Mesh (2D) Places node layer
-  inline constexpr static const char* MESH_PLACES = "MESH_PLACES";
-  //! Traversability node layer
-  inline constexpr static const char* TRAVERSABILITY = "TRAVERSABILITY";
   //! Room node layer
   inline constexpr static const char* ROOMS = "ROOMS";
-  //! Building node layer
-  inline constexpr static const char* BUILDINGS = "BUILDINGS";
 
   //! Get default layer ID for each layer name
   static std::optional<LayerKey> nameToLayerId(const std::string& name);

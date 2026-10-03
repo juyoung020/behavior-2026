@@ -141,9 +141,7 @@ void writeLayer(const SceneGraphLayer& graph, std::vector<uint8_t>& buffer) {
   serializer.endDynamicArray();
 }
 
-void writeGraph(const DynamicSceneGraph& graph,
-                std::vector<uint8_t>& buffer,
-                bool include_mesh) {
+void writeGraph(const DynamicSceneGraph& graph, std::vector<uint8_t>& buffer) {
   BinarySerializer serializer(&buffer);
   serializer.write(graph.layer_keys());
 
@@ -191,15 +189,6 @@ void writeGraph(const DynamicSceneGraph& graph,
     serializer.write(edge);
   }
   serializer.endDynamicArray();
-
-  auto mesh = graph.mesh();
-  if (!include_mesh || !mesh) {
-    serializer.write(false);
-    return;
-  }
-
-  serializer.write(true);
-  mesh->serializeToBinary(buffer);
 }
 
 template <typename Attrs>
@@ -242,33 +231,16 @@ bool updateGraph(DynamicSceneGraph& graph, const BinaryDeserializer& deserialize
     }
   }
 
-  if (header.version < io::Version(1, 0, 2)) {
-    io::warnOutdatedHeader(header);
-
-    LayerId mesh_layer_id;
-    deserializer.read(mesh_layer_id);
-  }
-
   // load name to type index mapping if present
   const auto node_factory = loadFactory<NodeAttributes>(header, deserializer);
   const auto edge_factory = loadFactory<EdgeAttributes>(header, deserializer);
 
+  // Map_Vla: formats older than 1.1.1 (no layer-name map) are not supported any more
+  if (header.version < io::Version(1, 1, 1)) {
+    throw std::runtime_error("unsupported (too old) scene graph format");
+  }
   std::map<std::string, LayerKey> layer_names;
-  if (header.version < io::Version(1, 1, 0)) {
-    io::warnOutdatedHeader(header);
-
-    layer_names = {{DsgLayers::OBJECTS, 2},
-                   {DsgLayers::AGENTS, 2},
-                   {DsgLayers::PLACES, 3},
-                   {DsgLayers::ROOMS, 4},
-                   {DsgLayers::BUILDINGS, 5}};
-  } else if (header.version < io::Version(1, 1, 1)) {
-    io::warnOutdatedHeader(header);
-
-    std::map<std::string, LayerId> names;
-    deserializer.read(names);
-    layer_names = DynamicSceneGraph::LayerNames(names.begin(), names.end());
-  } else {
+  {
     deserializer.read(layer_names);
   }
 
@@ -331,14 +303,6 @@ bool updateGraph(DynamicSceneGraph& graph, const BinaryDeserializer& deserialize
               });
   }
   graph.removeAllStaleEdges();
-
-  if (!deserializer.checkIfTrue()) {
-    return true;
-  }
-
-  auto mesh = std::make_shared<Mesh>();
-  deserializer.read(*mesh);
-  graph.setMesh(mesh);
   return true;
 }
 

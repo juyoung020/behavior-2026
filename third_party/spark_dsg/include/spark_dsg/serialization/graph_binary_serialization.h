@@ -39,9 +39,7 @@
 
 namespace spark_dsg::io::binary {
 
-void writeGraph(const DynamicSceneGraph& graph,
-                std::vector<uint8_t>& buffer,
-                bool include_mesh = false);
+void writeGraph(const DynamicSceneGraph& graph, std::vector<uint8_t>& buffer);
 
 void writeLayer(const SceneGraphLayer& graph, std::vector<uint8_t>& buffer);
 

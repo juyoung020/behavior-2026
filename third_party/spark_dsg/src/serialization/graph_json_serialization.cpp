@@ -111,7 +111,7 @@ void read_edge_from_json(const serialization::AttributeFactory<EdgeAttributes>& 
 
 namespace io::json {
 
-std::string writeGraph(const DynamicSceneGraph& graph, bool include_mesh) {
+std::string writeGraph(const DynamicSceneGraph& graph) {
   nlohmann::json record;
   record[io::FileHeader::header_json_key()] = io::FileHeader::current();
   record["directed"] = false;
@@ -148,13 +148,6 @@ std::string writeGraph(const DynamicSceneGraph& graph, bool include_mesh) {
     }
   }
 
-  auto mesh = graph.mesh();
-  if (!mesh || !include_mesh) {
-    return record.dump();
-  }
-
-  // TODO(nathan) push header serialization to to/from json and reuse
-  record["mesh"] = nlohmann::json::parse(mesh->serializeToJson());
   return record.dump();
 }
 
@@ -180,23 +173,12 @@ DynamicSceneGraph::Ptr readGraph(const std::string& contents) {
     record.at("layer_keys").get_to(layer_keys);
   }
 
-  DynamicSceneGraph::LayerNames layer_names;
-  if (header.version < io::Version(1, 1, 0)) {
-    io::warnOutdatedHeader(header);
-
-    layer_names = {{DsgLayers::OBJECTS, 2},
-                   {DsgLayers::AGENTS, 2},
-                   {DsgLayers::PLACES, 3},
-                   {DsgLayers::ROOMS, 4},
-                   {DsgLayers::BUILDINGS, 5}};
-  } else if (header.version < io::Version(1, 1, 1)) {
-    io::warnOutdatedHeader(header);
-
-    const auto names = record.at("layer_names").get<std::map<std::string, LayerId>>();
-    layer_names = DynamicSceneGraph::LayerNames(names.begin(), names.end());
-  } else {
-    layer_names = record.at("layer_names").get<DynamicSceneGraph::LayerNames>();
+  // Map_Vla: formats older than 1.1.1 (no layer-name map) are not supported any more
+  if (header.version < io::Version(1, 1, 1)) {
+    throw std::runtime_error("unsupported (too old) scene graph format");
   }
+  const DynamicSceneGraph::LayerNames layer_names =
+      record.at("layer_names").get<DynamicSceneGraph::LayerNames>();
 
   auto graph = std::make_shared<DynamicSceneGraph>(layer_keys, layer_names);
 
@@ -212,13 +194,6 @@ DynamicSceneGraph::Ptr readGraph(const std::string& contents) {
     read_edge_from_json(edge_factory, edge, *graph);
   }
 
-  if (!record.contains("mesh")) {
-    return graph;
-  }
-
-  // TODO(nathan) push header serialization to to/from json and reuse
-  auto mesh = Mesh::deserializeFromJson(record.at("mesh").dump());
-  graph->setMesh(mesh);
   return graph;
 }
 

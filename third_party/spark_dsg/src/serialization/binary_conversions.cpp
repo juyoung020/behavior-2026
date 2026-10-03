@@ -92,44 +92,6 @@ void read_binary(const serialization::BinaryDeserializer& s, LayerKey& key) {
   s.read(key.partition);
 }
 
-void read_binary(const serialization::BinaryDeserializer& s, NearestVertexInfo& info) {
-  // array: [block_index, pos, vertex_index, label]
-  s.checkFixedArrayLength(4);
-  // block index
-  s.checkFixedArrayLength(3);
-  s.read(info.block[0]);
-  s.read(info.block[1]);
-  s.read(info.block[2]);
-  // pos
-  s.checkFixedArrayLength(3);
-  s.read(info.voxel_pos[0]);
-  s.read(info.voxel_pos[1]);
-  s.read(info.voxel_pos[2]);
-  // vertex
-  s.read(info.vertex);
-  // label
-  s.read(info.label);
-}
-
-void write_binary(serialization::BinarySerializer& s, const NearestVertexInfo& info) {
-  // array: [block_index, pos, vertex_index, label]
-  s.startFixedArray(4);
-  // block index
-  s.startFixedArray(3);
-  s.write(info.block[0]);
-  s.write(info.block[1]);
-  s.write(info.block[2]);
-  // pos
-  s.startFixedArray(3);
-  s.write(info.voxel_pos[0]);
-  s.write(info.voxel_pos[1]);
-  s.write(info.voxel_pos[2]);
-  // vertex
-  s.write(info.vertex);
-  // label
-  s.write(info.label);
-}
-
 void read_binary(const serialization::BinaryDeserializer& s, Color& c) {
   s.read(c.r);
   s.read(c.g);
@@ -144,7 +106,6 @@ void write_binary(serialization::BinarySerializer& s, const Color& c) {
   s.write(c.a);
 }
 
-// TODO(nathan) mesh?
 
 void write_binary(serialization::BinarySerializer& s, const NodeAttributes& attrs) {
   serialization::Visitor::to(s, attrs);

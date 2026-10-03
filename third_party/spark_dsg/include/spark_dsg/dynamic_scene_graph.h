@@ -117,9 +117,8 @@ class DynamicSceneGraph {
 
   /**
    * @brief Delete all layers and edges
-   * @param include_mesh If true also clear the mesh
    */
-  void clear(bool include_mesh = true);
+  void clear();
 
   //! @brief Reset scene graph to use new layers
   void reset(const LayerKeys& layer, const LayerNames& layer_names = {});
@@ -459,9 +458,8 @@ class DynamicSceneGraph {
    * @brief Save the DSG to file. By default, this will save a binary version of the
    * graph. To save as JSON, specify the filepath with a .json extension.
    * @param filepath Filepath to save graph to.
-   * @param include_mesh Optionally encode mesh (defaults to true)
    */
-  void save(std::filesystem::path filepath, bool include_mesh = true) const;
+  void save(std::filesystem::path filepath) const;
 
   /**
    * @brief Parse graph from binary or JSON file
@@ -469,15 +467,6 @@ class DynamicSceneGraph {
    * @returns Resulting parsed scene graph
    */
   static Ptr load(std::filesystem::path filepath);
-
-  //! @brief Set the scene graph mesh
-  void setMesh(const std::shared_ptr<Mesh>& mesh);
-
-  //! @brief Check if the scene graph has a mesh
-  bool hasMesh() const;
-
-  //! @brief Get the mesh associated with the scene graph
-  std::shared_ptr<Mesh> mesh() const;
 
   //! Any extra information about the graph
   Metadata metadata;
@@ -530,8 +519,6 @@ class DynamicSceneGraph {
   std::map<LayerId, Partitions> layer_partitions_;
 
   EdgeContainer interlayer_edges_;
-
-  std::shared_ptr<Mesh> mesh_;
 
  public:
   //! @brief Get layer key for a named layer

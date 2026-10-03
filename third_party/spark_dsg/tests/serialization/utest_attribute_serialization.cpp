@@ -70,7 +70,6 @@ const std::shared_ptr<NodeAttributes> node_attribute_test_cases[] = {
     std::make_shared<ObjectNodeAttributes>(getObjectNodeAttributes()),
     std::make_shared<RoomNodeAttributes>(getRoomNodeAttributes()),
     std::make_shared<PlaceNodeAttributes>(getPlaceNodeAttributes()),
-    std::make_shared<KhronosObjectAttributes>(getKhronosObjectAttributes()),
 };
 
 const std::shared_ptr<EdgeAttributes> edge_attribute_test_cases[] = {

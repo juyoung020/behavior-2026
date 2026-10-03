@@ -7,7 +7,6 @@ pybind11_add_module(
   bindings/src/bounding_box.cpp
   bindings/src/color.cpp
   bindings/src/graph_types.cpp
-  bindings/src/mesh.cpp
   bindings/src/metadata.cpp
   bindings/src/python_layer_view.cpp
   bindings/src/python_types.cpp

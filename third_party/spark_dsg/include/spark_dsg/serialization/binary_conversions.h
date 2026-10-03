@@ -47,17 +47,9 @@ struct LayerKey;
 void read_binary(const serialization::BinaryDeserializer& s, LayerKey& key);
 void write_binary(serialization::BinarySerializer& s, const LayerKey& key);
 
-struct NearestVertexInfo;
-void read_binary(const serialization::BinaryDeserializer& s, NearestVertexInfo& info);
-void write_binary(serialization::BinarySerializer& s, const NearestVertexInfo& info);
-
 struct Color;
 void read_binary(const serialization::BinaryDeserializer& s, Color& c);
 void write_binary(serialization::BinarySerializer& s, const Color& c);
-
-class Mesh;
-void read_binary(const serialization::BinaryDeserializer& s, Mesh& mesh);
-void write_binary(serialization::BinarySerializer& s, const Mesh& mesh);
 
 struct NodeAttributes;
 void write_binary(serialization::BinarySerializer& s, const NodeAttributes& attrs);

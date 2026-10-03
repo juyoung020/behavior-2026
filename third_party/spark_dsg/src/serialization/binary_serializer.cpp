@@ -232,18 +232,4 @@ void BinarySerializer::write<SceneGraphEdge>(const SceneGraphEdge& edge) {
   write(*edge.info);
 }
 
-template <>
-void BinarySerializer::write<Mesh>(const Mesh& mesh) {
-  std::vector<uint8_t> buffer;
-  mesh.serializeToBinary(buffer);
-  write(buffer);
-}
-
-template <>
-void BinaryDeserializer::read<Mesh>(Mesh& mesh) const {
-  std::vector<uint8_t> buffer;
-  read(buffer);
-  mesh = *Mesh::deserializeFromBinary(buffer.data(), buffer.size());
-}
-
 }  // namespace spark_dsg::serialization

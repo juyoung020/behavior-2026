@@ -40,7 +40,6 @@
 #include <pybind11/stl/filesystem.h>
 #include <spark_dsg/bounding_box.h>
 #include <spark_dsg/labelspace.h>
-#include <spark_dsg/mesh.h>
 #include <spark_dsg/node_attributes.h>
 #include <spark_dsg/node_symbol.h>
 #include <spark_dsg/printing.h>
@@ -50,7 +49,6 @@
 #include <spark_dsg/scene_graph_utilities.h>
 #include <spark_dsg/serialization/graph_binary_serialization.h>
 #include <spark_dsg/serialization/versioning.h>
-#include <spark_dsg/zmq_interface.h>
 
 #include <filesystem>
 #include <iomanip>

@@ -3,7 +3,6 @@
 
 namespace spark_dsg {
 
-class Mesh;
 
 struct NodeAttributes;
 

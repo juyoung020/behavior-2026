@@ -79,15 +79,14 @@ FileType verifyFileExtension(std::filesystem::path& filepath) {
 }
 
 void saveDsgBinary(const DynamicSceneGraph& graph,
-                   const std::filesystem::path& filepath,
-                   bool include_mesh) {
+                   const std::filesystem::path& filepath) {
   // Get the header data.
   const FileHeader header = FileHeader::current();
   const std::vector<uint8_t> header_buffer = header.serializeToBinary();
 
   // Get the DSG data.
   std::vector<uint8_t> graph_buffer;
-  binary::writeGraph(graph, graph_buffer, include_mesh);
+  binary::writeGraph(graph, graph_buffer);
 
   // Write the header and graph data to the file.
   std::ofstream out(filepath, std::ios::out | std::ios::binary);
@@ -116,10 +115,9 @@ std::shared_ptr<DynamicSceneGraph> loadDsgBinary(
 }
 
 void saveDsgJson(const DynamicSceneGraph& graph,
-                 const std::filesystem::path& filepath,
-                 bool include_mesh) {
+                 const std::filesystem::path& filepath) {
   std::ofstream outfile(filepath);
-  outfile << json::writeGraph(graph, include_mesh);
+  outfile << json::writeGraph(graph);
 }
 
 std::shared_ptr<DynamicSceneGraph> loadDsgJson(const std::filesystem::path& filepath) {

@@ -44,7 +44,6 @@
 
 #include "spark_dsg/bounding_box.h"
 #include "spark_dsg/color.h"
-#include "spark_dsg/mesh.h"
 #include "spark_dsg/metadata.h"
 #include "spark_dsg/scene_graph_types.h"
 #include "spark_dsg/serialization/attribute_registry.h"
@@ -73,16 +72,6 @@ using NodeAttributeRegistration =
  * @brief Typedef representing the semantic class of an object or other node
  */
 using SemanticLabel = uint32_t;
-
-/**
- * @brief Information related to place to mesh coorespondence
- */
-struct NearestVertexInfo {
-  int32_t block[3];
-  double voxel_pos[3];
-  size_t vertex;
-  std::optional<uint32_t> label;
-};
 
 /**
  * @brief Base node attributes.
@@ -212,8 +201,6 @@ struct ObjectNodeAttributes : public SemanticNodeAttributes {
   NodeAttributes::Ptr clone() const override;
   void transform(const Eigen::Isometry3d& transform) override;
 
-  //! Mesh vertice connections
-  std::list<size_t> mesh_connections;
   //! Whether or not the object is known (and registered)
   bool registered;
   //! rotation of object w.r.t. world (only valid when registerd)
@@ -254,10 +241,10 @@ struct RoomNodeAttributes : public SemanticNodeAttributes {
 };
 
 /**
- * @brief Additional node attributes for a place
- * In addition to the normal semantic properties, a room has the minimum
- * distance to an obstacle and the number of basis points for that vertex in the
- * GVD
+ * @brief Additional node attributes for a place (free-space skeleton node)
+ * In addition to the normal semantic properties, a place has the distance to the
+ * nearest obstacle (its clearance). Map_Vla: the GVD basis points, mesh connections
+ * and frontier fields were removed.
  */
 struct PlaceNodeAttributes : public SemanticNodeAttributes {
  public:
@@ -270,32 +257,13 @@ struct PlaceNodeAttributes : public SemanticNodeAttributes {
   /**
    * @brief make places node attributes
    * @param distance distance to nearest obstalce
-   * @param num_basis_points number of basis points of the places node
    */
-  PlaceNodeAttributes(double distance, unsigned int num_basis_points);
+  explicit PlaceNodeAttributes(double distance);
   virtual ~PlaceNodeAttributes() = default;
   NodeAttributes::Ptr clone() const override;
 
   //! distance to nearest obstacle
   double distance;
-  //! number of equidistant obstacles
-  unsigned int num_basis_points;
-  //! voxblox mesh vertices that are closest to this place
-  std::vector<NearestVertexInfo> voxblox_mesh_connections;
-  //! pcl mesh vertices that are closest to this place
-  std::vector<size_t> pcl_mesh_connections;
-  //! semantic labels of parents
-  std::vector<uint8_t> mesh_vertex_labels;
-  //! deformation vertices that are closest to this place
-  std::vector<size_t> deformation_connections;
-
-  bool real_place = true;
-  bool need_cleanup = false;
-  bool active_frontier = false;
-  bool anti_frontier = false;
-  Eigen::Vector3d frontier_scale;
-  Eigen::Quaterniond orientation;
-  size_t num_frontier_voxels = 0;
 
  protected:
   std::ostream& fill_ostream(std::ostream& out) const override;
@@ -303,64 +271,6 @@ struct PlaceNodeAttributes : public SemanticNodeAttributes {
   bool is_equal(const NodeAttributes& other) const override;
   // registers derived attributes
   REGISTER_NODE_ATTRIBUTES(PlaceNodeAttributes);
-};
-using FrontierNodeAttributes = PlaceNodeAttributes;
-
-/**
- * @brief Additional node attributes for a 2d (outdoor) place
- * In addition to the normal semantic properties, a 2d place has ...
- */
-struct Place2dNodeAttributes : public SemanticNodeAttributes {
- public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  //! desired pointer type of node
-  using Ptr = std::unique_ptr<Place2dNodeAttributes>;
-
-  Place2dNodeAttributes();
-
-  /**
-   * @brief make places node attributes
-   * @param boundary Boundary points surrounding place
-   */
-  Place2dNodeAttributes(std::vector<Eigen::Vector3d> boundary);
-  virtual ~Place2dNodeAttributes() = default;
-  NodeAttributes::Ptr clone() const override;
-
-  //! points on boundary of place region
-  std::vector<Eigen::Vector3d> boundary;
-  //! center of intersection checking ellipsoid
-  Eigen::Vector3d ellipse_centroid;
-  //! shape matrix for intersection checking ellipsoid
-  Eigen::Matrix<double, 2, 2> ellipse_matrix_compress;
-  //! shape matrix for plotting ellipsoid
-  Eigen::Matrix<double, 2, 2> ellipse_matrix_expand;
-  //! pcl mesh vertices corresponding to boundary points
-  std::vector<size_t> pcl_boundary_connections;
-  //! voxblox mesh vertices that are closest to this place
-  std::vector<NearestVertexInfo> voxblox_mesh_connections;
-  //! pcl mesh vertices that are closest to this place
-  std::vector<size_t> pcl_mesh_connections;
-  //! min vertex index of associated mesh vertices
-  size_t pcl_min_index;
-  //! max vertex index of associated mesh vertices
-  size_t pcl_max_index;
-  //! semantic labels of parents
-  std::vector<uint8_t> mesh_vertex_labels;
-  //! deformation vertices that are closest to this place
-  std::vector<size_t> deformation_connections;
-  //! tracks whether the node still needs to be cleaned up during merging
-  bool need_finish_merge;
-  //! whether this node has been merged to while in current active window
-  bool need_cleanup_splitting;
-  //! whether this node has mesh vertices in active window
-  bool has_active_mesh_indices;
-
- protected:
-  std::ostream& fill_ostream(std::ostream& out) const override;
-  void serialization_info() override;
-  bool is_equal(const NodeAttributes& other) const override;
-  // registers derived attributes
-  REGISTER_NODE_ATTRIBUTES(Place2dNodeAttributes);
 };
 
 struct AgentNodeAttributes : public NodeAttributes {
@@ -390,108 +300,6 @@ struct AgentNodeAttributes : public NodeAttributes {
   bool is_equal(const NodeAttributes& other) const override;
   // registers derived attributes
   REGISTER_NODE_ATTRIBUTES(AgentNodeAttributes);
-};
-
-/**
- * @brief Attributes for khronos object nodes.
- */
-struct KhronosObjectAttributes : public ObjectNodeAttributes {
- public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  //! desired pointer type of node
-  using Ptr = std::unique_ptr<KhronosObjectAttributes>;
-
-  KhronosObjectAttributes();
-  virtual ~KhronosObjectAttributes() = default;
-  NodeAttributes::Ptr clone() const override;
-
-  // Attributes.
-  // Sequence of observation starts and ends.
-  std::vector<uint64_t> first_observed_ns;
-  std::vector<uint64_t> last_observed_ns;
-
-  // Mesh of the object. Positions of vertices are relative to the object bounding box
-  // origin.
-  Mesh mesh;
-
-  // If the object is considered dynamic, store the trajectory of the object.
-  // NOTE(lschmid): Currently dynamic and static objects just have the
-  // khronos-attributes. Could change in the future.
-  std::vector<uint64_t> trajectory_timestamps;
-  std::vector<Eigen::Vector3f> trajectory_positions;
-  // Store per frame the 3D dynamic points of the object in world frame.
-  std::vector<std::vector<Eigen::Vector3f>> dynamic_object_points;
-
-  // Optionally store additional detailed infos if needed.
-  std::map<std::string, std::vector<size_t>> details;
-
- protected:
-  std::ostream& fill_ostream(std::ostream& out) const override;
-  void serialization_info() override;
-  bool is_equal(const NodeAttributes& other) const override;
-  // registers derived attributes
-  REGISTER_NODE_ATTRIBUTES(KhronosObjectAttributes);
-};
-
-/**
- * @brief The traversability state of a traversability boundary.
- */
-enum class TraversabilityState : uint8_t {
-  UNKNOWN = 0,
-  TRAVERSABLE = 1,
-  INTRAVERSABLE = 2,
-  TRAVERSED = 3
-};
-
-using TraversabilityStates = std::vector<TraversabilityState>;
-
-/**
- * @brief Compact information to store a grid aligned traversability boundary.
- */
-struct BoundaryInfo {
-  //! Coordinates of the boundary w.r.t. the attribute center.
-  Eigen::Vector2d min;
-  Eigen::Vector2d max;
-
-  //! Traversability states for each side of the boundary. Each side can be empty
-  //! (=UNKNOWN), a single state, or a sequence of states indicating uniform
-  //! tessellation of the boundary. The sides are ordered bottom, left, top, right.
-  //! The states per side are ordered from the lower to the higher coordinate.
-  std::array<TraversabilityStates, 4> states;
-
-  bool operator==(const BoundaryInfo& other) const;
-  bool operator!=(const BoundaryInfo& other) const { return !(*this == other); }
-};
-
-/**
- * @brief First simple implementation of traversability places.
- */
-struct TraversabilityNodeAttributes : public NodeAttributes {
- public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  using Ptr = std::unique_ptr<TraversabilityNodeAttributes>;
-
-  TraversabilityNodeAttributes() = default;
-  virtual ~TraversabilityNodeAttributes() = default;
-  NodeAttributes::Ptr clone() const override;
-
-  //! Timestamps when this place was first and last observed.
-  uint64_t first_observed_ns = 0;
-  uint64_t last_observed_ns = 0;
-
-  //! Boundary information
-  BoundaryInfo boundary;
-
-  // TODO(lschmid): Reconsider in the future.
-  //! Distance to the nearest intraversable obstacle.
-  double distance = 0.0;
-
- protected:
-  std::ostream& fill_ostream(std::ostream& out) const override;
-  void serialization_info() override;
-  bool is_equal(const NodeAttributes& other) const override;
-
-  REGISTER_NODE_ATTRIBUTES(TraversabilityNodeAttributes);
 };
 
 }  // namespace spark_dsg

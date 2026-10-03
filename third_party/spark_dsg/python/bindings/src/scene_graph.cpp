@@ -71,7 +71,7 @@ void init_scene_graph(py::module_& m) {
       .def(py::init<const DynamicSceneGraph::LayerKeys&, const DynamicSceneGraph::LayerNames&>(),
            "layer_keys"_a,
            "layer_names"_a = DynamicSceneGraph::LayerNames{})
-      .def("clear", &DynamicSceneGraph::clear, "include_mesh"_a = true)
+      .def("clear", &DynamicSceneGraph::clear)
       .def("reset", &DynamicSceneGraph::reset)
       .def(
           "has_layer",
@@ -166,7 +166,6 @@ void init_scene_graph(py::module_& m) {
            [](const DynamicSceneGraph& graph, NodeSymbol source, NodeSymbol target) {
              return graph.hasEdge(source, target);
            })
-      .def("has_mesh", &DynamicSceneGraph::hasMesh)
       .def(
           "get_node",
           [](const DynamicSceneGraph& graph, NodeSymbol node) -> const SceneGraphNode& { return graph.getNode(node); },
@@ -209,18 +208,12 @@ void init_scene_graph(py::module_& m) {
       .def("get_position", &DynamicSceneGraph::getPosition)
       .def(
           "save",
-          [](const DynamicSceneGraph& graph, const std::string& filepath, bool include_mesh) {
-            graph.save(filepath, include_mesh);
-          },
-          "filepath"_a,
-          "include_mesh"_a = true)
+          [](const DynamicSceneGraph& graph, const std::string& filepath) { graph.save(filepath); },
+          "filepath"_a)
       .def(
           "save",
-          [](const DynamicSceneGraph& graph, const std::filesystem::path& filepath, bool include_mesh) {
-            graph.save(filepath, include_mesh);
-          },
-          "filepath"_a,
-          "include_mesh"_a = true)
+          [](const DynamicSceneGraph& graph, const std::filesystem::path& filepath) { graph.save(filepath); },
+          "filepath"_a)
       .def_static("load", &DynamicSceneGraph::load)
       .def_static("load", [](const std::string& filepath) { return DynamicSceneGraph::load(filepath); })
       .def_readwrite("_metadata", &DynamicSceneGraph::metadata)
@@ -271,10 +264,6 @@ void init_scene_graph(py::module_& m) {
           },
           nullptr,
           py::return_value_policy::reference_internal)
-      .def_property(
-          "mesh",
-          [](const DynamicSceneGraph& graph) { return graph.mesh(); },
-          [](DynamicSceneGraph& graph, const Mesh::Ptr& mesh) { graph.setMesh(mesh); })
       .def("get_layer_key", &DynamicSceneGraph::getLayerKey, "name"_a)
       .def("clone", &DynamicSceneGraph::clone)
       .def("transform",
@@ -285,12 +274,11 @@ void init_scene_graph(py::module_& m) {
       .def("__deepcopy__", [](const DynamicSceneGraph& G, py::object) { return G.clone(); })
       .def(
           "to_binary",
-          [](const DynamicSceneGraph& graph, bool include_mesh) {
+          [](const DynamicSceneGraph& graph) {
             std::vector<uint8_t> buffer;
-            io::binary::writeGraph(graph, buffer, include_mesh);
+            io::binary::writeGraph(graph, buffer);
             return py::bytes(reinterpret_cast<char*>(buffer.data()), buffer.size());
-          },
-          "include_mesh"_a = false)
+          })
       .def(
           "update_from_binary",
           [](DynamicSceneGraph& graph, const py::bytes& contents) {

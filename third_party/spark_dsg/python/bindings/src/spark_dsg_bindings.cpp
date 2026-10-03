@@ -39,7 +39,6 @@
 #include "spark_dsg/python/bounding_box.h"
 #include "spark_dsg/python/color.h"
 #include "spark_dsg/python/graph_types.h"
-#include "spark_dsg/python/mesh.h"
 #include "spark_dsg/python/metadata.h"
 #include "spark_dsg/python/python_types.h"
 #include "spark_dsg/python/scene_graph.h"
@@ -54,7 +53,6 @@ PYBIND11_MODULE(_dsg_bindings, m) {
   spark_dsg::python::init_bounding_box(m);
   spark_dsg::python::init_color(m);
   spark_dsg::python::init_graph_types(m);
-  spark_dsg::python::init_mesh(m);
   spark_dsg::python::init_metadata(m);
   spark_dsg::python::init_python_types(m);
   spark_dsg::python::init_scene_graph(m);

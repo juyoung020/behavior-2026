@@ -69,11 +69,8 @@ FileType verifyFileExtension(std::filesystem::path& filepath);
  * @brief Save a DynamicSceneGraph to a JSON file.
  * @param graph The graph to save.
  * @param filepath The filepath including extension to save to.
- * @param include_mesh If true, save the mesh data for each node.
  */
-void saveDsgJson(const DynamicSceneGraph& graph,
-                 const std::filesystem::path& filepath,
-                 bool include_mesh = false);
+void saveDsgJson(const DynamicSceneGraph& graph, const std::filesystem::path& filepath);
 
 /**
  * @brief Load a DynamicSceneGraph from a JSON file.
@@ -86,11 +83,8 @@ std::shared_ptr<DynamicSceneGraph> loadDsgJson(const std::filesystem::path& file
  * @brief Save a DynamicSceneGraph to a file in binary serialization.
  * @param graph The graph to save.
  * @param filepath The filepath including extension to save to.
- * @param include_mesh If true, save the mesh data for each node.
  */
-void saveDsgBinary(const DynamicSceneGraph& graph,
-                   const std::filesystem::path& filepath,
-                   bool include_mesh = false);
+void saveDsgBinary(const DynamicSceneGraph& graph, const std::filesystem::path& filepath);
 
 /**
  * @brief Load a DynamicSceneGraph from a file in binary serialization.

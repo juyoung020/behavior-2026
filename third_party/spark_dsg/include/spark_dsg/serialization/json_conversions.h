@@ -48,17 +48,9 @@ struct LayerKey;
 void to_json(nlohmann::json& j, const LayerKey& key);
 void from_json(const nlohmann::json& j, LayerKey& key);
 
-struct NearestVertexInfo;
-void to_json(nlohmann::json& j, const NearestVertexInfo& b);
-void from_json(const nlohmann::json& j, NearestVertexInfo& b);
-
 struct Color;
 void to_json(nlohmann::json& record, const Color& c);
 void from_json(const nlohmann::json& record, Color& c);
-
-class Mesh;
-void to_json(nlohmann::json& j, const Mesh& mesh);
-void from_json(const nlohmann::json& j, Mesh& mesh);
 
 struct NodeAttributes;
 void to_json(nlohmann::json& j, const NodeAttributes& attrs);

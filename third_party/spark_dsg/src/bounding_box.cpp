@@ -37,7 +37,6 @@
 #include <iostream>
 
 #include "spark_dsg/bounding_box_extraction.h"
-#include "spark_dsg/mesh.h"
 #include "spark_dsg/printing.h"
 #include "spark_dsg/scene_graph_types.h"
 
@@ -103,10 +102,6 @@ BoundingBox::BoundingBox(const PointAdaptor& points, BoundingBox::Type type) {
 BoundingBox::BoundingBox(const std::vector<Eigen::Vector3f>& points,
                          BoundingBox::Type type) {
   *this = bounding_box::extract(PointVectorAdaptor(points), type);
-}
-
-BoundingBox::BoundingBox(const Mesh& mesh, BoundingBox::Type type) {
-  *this = bounding_box::extract(MeshAdaptor(mesh), type);
 }
 
 bool BoundingBox::isValid() const {
@@ -342,19 +337,6 @@ std::ostream& operator<<(std::ostream& os, const BoundingBox& box) {
 
 bool BoundingBox::isInside(const Eigen::Vector3f& point_B) const {
   return (point_B.cwiseAbs() - dimensions / 2).maxCoeff() <= 0;
-}
-
-BoundingBox::MeshAdaptor::MeshAdaptor(const Mesh& mesh,
-                                      const std::vector<size_t>* indices)
-    : mesh(mesh), indices(indices) {}
-
-size_t BoundingBox::MeshAdaptor::size() const {
-  return indices ? indices->size() : mesh.numVertices();
-}
-
-Eigen::Vector3f BoundingBox::MeshAdaptor::get(size_t index) const {
-  const size_t global_idx = indices ? indices->at(index) : index;
-  return mesh.pos(global_idx);
 }
 
 BoundingBox::PointVectorAdaptor::PointVectorAdaptor(

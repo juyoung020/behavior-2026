@@ -72,20 +72,14 @@ bool LayerKey::operator<(const LayerKey& other) const {
 }
 
 std::optional<LayerKey> DsgLayers::nameToLayerId(const std::string& name) {
-  if (name == DsgLayers::SEGMENTS) {
-    return 1;
-  } else if (name == DsgLayers::OBJECTS) {
+  if (name == DsgLayers::OBJECTS) {
     return 2;
   } else if (name == DsgLayers::AGENTS) {
     return 2;
   } else if (name == DsgLayers::PLACES) {
     return 3;
-  } else if (name == DsgLayers::MESH_PLACES) {
-    return LayerKey{3, 1};
   } else if (name == DsgLayers::ROOMS) {
     return 4;
-  } else if (name == DsgLayers::BUILDINGS) {
-    return 5;
   } else {
     return std::nullopt;
   }

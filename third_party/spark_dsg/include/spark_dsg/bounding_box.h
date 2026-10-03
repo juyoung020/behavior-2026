@@ -133,14 +133,6 @@ struct BoundingBox {
   explicit BoundingBox(const std::vector<Eigen::Vector3f>& points,
                        BoundingBox::Type type = BoundingBox::Type::AABB);
 
-  /**
-   * @brief Fit a bounding box of a given type to a mesh in world coordinates.
-   * @param mesh Adaptor to lookup the points to fit the bounding box to.
-   * @param type The type of bounding box to fit. Defaults to AABB.
-   */
-  explicit BoundingBox(const Mesh& mesh,
-                       BoundingBox::Type type = BoundingBox::Type::AABB);
-
   virtual ~BoundingBox() = default;
 
   // Operators.
@@ -267,14 +259,6 @@ struct BoundingBox {
 
  public:
   // Specialized point adaptors.
-  struct MeshAdaptor : PointAdaptor {
-    MeshAdaptor(const Mesh& mesh, const std::vector<size_t>* indices = nullptr);
-    size_t size() const override;
-    Eigen::Vector3f get(size_t index) const override;
-    const Mesh& mesh;
-    const std::vector<size_t>* indices;
-  };
-
   struct PointVectorAdaptor : PointAdaptor {
     PointVectorAdaptor(const std::vector<Eigen::Vector3f>& points);
     size_t size() const override;

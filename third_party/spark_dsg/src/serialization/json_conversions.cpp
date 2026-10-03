@@ -39,7 +39,6 @@
 #include "spark_dsg/bounding_box.h"
 #include "spark_dsg/edge_attributes.h"
 #include "spark_dsg/logging.h"
-#include "spark_dsg/mesh.h"
 #include "spark_dsg/node_attributes.h"
 #include "spark_dsg/serialization/attribute_serialization.h"
 #include "spark_dsg/serialization/versioning.h"
@@ -98,31 +97,6 @@ void from_json(const json& j, LayerKey& key) {
   key.partition = j.at("partition").get<PartitionId>();
 }
 
-void to_json(json& j, const NearestVertexInfo& info) {
-  j = json{
-      {"block", info.block}, {"voxel_pos", info.voxel_pos}, {"vertex", info.vertex}};
-
-  if (info.label) {
-    j["label"] = info.label.value();
-  } else {
-    j["label"] = nullptr;
-  }
-}
-
-void from_json(const json& j, NearestVertexInfo& info) {
-  info.block[0] = j.at("block").at(0).get<int32_t>();
-  info.block[1] = j.at("block").at(1).get<int32_t>();
-  info.block[2] = j.at("block").at(2).get<int32_t>();
-  info.voxel_pos[0] = j.at("voxel_pos").at(0).get<double>();
-  info.voxel_pos[1] = j.at("voxel_pos").at(1).get<double>();
-  info.voxel_pos[2] = j.at("voxel_pos").at(2).get<double>();
-  info.vertex = j.at("vertex");
-
-  if (j.contains("label") && !j.at("label").is_null()) {
-    info.label = j.at("label").get<uint32_t>();
-  }
-}
-
 void to_json(json& record, const Color& c) {
   record["r"] = c.r;
   record["g"] = c.g;
@@ -153,7 +127,6 @@ void from_json(const json& record, Color& c) {
   }
 }
 
-// TODO(nathan) think about mesh serialization
 
 void to_json(json& record, const NodeAttributes& attributes) {
   serialization::Visitor::to(record, attributes);

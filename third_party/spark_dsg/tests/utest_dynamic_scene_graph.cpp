@@ -76,7 +76,7 @@ TEST(DynamicSceneGraph, defaultConstructorInvariants) {
   DynamicSceneGraph graph;
   EXPECT_EQ(0u, graph.numNodes());
   EXPECT_EQ(0u, graph.numEdges());
-  EXPECT_EQ(4u, graph.numLayers());
+  EXPECT_EQ(3u, graph.numLayers());  // Map_Vla: OBJECTS(+AGENTS), PLACES, ROOMS
 }
 
 TEST(DynamicSceneGraph, customLayerInvariants) {
@@ -491,28 +491,28 @@ TEST(DynamicSceneGraph, removeEdgeCorrect) {
 
 TEST(DynamicSceneGraph, insertDynamicLayerCorrect) {
   DynamicSceneGraph graph;
-  EXPECT_EQ(4u, graph.numLayers());
+  EXPECT_EQ(3u, graph.numLayers());
 
   graph.addLayer(1, 'a');
-  EXPECT_EQ(5u, graph.numLayers());
+  EXPECT_EQ(4u, graph.numLayers());
   EXPECT_TRUE(graph.hasLayer(1, 'a'));
   EXPECT_FALSE(graph.hasLayer(2, 'a'));
   EXPECT_FALSE(graph.hasLayer(1, 'b'));
 
   graph.addLayer(1, 'b');
-  EXPECT_EQ(5u, graph.numLayers());
+  EXPECT_EQ(4u, graph.numLayers());
   EXPECT_TRUE(graph.hasLayer(1, 'a'));
   EXPECT_FALSE(graph.hasLayer(2, 'a'));
   EXPECT_TRUE(graph.hasLayer(1, 'b'));
 
   graph.addLayer(2, 'a');
-  EXPECT_EQ(5u, graph.numLayers());
+  EXPECT_EQ(4u, graph.numLayers());
   EXPECT_TRUE(graph.hasLayer(1, 'a'));
   EXPECT_TRUE(graph.hasLayer(2, 'a'));
   EXPECT_TRUE(graph.hasLayer(1, 'b'));
 
   graph.addLayer(7, 'a');
-  EXPECT_EQ(6u, graph.numLayers());
+  EXPECT_EQ(5u, graph.numLayers());
   EXPECT_TRUE(graph.hasLayer(1, 'a'));
   EXPECT_TRUE(graph.hasLayer(2, 'a'));
   EXPECT_TRUE(graph.hasLayer(1, 'b'));
@@ -521,7 +521,7 @@ TEST(DynamicSceneGraph, insertDynamicLayerCorrect) {
 
 TEST(DynamicSceneGraph, emplacePartitionNodeCorrect) {
   DynamicSceneGraph G;
-  EXPECT_EQ(4u, G.numLayers());
+  EXPECT_EQ(3u, G.numLayers());
 
   EXPECT_TRUE(G.emplaceNode(2, "a0"_id, std::make_unique<NodeAttributes>(), 'a'));
   EXPECT_TRUE(G.hasNode("a0"_id));
@@ -709,7 +709,7 @@ TEST(DynamicSceneGraph, mergeGraphWithPartitionsCorrect) {
 
 TEST(DynamicSceneGraph, clearWithPartitionsCorrect) {
   DynamicSceneGraph graph;
-  EXPECT_EQ(4u, graph.numLayers());
+  EXPECT_EQ(3u, graph.numLayers());
 
   EXPECT_TRUE(graph.emplaceNode(2, "a0"_id, std::make_unique<NodeAttributes>(), 'a'));
   EXPECT_EQ(1u, graph.numNodes());

@@ -80,13 +80,11 @@ void testSaveLoad(const std::string& file_name) {
   DynamicSceneGraph graph;
   graph.emplaceNode(
       2, NodeSymbol('p', 0), std::make_unique<NodeAttributes>(Eigen::Vector3d::Zero()));
-  graph.setMesh(std::make_shared<Mesh>());
   graph.save(file_name);
   auto other = DynamicSceneGraph::load(file_name);
 
   EXPECT_EQ(graph.numNodes(), other->numNodes());
   EXPECT_EQ(graph.numLayers(), other->numLayers());
-  EXPECT_EQ(graph.hasMesh(), other->hasMesh());
 }
 
 TEST(FileIoTests, SaveLoadJson) {

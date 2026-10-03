@@ -219,6 +219,17 @@ class ExplorePolicy:
                                                           "map_start": [mx, my, myaw], "map_from_world": self.T}))
         print(f"[explore] reference set: {int(ref.sum())} cells ({ref.sum() * res * res:.1f} m2)", flush=True)
 
+    def _push_gt_pose_to_move_robot(self):
+        """SGRT_POSE=gt: the robot's pose, trajectory (path_log) and path length follow the simulator's GT pose, not base_qvel integration."""
+        if os.environ.get("SGRT_POSE", "").lower() != "gt" or not self.mr.lib.has_gt_pose:
+            return
+        import math
+        pos, q = self._robot().get_position_orientation()
+        wyaw = yaw_of(q)
+        c, s, tx, ty = getattr(self, "T", (1.0, 0.0, 0.0, 0.0))  # map_from_world; identity in GT mode (map = world)
+        x, y = float(pos[0]), float(pos[1])
+        self.mr.lib.set_gt_pose(c * x - s * y + tx, s * x + c * y + ty, wyaw + math.atan2(s, c))
+
     def _contacts(self):
         try:
             from omnigibson.utils.usd_utils import RigidContactAPI
@@ -265,6 +276,7 @@ class ExplorePolicy:
             self._robot()
             self._contacts()
         t3 = time.perf_counter()
+        self._push_gt_pose_to_move_robot()
         if self.vla_active is not None:
             # move_robot holds still meanwhile (its own tick keeps observing)
             self.mr.lib.tick(self.mr._proprio(obs)[0])

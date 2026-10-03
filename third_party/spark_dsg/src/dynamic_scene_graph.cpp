@@ -38,7 +38,6 @@
 
 #include "spark_dsg/edge_attributes.h"
 #include "spark_dsg/logging.h"
-#include "spark_dsg/mesh.h"
 #include "spark_dsg/node_attributes.h"
 #include "spark_dsg/node_symbol.h"
 #include "spark_dsg/printing.h"
@@ -69,13 +68,12 @@ std::set<LayerKey> layersFromNames(const LayerNames& layer_names,
 bool EdgeLayerInfo::isSameLayer() const { return source == target; }
 
 DynamicSceneGraph::DynamicSceneGraph(bool empty)
-    : DynamicSceneGraph(empty ? LayerKeys{} : LayerKeys{2, 3, 4, 5},
+    : DynamicSceneGraph(empty ? LayerKeys{} : LayerKeys{2, 3, 4},
                         empty ? LayerNames{}
                               : LayerNames{{DsgLayers::OBJECTS, 2},
                                            {DsgLayers::AGENTS, 2},
                                            {DsgLayers::PLACES, 3},
-                                           {DsgLayers::ROOMS, 4},
-                                           {DsgLayers::BUILDINGS, 5}}) {}
+                                           {DsgLayers::ROOMS, 4}}) {}
 
 DynamicSceneGraph::DynamicSceneGraph(const LayerKeys& layer_keys,
                                      const LayerNames& layer_names)
@@ -87,16 +85,12 @@ DynamicSceneGraph::Ptr DynamicSceneGraph::fromNames(const LayerNames& layers) {
   return std::make_shared<DynamicSceneGraph>(LayerKeys{}, layers);
 }
 
-void DynamicSceneGraph::clear(bool include_mesh) {
+void DynamicSceneGraph::clear() {
   layers_.clear();
   layer_partitions_.clear();
 
   node_lookup_.clear();
   interlayer_edges_.reset();
-
-  if (include_mesh) {
-    mesh_.reset();
-  }
 
   for (const auto& key : layer_keys_) {
     addLayer(key.layer, key.partition);
@@ -695,29 +689,22 @@ DynamicSceneGraph::Ptr DynamicSceneGraph::clone() const {
     to_return->insertEdge(edge.source, edge.target, edge.info->clone());
   }
 
-  if (mesh_) {
-    to_return->mesh_ = mesh_->clone();
-  }
-
   return to_return;
 }
 
 void DynamicSceneGraph::transform(const Eigen::Isometry3d& transform) {
   visitLayers([&](LayerKey, Layer& layer) { layer.transform(transform); });
-  if (mesh_) {
-    mesh_->transform(transform.cast<float>());
-  }
 }
 
-void DynamicSceneGraph::save(std::filesystem::path filepath, bool include_mesh) const {
+void DynamicSceneGraph::save(std::filesystem::path filepath) const {
   const auto type = io::verifyFileExtension(filepath);
   if (type == io::FileType::JSON) {
-    io::saveDsgJson(*this, filepath, include_mesh);
+    io::saveDsgJson(*this, filepath);
     return;
   }
 
   // Can only be binary after verification.
-  io::saveDsgBinary(*this, filepath, include_mesh);
+  io::saveDsgBinary(*this, filepath);
 }
 
 DynamicSceneGraph::Ptr DynamicSceneGraph::load(std::filesystem::path filepath) {
@@ -733,12 +720,6 @@ DynamicSceneGraph::Ptr DynamicSceneGraph::load(std::filesystem::path filepath) {
   // Can only be binary after verification (worstcase: throws meaningful error)
   return io::loadDsgBinary(filepath);
 }
-
-void DynamicSceneGraph::setMesh(const std::shared_ptr<Mesh>& mesh) { mesh_ = mesh; }
-
-bool DynamicSceneGraph::hasMesh() const { return mesh_ != nullptr; }
-
-Mesh::Ptr DynamicSceneGraph::mesh() const { return mesh_; }
 
 Layer& DynamicSceneGraph::layerFromKey(const LayerKey& key) {
   layer_keys_.insert(key);

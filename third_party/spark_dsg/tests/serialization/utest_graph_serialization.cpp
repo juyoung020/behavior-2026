@@ -42,22 +42,20 @@
 namespace spark_dsg {
 
 void PrintTo(const DynamicSceneGraph& graph, std::ostream* os) {
-  *os << io::json::writeGraph(graph, true);
+  *os << io::json::writeGraph(graph);
 }
 
 struct SerializationMethod {
   using Ptr = std::shared_ptr<SerializationMethod>;
   virtual ~SerializationMethod() = default;
-  virtual DynamicSceneGraph::Ptr compute(const DynamicSceneGraph& graph,
-                                         bool include_mesh = true) const = 0;
+  virtual DynamicSceneGraph::Ptr compute(const DynamicSceneGraph& graph) const = 0;
   virtual std::string name() const = 0;
 };
 
 struct JsonRoundTrip : SerializationMethod {
   virtual ~JsonRoundTrip() = default;
-  DynamicSceneGraph::Ptr compute(const DynamicSceneGraph& graph,
-                                 bool include_mesh = true) const override {
-    const auto output = io::json::writeGraph(graph, include_mesh);
+  DynamicSceneGraph::Ptr compute(const DynamicSceneGraph& graph) const override {
+    const auto output = io::json::writeGraph(graph);
     return io::json::readGraph(output);
   }
 
@@ -66,10 +64,9 @@ struct JsonRoundTrip : SerializationMethod {
 
 struct BinaryRoundTrip : SerializationMethod {
   virtual ~BinaryRoundTrip() = default;
-  DynamicSceneGraph::Ptr compute(const DynamicSceneGraph& graph,
-                                 bool include_mesh = true) const override {
+  DynamicSceneGraph::Ptr compute(const DynamicSceneGraph& graph) const override {
     std::vector<uint8_t> buffer;
-    io::binary::writeGraph(graph, buffer, include_mesh);
+    io::binary::writeGraph(graph, buffer);
     return io::binary::readGraph(buffer);
   }
 
@@ -146,37 +143,6 @@ TEST_P(GraphSerializationFixture, DsgWithPartitions) {
   expected.emplaceNode(2, "a3"_id, std::make_unique<NodeAttributes>(), 'a');
 
   const auto result = round_trip_serializer->compute(expected);
-  ASSERT_TRUE(result);
-  EXPECT_EQ(expected, *result);
-}
-
-TEST_P(GraphSerializationFixture, DsgWithMesh) {
-  const auto round_trip_serializer = GetParam();
-
-  using namespace std::chrono_literals;
-  DynamicSceneGraph expected;
-  expected.emplaceNode(3, 0, std::make_unique<NodeAttributes>());
-
-  expected.emplaceNode(2, "a0"_id, std::make_unique<NodeAttributes>(), 'a');
-  expected.emplaceNode(2, "a1"_id, std::make_unique<NodeAttributes>(), 'a');
-  expected.emplaceNode(2, "a2"_id, std::make_unique<NodeAttributes>(), 'a');
-  expected.emplaceNode(2, "a3"_id, std::make_unique<NodeAttributes>(), 'a');
-
-  auto mesh = std::make_shared<Mesh>();
-  mesh->points.push_back(Eigen::Vector3f::Zero());
-  mesh->points.push_back(Eigen::Vector3f::Zero());
-  mesh->points.push_back(Eigen::Vector3f::Zero());
-  mesh->colors.push_back({10, 20, 30, 255});
-  mesh->labels.push_back(2);
-  mesh->labels.push_back(8);
-  mesh->stamps.push_back(0);
-  mesh->stamps.push_back(10);
-  mesh->stamps.push_back(20);
-  mesh->stamps.push_back(30);
-  mesh->faces.push_back({{1, 2, 3}});
-  expected.setMesh(mesh);
-
-  const auto result = round_trip_serializer->compute(expected, true);
   ASSERT_TRUE(result);
   EXPECT_EQ(expected, *result);
 }
