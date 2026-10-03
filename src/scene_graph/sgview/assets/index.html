@@ -148,15 +148,33 @@ const texLoader = new THREE.TextureLoader();
 // Round, softly edged points whose size is in world units (perspective-correct); `rim` darkens the border so nodes read as discs.
 const pointUniforms = { scale:{ value:600 } };
 function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opacity = 1 }) {
-  return new THREE.ShaderMaterial({
+  // rim > 0: node style — a lit sphere (diffuse + specular highlight) with a thin dark outline; rim = 0: flat disc (point clouds).
+  // The edge is anti-aliased with a width derived from the point's pixel size, so small and large nodes both stay smooth.
+  const m = new THREE.ShaderMaterial({
     uniforms:{ uSize:{ value:size }, uColor:{ value:new THREE.Color(color) }, uRim:{ value:rim }, uOpacity:{ value:opacity }, uScale:pointUniforms.scale },
-    vertexShader:`attribute vec3 color; uniform float uSize; uniform float uScale; varying vec3 vC;
-      void main(){ vC = color; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = max(2.0, uSize * uScale / -mv.z); gl_Position = projectionMatrix * mv; }`,
-    fragmentShader:`uniform vec3 uColor; uniform float uRim; uniform float uOpacity; varying vec3 vC;
-      void main(){ vec2 p = gl_PointCoord * 2.0 - 1.0; float r = length(p); if (r > 1.0) discard;
-        vec3 c = ${vertexColors ? "vC" : "uColor"}; c *= 1.0 - uRim * smoothstep(0.62, 1.0, r);
-        gl_FragColor = vec4(c, uOpacity * (1.0 - smoothstep(0.92, 1.0, r))); }`,
-    transparent:opacity < 1 || rim > 0, depthWrite:opacity >= 1 });
+    vertexShader:`attribute vec3 color; uniform float uSize; uniform float uScale; varying vec3 vC; varying float vPx;
+      void main(){ vC = color; vec4 mv = modelViewMatrix * vec4(position,1.0); vPx = max(3.0, uSize * uScale / -mv.z); gl_PointSize = vPx; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader:`uniform vec3 uColor; uniform float uRim; uniform float uOpacity; varying vec3 vC; varying float vPx;
+      void main(){
+        vec2 p = gl_PointCoord * 2.0 - 1.0; float r2 = dot(p, p); if (r2 > 1.0) discard;
+        float r = sqrt(r2), aa = 2.0 / vPx;
+        vec3 base = ${vertexColors ? "vC" : "uColor"};
+        float alpha = uOpacity * (1.0 - smoothstep(1.0 - aa, 1.0, r));
+        vec3 c = base;
+        if (uRim > 0.0) {
+          vec3 n = vec3(p.x, -p.y, sqrt(max(0.0, 1.0 - r2)));
+          vec3 L = normalize(vec3(-0.45, 0.6, 0.65));
+          float d = max(dot(n, L), 0.0);
+          vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+          float spec = pow(max(dot(n, H), 0.0), 36.0);
+          c = base * (0.52 + 0.58 * d) + vec3(0.55) * spec;
+          float ring = smoothstep(1.0 - 2.2 * aa - 0.07, 1.0 - 2.2 * aa, r);   // thin darker outline
+          c = mix(c, base * 0.38, ring * 0.85);
+        }
+        gl_FragColor = vec4(c, alpha);
+      }`,
+    transparent:true, depthWrite:opacity >= 1 });
+  return m;
 }
 function updatePointScale() { pointUniforms.scale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); }
 
@@ -318,7 +336,7 @@ function drawGraph() {
   const shown = k => ({ object:opt("g_objs"), agent:opt("g_agents"), room:opt("g_rooms") })[k] || false;   // places are backend-only
   const xyz = n => [n.pos[0], n.pos[1], zOf(n.kind)];
 
-  for (const [kind, size, rim] of [["object", 0.20, 0.45], ["agent", 0.11, 0.3], ["room", 0.55, 0.3]]) {
+  for (const [kind, size, rim] of [["object", 0.26, 1], ["agent", 0.12, 1], ["room", 0.70, 1]]) {
     const ns = [...nodes.values()].filter(n => n.kind === kind && shown(kind) && (kind !== "object" || objVisible(n.o)));
     if (!ns.length) continue;
     const p = new Float32Array(ns.length * 3), c = new Float32Array(ns.length * 3);
