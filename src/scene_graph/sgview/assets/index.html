@@ -52,6 +52,7 @@
     <label class="row"><input type="checkbox" id="c_points" checked> Segment points</label>
     <label class="row">Point colour
       <select id="s_pcolor"><option>true colour</option><option>state colour</option></select></label>
+    <div class="num">Point size × voxel <input type="number" id="n_psize" value="1.0" min="0.2" max="5" step="0.1"></div>
     <label class="row"><input type="checkbox" id="c_boxes"> Boxes (objects w/o points)</label>
     <label class="row"><input type="checkbox" id="c_struct" checked> Structural objects</label>
     <label class="row"><input type="checkbox" id="c_gone" checked> Gone objects</label>
@@ -147,7 +148,7 @@ const texLoader = new THREE.TextureLoader();
 
 // Round, softly edged flat points whose size is in world units (perspective-correct).
 const pointUniforms = { scale:{ value:600 } };
-function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opacity = 1 }) {
+function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opacity = 1, square = false }) {
   // Flat discs (no lighting): the colour is exactly the node/state colour, so the map stays the emphasised element.
   // Coverage is analytic and symmetric around the true radius (the point quad is padded by 1.5 px), so the outline is smooth
   // at any size instead of being cut at the quad edge.
@@ -155,13 +156,13 @@ function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opaci
     uniforms:{ uSize:{ value:size }, uColor:{ value:new THREE.Color(color) }, uRim:{ value:rim }, uOpacity:{ value:opacity }, uScale:pointUniforms.scale },
     vertexShader:`attribute vec3 color; uniform float uSize; uniform float uScale; varying vec3 vC; varying float vPx; varying float vPad;
       void main(){ vC = color; vec4 mv = modelViewMatrix * vec4(position,1.0);
-        vPx = max(3.0, uSize * uScale / -mv.z); vPad = vPx + 3.0; gl_PointSize = vPad; gl_Position = projectionMatrix * mv; }`,
+        vPx = max(${square ? "2.0" : "3.0"}, uSize * uScale / -mv.z); vPad = vPx + ${square ? "0.0" : "3.0"}; gl_PointSize = vPad; gl_Position = projectionMatrix * mv; }`,
     fragmentShader:`uniform vec3 uColor; uniform float uRim; uniform float uOpacity; varying vec3 vC; varying float vPx; varying float vPad;
       void main(){
         vec2 q = (gl_PointCoord * 2.0 - 1.0) * (vPad / vPx);     // 1.0 = the true radius
         float r2 = dot(q, q), r = sqrt(r2);
         float aa = 1.0 / vPx;                                     // ~half a pixel in radius units
-        float cov = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+        float cov = ${square ? "1.0" : "1.0 - smoothstep(1.0 - aa, 1.0 + aa, r)"};   // square: one voxel = one filled cell
         if (cov <= 0.0) discard;
         vec3 base = ${vertexColors ? "vC" : "uColor"};
         vec3 c = base;
@@ -274,10 +275,10 @@ function drawObjects() {
     const sel = selected === o.id;
     if (o.points && ent && ent.geom && opt("c_points")) {
       const true_ = opt("s_pcolor") === "true colour";
-      const m = pointMat({ size:(o.points.voxel || 0.02) * (sel ? 2.2 : 1.7), vertexColors:true_, color:st });
+      const m = pointMat({ size:(o.points.voxel || 0.02) * opt("n_psize") * (sel ? 1.25 : 1), vertexColors:true_, color:st, square:true });
       const pts = new THREE.Points(ent.geom, m); pts.userData.shared = true;   // geometry belongs to plyCache
       gObjs.add(pts);
-      if (sel) { const y = new THREE.Points(ent.geom, pointMat({ size:(o.points.voxel || 0.02) * 2.8, color:0xffe14a, opacity:0.5 })); y.userData.shared = true; gObjs.add(y); }
+      if (sel) { const y = new THREE.Points(ent.geom, pointMat({ size:(o.points.voxel || 0.02) * opt("n_psize") * 1.5, color:0xffe14a, opacity:0.5, square:true })); y.userData.shared = true; gObjs.add(y); }
     } else if (!o.points || !ent || !ent.geom) {
       // no points: state-coloured sphere (+ optional box)
       const r = Math.max(0.06, Math.min(0.25, Math.max(...o.extent) * 0.15));
@@ -652,7 +653,7 @@ async function poll() {
   setTimeout(poll, 250);
 }
 // controls
-for (const id of ["c_points", "s_pcolor", "c_boxes", "c_struct", "c_gone", "c_ceil"]) $(id).onchange = () => { drawObjects(); drawGraph(); };
+for (const id of ["c_points", "s_pcolor", "n_psize", "c_boxes", "c_struct", "c_gone", "c_ceil"]) $(id).onchange = () => { drawObjects(); drawGraph(); };
 for (const id of ["g_on", "g_objs", "g_thumbs", "g_agents", "g_rooms", "g_intra", "g_inter", "n_objz", "n_h", "n_thumb"]) $(id).onchange = drawGraph;
 $("c_walls").onchange = () => { gWalls.visible = $("c_walls").checked; invalidate(); };
 $("c_map").onchange = () => { gMap.visible = $("c_map").checked; invalidate(); };
