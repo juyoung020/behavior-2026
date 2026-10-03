@@ -22,7 +22,7 @@ done
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
-export SGRT_POSE=${SGRT_POSE:-gt}   # 시뮬 시험: 정답 자세(map = world). 실제 로봇 기본은 slam
+export SGRT_POSE=${SGRT_POSE:-slam}   # 실제 로봇과 같게 slam(오도메트리 + 스캔 맞추기). 정답 자세 확인용은 SGRT_POSE=gt
 export SGRT_LIB=${SGRT_LIB:-$HOME/sgrt_build_explore/libsgrt.so}
 cd "$OUT"
 python "$HERE/run_explore.py" --listen 127.0.0.1:$PORT --out "$OUT" -- --task-name "$TASK" --mode public_test \
