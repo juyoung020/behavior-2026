@@ -23,8 +23,9 @@ side is the original openpi/JAX/torchcodec code.
 ## Build (Linux)
 
 ```bash
-bash src/vla/fasttrain/build.sh            # syncs sources to $FT_WORK/src, builds ftprep (Rust) and libftcore.so + ftbench (C++/CUDA)
-# env: FT_WORK (~/fasttrain_work), CUDA_HOME (/usr/local/cuda-12.8), FT_CUDA_ARCH (120; A100 80, H100 90)
+bash src/vla/fasttrain/build.sh [all|rust|native]   # syncs sources to $FT_WORK/src, builds ftprep (Rust) and libftcore.so + ftbench (C++/CUDA)
+# env: FT_WORK (~/fasttrain_work), CUDA_HOME (/usr/local/cuda-12.8), FT_CUDA_ARCH (120; A100 80, H100 90),
+#      FT_NVHDR (nv-codec-headers include dir; cloned into $FT_WORK/third_party if missing)
 ```
 
 Needs: NVIDIA driver with `libnvcuvid.so.1`, CUDA toolkit (nvcc), g++, cmake (for the sentencepiece crate), Rust,

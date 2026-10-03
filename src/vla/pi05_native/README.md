@@ -19,14 +19,20 @@ JAX-CPU vs JAX-GPU" at every point. Details and numbers (Korean): `docs/π05_네
 | `src/tokenizer.cpp` | SentencePiece BPE (protobuf parsed by hand), byte fallback, user-defined symbols |
 | `src/host_io.cpp` | B1K state extraction, z-score normalization (float64), state discretization, prompt, unnormalize, delta→absolute |
 | `src/image.cpp` | `resize_with_pad` bit-exact with PIL bilinear |
+| `src/pb_kernels.cu`, `src/pb_host.cpp` | 2025 1st place (PiBehavior) model kernels and host-side wrapper logic |
+| `src/batch_kernels.cu`, `src/image_gpu.cu` | kernels for the batched suffix (`pi05_infer_batch`), `resize_with_pad` on the GPU for device-resident views |
 | `src/engine_api.cpp`, `include/pi05_native.h` | C API: `pi05_create / pi05_infer / pi05_act` (B1K receding horizon) |
 | `glue/` | CPython extension (raw C API + buffer protocol), evaluator policy, launchers |
+| `exp/` | experiment matrices and `run_insurance.sh` (native policy through `tools/exp_run.py`) |
 | `server/pi05_server.cpp` | Linux websocket policy server (openpi msgpack protocol), hand-written RFC 6455 + msgpack |
 | `tools/` | offline Python: weight export (orbax → `.pi05w`), JAX reference dumps; C++: `pi05_verify`, GEMM test/bench, tokenizer test |
 
 ## Build
 
-- Linux: `bash build_linux.sh [build_dir]` (CUDA 12.8+, g++). Produces `libpi05.a`, `pi05_verify`, `pi05_server`.
+- Linux: `bash build_linux.sh [build_dir]` (CUDA 12.8+, g++; build dir default `~/pi05_native_build`, toolkit `CUDA_HOME`
+  default `/usr/local/cuda-12.8`). Produces `libpi05.a`, `pi05_verify`, `pi05_verify_pb`, `pi05_batch_test`,
+  `pi05_server_ref`, `tok_test`, `pi05_server`, and the evaluator's Python extension `build/_pi05native*.so` (built with
+  `PI05_PY`, default the conda env `behavior` python).
 - Windows (no longer used; Linux is the only work machine): `archive/src/vla/pi05_native/build_windows.bat`.
 
 Only sm_120 (RTX 50xx) is compiled by default; set `PI05_ARCH` (Linux) for other GPUs.
@@ -89,7 +95,7 @@ Image (`server/Dockerfile`, CUDA 12.8 base, no Python inside):
 # build context: src/vla/pi05_native/ and weights/ (pb2025_ckpt1..4.pi05w + task_checkpoint_mapping.json, or pi05_radio.pi05w)
 docker build -f src/vla/pi05_native/server/Dockerfile -t behavior-policy:pb2025 --build-arg MODEL=pb2025 .
 docker run --gpus all -p 8000:8000 behavior-policy:pb2025
-python -m omnigibson.eval.evaluator ... --policy websocket --host <server> --port 8000   # official evaluator
+python -m omnigibson.eval.eval ... --policy websocket --host <server> --port 8000   # official evaluator
 ```
 
 GPUs: sm_75 (Turing, e.g. TitanRTX) and newer; the image carries sm_75 / 80 / 86 / 89 / 90 / 120 code and the driver

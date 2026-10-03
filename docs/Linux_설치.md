@@ -34,7 +34,7 @@
 1. `bash tools/setup/linux_setup.sh driver` → 재부팅 → `nvidia-smi` 확인. 드라이버는 **580 계열**(535 는 아래 3 절의 오류).
 2. `bash tools/setup/linux_setup.sh base` → 새 셸 → `gh auth login`.
 3. `bash tools/setup/linux_setup.sh repos` (우리 저장소 + BEHAVIOR-1K `bd049de` = v3.9.3-post1).
-4. `bash tools/setup/linux_setup.sh behavior` — 공식 `./setup.sh --new-env --omnigibson --bddl --joylo --dataset --eval`
+4. `bash tools/setup/linux_setup.sh behavior` — 공식 `./setup.sh --new-env --omnigibson --bddl --joylo --dataset --eval` 에서 `--dataset` 만 뺀 것(데이터셋은 따로 옮김)
    (+ 약관 동의 인자 `--accept-conda-tos --accept-nvidia-eula --accept-dataset-tos`). 이어서 `pip install av "numpy<2"`(검은 프레임 검사 도구가 씀).
 5. `import omnigibson` 이 `warp` 를 요구하면 `pip install warp-lang==1.12.0`(OmniGibson `primitives` 옵션과 같은 버전).
 6. `bash tools/setup/linux_setup.sh check` → `bash tools/setup/linux_first_check.sh 3` (4 절).

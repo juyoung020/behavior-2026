@@ -39,11 +39,11 @@ BEHAVIOR-1K/          challenge framework (StanfordVL, tag v3.9.3-post1) — sub
 data/                 2026 challenge demos (LeRobot v3): metadata + task 0 only (not in git)
 src/                  three layers, same as the team repo (robot-agent): ① memory → ② planning → ③ action, plus sim/
   scene_graph/        ① object memory
-    scenemap/         2D SLAM + object map + planner queries, Spark-DSG save (C++/CUDA, Rust)
+    scenemap/         2D SLAM + object map + planner queries, Spark-DSG save (C++)
     ovdet/            open-vocabulary detector (YOLOE, TensorRT, C API; AGPL-3.0)
     clip/             sgclip: object crop → SigLIP 2 image embedding (TensorRT), label table lookup, vectors and name cache in the memory folder (C++/CUDA; in progress)
     runtime/          sgrt: one C ABI that runs object memory inside the evaluator/robot process (scenemap + ovdet, periodic save) (C++/CUDA)
-    spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + rooms; scenemap builds it first. Changes: OUR_CHANGES.md
+    spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + places + rooms; scenemap builds it first. Changes: OUR_CHANGES.md
     da/               data association: merges the per-frame segments of one object into a single object (C++, built into scenemap)
     sgview/           live memory viewer in the browser (Rust server + three.js, no Python / Spark-DSG)
     viewer/           sgviz: the old Python viewer (Spark-DSG + viser), to be removed
