@@ -10,10 +10,11 @@ import argparse
 import collections
 import sys
 import threading
+from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, "/mnt/c/behavior-2026/tools")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from serve_b1k_agent import FLUSH_KEY, PROMPT_KEY, AgentPromptWrapper  # noqa: E402
 
 

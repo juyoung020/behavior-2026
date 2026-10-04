@@ -24,7 +24,7 @@ const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평�
   sim          가짜 세계에서 에이전트 한 판. --scenario radio|trash [--llm oracle|kau|URL] [--decider llm|prior]
                [--format …] [--p-success 0.9] [--seed 0] [--episodes 1] [--trace-dir 폴더] [--no-images]
   replay       기록 재생. <trace.jsonl> [--verify] [--html 파일]
-  build-assets 과제 카드 만들기. --root /mnt/c/behavior-2026 [--out assets/tasks.json] [--threads 16]
+  build-assets 과제 카드 만들기. [--root 저장소 뿌리(기본: 이 크레이트의 ../../..)] [--out assets/tasks.json] [--threads 16]
   render       과제 참고 순서를 형식 4가지로 찍기(토큰 추정 포함). --task turning_on_radio
   schedule     시연 주석 한 판 → 스텝별 문장 표. --episode 주석.json [--format subtask] [--out 표.json]
   mock-llm     가짜 OpenAI 호환 서버. --listen 127.0.0.1:8091 [--delay-ms 0]
@@ -210,8 +210,14 @@ fn cmd_replay(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+// 저장소 뿌리(BEHAVIOR-1K/·data/ 가 있는 곳) = 이 크레이트(src/agent/planner)의 ../../..
+fn repo_root() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    p.canonicalize().unwrap_or(p)
+}
+
 fn cmd_build_assets(a: &Args) -> Result<(), String> {
-    let root = PathBuf::from(a.str_or("root", "/mnt/c/behavior-2026"));
+    let root = a.get("root").map(PathBuf::from).unwrap_or_else(repo_root);
     let t0 = std::time::Instant::now();
     let c = bagent::catalog::build(&root, a.num("threads", 16))?;
     let out = a.get("out").map(PathBuf::from).unwrap_or_else(Catalog::default_path);
@@ -485,4 +491,13 @@ fn cmd_link_bench(a: &Args) -> Result<(), String> {
     println!("  영상 스텝     {}", summarize_us(&t_frames));
     println!("  경계(대기) 스텝 {}", summarize_us(&t_hold));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repo_root_is_this_checkout() {
+        let r = super::repo_root();
+        assert!(r.join("src/agent/planner/Cargo.toml").is_file(), "{}", r.display());
+    }
 }
