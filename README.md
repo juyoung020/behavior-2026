@@ -45,8 +45,8 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     runtime/          sgrt: one C ABI that runs object memory inside the evaluator/robot process (scenemap + ovdet, periodic save) (C++/CUDA)
     spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + rooms (places are computed in the backend); scenemap builds it first. Changes: OUR_CHANGES.md
     da/               data association: merges the per-frame segments of one object into a single object (C++, built into scenemap)
-    sgview/           live memory viewer in the browser (Rust server + three.js, no Python / Spark-DSG)
-    viewer/           sgviz: the old Python viewer (Spark-DSG + viser), to be removed
+    sgview/           THE scene-graph viewer (Spark-DSG 장면 그래프 보기 = sgview): Rust server + three.js, live sgrt socket → SSE at 60 Hz+. Run: robot-agent tools/run_sgview.sh / tools/run_explore_live.sh
+    viewer/           LEGACY sgviz (Python + viser, file polling, not real-time). Do not use; kept for history
   agent/              ② high-level planning
     planner/          planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
   vla/                ③ low-level action (π0.5)
@@ -57,7 +57,7 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     engine/           our own GPU simulator engine; layer 0 = PhysX 5.6.1 oracle replay (C++)
     fasteval/         evaluator acceleration: chunked-replay policy server, instrumentation
     integ/            evaluator ↔ planner ↔ scenemap link (simlink, Rust)
-    explore/          one simulator run of the explore skill (evaluator side) + 8080 viewer launcher
+    explore/          one simulator run of the explore skill (evaluator side) + 8080 sgview launcher (viewer_8080.sh)
     move_robot/       simulator side of the move_robot tool (calls robot-agent's Rust crate via ctypes)
     configs/          evaluator robot configs
 tools/                run, measure and verify scripts (evaluator launcher, trace_compare, black-frame checks, …) (tools/README.md: Linux runners, old Windows/WSL → Linux table)

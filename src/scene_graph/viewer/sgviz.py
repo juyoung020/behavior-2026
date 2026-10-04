@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Live Spark-DSG viewer for the robot's object memory.
+"""LEGACY Spark-DSG viewer (Python + viser) for the robot's object memory. NOT real-time.
+
+    *** Do not use. The real viewer is sgview (Rust server + three.js):
+    ***   src/scene_graph/sgview  — robot-agent: tools/run_sgview.sh <memory_dir> [--live]
+    ***   live run + viewer       — robot-agent: tools/run_explore_live.sh (LIMO: SGRT_ROBOT=limo_omx)
+    *** This file only polls scene.json; sgview gets sgrt's socket stream at 60 Hz+.
 
     ~/sdsg_venv/bin/python src/scene_graph/viewer/sgviz.py <memory_dir> [--port 8080]
 
@@ -27,6 +32,21 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+LEGACY_WARNING = """
+################################################################################
+#  sgviz.py is the OLD Python viewer (Spark-DSG + viser). LEGACY, NOT REAL-TIME #
+#  (it only polls scene.json files). Kept for history only.                    #
+#                                                                              #
+#  Use sgview (Rust + three.js) instead:                                       #
+#    robot-agent/tools/run_sgview.sh <memory_dir> [--live]                     #
+#    robot-agent/tools/run_explore_live.sh   (LIMO: SGRT_ROBOT=limo_omx)       #
+#    docs: src/scene_graph/sgview/README.md                                    #
+#  옛 Python 뷰어(실시간 아님). 지금 뷰어는 sgview(Rust).                      #
+################################################################################
+"""
+if __name__ == "__main__":  # loud, before the heavy imports below can fail
+    print(LEGACY_WARNING, file=sys.stderr, flush=True)
 
 import numpy as np
 

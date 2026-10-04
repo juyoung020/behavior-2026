@@ -1,4 +1,13 @@
-# sgviz — 물체 기억 실시간 뷰어 (Spark-DSG + viser)
+# [옛 뷰어, 안 씀] sgviz — 물체 기억 Python 뷰어 (Spark-DSG + viser, 실시간 아님)
+
+> **옛 Python 뷰어(실시간 아님). 지금 뷰어는 sgview(Rust) — tools/run_sgview.sh / tools/run_explore_live.sh**
+>
+> - 이 폴더(sgviz, Spark-DSG + viser)는 기록용으로만 남겨 둔다. `scene.json` 파일을 폴링할 뿐이라 실시간이 아니다. 새로 쓰지 말 것.
+> - "Spark-DSG 장면 그래프 보기" = **sgview**: [`../sgview/README.md`](../sgview/README.md) (Rust 서버 + three.js, sgrt 소켓 → SSE 60 Hz 이상).
+> - 실행(robot-agent 저장소): 녹화 폴더 `tools/run_sgview.sh <memory_dir>`, 실시간 `tools/run_sgview.sh <memory_dir> --live`(시뮬 쪽 `SGRT_STREAM=127.0.0.1:9001`),
+>   탐사 한 판 + 실시간 뷰어 `tools/run_explore_live.sh` (LIMO 는 `SGRT_ROBOT=limo_omx`). 이 저장소만 있으면 `src/sim/explore/viewer_8080.sh <run dir>`(sgview 파일 모드).
+> - 규칙: 런타임·학습·추론은 Rust/C++/CUDA, 파이썬은 오프라인 도구만. `walls2d.py` 는 scenemap `walls.cpp` 의 원본(값 비교용)이라 같이 남긴다.
+
 
 메모리 런타임이 ~1 s 마다 다시 쓰는 디렉터리(`scene.json`, `map.pgm`/`map.yaml`,
 `objects/O<id>_{rgb,depth}.png`)를 브라우저에서 실시간으로 본다.

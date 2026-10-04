@@ -15,7 +15,7 @@
 | 물체 인식 | YOLO-seg nano, 80종 밖이면 YOLOE / YOLO-World | **YOLOE-seg**(열린 어휘). 프롬프트 = 과제 BDDL 물체 이름. C++ frontend 에이전트가 만든다. 출력 형식은 이 문서 5절이 정한다 | 형식 제안 |
 | 같은 물체 판단(DA) | 직접. 같은 이름끼리 위치로 비교, 부족하면 색 분포 | 같음 | 설계 |
 | 지도 갱신 | 직접. 바뀐 부분만(DovSG·Khronos 참고) | 같음 + 들고 있는 물체 처리(2절 규칙) | 설계 |
-| 저장·보기 | Spark-DSG + 뷰어, 계획기에는 JSON | 같음. 살아 있는 Hydra 식 층 그래프(3.5) + Spark-DSG JSON 직접 쓰기, 뷰어 sgviz(층 쌓기) | 동작 중 |
+| 저장·보기 | Spark-DSG + 뷰어, 계획기에는 JSON | 같음. 살아 있는 Hydra 식 층 그래프(3.5) + Spark-DSG JSON 직접 쓰기, 뷰어 sgview(Rust + three.js, 소켓 → SSE 실시간, 층 쌓기; 옛 Python sgviz 는 안 씀) | 동작 중 |
 | 계획 | Qwen3.5-9B API | 같음(`src/agent`, KAU API) | 동작 중 |
 | 행동 | π0.5 | 같음(네이티브 C++/CUDA 엔진, 평가기 프로세스 안) | 동작 중 |
 
@@ -147,7 +147,7 @@
     - 열리면 그 자리에 둔다. 다음 관측이 맞으면 그 값으로 고친다.
 - **방(room)**: 1판에서는 2D 격자에서 문(YOLOE "door" 검출 + 좁은 통로) 기준으로 영역을 나누는 것을 나중 단계로 둔다(필요하나 특권 정보 금지).
   - 그 전에는 물체마다 `room: null` 이다.
-- **저장**: Spark-DSG `DynamicSceneGraph` 로 저장한다(C++, ROS 없음). 층은 OBJECTS(물체 노드: 이름·위치·크기·이력), PLACES 는 나중(방), 2D 지도는 파일 옆에 PGM + YAML 로 둔다. 판 끝·요청 때 저장한다. 뷰어는 `spark-dsg visualize`(오프라인)다.
+- **저장**: Spark-DSG `DynamicSceneGraph` 로 저장한다(C++, ROS 없음). 층은 OBJECTS(물체 노드: 이름·위치·크기·이력), PLACES 는 나중(방), 2D 지도는 파일 옆에 PGM + YAML 로 둔다. 판 끝·요청 때 저장한다. 뷰어는 `spark-dsg visualize`(오프라인)다. (→ 지금 뷰어는 sgview `src/scene_graph/sgview`, robot-agent `tools/run_sgview.sh`)
 
 #### 3.2.1 진행(09-30, 멈춘 지점)
 
@@ -292,7 +292,7 @@ Hydra 가 더 나은·싼 것과 우리 판단(재서 정함):
 
 > **Map_Vla 변경 (10-03)**: 아래 표의 물체끼리 관계 `on / in / near`는 **만들지 않는다.** 물체마다 위치·상자가 메타데이터로 남으므로 "위에 있다 / 안에 있다"는 소비자(LLM)가 추론한다. 원래 규칙은 `in`에 컨테이너 크기 제한이 없어서, 합쳐진 덩어리 상자(`ceiling fan` 3.9×3.2×2.4 m) 하나가 물체 32개를 "안"으로 끌어들였다(한 장면에서 `in` 786개, 간선 903개 중 87%). 남는 물체 연결은 부모 쪽뿐이다: **방 → 물체**, place → 물체. 코드: `src/sgraph.cpp`(`updateObjects`), 시험 `tests/test_relations.cpp`. `scenemap.h`의 `SM_REL_ON/IN/NEAR`(3, 4, 5)는 번호만 남겨 둠(ABI).
 
-코드: `scenemap/include/scenemap/sgraph.hpp`, `src/sgraph.cpp`(갱신), `src/capi.cpp`(keyframe 뒤 갱신·C ABI), `src/dsg_save.cpp`(scene.json 직접 쓰기). 시험: `tests/test_posemap.cpp` testGraph, 뷰어 `viewer/sglayers.py`·`test_sglayers.py`.
+코드: `scenemap/include/scenemap/sgraph.hpp`, `src/sgraph.cpp`(갱신), `src/capi.cpp`(keyframe 뒤 갱신·C ABI), `src/dsg_save.cpp`(scene.json 직접 쓰기). 시험: `tests/test_posemap.cpp` testGraph, 옛 Python 뷰어 `viewer/sglayers.py`·`test_sglayers.py`(지금 층 그리기는 sgview `assets/index.html`).
 
 물체를 저장할 때만 노드로 만들던 것을, 판 내내 살아 있는 그래프로 바꿨다. keyframe 마다 바뀐 곳만 고치고, 스냅숏은 그때의 바뀌지 않는 사본(GraphView)을 포인터로 나눠 쓴다.
 
@@ -390,7 +390,7 @@ C ABI 전체(`sm_bench`, 같은 기록, 스냅숏 6 스텝마다, 저장 1 s 마
   - 사용자가 본 어긋남은 대부분 프레임이었다(slam map = 판 시작 베이스 프레임 — world 와 회전·평행 이동만큼 다름). gt 모드는 world 그대로라 정답 물체·바닥과 바로 겹친다.
   - **영상 늦춤**(B, 돌 때 잘 보임): gt 모드 점유 10 cm 안 = 늦춤 0: 90.2 %, 1: 94.9 %, 2: 97.7 %, 3: 96.1 %. slam yaw 오차가 회전 속도에 비례(−0.027 s × ω, 상관 −0.74), 늦춤 2 에서 최대 yaw 2.53 → 1.22°. 반면 A(머리·몸통만 움직임)는 늦춤 1 이 가장 좋음(100 % vs 97.8 %). proprio 와 시뮬 정답은 같은 스텝(정답 베이스 ∘ 순기구학 = 정답 카메라 0.22 mm, base_qvel ↔ 정답 회전 속도 짝 0 스텝)이라, 베이스가 돌 때만 영상이 한 스텝 더 늦게 그려지는 것으로 보인다(추정 — 렌더 쪽 베이스 변환 갱신). 기본은 1 로 두고(`SGRT_IMAGE_LAG`, 0..7) 따로 본다.
 - 실시간 단계 시간(B, sgrt 안, Isaac Sim·다른 에이전트와 CPU 를 나눔 — 재생 표보다 2–3 배): keyframe 당 scan 389·objmap 393·insert 78 µs, image_total 1.74 ms(장치 자르기·구름 색 포함), graph_places 0.98 ms(0.5 s 마다), 검출(YOLO26s) 7.8 ms, 저장은 저장 스레드(평균 11.7 ms, 스텝 밖). 파이썬 쪽: 시뮬 정답 자세 읽기 약 0.6 ms/번(그래서 영상 짝 스텝에만 읽게 바꿈), 준비 21 µs, sgrt_step 호출 평균 1.8 ms(검출 포함).
-- 뷰어 8080: B 의 memory(층 쌓기 — 물체·궤적·places·방 4·건물, 물체 그림).
+- 뷰어 8080(그때는 옛 sgviz, 지금은 sgview): B 의 memory(층 쌓기 — 물체·궤적·places·방 4·건물, 물체 그림).
 
 ### 3.7 ⑥ 물체 영상 임베딩·이름 캐시 — SigLIP 2 B/32-256(10-03)
 
@@ -418,7 +418,7 @@ C ABI 전체(`sm_bench`, 같은 기록, 스냅숏 6 스텝마다, 저장 1 s 마
   이름과 같으면 미리 계산한 글 임베딩으로, 없으면 -2), `sgrt_object_names(id, …)`, `sgrt_get_clip_stats`.
 - **글 쪽**: 로봇 밖 `clip/tools/text_query.py`(SigLIP 2 글 탑, `--serve` HTTP `/encode`·`/search`). 로봇 안 한국어 학생은
   training/embed 가 같은 약속(글 → 768-d L2)으로 만든다.
-- **뷰어**: sgviz 물체 판에 이름(영·한·점수·상위 5·표 sha·emb), FastSAM(`object`)이면 노드 이름 대신 임베딩 이름, 글 찾기 칸
+- **뷰어**(옛 Python 뷰어 sgviz 에 넣었던 것 — 지금 뷰어 sgview 에는 글 찾기 칸이 아직 없다): sgviz 물체 판에 이름(영·한·점수·상위 5·표 sha·emb), FastSAM(`object`)이면 노드 이름 대신 임베딩 이름, 글 찾기 칸
   (`SGVIZ_QUERY_URL`, 기본 `http://127.0.0.1:8091`).
 
 #### 3.7.1 시뮬 확인(10-03, bringing_water public_test 0, 3000 스텝, headless, FastSAM-s 416, SGRT_POSE=gt)
