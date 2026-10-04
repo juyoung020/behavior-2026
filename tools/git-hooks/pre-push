@@ -1,0 +1,17 @@
+#!/bin/sh
+# 푸시할 커밋에 Claude 기여자 표기(Co-Authored-By: Claude …, Claude-Session: …)가 남아 있으면 푸시를 막는다.
+# commit-msg 훅을 거치지 않은 커밋(--no-verify, 다른 작업 트리·hooksPath)까지 잡는 마지막 관문.
+# 설치(PC 마다 한 번): git config core.hooksPath tools/git-hooks
+z=0000000000000000000000000000000000000000
+bad=0
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z" ] && continue
+  if [ "$rsha" = "$z" ]; then range="$lsha --not --remotes"; else range="$rsha..$lsha"; fi
+  hits=$(git log --format='%h %s' -i -E --grep='^(Co-Authored-By:.*(claude|anthropic\.com)|Claude-Session:)' $range)
+  if [ -n "$hits" ]; then
+    echo "pre-push: Claude 기여자 표기가 든 커밋이 있어 푸시를 막는다 ($lref):" >&2
+    echo "$hits" >&2
+    bad=1
+  fi
+done
+exit $bad
