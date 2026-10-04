@@ -11,6 +11,7 @@ SUPER=${ROBOT_AGENT:-$(cd "$REPO/../.." && pwd)}   # robot-agent (behavior-2026 
 [ -x "$SUPER/src/agent/skills/explore/target/release/explore" ] || SUPER=$HOME/robot-agent
 TS=$(date +%Y%m%d_%H%M%S)
 OUT=$REPO/outputs/explore_${TS}_${TASK}_${POL}${TAG:+_$TAG}
+case "${SGRT_ROBOT:-r1pro}" in r1pro) ;; *) echo "[run] 탐색은 move_robot(R1 Pro 제어)을 써서 R1 전용이다 — LIMO 지도 확인은 src/sim/limo/run_limo_map.sh"; exit 1;; esac
 PORT=${PORT:-8771}
 MAXSTEPS=${MAXSTEPS:-27000}
 mkdir -p "$OUT"
