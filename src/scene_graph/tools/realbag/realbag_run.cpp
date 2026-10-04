@@ -252,8 +252,8 @@ struct Detector {
     const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
     std::string engine = engine_in;
     if (engine.empty())
-      engine = home + (mode == "yoloe"  ? "/ovdet_models/x86_sm120/yoloe-11l-all.plan"
-                       : mode == "yolo" ? "/ovdet_models/x86_sm120/yolo26s-seg-416.plan"
+      engine = home + (mode == "yoloe"  ? "/ovdet_models/archive/x86_sm120/yoloe-11l-all.plan"   // yoloe·yolo: 비교용, 보관 엔진(2026-10-05)
+                       : mode == "yolo" ? "/ovdet_models/archive/x86_sm120/yolo26s-seg-416.plan"
                                         : "/ovdet_models/x86_sm120/FastSAM-s-416.plan");
     engine_path = engine;
     char err[2048] = {0};
