@@ -251,6 +251,12 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
   문·창·계단 위 헛노드 10·3·4 → 7·2·4 / 9·4·5 → 11·3·5, 문 6·창 2·계단 1 찾음 2·2·1 → 1·1·1 / 1·2·1 → 1·2·1, 중복 62 → 57 / 53 → 46,
   잘못 합침 9 → 8 / 9 → 9, 문·창 이름 노드 7·17 → 2·11, 액자·TV 노드 가장 큰 폭 3.1 → 2.9 / 3.0 → 1.9 m(정답 최대 1.4), CPU 그대로.
   OpenLORIS office1-1·1-5 노드 120·111 → 121·110. 벽 선 없는 벽 규칙은 r3 에서 1 번만 맞음. 노드 상자는 관측 상자 합집합이라 구름보다 클 수 있음.
+- **엔진별 매개변수**(10-05): 로지스틱 가중치(`ap_w0..7`·`ap_wm0..7`)·κ(`kap_k0`·`kap_s0`·`kap_trunc`·`kap_d0`)·문턱·그 밖 `ap_*` 를
+  `sm_set_obj_params(c, "key=val,…")`(SM_OBJ_PARAMS 와 같은 이름, `sm_reset`·`sm_set_robot` 뒤에도 남음, 환경 변수가 이김)로 싣는다.
+  파일은 `tools/realbag/objprob_params/<엔진>.json`(+ 라벨 사전), 맞추기·비교는 `tools/realbag/objprob_refit.sh`(그쪽 README).
+  `FastSAM-s-416.json` 은 내장 기본값과 같다(radio r3 objects·events 바이트 같음, 이 엔진 캐시로 다시 맞춰도 같은 값이 나옴).
+- `ap_bridge_drop`(기본 끔): 관측 하나가 이미 있는 물체 둘 이상과 P ≥ same_p 면(식탁 + 의자를 한 마스크로 낸 덜 나뉜 조각) 어느 쪽에도 안 붙이고 버림.
+  첫 시험 엔진(things 만 다시 학습한 FastSAM 후보) radio r3 에서 잘못 합침 gt 13 → 9 지만 찾음이 1 줄어 기본은 끔 — 엔진 파일에서 켤 수 있음.
 - scenemap 확률 모드 CPU: gt 판 731 keyframe 18.2 s vs 옛 규칙 11.9 s(keyframe 당 약 +8.6 ms, 통째 다시 담기 GPU 포함).
 
 ## 살펴본 정도(inspection) — 가장 가까이 본 거리·본 시점 수·윗면 본 비율 (10-05, 기본 꺼짐)

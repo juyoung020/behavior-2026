@@ -20,6 +20,8 @@
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
 //     --objprob                 확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기
 //     --label-prior f.json     objprob 라벨 log 사전(objprob_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
+//     --objprob-params f.json  objprob 엔진별 매개변수(obj_params = sm_set_obj_params 문자열, label_prior = 옆 파일). 없으면 objprob_params/<엔진>.json,
+//                              "none" = 안 씀(내장 기본값). --label-prior 가 파일의 사전보다 이김
 //     --inspect                살펴본 정도(scenemap README "살펴본 정도") — memory/view.json·scene.json 물체에 "inspect", metrics.json objmap_us
 //
 // 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv(노드 전부, structural 열), walls.csv(scenemap 벽 선분),
@@ -108,6 +110,11 @@ const Word kVocabAp[] = {
     {"hedgerow", "outdoors"}, {"lawn", "outdoors"},
 };
 
+// 기본 FastSAM 엔진(~/ovdet_models/x86_sm120/ 아래). objprob 매개변수는 objprob_params/<이 이름에서 .plan 뺀 것>.json
+constexpr const char* kDefaultEngine = "FastSAM-s-416.plan";
+#ifndef RB_PARAMS_DIR
+#define RB_PARAMS_DIR "objprob_params"
+#endif
 constexpr int32_t kDumpMagic = 0x52424431;   // 'RBD1'
 constexpr int32_t kDumpMagic2 = 0x52424432;  // 'RBD2': RBD1 + 프레임마다 임베딩 dim(0 = 없음)·n × dim FP16
 void putI(gzFile z, int32_t v) { gzwrite(z, &v, 4); }
@@ -293,7 +300,7 @@ struct Detector {
     if (engine.empty())
       engine = home + (mode == "yoloe"  ? "/ovdet_models/archive/x86_sm120/yoloe-11l-all.plan"   // yoloe·yolo: 비교용, 보관 엔진(2026-10-05)
                        : mode == "yolo" ? "/ovdet_models/archive/x86_sm120/yolo26s-seg-416.plan"
-                                        : "/ovdet_models/x86_sm120/FastSAM-s-416.plan");
+                                        : std::string("/ovdet_models/x86_sm120/") + kDefaultEngine);
     engine_path = engine;
     char err[2048] = {0};
     OvdConfig oc;
@@ -549,6 +556,7 @@ int main(int argc, char** argv) {
   float max_depth = 4.0f;
   float conf = 0.25f;
   std::string label_prior;   // objprob 라벨 사전(objprob_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
+  std::string obj_params_file;   // objprob 엔진별 매개변수(objprob_params/<엔진>.json). 비면 엔진 이름으로 고름, "none" = 안 씀
   bool inspect = false;   // 살펴본 정도(scenemap README "살펴본 정도", sm_set_inspect) — view.json·scene.json objects[].inspect
   bool objprob = false;   // 확률 물체 모델(objprob)(FastSAM + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기)
   for (int i = 3; i < argc; ++i) {
@@ -560,7 +568,7 @@ int main(int argc, char** argv) {
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
     else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
-    else if (a == "--objprob") objprob = true; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true;
+    else if (a == "--objprob") objprob = true; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true; else if (a == "--objprob-params") obj_params_file = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -621,6 +629,34 @@ int main(int argc, char** argv) {
     for (auto& l : D.labels) lp.push_back(l.c_str());
     sm_set_labels(c, lp.data(), int(lp.size()));
   }
+  std::string obj_kv;   // 엔진별 매개변수 파일의 obj_params(sm_set_obj_params)
+  if (objprob && obj_params_file != "none") {
+    // 엔진별 매개변수: --objprob-params 가 없으면 objprob_params/<엔진 파일 이름에서 .plan 뺀 것>.json(엔진을 안 주면 기본 엔진 —
+    // --load 캐시는 그 엔진을 --engine 으로 알려 줘야 맞는 파일을 고름). 파일: {"obj_params": "key=val,…", "label_prior": "옆 파일.json"}
+    std::string pf = obj_params_file;
+    if (pf.empty()) {
+      std::string st = engine.empty() ? std::string(kDefaultEngine) : engine;
+      st = st.substr(st.find_last_of('/') + 1);
+      if (st.size() > 5 && st.compare(st.size() - 5, 5, ".plan") == 0) st.resize(st.size() - 5);
+      pf = std::string(RB_PARAMS_DIR) + "/" + st + ".json";
+      if (!std::filesystem::exists(pf)) { std::fprintf(stderr, "objprob: no params file %s (built-in defaults)\n", pf.c_str()); pf.clear(); }
+    }
+    if (!pf.empty()) {
+      const std::string js = slurp(pf);
+      if (js.empty()) { std::fprintf(stderr, "cannot read %s\n", pf.c_str()); return 1; }
+      auto str = [&](const char* key) {
+        const size_t k = js.find(std::string("\"") + key + "\":");
+        if (k == std::string::npos) return std::string();
+        const size_t q0 = js.find('"', k + std::strlen(key) + 3), q1 = q0 == std::string::npos ? q0 : js.find('"', q0 + 1);
+        return q1 == std::string::npos ? std::string() : js.substr(q0 + 1, q1 - q0 - 1);
+      };
+      obj_kv = str("obj_params");
+      const std::string lp = str("label_prior");
+      if (label_prior.empty() && !lp.empty()) label_prior = lp[0] == '/' ? lp : pf.substr(0, pf.find_last_of('/') + 1) + lp;
+      obj_params_file = pf;
+      std::fprintf(stderr, "objprob params %s (label prior %s)\n", pf.c_str(), label_prior.c_str());
+    }
+  }
   if (objprob) {   // objprob: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어
     sm_set_text_model(c, D.text.data(), D.text_cls.data(), int32_t(D.text_cls.size()), SGC_DIM, 111.83257f, -16.766876f);
     const int nl = int(D.labels.size());
@@ -643,6 +679,7 @@ int main(int argc, char** argv) {
     }
     sm_set_label_stats(c, label_prior.empty() ? nullptr : lpri.data(), mu.data(), sd.data(), par.data(), nl, D.labelId("object"));
     sm_set_object_model(c, 1);
+    if (!obj_kv.empty() && sm_set_obj_params(c, obj_kv.c_str()) != 0) { std::fprintf(stderr, "objprob: unknown key in %s\n", obj_params_file.c_str()); return 1; }
   }
   if (inspect) sm_set_inspect(c, 1);
   sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
@@ -1098,7 +1135,7 @@ int main(int argc, char** argv) {
           .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
-          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
+          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).str("objprob_params", objprob ? obj_params_file : std::string()).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
           .num("yaw_rms_deg", yaw_rms * 180 / M_PI)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)

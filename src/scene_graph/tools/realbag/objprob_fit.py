@@ -1,7 +1,9 @@
 """objprob 맞추기(오프라인, 시뮬 정답): realbag_run 검출 캐시(RBD2 — 검출마다 SigLIP 2 임베딩) + 스트림 깊이·정답 자세 + 정답 물체로
-scenemap 확률 모드(objprob) 의 매개변수를 잰다. 결과는 사람이 objprob.hpp ApParams·KappaParams 기본값에 옮긴다(자동으로 고치지 않음).
+scenemap 확률 모드(objprob) 의 매개변수를 잰다. 결과: fit.json(표·문턱), label_prior.json, objprob_params.json(엔진별 매개변수 파일 —
+realbag_run --objprob-params, 또는 objprob_params/<엔진>.json 으로 옮기면 그 엔진의 기본. obj_params = 로지스틱 ap_w*·ap_wm*·κ kap_*·
+문턱 ap_same_p·ap_merge_p(--same-p·--merge-p, 끝에서 끝 채점으로 고름)).
 
-    python objprob_fit.py <stream dir> <dets.gz(RBD2)> <out dir> [--walls walls.csv --metrics metrics.json]
+    python objprob_fit.py <stream dir> <dets.gz(RBD2)> <out dir> [--walls walls.csv --metrics metrics.json] [--engine 이름.plan]
 
 1. 관측: 검출 마스크 × 깊이(3 화소 간격) → 정답 자세로 world 점, 마스크 안 깊이 중앙값 ± max(3·1.4826·MAD, 0.1) 밖 버림.
    정답 짝 = 점의 50 % 이상이 들어간(3 cm 넓힌) 정답 상자 중 비율이 가장 큰 것(같으면 부피 작은 것). 없으면 '없음'.
@@ -277,6 +279,9 @@ def main():
     ap.add_argument('--metrics', help='그 판의 metrics.json(se2_map_to_gt)')
     ap.add_argument('--cos0', type=float, default=0.75)
     ap.add_argument('--labels', default=os.path.expanduser('~/embed_work/labels/objects-v1'))
+    ap.add_argument('--engine', default='', help='objprob_params.json 의 engine(검출 엔진 파일 이름)')
+    ap.add_argument('--same-p', type=float, default=0.6)
+    ap.add_argument('--merge-p', type=float, default=0.7)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     cache = os.path.join(a.out, 'obs.npz')
@@ -473,6 +478,15 @@ def main():
     for k, v in rep['struct_table'].items():
         print(f'  {k:28s} {v}')
     json.dump(rep, open(os.path.join(a.out, 'fit.json'), 'w'), indent=1)
+    # 엔진별 매개변수 파일(realbag_run --objprob-params): 로지스틱 가중치·κ·문턱 + 라벨 사전(같은 폴더)
+    wa = list(rep['assoc']['w']) + [0.0] * (8 - len(rep['assoc']['w']))
+    kf = rep['kappa']['fit']
+    kv = ','.join([f'ap_w{i}={v:.4g}' for i, v in enumerate(wa[:8])] + [f'ap_wm{i}={v:.4g}' for i, v in enumerate(rep['merge']['w'][:8])] +
+                   [f'ap_same_p={a.same_p:g}', f'ap_merge_p={a.merge_p:g}', f'ap_cos0={a.cos0:g}',
+                    f'kap_k0={kf["k0"]:.5g}', f'kap_s0={kf["s0"]:g}', f'kap_trunc={kf["trunc"]:g}', f'kap_d0={kf["d0"]:g}'])
+    json.dump(dict(engine=a.engine, fit=f'objprob_fit.py {os.path.basename(os.path.normpath(a.stream))} {os.path.basename(a.dump)}',
+                   obj_params=kv, label_prior='label_prior.json'), open(os.path.join(a.out, 'objprob_params.json'), 'w'), indent=1)
+    print('params', kv)
 
 
 if __name__ == '__main__':
