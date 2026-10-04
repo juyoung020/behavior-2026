@@ -1059,10 +1059,10 @@ int main(int argc, char** argv) {
   if (objprob) {   // objprob 진단 셈·다시 담기 시간(SigLIP 호출 = 검출 조각 + 통째)
     int64_t a[16] = {0};
     sm_get_objprob_stats(c, a);
-    const char* nm[13] = {"obs", "struct_wall_big", "struct_wall_name", "struct_ceiling", "struct_floor", "struct_det_name", "assoc", "new", "merge",
-                          "struct_object", "reenc_req", "reenc_done", "through_window"};
+    const char* nm[16] = {"obs", "struct_wall_big", "struct_wall_name", "struct_ceiling", "struct_floor", "struct_det_name", "assoc", "new", "merge",
+                          "struct_object", "reenc_req", "reenc_done", "through_window", "struct_obj_too_big", "struct_wall_tall", "obs_blocked"};
     Obj o;
-    for (int k = 0; k < 13; ++k) o.num(nm[k], double(a[k]));
+    for (int k = 0; k < 16; ++k) o.num(nm[k], double(a[k]));
     o.num("reenc_ms_per_det_frame", n_detf ? D.reenc_ms / n_detf : 0).num("siglip_crops_per_det_frame", n_detf ? double(D.n_enc_dets + D.n_reenc) / n_detf : 0)
      .num("reenc_per_det_frame", n_detf ? double(D.n_reenc) / n_detf : 0);
     apj = o.done();
