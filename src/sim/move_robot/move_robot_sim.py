@@ -59,6 +59,24 @@ class MoveRobotLib:
         if self.has_gt_pose:
             L.mr_set_gt_pose.restype = ctypes.c_int
             L.mr_set_gt_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+        # VLA executor (LIMO + OMX-F, robot-agent docs/map_vla/POLICY.md 1.3): older builds do not export it
+        self.has_vla = hasattr(L, "mr_vla_start")
+        if self.has_vla:
+            L.mr_vla_start.restype = ctypes.c_int
+            L.mr_vla_start.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            L.mr_vla_tick.restype = ctypes.c_int
+            L.mr_vla_tick.argtypes = [ctypes.c_void_p, fp, ctypes.c_size_t, fp]
+            L.mr_vla_set_objects.restype = ctypes.c_int
+            L.mr_vla_set_objects.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_double]
+            L.mr_vla_set_objects_json.restype = ctypes.c_int
+            L.mr_vla_set_objects_json.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_double]
+            L.mr_vla_contacts.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64]
+            L.mr_vla_busy.restype = ctypes.c_int
+            L.mr_vla_busy.argtypes = [ctypes.c_void_p]
+            L.mr_vla_stop.restype = ctypes.c_int
+            L.mr_vla_stop.argtypes = [ctypes.c_void_p]
+            self.vprop = (ctypes.c_float * 64)()
+            self.vout = (ctypes.c_float * 8)()
         L.mr_take_result.restype = ctypes.c_ssize_t
         L.mr_take_result.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
         L.mr_tool_definition.restype = ctypes.c_char_p
@@ -77,6 +95,22 @@ class MoveRobotLib:
             for i in range(n):
                 self.prop[i] = float(proprio[i])
         return self.L.mr_tick(self.h, self.prop, n, self.act)
+
+    def vla_start(self, call) -> int:
+        """0 started, 1 finished at once (error / handback: take_result)"""
+        s = call if isinstance(call, str) else json.dumps(call)
+        return self.L.mr_vla_start(self.h, s.encode("utf-8"))
+
+    def vla_tick(self, proprio):
+        """LIMO proprio (24) -> (rc, filtered action 8 [vx, wz, j1..j5, gripper 0..1]); rc 0 idle, 1 running, 2 finished"""
+        n = min(len(proprio), 64)
+        for i in range(n):
+            self.vprop[i] = float(proprio[i])
+        rc = self.L.mr_vla_tick(self.h, self.vprop, n, self.vout)
+        return rc, list(self.vout)
+
+    def vla_busy(self) -> bool:
+        return bool(self.L.mr_vla_busy(self.h))
 
     def set_gt_pose(self, x: float, y: float, yaw: float) -> int:
         """GT base pose in the map frame for the NEXT tick only (replaces base_qvel integration there). -1 if the lib is old."""

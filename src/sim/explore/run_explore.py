@@ -5,8 +5,12 @@ unmodified) with --policy local, whose LocalPolicy gets ExplorePolicy:
                  keyframe -> sgrt_map(view) -> mr_set_map(robot, &view)   (pointer hand-off, Python touches no cells)
                  MoveRobotPolicy.act(obs)   (libmove_robot closed loop: go_to / probe / delta / joints)
     tool calls : TCP line JSON from the agent (`explore --addr ...`), result line back (with "map" summary + "_m" metrics)
-    executor   : {"executor":"vla","skill":"...","max_s":20} routes act() to the pi0.5 native engine when --vla-weights
-                 is given, otherwise answers {"status":"unavailable"} (switch interface, see decision_log.md)
+    executor   : {"executor":"vla","skill":"...","objects":[ids],"max_s":20}
+                 LIMO: libmove_robot VLA executor (robot-agent docs/map_vla/POLICY.md 1.3): policy (scripted / replay stand-in
+                 until a trained VLA exists, --vla-policy) -> move_robot safety filter -> end signal + verify + budget ->
+                 {"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}; objects come from
+                 the scenemap snapshot (sm_snap_objects, ids "O<id>") every keyframe, contacts split body / arm.
+                 R1: routes act() to the pi0.5 native engine when --vla-weights is given, otherwise {"status":"unavailable"}
     metrics    : GT floor reference (gt_trav.py) in the map frame -> mr_set_reference; robot-link contacts with anything
                  but the floor (RigidContactAPI) -> mr_set_contacts; robot footprint (AABB) logged once
     viewer     : <out>/memory/explore.json (trail, planned path, goal, frontier ids) every second
@@ -116,7 +120,7 @@ class VlaSource:
 
 
 class ExplorePolicy:
-    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, vla_weights=None, kf_every=6, robot="r1pro"):
+    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, vla_weights=None, kf_every=6, robot="r1pro", vla_policy=None):
         from move_robot_sim import MoveRobotPolicy
         from sgrt_glue import SceneMemory
 
@@ -160,11 +164,21 @@ class ExplorePolicy:
         self.vla = None
         self.vla_weights = vla_weights
         self.vla_active = None
+        self.vla_policy = vla_policy          # LIMO: default policy for calls without "policy" (MR_VLA_POLICY, else scripted)
+        self.limo_vla = False                 # a LIMO VLA step is running in libmove_robot
+        self.vla_log = open(out_dir / "vla.jsonl", "a")
+        if self.limo:
+            S.sgrt_map_snapshot.restype = ctypes.c_void_p
+            S.sgrt_map_snapshot.argtypes = [ctypes.c_void_p]
+            S.sm_snap_objects.restype = ctypes.c_int
+            S.sm_snap_objects.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
         print(f"[explore] task {task}, out {out_dir}, gt {'yes' if self.gt_floor is not None else 'no'}"
               + (", robot limo_omx" if self.limo else ""), flush=True)
 
     # ---------- VLA executor switch
     def start_vla(self, call):
+        if self.limo:
+            return self._start_limo_vla(call)
         if self.vla is None and self.vla_weights:
             try:
                 sys.path.insert(0, str(REPO / "src/vla/pi05_native/glue"))
@@ -182,6 +196,40 @@ class ExplorePolicy:
         self.vla.prompt = call.get("skill", "")
         self.vla.reset()
         self.vla_active = {"skill": self.vla.prompt, "steps": 0, "max": int(float(call.get("max_s", 20)) * 30), "t0": time.perf_counter()}
+
+    def _start_limo_vla(self, call):
+        call = dict(call)
+        if self.vla_policy and "policy" not in call:
+            call["policy"] = self.vla_policy
+        self._push_objects()
+        self.vla_log.write(json.dumps({"step": self.step_i, "call": call}) + "\n")
+        self.vla_t0 = time.perf_counter()
+        res = self.mr.vla_start(call)
+        if res is not None:
+            self._vla_reply(res)
+        else:
+            self.limo_vla = True
+            print(f"[explore] VLA step started: {json.dumps(call)}", flush=True)
+
+    def _vla_reply(self, res):
+        res = dict(res)
+        res["wall_s"] = round(time.perf_counter() - getattr(self, "vla_t0", time.perf_counter()), 2)
+        self.vla_log.write(json.dumps({"step": self.step_i, "result": res}) + "\n")
+        self.vla_log.flush()
+        print(f"[explore] VLA result: {json.dumps(res)}", flush=True)
+        self.src.reply(res)
+
+    def _push_objects(self):
+        """scenemap objects of the last sgrt_map snapshot -> libmove_robot (pointer hand-off, ids O<id>)"""
+        if not (self.limo and self.mr.lib.has_vla):
+            return
+        snap = self.mem.L.sgrt_map_snapshot(self.mem.h)
+        if not snap:
+            return
+        p = ctypes.c_void_p()
+        n = self.mem.L.sm_snap_objects(snap, ctypes.byref(p))
+        if n >= 0:
+            self.L.mr_vla_set_objects(self.mr.lib.h, p, n, self.step_i / 30.0)
 
     def _vla_step(self, obs):
         a = self.vla.act(obs)
@@ -293,6 +341,11 @@ class ExplorePolicy:
             self.contact_log.write(json.dumps({"step": self.step_i, "new": sorted(new), "robot_links": {k: sorted(links[k]) for k in new}}) + "\n")
             self.contact_log.flush()
             self.L.mr_set_contacts(self.mr.lib.h, self.contact_n)
+            if self.limo and self.mr.lib.has_vla:
+                # body (chassis / wheels) vs arm + gripper (omx_*): a VLA step fails as unsafe on new BODY contacts only
+                arm = sum(1 for k in new if all(l.startswith("omx_") for l in links[k]))
+                self.contact_arm = getattr(self, "contact_arm", 0) + arm
+                self.L.mr_vla_contacts(self.mr.lib.h, self.contact_n - self.contact_arm, self.contact_arm)
         self.contact_now = now
 
     def act(self, obs):
@@ -313,13 +366,21 @@ class ExplorePolicy:
                     self._set_reference()
                 if self.limo:
                     self._limo_pose_log()
+                    self._push_objects()
         t2 = time.perf_counter()
         if self.step_i % 3 == 0:
             self._robot()
             self._contacts()
         t3 = time.perf_counter()
         self._push_gt_pose_to_move_robot()
-        if self.vla_active is not None:
+        if self.limo_vla:
+            # LIMO VLA step: libmove_robot runs policy + safety filter + end conditions; move_robot's own tick is not called
+            # (the same Robot integrates odometry inside mr_vla_tick)
+            a, res = self.mr.vla_act(obs)
+            if res is not None:
+                self.limo_vla = False
+                self._vla_reply(res)
+        elif self.vla_active is not None:
             # move_robot holds still meanwhile (its own tick keeps observing)
             self.mr.lib.tick(self.mr._proprio(obs)[0])
             a = self._vla_step(obs)
@@ -371,6 +432,7 @@ def main():
     ap.add_argument("--lib", default=None)
     ap.add_argument("--gt-dir", default=None)
     ap.add_argument("--vla-weights", default=None)
+    ap.add_argument("--vla-policy", default=os.environ.get("MR_VLA_POLICY"), help="LIMO VLA stand-in: scripted | replay:<jsonl> (default scripted)")
     ap.add_argument("--robot", default=os.environ.get("SGRT_ROBOT") or "r1pro", choices=["r1pro", "limo_omx"])
     ap.add_argument("--limo-shim", default=os.environ.get("LIMO_SHIM") or str(pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
     args = ap.parse_args(argv[:split])
@@ -393,7 +455,8 @@ def main():
     def init(self, *a, **k):
         orig_init(self, *a, **k)
         if args.robot == "limo_omx":
-            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights, robot="limo_omx")
+            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights, robot="limo_omx",
+                                        vla_policy=args.vla_policy)
         else:
             self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights)
         holder["p"] = self.policy
