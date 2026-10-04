@@ -6,7 +6,9 @@ ROS 를 설치하지 않고 실제 로봇 bag 을 우리 파이프라인(ovdet �
 | 파일 | 하는 일 |
 |---|---|
 | `bag2stream.py` | (오프라인 변환만, 파이썬 `rosbags`) bag → 스트림 폴더: `rgb/`·`depth/`(uint16 mm, 컬러에 맞춘 깊이) PNG, `frames.csv`(영상 시각·채점용 정답), `odom.csv`(바퀴 오도메트리 전부), `meta.json`(내부 파라미터, base ← 카메라 `T_bc`). 종류 `openloris`(TF 그대로) · `tum_pioneer`(TF 가 이름뿐이라 깊이 바닥 평면으로 높이·기울기). `--refit-only` 는 `T_bc` 만 다시 |
-| `realbag_run.cpp` | 스트림 → 검출(`--det fastsam` = FastSAM-s + SigLIP 2 이름, `yoloe`, `none`) → scenemap(`--robot limo_omx` 기본, `--pose slam\|odom\|gt`). 카메라 외부 자세는 `sm_set_cam_extrinsic`, 오도메트리는 LIMO proprio 0–5(영상 시각에 보간 하나 더). 검출 캐시 `--dump/--load`, 정답 비교(ATE: SE(2) 맞춤·첫 프레임 맞춤, 오도메트리만 대비), `--ref-map`(정답 자세로 만든 지도와 점유 칸 비교), 여러 판을 한 지도에(`a,b,…` + `--pose gt`), 재생 판 `--sg <run>`(stream.sgs·memory·cam·meta.json, 학습 뷰어 group `real_bags`), 실시간 `--live host:port` |
+| `realbag_run.cpp` | 스트림 → 검출(`--det fastsam` = FastSAM-s + SigLIP 2 이름, `yoloe`, `yolo`(닫힌 어휘, 기본 yolo26s-seg-416), `none`; `--namer siglip\|engine` — 기본은 fastsam siglip·나머지 engine) → scenemap(`--robot limo_omx` 기본, `--pose slam\|odom\|gt`). 카메라 외부 자세는 `sm_set_cam_extrinsic`, 오도메트리는 LIMO proprio 0–5(영상 시각에 보간 하나 더). 검출 캐시 `--dump/--load`, 정답 비교(ATE: SE(2) 맞춤·첫 프레임 맞춤, 오도메트리만 대비), `--ref-map`(정답 자세로 만든 지도와 점유 칸 비교), `objects.csv` 는 물체 노드 전부(`structural` 1 = 큰 것·고정 종류 — metrics `live`·`dup_pairs` 는 예전처럼 작은 것만, `*_all` 이 전부), 여러 판을 한 지도에(`a,b,…` + `--pose gt`), 재생 판 `--sg <run>`(stream.sgs·memory·cam·meta.json, 학습 뷰어 group `real_bags`), 실시간 `--live host:port` |
+| `sgrec2stream.py` | sgrt 기록(`SGRT_RECORD` rec.bin, LIMO 시뮬 판) → 같은 스트림 폴더(RGB-D 5 Hz·바퀴 오도메트리 30 Hz·정답 베이스 자세, `T_bc` = 시뮬 정답 카메라 자세, `gt_objects.json`) — 같은 시뮬 프레임을 여러 검출기로 |
+| `detcmp_run.sh` · `detcmp_eval.py` | 검출기 비교: 한 검출기를 slam·gt 자세로(검출은 한 번, gt 판은 캐시), 판마다 프로세스 GPU 최대. 채점 = 정답 물체(보인 것만, 짝·중복·이름·크기별 재현율·구조물 위 헛것), 벽(scenemap `walls.csv` 와 sgview `/api/walls`), 점유(정답 바닥 지도) |
 | `sgs_play.cpp` | 기록한 `stream.sgs` 를 벽시계에 맞춰 sgview(`--ingest`)로: 자세 60 Hz 보간, 지도·요약은 기록 그대로. `--rate`·`--loop` |
 | `record_live.mjs` · `make_video.sh` | 머리 없는 Chrome 으로 sgview 화면을 찍고(재생과 함께) bag RGB 를 작은 창으로 붙여 MP4·GIF |
 | `rb_util.hpp` | JSON·폴더·JPEG·스트림 받기(Capture) |

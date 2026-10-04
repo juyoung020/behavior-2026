@@ -7,6 +7,9 @@
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
 //     --det fastsam|yoloe|none 검출(기본 fastsam = FastSAM-s 416 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길), yoloe = sgrt 기본 엔진
 //                              yoloe-11l-all 에 아래 사무실·집 낱말 중 엔진 어휘에 있는 것만 프롬프트로)
+//     --det yolo               닫힌 어휘 YOLO 분할(기본 yolo26s-seg-416, COCO 80) — 엔진 어휘 전부
+//     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yoloe·yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
+//                              아래 낱말 글 임베딩과 맞춤(세 검출기를 같은 이름 표로 비교할 때)
 //     --det-every K            K 프레임마다 검출(기본 3 — 스트림 15 Hz 면 5 Hz, sgrt kf_every 6 @ 30 Hz 와 같음). 나머지 프레임은 깊이로 지도만
 //     --dump dets.gz | --load a.gz[,b.gz…]   검출·이름 캐시(--load 면 GPU 없이 scenemap 만, 여러 판이면 판마다 하나)
 //     --live host:port [--rate R]       sgview(--ingest)로 실시간 스트림, R 배속으로 걸음 맞춤(기본 1)
@@ -16,7 +19,7 @@
 //     --max-depth M            이보다 먼 깊이는 버림(기본 4 m — RealSense D435·Kinect 잡음, 시뮬은 8 m)
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
 //
-// 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv,
+// 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv(노드 전부, structural 열), walls.csv(scenemap 벽 선분),
 //   events.csv(새 물체·사라짐·옮겨짐·지움, 판 번호), metrics.json(ATE·지도·물체 수), stdout 요약.
 #include <zlib.h>
 
@@ -222,13 +225,15 @@ bool loadPgm(const std::string& dir, Pgm* m) {
 
 // ---------------- 검출 ----------------
 struct Detector {
-  std::string mode;   // fastsam | yoloe | none
+  std::string mode;   // fastsam | yoloe | yolo | none
   OvdHandle* det = nullptr;
   sgc_encoder* enc = nullptr;
   sgc_labels* lt = nullptr;
   std::vector<std::string> labels;   // scenemap 프롬프트 표
-  std::vector<int> prompt_cls;       // 글 줄 → labels 번호
-  std::vector<float> text;           // fastsam: 글 임베딩
+  std::string namer, engine_path;     // siglip | engine
+  std::vector<int> prompt_cls;       // engine 이름: 검출 cls → labels 번호
+  std::vector<int> text_cls;         // siglip 이름: 글 줄 → labels 번호
+  std::vector<float> text;           // siglip: 글 임베딩
   std::vector<int32_t> cls;
   double det_ms = 0, clip_ms = 0;
   int n_calls = 0;
@@ -238,12 +243,19 @@ struct Detector {
     labels.push_back(l);
     return int(labels.size()) - 1;
   }
-  bool init(const std::string& m, const std::string& engine_in, const std::string& clip_plan, const std::string& labels_dir, float conf) {
+  bool init(const std::string& m, const std::string& engine_in, const std::string& clip_plan, const std::string& labels_dir, float conf,
+            const std::string& namer_in) {
     mode = m;
     if (mode == "none") return true;
+    namer = namer_in.empty() ? (mode == "fastsam" ? "siglip" : "engine") : namer_in;
+    if (mode == "fastsam" && namer != "siglip") { std::fprintf(stderr, "fastsam needs --namer siglip\n"); return false; }
     const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
     std::string engine = engine_in;
-    if (engine.empty()) engine = home + (mode == "yoloe" ? "/ovdet_models/x86_sm120/yoloe-11l-all.plan" : "/ovdet_models/x86_sm120/FastSAM-s-416.plan");
+    if (engine.empty())
+      engine = home + (mode == "yoloe"  ? "/ovdet_models/x86_sm120/yoloe-11l-all.plan"
+                       : mode == "yolo" ? "/ovdet_models/x86_sm120/yolo26s-seg-416.plan"
+                                        : "/ovdet_models/x86_sm120/FastSAM-s-416.plan");
+    engine_path = engine;
     char err[2048] = {0};
     OvdConfig oc;
     ovd_default_config(&oc);
@@ -253,7 +265,7 @@ struct Detector {
     oc.conf_th = conf;
     det = ovd_create(&oc, err, sizeof err);
     if (!det) { std::fprintf(stderr, "ovd_create: %s\n", err); return false; }
-    if (mode == "yoloe") {
+    if (mode == "yoloe") {   // 열린 어휘: 아래 낱말 중 엔진 어휘에 있는 것만 프롬프트로
       std::vector<const char*> pr;
       std::set<std::string> vocab;
       for (int i = 0; i < ovd_vocab_size(det); ++i) vocab.insert(ovd_vocab_name(det, i));
@@ -261,13 +273,24 @@ struct Detector {
       for (const Word& w : kVocab) {
         if (!vocab.count(w.text)) { missing += std::string(" '") + w.text + "'"; continue; }
         pr.push_back(w.text);
-        prompt_cls.push_back(labelId(w.label));
+        if (namer == "engine") prompt_cls.push_back(labelId(w.label));
       }
       ovd_set_prompt(det, pr.data(), int32_t(pr.size()), err, sizeof err);
-      std::fprintf(stderr, "yoloe: %zu prompts -> %zu labels (not in engine vocab:%s)\n", pr.size(), labels.size(), missing.c_str());
-      return true;
+      std::fprintf(stderr, "yoloe: %zu prompts (not in engine vocab:%s)\n", pr.size(), missing.c_str());
+    } else if (mode == "yolo") {   // 닫힌 어휘(COCO 등): 엔진 어휘 전부. engine 이름 = kVocab 에 있으면 그 지도 이름, 없으면 엔진 이름 그대로
+      ovd_set_prompt(det, nullptr, 0, nullptr, 0);
+      if (namer == "engine")
+        for (int i = 0; i < ovd_vocab_size(det); ++i) {
+          std::string lab = ovd_vocab_name(det, i);
+          for (const Word& w : kVocab) if (lab == w.text) { lab = w.label; break; }
+          prompt_cls.push_back(labelId(lab));
+        }
+      std::fprintf(stderr, "yolo: %d engine classes\n", ovd_vocab_size(det));
+    } else {
+      ovd_set_prompt(det, nullptr, 0, nullptr, 0);   // FastSAM: 'object' 하나
     }
-    ovd_set_prompt(det, nullptr, 0, nullptr, 0);   // FastSAM: 'object' 하나
+    if (namer != "siglip") { std::fprintf(stderr, "naming: engine classes -> %zu labels\n", labels.size()); return true; }
+    // SigLIP 2 이름(세 검출기 모두 같은 글 표·같은 라벨 표): 마스크 조각 임베딩 · 글 임베딩 최댓값
     sgc_config cc;
     sgc_default_config(&cc);
     cc.engine = clip_plan.c_str();
@@ -284,12 +307,17 @@ struct Detector {
       for (float x : e) n += double(x) * x;
       n = std::sqrt(std::max(n, 1e-20));
       for (float& x : e) x = float(x / n);
-      prompt_cls.push_back(labelId(w.label));
+      text_cls.push_back(labelId(w.label));
       text.insert(text.end(), e.begin(), e.end());
     }
-    std::fprintf(stderr, "fastsam+siglip2: %zu prompts -> %zu labels (table %s; not in table:%s)\n", prompt_cls.size(), labels.size(),
+    std::fprintf(stderr, "%s+siglip2: %zu prompts -> %zu labels (table %s; not in table:%s)\n", mode.c_str(), text_cls.size(), labels.size(),
                  sgc_labels_sha(lt), missing.c_str());
     return true;
+  }
+  int64_t deviceBytes() const {
+    int64_t b = det ? ovd_device_bytes(det) : 0;
+    if (enc) { sgc_timing tm{}; sgc_get_timing(enc, &tm); b += tm.device_bytes; }
+    return b;
   }
   // RGB(호스트, 3 채널) → 검출. 결과 D 는 다음 detect 까지 유효
   bool detect(const std::vector<uint8_t>& rgb, int W, int H, double stamp, sm_detections* D) {
@@ -303,7 +331,7 @@ struct Detector {
     det_ms += std::chrono::duration<double, std::milli>(tb - ta).count();
     ++n_calls;
     cls.assign(size_t(D->n), 0);
-    if (mode == "yoloe") {
+    if (namer == "engine") {
       for (int k = 0; k < D->n; ++k) cls[size_t(k)] = prompt_cls[size_t(D->cls[k])];
     } else if (D->n > 0) {
       sgc_frame fr{};
@@ -325,13 +353,13 @@ struct Detector {
           const float* e = res[size_t(q)].emb;
           int best = 0;
           float bs = -2.f;
-          for (size_t p = 0; p < prompt_cls.size(); ++p) {
+          for (size_t p = 0; p < text_cls.size(); ++p) {
             float sd = 0.f;
             const float* tp = text.data() + p * SGC_DIM;
             for (int j = 0; j < SGC_DIM; ++j) sd += e[j] * tp[j];
             if (sd > bs) { bs = sd; best = int(p); }
           }
-          cls[res[size_t(q)].id] = prompt_cls[size_t(best)];
+          cls[res[size_t(q)].id] = text_cls[size_t(best)];
         }
         got += r;
       }
@@ -407,12 +435,12 @@ const char* stateName(int s) { return s == SM_SEEN ? "seen" : s == SM_GONE ? "go
 int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose slam|odom|gt] "
-                         "[--det fastsam|yoloe|none] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
+                         "[--det fastsam|yoloe|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
                          "[--ref-map memdir] [--snap-at t,..] [--frames N]\n");
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
-  std::string robot = "limo_omx", pose = "slam", det_mode = "fastsam", engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
+  std::string robot = "limo_omx", pose = "slam", det_mode = "fastsam", namer, engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
   std::string clip_plan = home + "/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
   std::string labels_dir = home + "/embed_work/labels/objects-v1";
   int det_every = 3;
@@ -428,7 +456,7 @@ int main(int argc, char** argv) {
     else if (a == "--load") load_path = nx(); else if (a == "--live") live = nx(); else if (a == "--rate") rate = std::stod(nx());
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
-    else if (a == "--engine") engine = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
+    else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -463,7 +491,7 @@ int main(int argc, char** argv) {
     }
     if (dr.size() != streams.size()) { std::fprintf(stderr, "--load needs one dump per stream (%zu vs %zu)\n", dr.size(), streams.size()); return 1; }
     D.mode = "load";
-  } else if (!D.init(det_mode, engine, clip_plan, labels_dir, conf)) {
+  } else if (!D.init(det_mode, engine, clip_plan, labels_dir, conf, namer)) {
     return 1;
   }
   if (D.labels.empty()) D.labels.push_back("object");
@@ -755,16 +783,27 @@ int main(int argc, char** argv) {
   sm_snapshot(c, &snap);
   const sm_object* ob = nullptr;
   const int no = sm_snap_objects(snap, &ob);
-  std::map<std::string, int> by_label, by_state;
-  int n_live = 0, n_dup = 0;
+  // 물체 표: 전부(큰 것·고정 종류 = structural 1 포함 — sgview 가 그리는 것과 같음). 옛 지표 live·dup_pairs 는 그대로 작은·옮길 수 있는 것만,
+  // live_all·dup_pairs_all·by_label_all 은 전부
+  std::map<std::string, int> by_label, by_state, by_label_all;
+  int n_live = 0, n_dup = 0, n_live_all = 0, n_dup_all = 0;
   {
     FILE* fo = std::fopen((out + "/objects.csv").c_str(), "w");
-    std::fprintf(fo, "id,name,state,x,y,z,ex,ey,ez,n_obs,last_seen\n");
+    std::fprintf(fo, "id,name,state,x,y,z,ex,ey,ez,n_obs,last_seen,structural\n");
     for (int k = 0; k < no; ++k) {
       const sm_object& o = ob[k];
+      std::fprintf(fo, "%u,%s,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%.2f,%d\n", o.id, o.name ? o.name : "", stateName(o.state), o.pos[0], o.pos[1], o.pos[2],
+                   o.extent[0], o.extent[1], o.extent[2], o.n_obs, o.last_seen, o.structural ? 1 : 0);
+      if (o.state != SM_GONE) {
+        ++n_live_all;
+        ++by_label_all[o.name ? o.name : ""];
+        for (int j = 0; j < k; ++j) {
+          const sm_object& q = ob[j];
+          if (q.state == SM_GONE || !o.name || !q.name || std::strcmp(o.name, q.name)) continue;
+          if (std::hypot(o.pos[0] - q.pos[0], o.pos[1] - q.pos[1], o.pos[2] - q.pos[2]) < 0.5) ++n_dup_all;
+        }
+      }
       if (o.structural) continue;
-      std::fprintf(fo, "%u,%s,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%.2f\n", o.id, o.name ? o.name : "", stateName(o.state), o.pos[0], o.pos[1], o.pos[2],
-                   o.extent[0], o.extent[1], o.extent[2], o.n_obs, o.last_seen);
       ++by_state[stateName(o.state)];
       if (o.state == SM_GONE) continue;
       ++n_live;
@@ -789,6 +828,12 @@ int main(int argc, char** argv) {
   }
   std::vector<double> segs(4 * 512);
   const int n_seg = sm_snap_wall_segments(snap, segs.data(), 512);
+  {   // 벽 선분(map, m) — 정답 벽과 비교용
+    FILE* fw = std::fopen((out + "/walls.csv").c_str(), "w");
+    std::fprintf(fw, "ax,ay,bx,by\n");
+    for (int k = 0; k < std::min(n_seg, 512); ++k) std::fprintf(fw, "%.4f,%.4f,%.4f,%.4f\n", segs[4 * k], segs[4 * k + 1], segs[4 * k + 2], segs[4 * k + 3]);
+    std::fclose(fw);
+  }
   // 기준 지도(정답 자세로 만든 지도)와 비교: 이 지도 점유 칸을 Tu 로 정답 world 에 옮겨 기준 점유 칸까지 거리
   std::string mapcmp = "null";
   if (!ref_map.empty()) {
@@ -841,7 +886,9 @@ int main(int argc, char** argv) {
     }
   }
   sm_snapshot_release(snap);
-  std::string labj = "{", evj = "{", stj = "{", sessj = "[";
+  std::string labj = "{", evj = "{", stj = "{", sessj = "[", laj = "{";
+  for (auto& [k, v] : by_label_all) laj += std::string(laj.size() > 1 ? "," : "") + jstr(k) + ":" + std::to_string(v);
+  laj += "}";
   for (auto& [k, v] : by_label) labj += std::string(labj.size() > 1 ? "," : "") + jstr(k) + ":" + std::to_string(v);
   for (auto& [k, v] : ev_count) evj += std::string(evj.size() > 1 ? "," : "") + jstr(k) + ":" + std::to_string(v);
   for (auto& [k, v] : by_state) stj += std::string(stj.size() > 1 ? "," : "") + jstr(k) + ":" + std::to_string(v);
@@ -856,6 +903,8 @@ int main(int argc, char** argv) {
   for (auto& s : streams) snames += (snames.empty() ? "" : ",") + s.name;
   const std::string metrics =
       Obj().str("streams", snames).str("robot", robot).str("pose", pose).str("det", D.mode == "load" ? "load:" + load_path : D.mode)
+          .str("namer", D.namer).str("engine", D.engine_path).num("det_gpu_mb", double(D.deviceBytes()) / 1048576.0)
+          .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
           .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
@@ -865,7 +914,9 @@ int main(int argc, char** argv) {
                                 .num("rms_yaw_deg", pd.rms_yaw * 180 / M_PI).num("max_yaw_deg", pd.max_yaw * 180 / M_PI).done())
           .raw("map", Obj().num("res", g.resolution).num("known_m2", n_known * g.resolution * g.resolution).num("free_m2", n_free * g.resolution * g.resolution)
                           .num("occ_m2", n_occ * g.resolution * g.resolution).num("wall_segments", n_seg).raw("vs_ref", mapcmp).done())
-          .raw("objects", Obj().num("live", n_live).num("dup_pairs_same_name_0p5m", n_dup).raw("by_state", stj).raw("by_label", labj).done())
+          .raw("objects", Obj().num("live", n_live).num("dup_pairs_same_name_0p5m", n_dup).raw("by_state", stj).raw("by_label", labj)
+                              .str("note", "live/dup/by_label/by_state = small movable only (structural 0); *_all = every live node incl. furniture/big")
+                              .num("live_all", n_live_all).num("dup_pairs_same_name_0p5m_all", n_dup_all).raw("by_label_all", laj).done())
           .raw("events", evj).raw("sessions", sessj).done();
   std::ofstream(out + "/metrics.json") << metrics << "\n";
   std::printf("%s\n", metrics.c_str());
