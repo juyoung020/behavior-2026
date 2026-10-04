@@ -3,6 +3,10 @@
 #   run_explore.sh <policy llm|frontier> <task> [tag] [extra agent args...]
 # 결과: outputs/explore_<ts>_<task>_<policy>[_tag]/ (memory/ 지도, decisions.jsonl, timeline.jsonl, summary.json, sim.log)
 # 사전 조건: VRAM 여유 ≥ 9 GB, RAM 여유 ≥ 16 GB (아니면 기다린다). 키는 환경변수로만(kau.env).
+# 로봇: 기본 R1 Pro. SGRT_ROBOT=limo_omx 면 우리 LIMO + OMX-F — 평가기를 $ROBOT_AGENT/src/robot/og/eval_with_limo.py 로
+#   띄우고(--robot-config limo_omx_eval.yaml), move_robot 은 베이스만(팔 홈 자세·그리퍼 닫힘 유지, move_robot_limo.py),
+#   정답 자세·물체 기록(SGRT_GT_LOG=<out>/gt_poses.csv, .objects.json)·poses.csv·pose_diag.json 기본 켬. 가까운 자르기는
+#   robot-agent 391c04b 부터 eval_with_limo.py 가 0.05 m 로 둔다(옛 자산이면 LIMO_NEAR_CLIP, 기본 0.05 까지만 올림).
 set -u
 POL=$1; TASK=$2; TAG=${3:-}; shift 3 2>/dev/null || shift $#
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -11,7 +15,18 @@ SUPER=${ROBOT_AGENT:-$(cd "$REPO/../.." && pwd)}   # robot-agent (behavior-2026 
 [ -x "$SUPER/src/agent/skills/explore/target/release/explore" ] || SUPER=$HOME/robot-agent
 TS=$(date +%Y%m%d_%H%M%S)
 OUT=$REPO/outputs/explore_${TS}_${TASK}_${POL}${TAG:+_$TAG}
-case "${SGRT_ROBOT:-r1pro}" in r1pro) ;; *) echo "[run] 탐색은 move_robot(R1 Pro 제어)을 써서 R1 전용이다 — LIMO 지도 확인은 src/sim/limo/run_limo_map.sh"; exit 1;; esac
+ROBOT=${SGRT_ROBOT:-r1pro}
+case "$ROBOT" in r1pro|limo_omx) ;; *) echo "[run] SGRT_ROBOT=$ROBOT 모름 (r1pro | limo_omx)"; exit 1;; esac
+export MOVE_ROBOT_LIB=${MOVE_ROBOT_LIB:-$SUPER/src/agent/tools/move_robot/target/release/libmove_robot.so}   # 서브모듈 밖(클론)에서도
+GT=$HERE/gt; [ -d "$GT" ] || GT=$HOME/behavior-2026/src/sim/explore/gt   # gt/ 는 git 밖(gt_trav.py 로 만듦)
+ROBOT_ARGS=(); EVAL_ROBOT=()
+if [ "$ROBOT" = limo_omx ]; then
+  OGDIR=${LIMO_OG_DIR:-$SUPER/src/robot/og}
+  [ -f "$OGDIR/eval_with_limo.py" ] || OGDIR=$HOME/robot-agent/src/robot/og
+  ROBOT_ARGS=(--robot limo_omx --limo-shim "${LIMO_SHIM:-$OGDIR/eval_with_limo.py}")
+  EVAL_ROBOT=(--robot-config "$OGDIR/limo_omx_eval.yaml")
+  export SGRT_ROBOT=limo_omx SGRT_GT_LOG=${SGRT_GT_LOG:-$OUT/gt_poses.csv}
+fi
 PORT=${PORT:-8771}
 MAXSTEPS=${MAXSTEPS:-27000}
 mkdir -p "$OUT"
@@ -27,9 +42,10 @@ export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_POSE=${SGRT_POSE:-slam}   # 실제 로봇과 같게 slam(오도메트리 + 스캔 맞추기). 정답 자세 확인용은 SGRT_POSE=gt
 export SGRT_LIB=${SGRT_LIB:-$HOME/sgrt_build_explore/libsgrt.so}
 if [ -n "${SGRT_STREAM:-}" ] && ! strings "$SGRT_LIB" | grep -q SGRT_STREAM; then echo "[run] $SGRT_LIB 에 SGRT_STREAM 이 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi   # 뷰어가 조용히 비는 실수 방지
+if [ "$ROBOT" = limo_omx ] && ! grep -aqF sgrt_set_robot "$SGRT_LIB"; then echo "[run] $SGRT_LIB 에 로봇 고르기(sgrt_set_robot)가 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi
 cd "$OUT"
-python "$HERE/run_explore.py" --listen 127.0.0.1:$PORT --out "$OUT" -- --task-name "$TASK" --mode public_test \
-  --instance-indices 0 --num-envs 1 --max-steps $MAXSTEPS --headless \
+python "$HERE/run_explore.py" --listen 127.0.0.1:$PORT --out "$OUT" --gt-dir "$GT" "${ROBOT_ARGS[@]}" -- --task-name "$TASK" --mode public_test \
+  --instance-indices 0 --num-envs 1 --max-steps $MAXSTEPS --headless "${EVAL_ROBOT[@]}" \
   --env-wrapper omnigibson.eval.wrappers.RGBDFullResWrapper > "$OUT/sim.log" 2>&1 &
 SIM=$!
 echo "[run] sim pid $SIM out $OUT"

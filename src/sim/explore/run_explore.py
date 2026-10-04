@@ -13,6 +13,13 @@ unmodified) with --policy local, whose LocalPolicy gets ExplorePolicy:
 
     python run_explore.py --listen 127.0.0.1:8771 --out <dir> -- --task-name bringing_water --mode public_test \
         --instance-indices 0 --num-envs 1 --max-steps 27000 --headless --env-wrapper omnigibson.eval.wrappers.RGBDFullResWrapper
+
+LIMO + OMX-F (--robot limo_omx, default from SGRT_ROBOT): the evaluator is started through robot-agent's
+src/robot/og/eval_with_limo.py (--limo-shim, LIMO_SHIM; presampled-pose alias, agent_metric fix) and the eval args must carry
+--robot-config <robot-agent>/src/robot/og/limo_omx_eval.yaml; move_robot runs through move_robot_limo.LimoMoveRobotPolicy
+(base only, arm held at home, gripper closed), libsgrt is told limo_omx, and the body camera gets the LIMO_NEAR_CLIP
+safety net (raise-only, robot-agent 391c04b already sets 0.05 m) on the first step; GT/slam poses -> poses.csv, pose_diag.json.
+R1 (default) is unchanged.
 """
 import argparse
 import ctypes
@@ -109,14 +116,19 @@ class VlaSource:
 
 
 class ExplorePolicy:
-    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, vla_weights=None, kf_every=6):
+    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, vla_weights=None, kf_every=6, robot="r1pro"):
         from move_robot_sim import MoveRobotPolicy
         from sgrt_glue import SceneMemory
 
         self.out = out_dir
         (out_dir / "memory").mkdir(parents=True, exist_ok=True)
         self.src = VlaSource(src, self)
-        self.mr = MoveRobotPolicy(self.src, lib_path=lib_path, log_path=str(out_dir / "move_robot.jsonl"))
+        self.limo = robot == "limo_omx"
+        if self.limo:
+            from move_robot_limo import LimoMoveRobotPolicy
+            self.mr = LimoMoveRobotPolicy(self.src, lib_path=lib_path, log_path=str(out_dir / "move_robot.jsonl"))
+        else:
+            self.mr = MoveRobotPolicy(self.src, lib_path=lib_path, log_path=str(out_dir / "move_robot.jsonl"))
         L = self.mr.lib.L
         L.mr_set_map.restype = ctypes.c_int
         L.mr_set_map.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
@@ -125,7 +137,10 @@ class ExplorePolicy:
         L.mr_overlay_json.restype = ctypes.c_ssize_t
         L.mr_overlay_json.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
         self.L = L
-        self.mem = SceneMemory(task, str(out_dir / "memory"), kf_every=kf_every)
+        if self.limo:
+            self.mem = SceneMemory(task, str(out_dir / "memory"), kf_every=kf_every, robot_model="limo_omx")
+        else:
+            self.mem = SceneMemory(task, str(out_dir / "memory"), kf_every=kf_every)
         S = self.mem.L
         S.sgrt_map.restype = ctypes.c_int
         S.sgrt_map.argtypes = [ctypes.c_void_p, ctypes.POINTER(SgrtMapView)]
@@ -145,7 +160,8 @@ class ExplorePolicy:
         self.vla = None
         self.vla_weights = vla_weights
         self.vla_active = None
-        print(f"[explore] task {task}, out {out_dir}, gt {'yes' if self.gt_floor is not None else 'no'}", flush=True)
+        print(f"[explore] task {task}, out {out_dir}, gt {'yes' if self.gt_floor is not None else 'no'}"
+              + (", robot limo_omx" if self.limo else ""), flush=True)
 
     # ---------- VLA executor switch
     def start_vla(self, call):
@@ -230,6 +246,26 @@ class ExplorePolicy:
         x, y = float(pos[0]), float(pos[1])
         self.mr.lib.set_gt_pose(c * x - s * y + tx, s * x + c * y + ty, wyaw + math.atan2(s, c))
 
+    def _limo_pose_log(self):
+        """LIMO runs: per map keyframe the GT base pose (world and map frame, via map_from_world) next to the map (slam) pose
+        -> <out>/poses.csv; libsgrt's slam-vs-GT diagnostics (sgrt_get_pose_diag) -> <out>/pose_diag.json about every second
+        (the evaluator may exit before close()). GT is logged only, never fed to the map in slam mode."""
+        import math
+        if not hasattr(self, "pose_log"):
+            self.pose_log = open(self.out / "poses.csv", "w")
+            self.pose_log.write("step,gt_x,gt_y,gt_yaw,gt_map_x,gt_map_y,gt_map_yaw,map_x,map_y,map_yaw\n")
+        pos, q = self._robot().get_position_orientation()
+        x, y, yaw = float(pos[0]), float(pos[1]), yaw_of(q)
+        c, s, tx, ty = getattr(self, "T", (1.0, 0.0, 0.0, 0.0))
+        gm = (c * x - s * y + tx, s * x + c * y + ty, math.atan2(math.sin(yaw + math.atan2(s, c)), math.cos(yaw + math.atan2(s, c))))
+        v = self.view.pose
+        self.pose_log.write(f"{self.step_i},{x:.4f},{y:.4f},{yaw:.5f},{gm[0]:.4f},{gm[1]:.4f},{gm[2]:.5f},{v[0]:.4f},{v[1]:.4f},{v[2]:.5f}\n")
+        if self.step_i % 30 == 0:
+            self.pose_log.flush()
+            d = self.mem.pose_diag()
+            d["step"] = self.step_i
+            (self.out / "pose_diag.json").write_text(json.dumps(d))
+
     def _contacts(self):
         try:
             from omnigibson.utils.usd_utils import RigidContactAPI
@@ -262,6 +298,9 @@ class ExplorePolicy:
         t0 = time.perf_counter()
         if self.t_last is not None:
             self.timing["between"] += t0 - self.t_last
+        if self.limo and self.step_i == 0:
+            from move_robot_limo import apply_near_clip
+            apply_near_clip(self._robot())
         self.mem.step(obs)
         t1 = time.perf_counter()
         did_map = False
@@ -271,6 +310,8 @@ class ExplorePolicy:
                 did_map = True
                 if self.step_i == 0 or not hasattr(self, "T"):
                     self._set_reference()
+                if self.limo:
+                    self._limo_pose_log()
         t2 = time.perf_counter()
         if self.step_i % 3 == 0:
             self._robot()
@@ -329,6 +370,8 @@ def main():
     ap.add_argument("--lib", default=None)
     ap.add_argument("--gt-dir", default=None)
     ap.add_argument("--vla-weights", default=None)
+    ap.add_argument("--robot", default=os.environ.get("SGRT_ROBOT") or "r1pro", choices=["r1pro", "limo_omx"])
+    ap.add_argument("--limo-shim", default=os.environ.get("LIMO_SHIM") or str(pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
     args = ap.parse_args(argv[:split])
     eval_args = argv[split + 1:]
     if "--policy" in eval_args:
@@ -348,10 +391,25 @@ def main():
 
     def init(self, *a, **k):
         orig_init(self, *a, **k)
-        self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights)
+        if args.robot == "limo_omx":
+            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights, robot="limo_omx")
+        else:
+            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights)
         holder["p"] = self.policy
 
     P.LocalPolicy.__init__ = init
+    if args.robot == "limo_omx":
+        if "--robot-config" not in eval_args:
+            raise SystemExit("[explore] limo_omx needs --robot-config <robot-agent>/src/robot/og/limo_omx_eval.yaml in the eval args")
+        os.environ["SGRT_ROBOT"] = "limo_omx"
+        print(f"[explore] robot limo_omx via {args.limo_shim}", flush=True)
+        sys.argv = [args.limo_shim, *eval_args, "--policy", "local", "--output-dir", str(out)]
+        try:
+            runpy.run_path(args.limo_shim, run_name="__main__")
+        finally:
+            if "p" in holder:
+                holder["p"].close()
+        return
     sys.argv = ["omnigibson.eval.eval", *eval_args, "--policy", "local", "--output-dir", str(out)]
     try:
         runpy.run_module("omnigibson.eval.eval", run_name="__main__", alter_sys=True)

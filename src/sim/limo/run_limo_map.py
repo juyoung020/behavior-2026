@@ -30,6 +30,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / "src/scene_graph/runtime/glue"))
 sys.path.insert(0, str(REPO / "src/sim/explore"))
+sys.path.insert(0, str(REPO / "src/sim/move_robot"))
 SHIM = pathlib.Path(os.environ.get("LIMO_SHIM", pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
 
 VMAX, WMAX = 0.5, 0.8727          # limo_omx_eval.yaml base command_output_limits (input [-1, 1])
@@ -111,17 +112,11 @@ class LimoMapPolicy:
         return float(hx[m].min()) if m.any() else 9.0
 
     def _near_clip(self):
-        """The imported limo_omx puts robot_limo:eyes at depth_camera_link, ~1 cm behind the chassis shell's front face: unclipped,
-        the body camera sees only its own shell (depth ~0.0096 m everywhere, black RGB). Workaround for this check (the asset
-        should move the camera to the shell's outer face): near clipping plane LIMO_NEAR_CLIP (default 0.03 m, 0 = leave)."""
-        near = float(os.environ.get("LIMO_NEAR_CLIP", "0.03"))
-        if near <= 0:
-            return
-        for n, sen in self.robot.sensors.items():
-            if ":eyes:" in n and hasattr(sen, "clipping_range"):
-                old = [round(float(v), 4) for v in sen.clipping_range]
-                sen.clipping_range = (near, max(near * 10, float(old[1])))
-                print(f"[limo] {n} clipping range {old} -> {[round(float(v), 4) for v in sen.clipping_range]}", flush=True)
+        """Body camera near plane: robot-agent 391c04b moved robot_limo:eyes to the lens and eval_with_limo.py sets near clip
+        0.05 m. Older assets had the camera ~1 cm inside the shell (depth ~0.0096 m everywhere). Shared raise-only safety net
+        (src/sim/move_robot/move_robot_limo.apply_near_clip, LIMO_NEAR_CLIP default 0.05, 0 = leave)."""
+        from move_robot_limo import apply_near_clip
+        apply_near_clip(self.robot)
 
     # ---------- checks
     def _cam_fk_check(self, prop12):
