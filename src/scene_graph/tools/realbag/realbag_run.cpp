@@ -18,6 +18,8 @@
 //     --snap-at t1,t2,…        그 시각(스트림 초)에 기억 저장(<out>/snap_<t>/ — 손 확인용)
 //     --max-depth M            이보다 먼 깊이는 버림(기본 4 m — RealSense D435·Kinect 잡음, 시뮬은 8 m)
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
+//     --aprime                 A′ 물체 모델(scenemap README "A′") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기
+//     --label-prior f.json     A′ 라벨 log 사전(aprime_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
 //
 // 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv(노드 전부, structural 열), walls.csv(scenemap 벽 선분),
 //   events.csv(새 물체·사라짐·옮겨짐·지움, 판 번호), metrics.json(ATE·지도·물체 수), stdout 요약.
@@ -72,7 +74,41 @@ const Word kVocab[] = {
     {"toolbox", "box"}, {"cable", "cable"}, {"router", "modem"}, {"modem", "modem"}, {"pole", "pole"},
 };
 
+// A′ 라벨 통계: 지도 이름 → 가장 긴 변(m)의 대표값·log 표준편차(크기 우도, 흔한 가구·물건 치수에서 손으로 — 이 장면 정답에서 맞추지 않음),
+// 상위어(이름 사후가 낮을 때 올라갈 곳). 상위어 라벨(furniture …)과 "object" 는 낱말 줄이 없어 직접 이름이 되지 않는다
+struct ApLabel { const char* label; float size, sd; const char* parent; };
+const ApLabel kApLabels[] = {
+    {"structure", 0, 0, nullptr}, {"outdoors", 0, 0, "structure"}, {"furniture", 0, 0, nullptr}, {"electronics", 0, 0, nullptr}, {"container", 0, 0, nullptr},
+    {"decoration", 0, 0, nullptr}, {"object", 0, 0, nullptr},
+    {"wall", 3.0f, 0.8f, "structure"}, {"floor", 3.0f, 0.8f, "structure"}, {"ceiling", 3.0f, 0.8f, "structure"}, {"door", 2.0f, 0.3f, "structure"},
+    {"window", 1.2f, 0.5f, "structure"}, {"pillar", 2.4f, 0.4f, "structure"}, {"partition", 1.5f, 0.5f, "structure"},
+    {"staircase", 2.5f, 0.5f, "structure"}, {"railing", 1.5f, 0.6f, "structure"}, {"baseboard", 1.5f, 0.8f, "structure"}, {"person", 1.7f, 0.25f, nullptr},
+    {"desk", 1.4f, 0.3f, "furniture"}, {"table", 1.2f, 0.4f, "furniture"}, {"cabinet", 1.0f, 0.5f, "furniture"}, {"shelf", 1.0f, 0.5f, "furniture"},
+    {"bookcase", 1.6f, 0.4f, "furniture"}, {"sofa", 2.0f, 0.3f, "furniture"}, {"bed", 2.0f, 0.25f, "furniture"}, {"chair", 0.9f, 0.25f, "furniture"},
+    {"stool", 0.5f, 0.3f, "furniture"}, {"refrigerator", 1.8f, 0.2f, "appliance"}, {"microwave", 0.5f, 0.3f, "appliance"}, {"sink", 0.6f, 0.4f, nullptr},
+    {"toilet", 0.7f, 0.2f, nullptr}, {"tv", 1.0f, 0.4f, "electronics"}, {"lamp", 1.0f, 0.6f, "decoration"}, {"fixture", 0.4f, 0.7f, nullptr},
+    {"radiator", 0.9f, 0.4f, nullptr}, {"curtain", 1.8f, 0.5f, "decoration"}, {"appliance", 0.8f, 0.7f, nullptr}, {"whiteboard", 1.5f, 0.4f, "decoration"},
+    {"picture frame", 0.6f, 0.6f, "decoration"}, {"plant", 0.8f, 0.6f, "decoration"}, {"rug", 2.0f, 0.4f, "decoration"},
+    {"monitor", 0.55f, 0.3f, "electronics"}, {"computer", 0.45f, 0.4f, "electronics"}, {"laptop", 0.35f, 0.2f, "electronics"},
+    {"keyboard", 0.45f, 0.2f, "electronics"}, {"mouse", 0.11f, 0.3f, "electronics"}, {"phone", 0.15f, 0.3f, "electronics"},
+    {"speaker", 0.3f, 0.5f, "electronics"}, {"modem", 0.25f, 0.3f, "electronics"}, {"box", 0.4f, 0.6f, "container"}, {"bottle", 0.25f, 0.3f, "container"},
+    {"cup", 0.1f, 0.3f, "container"}, {"trash can", 0.4f, 0.3f, "container"}, {"bucket", 0.35f, 0.3f, "container"}, {"bag", 0.45f, 0.4f, "container"},
+    {"basket", 0.4f, 0.4f, "container"}, {"book", 0.25f, 0.3f, nullptr}, {"paper", 0.3f, 0.4f, nullptr}, {"tripod", 1.2f, 0.4f, nullptr},
+    {"fan", 0.6f, 0.5f, "appliance"}, {"clock", 0.3f, 0.4f, "decoration"}, {"clothing", 0.8f, 0.4f, nullptr}, {"umbrella", 0.9f, 0.4f, nullptr},
+    {"kettle", 0.25f, 0.2f, "appliance"}, {"pillow", 0.5f, 0.3f, "decoration"}, {"shoe", 0.28f, 0.2f, nullptr}, {"vase", 0.3f, 0.4f, "decoration"},
+    {"cable", 1.0f, 1.0f, nullptr}, {"pole", 1.8f, 0.5f, nullptr},
+};
+
+// A′ 만 더하는 배경 낱말(구조물 쪽): FastSAM 조각은 계단 디딤판·문틀·창 밖 덤불이 많은데 원래 어휘에는 그 말이 없어 book·curtain·plant 로
+// 불렸다. 물체 낱말은 더하지 않음(A/B/C 와 같은 물체 어휘 — 이름 정확도를 같은 표로 비교). "outdoors" = 창·유리문 너머 바깥(구조물 종류)
+const Word kVocabAp[] = {
+    {"stair", "staircase"}, {"stairway", "staircase"}, {"steps", "staircase"}, {"handrail", "railing"}, {"doorcase", "door"},
+    {"window frame", "window"}, {"windowpane", "window"}, {"skirting board", "baseboard"}, {"bush", "outdoors"}, {"shrub", "outdoors"},
+    {"hedgerow", "outdoors"}, {"lawn", "outdoors"},
+};
+
 constexpr int32_t kDumpMagic = 0x52424431;   // 'RBD1'
+constexpr int32_t kDumpMagic2 = 0x52424432;  // 'RBD2': RBD1 + 프레임마다 임베딩 dim(0 = 없음)·n × dim FP16
 void putI(gzFile z, int32_t v) { gzwrite(z, &v, 4); }
 bool getI(gzFile z, int32_t* v) { return gzread(z, v, 4) == 4; }
 size_t maskWords(const sm_detections& D) { return (size_t(D.mask_w) * D.mask_h + 31) / 32; }
@@ -235,6 +271,8 @@ struct Detector {
   std::vector<int> text_cls;         // siglip 이름: 글 줄 → labels 번호
   std::vector<float> text;           // siglip: 글 임베딩
   std::vector<int32_t> cls;
+  bool aprime = false;               // A′: 배경 낱말(kVocabAp)도 글 표에
+  std::vector<float> emb;            // siglip: 검출마다 SigLIP 2 마스크 임베딩(n × SGC_DIM, L2 정규화) — A′ 물체 모델이 씀
   double det_ms = 0, clip_ms = 0;
   int n_calls = 0;
 
@@ -290,7 +328,11 @@ struct Detector {
       ovd_set_prompt(det, nullptr, 0, nullptr, 0);   // FastSAM: 'object' 하나
     }
     if (namer != "siglip") { std::fprintf(stderr, "naming: engine classes -> %zu labels\n", labels.size()); return true; }
-    // SigLIP 2 이름(세 검출기 모두 같은 글 표·같은 라벨 표): 마스크 조각 임베딩 · 글 임베딩 최댓값
+    return initSiglip(clip_plan, labels_dir);
+  }
+  // SigLIP 2 이름(세 검출기 모두 같은 글 표·같은 라벨 표): 마스크 조각 임베딩 · 글 임베딩 최댓값. A′ 는 검출 캐시(--load)여도 부름(통째 다시 담기·글 모델)
+  bool initSiglip(const std::string& clip_plan, const std::string& labels_dir) {
+    char err[2048] = {0};
     sgc_config cc;
     sgc_default_config(&cc);
     cc.engine = clip_plan.c_str();
@@ -300,7 +342,9 @@ struct Detector {
     if (!lt) { std::fprintf(stderr, "sgc_labels_open: %s\n", err); return false; }
     std::vector<float> e(SGC_DIM);
     std::string missing;
-    for (const Word& w : kVocab) {
+    std::vector<Word> words(std::begin(kVocab), std::end(kVocab));
+    if (aprime) words.insert(words.end(), std::begin(kVocabAp), std::end(kVocabAp));
+    for (const Word& w : words) {
       const int row = sgc_labels_find(lt, w.text);
       if (row < 0 || sgc_labels_text_emb(lt, row, e.data()) != 0) { missing += std::string(" '") + w.text + "'"; continue; }
       double n = 0;
@@ -312,6 +356,35 @@ struct Detector {
     }
     std::fprintf(stderr, "%s+siglip2: %zu prompts -> %zu labels (table %s; not in table:%s)\n", mode.c_str(), text_cls.size(), labels.size(),
                  sgc_labels_sha(lt), missing.c_str());
+    return true;
+  }
+  // A′ 통째 다시 담기: 요청 마스크(검출 마스크 격자 배치)로 SigLIP 2. 결과 emb(n × SGC_DIM, 요청 순서)
+  double reenc_ms = 0;
+  long n_reenc = 0, n_enc_dets = 0;
+  bool encodeMasks(const std::vector<uint8_t>& rgb, int W, int H, double stamp, const sm_detections& Dm, const sm_reenc_req* rq,
+                   const uint32_t* bits, int n, std::vector<float>* out) {
+    const auto t0 = std::chrono::steady_clock::now();
+    sgc_frame fr{};
+    fr.rgb = rgb.data(); fr.on_device = 0; fr.row_stride = int64_t(W) * 3; fr.pix_stride = 3; fr.w = W; fr.h = H;
+    fr.mask_w = Dm.mask_w; fr.mask_h = Dm.mask_h; fr.mask_sx = Dm.mask_sx; fr.mask_sy = Dm.mask_sy; fr.mask_ox = Dm.mask_ox; fr.mask_oy = Dm.mask_oy;
+    fr.mask_bits = bits;
+    std::vector<sgc_item> items(static_cast<size_t>(n));
+    for (int k = 0; k < n; ++k) items[size_t(k)] = sgc_item{uint32_t(k), k, {rq[k].box[0], rq[k].box[1], rq[k].box[2], rq[k].box[3]}, rq[k].kappa};
+    out->assign(size_t(n) * SGC_DIM, 0.f);
+    std::vector<sgc_result> res(64);
+    int sent = 0, got = 0;
+    while (got < n) {
+      if (sent < n) {
+        const int s2 = sgc_submit(enc, stamp, &fr, items.data() + sent, n - sent);
+        if (s2 < 0) return false;
+        sent += s2;
+      }
+      const int r = sgc_poll(enc, res.data(), int(res.size()), 1);
+      for (int q = 0; q < r; ++q) std::copy(res[size_t(q)].emb, res[size_t(q)].emb + SGC_DIM, out->begin() + size_t(res[size_t(q)].id) * SGC_DIM);
+      got += r;
+    }
+    reenc_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    n_reenc += n;
     return true;
   }
   int64_t deviceBytes() const {
@@ -331,6 +404,7 @@ struct Detector {
     det_ms += std::chrono::duration<double, std::milli>(tb - ta).count();
     ++n_calls;
     cls.assign(size_t(D->n), 0);
+    emb.clear();
     if (namer == "engine") {
       for (int k = 0; k < D->n; ++k) cls[size_t(k)] = prompt_cls[size_t(D->cls[k])];
     } else if (D->n > 0) {
@@ -340,7 +414,9 @@ struct Detector {
       fr.mask_oy = D->mask_oy; fr.mask_bits = D->mask_bits;
       std::vector<sgc_item> items(size_t(D->n));
       for (int k = 0; k < D->n; ++k) items[size_t(k)] = sgc_item{uint32_t(k), k, {D->box[4 * k], D->box[4 * k + 1], D->box[4 * k + 2], D->box[4 * k + 3]}, 1.f};
+      n_enc_dets += D->n;
       std::vector<sgc_result> res(64);
+      emb.assign(size_t(D->n) * SGC_DIM, 0.f);
       int sent = 0, got = 0;
       while (got < D->n) {
         if (sent < D->n) {
@@ -351,6 +427,7 @@ struct Detector {
         const int r = sgc_poll(enc, res.data(), int(res.size()), 1);
         for (int q = 0; q < r; ++q) {
           const float* e = res[size_t(q)].emb;
+          std::copy(e, e + SGC_DIM, emb.begin() + size_t(res[size_t(q)].id) * SGC_DIM);
           int best = 0;
           float bs = -2.f;
           for (size_t p = 0; p < text_cls.size(); ++p) {
@@ -376,9 +453,11 @@ struct Detector {
 };
 
 // 검출 캐시: 머리 magic nl [len name]… 다음 프레임마다 key(프레임 번호) n img_w img_h | cls score box mask_w mask_h ms[4] bits
-void writeDets(gzFile z, int key, const sm_detections& D) {
+//   (RBD2: 그 뒤 dim, n × dim FP16 임베딩 — 검출이 0 개여도 dim 은 씀)
+void writeDets(gzFile z, int key, const sm_detections& D, const std::vector<float>& emb) {
   putI(z, key); putI(z, D.n); putI(z, D.img_w); putI(z, D.img_h);
-  if (D.n <= 0) return;
+  const int dim = D.n > 0 && emb.size() == size_t(D.n) * SGC_DIM ? SGC_DIM : 0;
+  if (D.n <= 0) { putI(z, 0); return; }
   gzwrite(z, D.cls, unsigned(4 * D.n));
   std::vector<float> sc(size_t(D.n), 1.f);
   if (D.score) std::copy(D.score, D.score + D.n, sc.begin());
@@ -388,6 +467,12 @@ void writeDets(gzFile z, int key, const sm_detections& D) {
   const float ms[4] = {D.mask_sx, D.mask_sy, D.mask_ox, D.mask_oy};
   gzwrite(z, ms, 16);
   gzwrite(z, D.mask_bits, unsigned(4 * maskWords(D) * size_t(D.n)));
+  putI(z, dim);
+  if (dim) {
+    std::vector<uint16_t> h(emb.size());
+    sgc_f32_to_f16(emb.data(), h.data(), int32_t(h.size()));
+    gzwrite(z, h.data(), unsigned(2 * h.size()));
+  }
 }
 struct DumpReader {
   gzFile z = nullptr;
@@ -396,10 +481,13 @@ struct DumpReader {
   std::vector<int32_t> cls;
   std::vector<float> score, box;
   std::vector<uint32_t> bits;
+  std::vector<float> emb;             // RBD2: 이 프레임 임베딩(n × SGC_DIM, 없으면 빔)
+  bool v2 = false;
   bool open(const std::string& p, std::vector<std::string>* labels) {
     z = gzopen(p.c_str(), "rb");
     int32_t magic = 0, nl = 0;
-    if (!z || !getI(z, &magic) || magic != kDumpMagic || !getI(z, &nl)) return false;
+    if (!z || !getI(z, &magic) || (magic != kDumpMagic && magic != kDumpMagic2) || !getI(z, &nl)) return false;
+    v2 = magic == kDumpMagic2;
     labels->resize(size_t(nl));
     for (auto& l : *labels) { int32_t k = 0; getI(z, &k); l.resize(size_t(k)); gzread(z, l.data(), unsigned(k)); }
     have = getI(z, &key);
@@ -423,6 +511,17 @@ struct DumpReader {
       gzread(z, bits.data(), unsigned(4 * bits.size()));
       D->cls = cls.data(); D->score = score.data(); D->box = box.data(); D->mask_bits = bits.data();
     }
+    emb.clear();
+    if (v2) {
+      int32_t dim = 0;
+      getI(z, &dim);
+      if (dim > 0) {
+        std::vector<uint16_t> h(size_t(n) * dim);
+        gzread(z, h.data(), unsigned(2 * h.size()));
+        emb.resize(h.size());
+        sgc_f16_to_f32(h.data(), emb.data(), int32_t(h.size()));
+      }
+    }
     have = getI(z, &key);
     return true;
   }
@@ -436,7 +535,7 @@ int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose slam|odom|gt] "
                          "[--det fastsam|yoloe|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
-                         "[--ref-map memdir] [--snap-at t,..] [--frames N]\n");
+                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--aprime [--label-prior f.json]]\n");
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
@@ -448,6 +547,8 @@ int main(int argc, char** argv) {
   double rate = 1.0, gap = 5.0, save_s = 1.0;
   float max_depth = 4.0f;
   float conf = 0.25f;
+  std::string label_prior;   // A′ 라벨 사전(aprime_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
+  bool aprime = false;   // A′ 물체 모델(FastSAM + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기)
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     auto nx = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -457,6 +558,7 @@ int main(int argc, char** argv) {
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
     else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
+    else if (a == "--aprime") aprime = true; else if (a == "--label-prior") label_prior = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -478,6 +580,7 @@ int main(int argc, char** argv) {
 
   // 검출
   Detector D;
+  D.aprime = aprime;
   std::vector<DumpReader> dr;   // 판마다 하나(--load a.gz,b.gz,…). 이름 표는 모두 같아야 함
   if (!load_path.empty()) {
     std::stringstream ss(load_path);
@@ -494,11 +597,15 @@ int main(int argc, char** argv) {
   } else if (!D.init(det_mode, engine, clip_plan, labels_dir, conf, namer)) {
     return 1;
   }
+  if (aprime) {
+    if (!D.enc && !D.initSiglip(clip_plan, labels_dir)) return 1;
+    for (const ApLabel& a : kApLabels) D.labelId(a.label);   // 상위어 라벨(furniture …)·object 를 표에 더함
+  }
   if (D.labels.empty()) D.labels.push_back("object");
   gzFile dz = nullptr;
   if (!dump_path.empty()) {
     dz = gzopen(dump_path.c_str(), "wb1");
-    putI(dz, kDumpMagic);
+    putI(dz, kDumpMagic2);
     putI(dz, int32_t(D.labels.size()));
     for (auto& l : D.labels) { putI(dz, int32_t(l.size())); gzwrite(dz, l.data(), unsigned(l.size())); }
   }
@@ -511,6 +618,29 @@ int main(int argc, char** argv) {
     std::vector<const char*> lp;
     for (auto& l : D.labels) lp.push_back(l.c_str());
     sm_set_labels(c, lp.data(), int(lp.size()));
+  }
+  if (aprime) {   // A′: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어
+    sm_set_text_model(c, D.text.data(), D.text_cls.data(), int32_t(D.text_cls.size()), SGC_DIM, 111.83257f, -16.766876f);
+    const int nl = int(D.labels.size());
+    std::vector<float> mu(size_t(nl), 0.f), sd(size_t(nl), 0.f);
+    std::vector<int32_t> par(size_t(nl), -1);
+    for (const ApLabel& a : kApLabels) {
+      const int l = D.labelId(a.label);
+      if (a.size > 0) { mu[size_t(l)] = std::log(a.size); sd[size_t(l)] = a.sd; }
+      if (a.parent) par[size_t(l)] = D.labelId(a.parent);
+    }
+    if (int(D.labels.size()) != nl) { std::fprintf(stderr, "aprime: label table grew\n"); return 1; }
+    std::vector<float> lpri(size_t(nl), -std::log(float(nl)));   // 표에 없는 라벨은 고른 사전 1/n
+    if (!label_prior.empty()) {
+      const std::string js = slurp(label_prior);
+      if (js.empty()) { std::fprintf(stderr, "cannot read %s\n", label_prior.c_str()); return 1; }
+      for (int l = 0; l < nl; ++l) {   // 상위어 라벨은 낱말 줄이 없어 직접 이름이 안 됨(사전 값은 상관없음)
+        const size_t k = js.find("\"" + D.labels[size_t(l)] + "\":");
+        if (k != std::string::npos) lpri[size_t(l)] = float(std::atof(js.c_str() + k + D.labels[size_t(l)].size() + 3));
+      }
+    }
+    sm_set_label_stats(c, label_prior.empty() ? nullptr : lpri.data(), mu.data(), sd.data(), par.data(), nl, D.labelId("object"));
+    sm_set_object_model(c, 1);
   }
   sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
   sm_set_cam_extrinsic(c, 0, streams[0].T_bc);
@@ -640,12 +770,51 @@ int main(int argc, char** argv) {
         else if (D.mode != "none") {
           if (!D.detect(rgb, S.w, S.h, t, &Dt)) return 1;
           have_det = true;
-          if (dz) writeDets(dz, int(fi), Dt);   // 판 하나 기준 번호(여러 판이면 --dump 는 판마다 따로 돌릴 것)
+          if (dz) writeDets(dz, int(fi), Dt, D.emb);   // 판 하나 기준 번호(여러 판이면 --dump 는 판마다 따로 돌릴 것)
         }
         if (have_det) { Dt.stamp = t; Dt.cam = 0; ++n_detf; n_dets += Dt.n; }
       }
       sm_image im{t, 0, S.w, S.h, kf ? rgba.data() : nullptr, dm.data(), S.fx, S.fy, S.cx, S.cy};
+      if (aprime && have_det) {
+        const std::vector<float>& E = D.mode == "load" ? dr[si].emb : D.emb;
+        if (E.size() == size_t(Dt.n) * SGC_DIM) sm_set_det_embeddings(c, E.data(), Dt.n, SGC_DIM);
+        else if (Dt.n > 0) { std::fprintf(stderr, "aprime: no embeddings in this dump (needs RBD2 from a siglip run)\n"); return 1; }
+      }
       sm_push_image_rgb(c, &im, have_det ? &Dt : nullptr, nullptr);
+      if (aprime && have_det) {   // 통째 다시 담기: 합친 물체·더 좋은 모습을 구름 투영 마스크로 SigLIP 2
+        const sm_reenc_req* rq = nullptr;
+        const uint32_t* rb = nullptr;
+        const int nr = sm_reencode_requests(c, &rq, &rb);
+        if (nr > 0) {
+          std::vector<uint32_t> bits(rb, rb + size_t(nr) * maskWords(Dt));
+          std::vector<sm_reenc_req> reqs(rq, rq + nr);
+          std::vector<float> ze;
+          if (!D.encodeMasks(rgb, S.w, S.h, t, Dt, reqs.data(), bits.data(), nr, &ze)) { std::fprintf(stderr, "reencode failed\n"); return 1; }
+          std::vector<uint32_t> ids(static_cast<size_t>(nr));
+          for (int k = 0; k < nr; ++k) ids[size_t(k)] = reqs[size_t(k)].id;
+          static const char* rdump = std::getenv("RB_REENC_DUMP");   // 진단: 다시 담기 상자 그림(마스크 밖 어둡게) <dir>/t_<시각>_O<id>.jpg
+          static int n_rd = 0;
+          if (rdump && n_rd < 400)
+            for (int k = 0; k < nr; ++k, ++n_rd) {
+              const sm_reenc_req& q = reqs[size_t(k)];
+              const int x0 = std::max(0, int(q.box[0])), y0 = std::max(0, int(q.box[1])), x1 = std::min(S.w, int(q.box[2])), y1 = std::min(S.h, int(q.box[3]));
+              if (x1 - x0 < 4 || y1 - y0 < 4) continue;
+              std::vector<uint8_t> im2(size_t(x1 - x0) * (y1 - y0) * 3);
+              const uint32_t* bb = bits.data() + size_t(k) * maskWords(Dt);
+              for (int y = y0; y < y1; ++y)
+                for (int x = x0; x < x1; ++x) {
+                  const int i = int(std::floor((x + 0.5f - Dt.mask_ox) / Dt.mask_sx)), j = int(std::floor((y + 0.5f - Dt.mask_oy) / Dt.mask_sy));
+                  const size_t cc = size_t(std::clamp(j, 0, Dt.mask_h - 1)) * Dt.mask_w + size_t(std::clamp(i, 0, Dt.mask_w - 1));
+                  const bool in = (bb[cc >> 5] >> (cc & 31)) & 1u;
+                  for (int ch = 0; ch < 3; ++ch) im2[(size_t(y - y0) * (x1 - x0) + (x - x0)) * 3 + ch] = in ? rgb[(size_t(y) * S.w + x) * 3 + ch] : rgb[(size_t(y) * S.w + x) * 3 + ch] / 4;
+                }
+              char fn[256];
+              std::snprintf(fn, sizeof fn, "%s/t%07.2f_O%u.jpg", rdump, t, q.id);
+              rb::writeJpeg(fn, im2.data(), x1 - x0, y1 - y0, 85);
+            }
+          sm_set_object_embeddings(c, ids.data(), ze.data(), nr, SGC_DIM);
+        }
+      }
       if (!sg_out.empty()) rb::drain(c, cap);
       ++n_frames;
       t_end = t;
@@ -886,6 +1055,18 @@ int main(int argc, char** argv) {
     }
   }
   sm_snapshot_release(snap);
+  std::string apj = "null";
+  if (aprime) {   // A′ 진단 셈·다시 담기 시간(SigLIP 호출 = 검출 조각 + 통째)
+    int64_t a[16] = {0};
+    sm_get_aprime_stats(c, a);
+    const char* nm[13] = {"obs", "struct_wall_big", "struct_wall_name", "struct_ceiling", "struct_floor", "struct_det_name", "assoc", "new", "merge",
+                          "struct_object", "reenc_req", "reenc_done", "through_window"};
+    Obj o;
+    for (int k = 0; k < 13; ++k) o.num(nm[k], double(a[k]));
+    o.num("reenc_ms_per_det_frame", n_detf ? D.reenc_ms / n_detf : 0).num("siglip_crops_per_det_frame", n_detf ? double(D.n_enc_dets + D.n_reenc) / n_detf : 0)
+     .num("reenc_per_det_frame", n_detf ? double(D.n_reenc) / n_detf : 0);
+    apj = o.done();
+  }
   std::string labj = "{", evj = "{", stj = "{", sessj = "[", laj = "{";
   for (auto& [k, v] : by_label_all) laj += std::string(laj.size() > 1 ? "," : "") + jstr(k) + ":" + std::to_string(v);
   laj += "}";
@@ -907,7 +1088,7 @@ int main(int argc, char** argv) {
           .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
-          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
+          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("aprime", apj).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
           .num("yaw_rms_deg", yaw_rms * 180 / M_PI)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)
