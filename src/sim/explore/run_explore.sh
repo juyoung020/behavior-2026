@@ -7,6 +7,7 @@
 #   띄우고(--robot-config limo_omx_eval.yaml), move_robot 은 베이스만(팔 홈 자세·그리퍼 닫힘 유지, move_robot_limo.py),
 #   정답 자세·물체 기록(SGRT_GT_LOG=<out>/gt_poses.csv, .objects.json)·poses.csv·pose_diag.json 기본 켬. 가까운 자르기는
 #   robot-agent 391c04b 부터 eval_with_limo.py 가 0.05 m 로 둔다(옛 자산이면 LIMO_NEAR_CLIP, 기본 0.05 까지만 올림).
+#   libmove_robot 몸 크기는 MOVE_ROBOT_FOOTPRINT=limo_omx(기본, 바꾸려면 rect:LxW·circle:R). R1 은 설정 안 함(원 0.37 그대로).
 set -u
 POL=$1; TASK=$2; TAG=${3:-}; shift 3 2>/dev/null || shift $#
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -26,6 +27,7 @@ if [ "$ROBOT" = limo_omx ]; then
   ROBOT_ARGS=(--robot limo_omx --limo-shim "${LIMO_SHIM:-$OGDIR/eval_with_limo.py}")
   EVAL_ROBOT=(--robot-config "$OGDIR/limo_omx_eval.yaml")
   export SGRT_ROBOT=limo_omx SGRT_GT_LOG=${SGRT_GT_LOG:-$OUT/gt_poses.csv}
+  export MOVE_ROBOT_FOOTPRINT=${MOVE_ROBOT_FOOTPRINT:-limo_omx}   # libmove_robot 몸통: LIMO 0.36 × 0.22 m 사각형(R1 은 원 0.37)
 fi
 PORT=${PORT:-8771}
 MAXSTEPS=${MAXSTEPS:-27000}

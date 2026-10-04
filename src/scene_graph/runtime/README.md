@@ -64,7 +64,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_SM_CONFIG='<json>'` | `sm_create` 의 config_json 그대로(`robot`·`odom`·`grip_closed`, `../scenemap/README.md` LIMO 절). `SGRT_ROBOT` 보다 먼저 |
 | `sgrt_set_robot(s, 1)` | 만든 뒤 바꾸기(지도·물체 비움). `sgrt_begin` 앞에서. `sgrt_get_robot`·`sgrt_proprio_dim` 으로 확인 |
 
-모르는 로봇·틀린 json 이면 `sgrt_create` 가 NULL(err 에 까닭). LIMO 면 `sgrt_step` 의 proprio 는 12 f32(`SM_LIMO_*`), 영상은 몸통 앞 깊이 카메라(scenemap cam 0 = `depth_link`)와 그 내부 파라미터다. `sgrt_step` 은 영상 하나만 받으므로 손목 카메라(cam 1, 깊이 없음)는 넘기지 않는다(지도에도 안 씀).
+모르는 로봇·틀린 json 이면 `sgrt_create` 가 NULL(err 에 까닭). LIMO 면 `sgrt_step` 의 proprio 는 12 f32(`SM_LIMO_*`), 영상은 몸통 앞 깊이 카메라(scenemap cam 0 = `depth_camera_lens_optical_frame`, 렌즈)와 그 내부 파라미터다. `sgrt_step` 은 영상 하나만 받으므로 손목 카메라(cam 1, 깊이 없음)는 넘기지 않는다(지도에도 안 씀).
 
 **글루(`SceneMemory`)** 가 로봇을 정하는 순서: 인자 `robot_model=` → `SGRT_ROBOT` → 시뮬 로봇의 `robot.model`(`limo_omx`) → 첫 스텝 관측에 `:eyes:Camera:0` 이 있으면 LIMO 로 바꿈(`sgrt_set_robot`). R1 이면 아무것도 안 바꾼다.
 
@@ -92,11 +92,13 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | 몸통·팔 집어넣기(tuck), 머리 카메라 기울기 = 몸통 관절 유지 | 없음(카메라 몸통 고정). 베이스 아닌 `part` 호출은 move_robot 에 안 가고 오류로 답함 |
 | 머리 카메라 `zed_link`, 고정 HEAD_K | 글루가 `eyes` 카메라·센서 내부 파라미터(위 표) |
 | 정답 기록 끔 | `SGRT_GT_LOG=<out>/gt_poses.csv` 기본(+ `.objects.json` 정답 물체), `<out>/poses.csv`(keyframe 마다 정답 world·map 틀 자세 ↔ slam 자세), `<out>/pose_diag.json`(sgrt_get_pose_diag, 약 1 초마다 — 평가기가 close 전에 끝나므로) |
-| 몸통 사각형 0.55 × 0.52 m(libmove_robot `nav.rs` Footprint, 고정) | **그대로** — LIMO(base_link 0.30 × 0.32 m)보다 커서 보수적. 좁은 길은 못 감(고치려면 libmove_robot 에 로봇별 footprint) |
+| 몸통(libmove_robot `nav.rs` Footprint, R1 원 0.37 m · 계획 부풀림 0.40) | **LIMO 사각형 0.36 × 0.22 m**(시뮬 충돌 모양: 몸통 0.322, 바퀴 폭 0.217, 홈 자세 팔이 뒤로 0.18 m 까지 → 대칭), 부풀림 = 외접원 0.211 + 0.03 = 0.241 m. `MOVE_ROBOT_FOOTPRINT=limo_omx`(run_explore.sh 가 LIMO 일 때 기본으로 넣음, `rect:LxW`·`circle:R` 도 됨). 없으면 R1 그대로 |
 
 그 밖: `MOVE_ROBOT_LIB` 기본 = `$ROBOT_AGENT/src/agent/tools/move_robot/target/release/libmove_robot.so`, 정답 바닥 지도는 `src/sim/explore/gt` 가 없으면 `~/behavior-2026/src/sim/explore/gt`(서브모듈 안에서는 둘 다 같은 경로). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). R1(`SGRT_ROBOT` 없음·r1pro)은 바뀐 것 없음.
 
 **LIMO 탐색 결과**(10-04, turning_on_radio 인스턴스 0 = house_double_floor_lower, headless, frontier, `SGRT_POSE=slam`, robot-agent 391c04b 자산 — `LIMO_NEAR_CLIP` 우회 안 씀(이미 0.05), 엔진 기본 yoloe-11l): `no_frontier` 로 끝, go_to 5 번, 시뮬 58.4 s(벽 62 s). 경로 정답 13.1 m(move_robot `path_m` 11.0 — base_qvel 적분, 약 16 % 짧음), 빈칸 53.3 m², 닿을 수 있는 정답 바닥의 88.7 %. slam ↔ 정답 keyframe 291 개 rms 3.1 cm / 0.26°, 최대 5.3 cm / 0.66°, 끝 4.1 cm / 0.49°. 막힘·멈춤·접촉 0, 최소 여유 0.10 m. 지도: 빈칸의 90 % 가 정답 바닥, 점유 칸의 96 % 가 정답 비바닥 ±10 cm 안. 물체 16 개 모두 정답 물체 AABB 10 cm 안, 범주로 보면 13 개 맞음(radio·sofa·shelf·coffee/breakfast table·조명), 3 개 틀림(lamp→stairs, picture frame→hall_tree, radio receiver→downlight). 같은 조건 R1 확인 판: 16.6 m·56.5 m²·90.3 %·67 s.
+
+**LIMO 탐색 결과 2**(10-04, 같은 조건 + 렌즈 프레임 cam 0(scenemap FK = OmniGibson eyes, 차 2.6e-7 m), eyes 수평 화각 67.9°(Dabai 깊이, fx 534.7 @ 720), move_robot 몸 0.36 × 0.22 m(`MOVE_ROBOT_FOOTPRINT=limo_omx`), path_m 고침): `no_frontier`, go_to 15 번, 시뮬 157.4 s(벽 183 s). move_robot `path_m` 38.35 m 대 정답 38.15 m(+0.5 %, 전 −16 %). 빈칸 59.2 m², 정답 바닥의 95.0 %. slam ↔ 정답 keyframe 786 개 rms 9.9 cm / 0.30°, 최대 12.6 cm / 1.75°, 끝 11.2 cm / 0.43°(경로가 3 배 길고 화각이 좁아짐). 막힘·멈춤·접촉 0, 최소 여유 0.05 m. 판: `outputs/explore_20261004_100358_turning_on_radio_frontier_limo`.
 
 **R1 회귀**(10-04): 바꾸기 전(7219187)과 뒤의 libsgrt 를 `sgrt_replay` 로 같은 기록 3 개(`mem_pose_slam_*`, `mem_pose_gt_move*`, 엔진 yolo26s-seg) × 자세 모드 3 개(slam·gt·odom)에 굴려(`SGRT_SAVE_SYNC=1`) 저장 디렉터리 전부(map.pgm·scene.json·view.json·물체 PNG/PLY)와 keyframe 자세 CSV 가 바이트까지 같음 — `SGRT_ROBOT` 없음, `SGRT_ROBOT=r1pro` 둘 다. `sm_bench --save --traj` 9 개도 같음.
 

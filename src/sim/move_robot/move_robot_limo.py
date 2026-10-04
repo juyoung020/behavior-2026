@@ -12,6 +12,11 @@ so for LIMO this adapter runs it unchanged and translates bytes on both sides:
               gripper_0 [8] = -1 (closed = home)
     calls   : only part "base" reaches move_robot; any other part gets an error (the LIMO arm is not driven by explore)
 
+Odometry check (10-04, headless probe, turning_on_radio): LIMO base_qvel (base frame, vx/vy/wz) integrated at 1/30 s matches the
+GT base motion within 1 % (3.00 m vs 2.98 m, 172 vs 171 deg over forward / spin / arc / reverse), so this adapter passes it
+unchanged. The ~16 % short path_m of earlier runs was libmove_robot dropping the distance of the step after every map update
+(1 of 6 keyframe steps), fixed in robot-agent move_robot (NavState::integrate).
+
 Slots come from the sim robot (controller_action_idx, _proprio_obs), not hard-coded, with the yaml order as fallback.
 The R1 path (move_robot_sim.MoveRobotPolicy) is not touched.
 """
