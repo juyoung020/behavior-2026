@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <cmath>
 #include <string>
 #include <tuple>
@@ -180,7 +181,10 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"ap_link_cos", &p->ap.link_cos, nullptr, nullptr},  {"ap_whole_w", &p->ap.whole_w, nullptr, nullptr},
                     {"ap_export_named", nullptr, nullptr, &p->ap.export_named},  {"ap_guard_obj", &p->ap.guard_obj, nullptr, nullptr},
                     {"ap_guard_obs", &p->ap.guard_obs, nullptr, nullptr},  {"ap_geo_w", &p->ap.geo_w, nullptr, nullptr},
-                    {"ap_name_veto", &p->ap.name_veto, nullptr, nullptr},  {"ap_through_d", &p->ap.through_d, nullptr, nullptr},  {"ap_bridge_max", &p->ap.bridge_max, nullptr, nullptr},  {"ap_frame_group", nullptr, nullptr, &p->ap.frame_group},  {"ap_struct_obj_min_views", nullptr, &p->ap.struct_obj_min_views, nullptr}};
+                    {"ap_name_veto", &p->ap.name_veto, nullptr, nullptr},  {"ap_through_d", &p->ap.through_d, nullptr, nullptr},  {"ap_bridge_max", &p->ap.bridge_max, nullptr, nullptr},  {"ap_frame_group", nullptr, nullptr, &p->ap.frame_group},  {"ap_struct_obj_min_views", nullptr, &p->ap.struct_obj_min_views, nullptr},
+                    {"ap_plane_inl", &p->ap.plane_inl, nullptr, nullptr},  {"ap_obj_plane_inl", &p->ap.obj_plane_inl, nullptr, nullptr},  {"ap_ransac_tau0", &p->ap.ransac_tau0, nullptr, nullptr},
+                    {"ap_ransac_tau_k", &p->ap.ransac_tau_k, nullptr, nullptr},  {"ap_obj_tau", &p->ap.obj_tau, nullptr, nullptr},
+                    {"ap_ransac_iters", nullptr, &p->ap.ransac_iters, nullptr}};
   std::string s(e);
   size_t a = 0;
   while (a < s.size()) {
@@ -613,8 +617,14 @@ void ObjectMap::update(const ObjFrame& f) {
     const int nc = int(o.cxyz.size() / 3);
     if (nc < 8) return false;
     const ApParams& A = p_.ap;
-    const ApPlane pl = apPlaneFit(o.cxyz.data(), nc);
-    if (!pl.ok || pl.thick > A.plane_thick) return false;
+    double cen[3] = {0, 0, 0};
+    for (int i = 0; i < nc; ++i) for (int k = 0; k < 3; ++k) cen[k] += o.cxyz[size_t(3 * i + k)];
+    const double dc = std::hypot(cen[0] / nc - f.T_mc[3], cen[1] / nc - f.T_mc[7], cen[2] / nc - f.T_mc[11]);
+    const double tau = std::min(A.ransac_tau_max, A.ransac_tau0 + A.ransac_tau_k * dc * dc);
+    uint64_t sb;
+    std::memcpy(&sb, &f.stamp, 8);
+    const ApPlane pl = apPlaneFit(o.cxyz.data(), nc, tau, apSeed(sb, uint64_t(o.det)), A.ransac_iters);
+    if (!pl.ok || pl.inl < A.plane_inl || pl.thick > A.plane_thick) return false;
     const double nz = std::fabs(pl.n[2]);
     if (nz > A.horiz) {
       if (pl.zmed > 1.8) {   // 천장 높이 추정에 씀(정답 없이)
@@ -1348,10 +1358,11 @@ bool ObjectMap::apStructObject(MapObject& m) {
     thread_local std::vector<float> P;
     cloudSample(m, 800, &P);
     const int n = int(P.size() / 3);
-    const ApPlane pl = apPlaneFit(P.data(), n);
+    const ApPlane pl = apPlaneFit(P.data(), n, A.obj_tau, apSeed(m.id, m.cloud.version), A.ransac_iters);
     s.geo = 0;
     const double nz = std::fabs(pl.n[2]);
-    if (pl.ok && pl.thick < A.obj_thick) {
+    const bool plane = pl.ok && pl.inl >= A.obj_plane_inl;   // 지배 평면
+    if (plane && pl.thick < A.obj_thick) {
       if (nz < A.wall_vert && (pl.hspan >= A.obj_wall_span || (pl.zhi >= A.obj_wall_top && pl.zhi - pl.zlo >= A.obj_wall_h))) s.geo = 1;
       else if (nz > A.horiz && pl.zmed > A.ceil_z) s.geo = 2;
     }
@@ -1362,7 +1373,7 @@ bool ObjectMap::apStructObject(MapObject& m) {
       if (up >= A.ceil_frac * n && std::max(m.hi[0] - m.lo[0], m.hi[1] - m.lo[1]) >= A.ceil_wide) s.geo = 2;
     }
     // 벽 선 위 아주 얇은 평면(문짝·창유리)
-    if (!s.geo && pl.ok && pl.thick < A.obj_flat_thick && nz < A.wall_vert && !wsegs_.empty() && n > 0) {
+    if (!s.geo && plane && pl.thick < A.obj_flat_thick && nz < A.wall_vert && !wsegs_.empty() && n > 0) {
       int near = 0;
       for (int i = 0; i < n; ++i) {
         double dm = 1e9;

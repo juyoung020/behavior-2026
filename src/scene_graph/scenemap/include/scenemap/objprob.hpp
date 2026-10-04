@@ -76,7 +76,11 @@ struct ApParams {
   double reenc_min_vis = 0.5;     // 구름 점 중 지금 보이는(안 가린) 비율 하한
   int reenc_min_px = 24;          // 투영 마스크 넓이의 제곱근 하한(화소)
   // 기하 구조물
-  double plane_thick = 0.035;     // 평면 두께(가장 작은 고유값의 √) 상한 m
+  double plane_thick = 0.035;     // 평면 두께(안쪽 점 가장 작은 고유값의 √) 상한 m
+  // RANSAC 평면(apPlaneFit): 조각 안쪽 문턱 tau = ransac_tau0 + ransac_tau_k·d²(d = 카메라 → 조각 중심 m, 깊이 잡음), ransac_tau_max 까지.
+  // 합친 물체 구름은 obj_tau. 구조물 판정은 안쪽 비율 ≥ plane_inl(조각)·obj_plane_inl(합친 물체)(지배 평면)일 때만 — 소파·화분 같은 휜 것은 평면으로 안 읽음
+  double ransac_tau0 = 0.01, ransac_tau_k = 0.0025, ransac_tau_max = 0.05, obj_tau = 0.02, plane_inl = 0.8, obj_plane_inl = 0.92;
+  int ransac_iters = 64;
   double wall_vert = 0.30;        // 세운 평면: |법선 z| < 이것
   double wall_d = 0.12;           // 벽 선분까지 수평 거리 m
   double wall_frac = 0.6;         // 그 안 점 비율
@@ -143,13 +147,16 @@ struct ApState {
 };
 using ApStatePtr = std::shared_ptr<ApState>;
 
-// 점 구름 기하(PCA): 법선(가장 작은 고유 벡터), 두께 √λ3, 주축 폭(10~90 백분위), 중앙 높이
+// 점 구름 기하(RANSAC 평면): 세 점 가설로 가장 많은 점이 |거리| ≤ tau 인 평면을 찾고(적응 반복, 최대 max_iters — 시드로 재현),
+// 그 안쪽 점만으로 PCA 다시 맞춤. 법선·두께 √λ3·폭·높이는 안쪽 점 기준, inl = 안쪽 점 비율(지배 평면인지 — 휜 것은 낮음)
 struct ApPlane {
   double n[3] = {0, 0, 1};
   double thick = 1, span1 = 0, span2 = 0, zmed = 0, zlo = 0, zhi = 0, hspan = 0;   // hspan = 수평 폭(가장 긴 수평 방향)
+  double inl = 0;
   bool ok = false;
 };
-ApPlane apPlaneFit(const float* xyz, int n);
+ApPlane apPlaneFit(const float* xyz, int n, double tau, uint64_t seed, int max_iters = 64);
+uint64_t apSeed(uint64_t a, uint64_t b);   // 조각·물체 시드(시각 비트·번호 등을 섞음)
 
 // 벡터
 void apToF16(const float* in, uint16_t* out, int n);
