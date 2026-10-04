@@ -10,6 +10,7 @@ ROS 를 설치하지 않고 실제 로봇 bag 을 우리 파이프라인(ovdet �
 | `sgrec2stream.py` | sgrt 기록(`SGRT_RECORD` rec.bin, LIMO 시뮬 판) → 같은 스트림 폴더(RGB-D 5 Hz·바퀴 오도메트리 30 Hz·정답 베이스 자세, `T_bc` = 시뮬 정답 카메라 자세, `gt_objects.json`) — 같은 시뮬 프레임을 여러 검출기로 |
 | `detcmp_run.sh` · `detcmp_eval.py` | 검출기 비교: 한 검출기를 slam·gt 자세로(검출은 한 번, gt 판은 캐시), 판마다 프로세스 GPU 최대. 채점 = 정답 물체(보인 것만, 짝·중복·이름·크기별 재현율·구조물 위 헛것), 벽(scenemap `walls.csv` 와 sgview `/api/walls`), 점유(정답 바닥 지도) |
 | `realbag_run --objprob` | 확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드"): FastSAM-s + SigLIP 2 조각 임베딩을 scenemap 에 주고(`sm_set_det_embeddings`), 통째 다시 담기 요청을 SigLIP 2 로 돌려줌. 배경 낱말(계단·문틀·창틀·덤불 → 구조물 쪽, `kVocabAp`)·라벨 크기 사전·상위어(`kApLabels`). `--label-prior label_prior.json`(아래 맞추기가 정답 없이 잰 라벨 사전). 검출 캐시는 RBD2(검출마다 임베딩 FP16 — `--load` 로 GPU 없이 objprob 를 다시 돌림, 통째 다시 담기만 GPU). `--engine` 으로 다른 FastSAM 엔진 |
+| `realbag_run --inspect` | 살펴본 정도(scenemap README "살펴본 정도", `sm_set_inspect`): `memory/view.json`·`scene.json` 물체에 `inspect`(가장 가까이 본 거리·본 시점 수·윗면 본 비율). `metrics.json` 에 `objmap_us`(objmap 단계 평균 µs/검출 keyframe)·`inspect` |
 | `objprob_fit.py` | (오프라인) objprob 맞추기: RBD2 캐시 + 깊이·정답 자세 + 정답 물체 → κ(모습 품질), 같은 것 로지스틱(관측↔물체, 물체↔물체, 문턱 표·작은 것↔가구·같은 종류 이웃 거짓 같음), 라벨 사전(정답 없이 EM), 기하 구조물 표. 사람이 objprob.hpp 기본값으로 옮김 |
 | `objprob_eval.py` | `detcmp_eval.py` 표 + 잘못 합침(노드 점 구름이 서로 다른 정답 둘 이상 — 작은 것+가구 / 같은 종류 이웃), 문·창·계단(찾음·맞는 이름·물체 이름 노드), 글 질의 R@1(μ·모습·이름) |
 | `sgs_play.cpp` | 기록한 `stream.sgs` 를 벽시계에 맞춰 sgview(`--ingest`)로: 자세 60 Hz 보간, 지도·요약은 기록 그대로. `--rate`·`--loop` |

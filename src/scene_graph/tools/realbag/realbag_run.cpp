@@ -20,6 +20,7 @@
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
 //     --objprob                 확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기
 //     --label-prior f.json     objprob 라벨 log 사전(objprob_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
+//     --inspect                살펴본 정도(scenemap README "살펴본 정도") — memory/view.json·scene.json 물체에 "inspect", metrics.json objmap_us
 //
 // 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv(노드 전부, structural 열), walls.csv(scenemap 벽 선분),
 //   events.csv(새 물체·사라짐·옮겨짐·지움, 판 번호), metrics.json(ATE·지도·물체 수), stdout 요약.
@@ -535,7 +536,7 @@ int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose slam|odom|gt] "
                          "[--det fastsam|yoloe|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
-                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]]\n");
+                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]] [--inspect]\n");
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
@@ -548,6 +549,7 @@ int main(int argc, char** argv) {
   float max_depth = 4.0f;
   float conf = 0.25f;
   std::string label_prior;   // objprob 라벨 사전(objprob_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
+  bool inspect = false;   // 살펴본 정도(scenemap README "살펴본 정도", sm_set_inspect) — view.json·scene.json objects[].inspect
   bool objprob = false;   // 확률 물체 모델(objprob)(FastSAM + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기)
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
@@ -558,7 +560,7 @@ int main(int argc, char** argv) {
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
     else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
-    else if (a == "--objprob") objprob = true; else if (a == "--label-prior") label_prior = nx();
+    else if (a == "--objprob") objprob = true; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true;
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -642,6 +644,7 @@ int main(int argc, char** argv) {
     sm_set_label_stats(c, label_prior.empty() ? nullptr : lpri.data(), mu.data(), sd.data(), par.data(), nl, D.labelId("object"));
     sm_set_object_model(c, 1);
   }
+  if (inspect) sm_set_inspect(c, 1);
   sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
   sm_set_cam_extrinsic(c, 0, streams[0].T_bc);
   const bool limo = robot == "limo_omx";
@@ -1082,13 +1085,20 @@ int main(int argc, char** argv) {
   auto ateJ = [](const Ate& a) { return Obj().num("rms", a.rms).num("mean", a.mean).num("max", a.max).num("final", a.final).num("n", a.n).done(); };
   std::string snames;
   for (auto& s : streams) snames += (snames.empty() ? "" : ",") + s.name;
+  double objmap_us = 0;   // scenemap objmap 단계 평균 µs/검출 keyframe
+  {
+    sm_stage_timing tm[32];
+    const int nt = sm_get_timing(c, tm, 32);
+    for (int i = 0; i < std::min(nt, 32); ++i)
+      if (std::string(tm[i].name) == "objmap") objmap_us = tm[i].mean_us;
+  }
   const std::string metrics =
       Obj().str("streams", snames).str("robot", robot).str("pose", pose).str("det", D.mode == "load" ? "load:" + load_path : D.mode)
           .str("namer", D.namer).str("engine", D.engine_path).num("det_gpu_mb", double(D.deviceBytes()) / 1048576.0)
           .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
-          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
+          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
           .num("yaw_rms_deg", yaw_rms * 180 / M_PI)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)
