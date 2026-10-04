@@ -1,7 +1,7 @@
-"""A′ 맞추기(오프라인, 시뮬 정답): realbag_run 검출 캐시(RBD2 — 검출마다 SigLIP 2 임베딩) + 스트림 깊이·정답 자세 + 정답 물체로
-scenemap A′ 의 매개변수를 잰다. 결과는 사람이 objprob.hpp ApParams·KappaParams 기본값에 옮긴다(자동으로 고치지 않음).
+"""objprob 맞추기(오프라인, 시뮬 정답): realbag_run 검출 캐시(RBD2 — 검출마다 SigLIP 2 임베딩) + 스트림 깊이·정답 자세 + 정답 물체로
+scenemap 확률 모드(objprob) 의 매개변수를 잰다. 결과는 사람이 objprob.hpp ApParams·KappaParams 기본값에 옮긴다(자동으로 고치지 않음).
 
-    python aprime_fit.py <stream dir> <dets.gz(RBD2)> <out dir> [--walls walls.csv --metrics metrics.json]
+    python objprob_fit.py <stream dir> <dets.gz(RBD2)> <out dir> [--walls walls.csv --metrics metrics.json]
 
 1. 관측: 검출 마스크 × 깊이(3 화소 간격) → 정답 자세로 world 점, 마스크 안 깊이 중앙값 ± max(3·1.4826·MAD, 0.1) 밖 버림.
    정답 짝 = 점의 50 % 이상이 들어간(3 cm 넓힌) 정답 상자 중 비율이 가장 큰 것(같으면 부피 작은 것). 없으면 '없음'.
@@ -213,12 +213,12 @@ def feats(alo, ahi, apos, Pa, keys, blo, bhi, bpos, cos, cos0):
     return f
 
 
-def vocab_text(labels_dir, aprime=True):
+def vocab_text(labels_dir, objprob=True):
     """realbag_run.cpp 의 kVocab(+ kVocabAp) 글 → (라벨 이름들, 글 임베딩 rows × 768, 줄 → 라벨 번호)"""
     import re
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'realbag_run.cpp')).read()
     blk = src[src.index('const Word kVocab[] = {'):src.index('constexpr int32_t kDumpMagic')]
-    if not aprime:
+    if not objprob:
         blk = blk[:blk.index('const Word kVocabAp[]')]
     words = re.findall(r'\{"([^"]+)", "([^"]+)"\}', blk)
     row = {}

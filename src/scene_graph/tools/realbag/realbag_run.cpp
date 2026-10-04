@@ -18,8 +18,8 @@
 //     --snap-at t1,t2,…        그 시각(스트림 초)에 기억 저장(<out>/snap_<t>/ — 손 확인용)
 //     --max-depth M            이보다 먼 깊이는 버림(기본 4 m — RealSense D435·Kinect 잡음, 시뮬은 8 m)
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
-//     --aprime                 A′ 물체 모델(scenemap README "A′") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기
-//     --label-prior f.json     A′ 라벨 log 사전(aprime_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
+//     --objprob                 확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기
+//     --label-prior f.json     objprob 라벨 log 사전(objprob_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
 //
 // 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv(노드 전부, structural 열), walls.csv(scenemap 벽 선분),
 //   events.csv(새 물체·사라짐·옮겨짐·지움, 판 번호), metrics.json(ATE·지도·물체 수), stdout 요약.
@@ -74,7 +74,7 @@ const Word kVocab[] = {
     {"toolbox", "box"}, {"cable", "cable"}, {"router", "modem"}, {"modem", "modem"}, {"pole", "pole"},
 };
 
-// A′ 라벨 통계: 지도 이름 → 가장 긴 변(m)의 대표값·log 표준편차(크기 우도, 흔한 가구·물건 치수에서 손으로 — 이 장면 정답에서 맞추지 않음),
+// objprob 라벨 통계: 지도 이름 → 가장 긴 변(m)의 대표값·log 표준편차(크기 우도, 흔한 가구·물건 치수에서 손으로 — 이 장면 정답에서 맞추지 않음),
 // 상위어(이름 사후가 낮을 때 올라갈 곳). 상위어 라벨(furniture …)과 "object" 는 낱말 줄이 없어 직접 이름이 되지 않는다
 struct ApLabel { const char* label; float size, sd; const char* parent; };
 const ApLabel kApLabels[] = {
@@ -99,7 +99,7 @@ const ApLabel kApLabels[] = {
     {"cable", 1.0f, 1.0f, nullptr}, {"pole", 1.8f, 0.5f, nullptr},
 };
 
-// A′ 만 더하는 배경 낱말(구조물 쪽): FastSAM 조각은 계단 디딤판·문틀·창 밖 덤불이 많은데 원래 어휘에는 그 말이 없어 book·curtain·plant 로
+// objprob 만 더하는 배경 낱말(구조물 쪽): FastSAM 조각은 계단 디딤판·문틀·창 밖 덤불이 많은데 원래 어휘에는 그 말이 없어 book·curtain·plant 로
 // 불렸다. 물체 낱말은 더하지 않음(A/B/C 와 같은 물체 어휘 — 이름 정확도를 같은 표로 비교). "outdoors" = 창·유리문 너머 바깥(구조물 종류)
 const Word kVocabAp[] = {
     {"stair", "staircase"}, {"stairway", "staircase"}, {"steps", "staircase"}, {"handrail", "railing"}, {"doorcase", "door"},
@@ -271,8 +271,8 @@ struct Detector {
   std::vector<int> text_cls;         // siglip 이름: 글 줄 → labels 번호
   std::vector<float> text;           // siglip: 글 임베딩
   std::vector<int32_t> cls;
-  bool aprime = false;               // A′: 배경 낱말(kVocabAp)도 글 표에
-  std::vector<float> emb;            // siglip: 검출마다 SigLIP 2 마스크 임베딩(n × SGC_DIM, L2 정규화) — A′ 물체 모델이 씀
+  bool objprob = false;               // objprob: 배경 낱말(kVocabAp)도 글 표에
+  std::vector<float> emb;            // siglip: 검출마다 SigLIP 2 마스크 임베딩(n × SGC_DIM, L2 정규화) — 확률 물체 모델(objprob)이 씀
   double det_ms = 0, clip_ms = 0;
   int n_calls = 0;
 
@@ -330,7 +330,7 @@ struct Detector {
     if (namer != "siglip") { std::fprintf(stderr, "naming: engine classes -> %zu labels\n", labels.size()); return true; }
     return initSiglip(clip_plan, labels_dir);
   }
-  // SigLIP 2 이름(세 검출기 모두 같은 글 표·같은 라벨 표): 마스크 조각 임베딩 · 글 임베딩 최댓값. A′ 는 검출 캐시(--load)여도 부름(통째 다시 담기·글 모델)
+  // SigLIP 2 이름(세 검출기 모두 같은 글 표·같은 라벨 표): 마스크 조각 임베딩 · 글 임베딩 최댓값. objprob 는 검출 캐시(--load)여도 부름(통째 다시 담기·글 모델)
   bool initSiglip(const std::string& clip_plan, const std::string& labels_dir) {
     char err[2048] = {0};
     sgc_config cc;
@@ -343,7 +343,7 @@ struct Detector {
     std::vector<float> e(SGC_DIM);
     std::string missing;
     std::vector<Word> words(std::begin(kVocab), std::end(kVocab));
-    if (aprime) words.insert(words.end(), std::begin(kVocabAp), std::end(kVocabAp));
+    if (objprob) words.insert(words.end(), std::begin(kVocabAp), std::end(kVocabAp));
     for (const Word& w : words) {
       const int row = sgc_labels_find(lt, w.text);
       if (row < 0 || sgc_labels_text_emb(lt, row, e.data()) != 0) { missing += std::string(" '") + w.text + "'"; continue; }
@@ -358,7 +358,7 @@ struct Detector {
                  sgc_labels_sha(lt), missing.c_str());
     return true;
   }
-  // A′ 통째 다시 담기: 요청 마스크(검출 마스크 격자 배치)로 SigLIP 2. 결과 emb(n × SGC_DIM, 요청 순서)
+  // objprob 통째 다시 담기: 요청 마스크(검출 마스크 격자 배치)로 SigLIP 2. 결과 emb(n × SGC_DIM, 요청 순서)
   double reenc_ms = 0;
   long n_reenc = 0, n_enc_dets = 0;
   bool encodeMasks(const std::vector<uint8_t>& rgb, int W, int H, double stamp, const sm_detections& Dm, const sm_reenc_req* rq,
@@ -535,7 +535,7 @@ int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose slam|odom|gt] "
                          "[--det fastsam|yoloe|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
-                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--aprime [--label-prior f.json]]\n");
+                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]]\n");
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
@@ -547,8 +547,8 @@ int main(int argc, char** argv) {
   double rate = 1.0, gap = 5.0, save_s = 1.0;
   float max_depth = 4.0f;
   float conf = 0.25f;
-  std::string label_prior;   // A′ 라벨 사전(aprime_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
-  bool aprime = false;   // A′ 물체 모델(FastSAM + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기)
+  std::string label_prior;   // objprob 라벨 사전(objprob_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
+  bool objprob = false;   // 확률 물체 모델(objprob)(FastSAM + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기)
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     auto nx = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -558,7 +558,7 @@ int main(int argc, char** argv) {
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
     else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
-    else if (a == "--aprime") aprime = true; else if (a == "--label-prior") label_prior = nx();
+    else if (a == "--objprob") objprob = true; else if (a == "--label-prior") label_prior = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -580,7 +580,7 @@ int main(int argc, char** argv) {
 
   // 검출
   Detector D;
-  D.aprime = aprime;
+  D.objprob = objprob;
   std::vector<DumpReader> dr;   // 판마다 하나(--load a.gz,b.gz,…). 이름 표는 모두 같아야 함
   if (!load_path.empty()) {
     std::stringstream ss(load_path);
@@ -597,7 +597,7 @@ int main(int argc, char** argv) {
   } else if (!D.init(det_mode, engine, clip_plan, labels_dir, conf, namer)) {
     return 1;
   }
-  if (aprime) {
+  if (objprob) {
     if (!D.enc && !D.initSiglip(clip_plan, labels_dir)) return 1;
     for (const ApLabel& a : kApLabels) D.labelId(a.label);   // 상위어 라벨(furniture …)·object 를 표에 더함
   }
@@ -619,7 +619,7 @@ int main(int argc, char** argv) {
     for (auto& l : D.labels) lp.push_back(l.c_str());
     sm_set_labels(c, lp.data(), int(lp.size()));
   }
-  if (aprime) {   // A′: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어
+  if (objprob) {   // objprob: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어
     sm_set_text_model(c, D.text.data(), D.text_cls.data(), int32_t(D.text_cls.size()), SGC_DIM, 111.83257f, -16.766876f);
     const int nl = int(D.labels.size());
     std::vector<float> mu(size_t(nl), 0.f), sd(size_t(nl), 0.f);
@@ -629,7 +629,7 @@ int main(int argc, char** argv) {
       if (a.size > 0) { mu[size_t(l)] = std::log(a.size); sd[size_t(l)] = a.sd; }
       if (a.parent) par[size_t(l)] = D.labelId(a.parent);
     }
-    if (int(D.labels.size()) != nl) { std::fprintf(stderr, "aprime: label table grew\n"); return 1; }
+    if (int(D.labels.size()) != nl) { std::fprintf(stderr, "objprob: label table grew\n"); return 1; }
     std::vector<float> lpri(size_t(nl), -std::log(float(nl)));   // 표에 없는 라벨은 고른 사전 1/n
     if (!label_prior.empty()) {
       const std::string js = slurp(label_prior);
@@ -775,13 +775,13 @@ int main(int argc, char** argv) {
         if (have_det) { Dt.stamp = t; Dt.cam = 0; ++n_detf; n_dets += Dt.n; }
       }
       sm_image im{t, 0, S.w, S.h, kf ? rgba.data() : nullptr, dm.data(), S.fx, S.fy, S.cx, S.cy};
-      if (aprime && have_det) {
+      if (objprob && have_det) {
         const std::vector<float>& E = D.mode == "load" ? dr[si].emb : D.emb;
         if (E.size() == size_t(Dt.n) * SGC_DIM) sm_set_det_embeddings(c, E.data(), Dt.n, SGC_DIM);
-        else if (Dt.n > 0) { std::fprintf(stderr, "aprime: no embeddings in this dump (needs RBD2 from a siglip run)\n"); return 1; }
+        else if (Dt.n > 0) { std::fprintf(stderr, "objprob: no embeddings in this dump (needs RBD2 from a siglip run)\n"); return 1; }
       }
       sm_push_image_rgb(c, &im, have_det ? &Dt : nullptr, nullptr);
-      if (aprime && have_det) {   // 통째 다시 담기: 합친 물체·더 좋은 모습을 구름 투영 마스크로 SigLIP 2
+      if (objprob && have_det) {   // 통째 다시 담기: 합친 물체·더 좋은 모습을 구름 투영 마스크로 SigLIP 2
         const sm_reenc_req* rq = nullptr;
         const uint32_t* rb = nullptr;
         const int nr = sm_reencode_requests(c, &rq, &rb);
@@ -1056,9 +1056,9 @@ int main(int argc, char** argv) {
   }
   sm_snapshot_release(snap);
   std::string apj = "null";
-  if (aprime) {   // A′ 진단 셈·다시 담기 시간(SigLIP 호출 = 검출 조각 + 통째)
+  if (objprob) {   // objprob 진단 셈·다시 담기 시간(SigLIP 호출 = 검출 조각 + 통째)
     int64_t a[16] = {0};
-    sm_get_aprime_stats(c, a);
+    sm_get_objprob_stats(c, a);
     const char* nm[13] = {"obs", "struct_wall_big", "struct_wall_name", "struct_ceiling", "struct_floor", "struct_det_name", "assoc", "new", "merge",
                           "struct_object", "reenc_req", "reenc_done", "through_window"};
     Obj o;
@@ -1088,7 +1088,7 @@ int main(int argc, char** argv) {
           .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
-          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("aprime", apj).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
+          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
           .num("yaw_rms_deg", yaw_rms * 180 / M_PI)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)

@@ -1,6 +1,6 @@
-// scenemap A′ 물체 모델(10-05) — FastSAM 조각 + SigLIP 2 임베딩을 이름 없이 묶고, 물체마다 확률 모델을 둔다.
+// scenemap 확률 물체 모델(objprob)(10-05) — FastSAM 조각 + SigLIP 2 임베딩을 이름 없이 묶고, 물체마다 확률 모델을 둔다.
 //
-// 흐름(objmap.cpp ObjectMap::update, ObjParams::aprime 일 때만 — 끄면 옛 이름 기준 규칙 그대로):
+// 흐름(objmap.cpp ObjectMap::update, ObjParams::objprob 일 때만 — 끄면 옛 이름 기준 규칙 그대로):
 //   조각 → 기하 구조물 거르기(벽 선 위 세운 평면·천장 높이 수평면·바닥) → 이름 없는 같은 것 판정(가설 검정: 같은 물체 / 다른 물체의
 //   로그 우도비, 문턱 하나) → 합친 물체를 통째로 다시 담기(구름을 지금 영상에 투영한 마스크로 SigLIP — 호출자가 함) →
 //   이름 = 범주 사후 확률(문턱 아래면 상위어로) → 물체마다 벡터 저장(objects/O<id>_emb.f16·_views.f16)
@@ -15,7 +15,7 @@
 //   Σ w 가 name_wmax 를 넘으면 λ 로 눌러 과신을 막음. 최대 사후 ≥ name_tau 면 그 이름, 아니면 상위어(부모 라벨 아래 확률 합)가
 //   name_tau 를 넘는 가장 낮은 것, 그것도 아니면 "object"(라벨 표에 있으면). 엔트로피 = 이름 불확실성. 이름은 다시 셀 수 있는 캐시.
 // 같은 것(로그 우도비): logit P(같음) = b0 + w_contact·접촉 + w_gap·틈 + w_cdist·중심 거리 + w_cos·cos + w_ov·겹침 + w_support·받침
-//   (특징 정의는 apPairFeatures). 가중치는 tools/aprime_fit.py 가 시뮬 정답 쌍(같은 정답 물체 / 다른 것)으로 맞춘 로지스틱 회귀 —
+//   (특징 정의는 apPairFeatures). 가중치는 tools/objprob_fit.py 가 시뮬 정답 쌍(같은 정답 물체 / 다른 것)으로 맞춘 로지스틱 회귀 —
 //   판별 모델의 로짓 = 로그 우도비 + 로그 사전 비. P ≥ same_p 면 같은 것.
 #pragma once
 #include <array>
@@ -42,15 +42,15 @@ struct ApText {
 
 struct ApParams {
   // 같은 것(로지스틱): 특징 순서 = ApPair::f
-  // 관측 ↔ 물체(w)와 물체 ↔ 물체(병합, wm) 따로 맞춤(aprime_fit.py, radio r3 정답 쌍 — fit.json). 받침(작은 것이 큰 것 윗면에
+  // 관측 ↔ 물체(w)와 물체 ↔ 물체(병합, wm) 따로 맞춤(objprob_fit.py, radio r3 정답 쌍 — fit.json). 받침(작은 것이 큰 것 윗면에
   // 놓임)은 특징이면서 막기 규칙: 받침이면 같은 것이 아님(받침은 크기 비 < 0.6 일 때만이라 '같은 크기 종류'가 아님)
   // 문턱: fit.json 문턱 표(관측 0.6: 참 11179·거짓 1710 / 병합 0.7: 참 36·거짓 5)에서 시작해 radio r3 slam 판 끝까지 채점으로 고름
-  // (aprime_eval: 0.5/0.8·0.6/0.7·0.7/0.8 … 중 찾음·중복·잘못 합침 균형 — README "A′ 잰 값")
+  // (objprob_eval: 0.5/0.8·0.6/0.7·0.7/0.8 … 중 찾음·중복·잘못 합침 균형 — README "확률 모드" 잰 값)
   double same_p = 0.6, merge_p = 0.7;
   double w[8] = {-5.116, 4.553, -4.976, 0.376, 8.814, 1.824, -0.186, 0.0};    // b0, contact, gap, cdist, cos − cos0, ov, support, (예비)
   double wm[8] = {-4.265, 1.094, -3.378, 0.627, 8.823, 3.205, -2.500, 1.717};   // 마지막 = 이름 분포 겹침(바타차리야 − 0.5)
   // 구조물 막기: 물체의 구조물 사후 ≥ guard_obj 인데 관측(또는 상대 물체)의 구조물 확률 ≤ guard_obs 면 같은 것이 아님 — 벽 덩어리가
-  // 액자·벽난로·옷걸이를 삼키지 않게(aprime_fit: 액자 조각 구조물 확률 중앙 0.09, 벽 0.78)
+  // 액자·벽난로·옷걸이를 삼키지 않게(objprob_fit: 액자 조각 구조물 확률 중앙 0.09, 벽 0.78)
   double guard_obj = 0.6, guard_obs = 0.2;
   // 이름 충돌 막기: 관측(조각 하나)과 물체가 둘 다 확신하는 이름(≥ name_veto)이 다르고 한쪽이 다른 쪽의 상위어도 아니면 같은 것이 아님
   // (식탁에 붙은 의자 — 깊이로는 맞닿고 가려 섞임). 0 = 끔

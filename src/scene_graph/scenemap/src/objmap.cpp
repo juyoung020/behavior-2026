@@ -67,7 +67,7 @@ struct Obs {
   float score;
   double pos[3], ext[3], lo[3], hi[3];
   int n;
-  // A′
+  // objprob
   const float* z = nullptr;       // SigLIP 임베딩(검출 k)
   double kappa = 0;               // vMF 집중도(viewKappa)
   bool wall_like = false;         // 벽 선 위 세운 얇은 평면(작아서 구조물로 안 버린 것)
@@ -87,7 +87,7 @@ double segDist(double px, double py, const double* s) {
   return std::hypot(px - ax - u * dx, py - ay - u * dy);
 }
 
-// A′ 같은 것 특징(a = 관측 또는 작은 쪽 물체, b = 물체): a 의 점 표본 중 b 접촉 칸에 닿는 비율, 상자 틈, 중심 거리/크기, cos, 겹침, 받침
+// objprob 같은 것 특징(a = 관측 또는 작은 쪽 물체, b = 물체): a 의 점 표본 중 b 접촉 칸에 닿는 비율, 상자 틈, 중심 거리/크기, cos, 겹침, 받침
 ApPair pairFeatures(const double alo[3], const double ahi[3], const double apos[3], const float* apts, int na, const double blo[3],
                     const double bhi[3], const double bpos[3], const std::vector<uint64_t>& bidx, double cos, const ApParams& P,
                     bool merge = false) {
@@ -168,8 +168,8 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"merge_overlap", &p->merge_overlap, nullptr, nullptr},
                     {"grasp_check", nullptr, nullptr, &p->grasp_check},  {"self_pad", &p->self_pad, nullptr, nullptr},
                     {"self_mask", nullptr, nullptr, &p->self_mask},
-                    // A′(objprob.hpp ApParams — 앞에 ap_)
-                    {"aprime", nullptr, nullptr, &p->aprime},  {"ap_name_struct_skip", nullptr, nullptr, &p->ap_name_struct_skip},
+                    // objprob(objprob.hpp ApParams — 앞에 ap_)
+                    {"objprob", nullptr, nullptr, &p->objprob},  {"ap_name_struct_skip", nullptr, nullptr, &p->ap_name_struct_skip},
                     {"ap_same_p", &p->ap.same_p, nullptr, nullptr},  {"ap_merge_p", &p->ap.merge_p, nullptr, nullptr},
                     {"ap_gate", &p->ap.gate, nullptr, nullptr},  {"ap_name_tau", &p->ap.name_tau, nullptr, nullptr},
                     {"ap_name_wmax", &p->ap.name_wmax, nullptr, nullptr},  {"ap_size_w", &p->ap.size_w, nullptr, nullptr},
@@ -360,7 +360,7 @@ void ObjectMap::relink(double t) {
     if (t - n.first_seen > p_.link_window_s) continue;   // 오래 자리 잡은 새 물체는 더 잇지 않음
     for (const MapObject& m : objs_) {
       if (&m == &n || m.state != SM_GONE || !m.confirmed || m.held_by >= 0 || (!m.moved && int(m.n_obs) < p_.spurious_obs)) continue;
-      if (p_.aprime && m.ap && n.ap) {   // A′: 이름 대신 임베딩(μ 끼리 가장 잘 맞는 cos)
+      if (p_.objprob && m.ap && n.ap) {   // objprob: 이름 대신 임베딩(μ 끼리 가장 잘 맞는 cos)
         std::vector<float> mu;
         if (!apMu(*n.ap, &mu) || apCosMax(*m.ap, mu.data(), int(mu.size())) < p_.ap.link_cos) continue;
       } else if (m.cls != n.cls && !(p_.name_vote && (nameShare(m, n.cls) >= p_.name_share || nameShare(n, m.cls) >= p_.name_share))) continue;
@@ -581,14 +581,14 @@ void ObjectMap::update(const ObjFrame& f) {
   }
   const bool cam_steady = cam_w <= p_.move_max_cam_w;
   cam_w_ = cam_w;
-  const bool ap = p_.aprime;
-  // A′: 지난 keyframe 들의 구름이 쌓인 뒤 물체끼리 같은 것 판정(이름 없이) — 합친 물체를 이번 관측이 바로 받게 먼저
+  const bool ap = p_.objprob;
+  // objprob: 지난 keyframe 들의 구름이 쌓인 뒤 물체끼리 같은 것 판정(이름 없이) — 합친 물체를 이번 관측이 바로 받게 먼저
   if (ap) {
     if (f.wall_segs) wsegs_.assign(f.wall_segs, f.wall_segs + 4 * f.n_wall_segs);
     apMergePass(f.stamp);
   }
   const double cam6[6] = {T[3], T[7], T[11], T[2], T[6], T[10]};
-  // A′ 기하 구조물: 관측 점(복셀 후보)의 평면 맞춤 — 얇은 수평면이 천장 높이(ceil_z) 위면 천장, 바닥 높이면 바닥,
+  // objprob 기하 구조물: 관측 점(복셀 후보)의 평면 맞춤 — 얇은 수평면이 천장 높이(ceil_z) 위면 천장, 바닥 높이면 바닥,
   // 얇은 세운 평면의 점 wall_frac 이상이 벽 선분 wall_d 안이면 벽 선 위 평면: 크면(wall_big) 벽, 작으면 이 조각 하나의
   // 구조물(벽·문·창 …) 확률이 struct_p 이상일 때만 벽(벽에 건 액자·간판은 남김) — 남긴 것은 wall_like(벽 추출에서 자리를 안 지움)
   std::vector<uint8_t> smask, omask;   // 라벨이 지울 구조물(벽·바닥·천장 …) / 구조 물체(문·창·계단)
@@ -833,7 +833,7 @@ void ObjectMap::update(const ObjFrame& f) {
     obj_hit[b] = 1;
   }
   } else {
-    // A′: 이름 없이 관측마다 P(같은 물체) 가 가장 큰 물체(≥ same_p). 여러 조각이 한 물체에 붙을 수 있음(FastSAM 은 한 물체를
+    // objprob: 이름 없이 관측마다 P(같은 물체) 가 가장 큰 물체(≥ same_p). 여러 조각이 한 물체에 붙을 수 있음(FastSAM 은 한 물체를
     // 여러 마스크로 나눔) — 한 물체에 붙은 조각들은 첫(가장 큰) 조각에 합쳐 한 번 갱신. 접촉 ≥ 0.3 또는 P ≥ 0.2 인 물체는
     // '이번에 보임'(놓침으로 안 셈 — 조각 하나를 놓쳐도 물체는 보임)
     const ApParams& A = p_.ap;
@@ -1050,7 +1050,7 @@ void ObjectMap::update(const ObjFrame& f) {
     objs_.push_back(m);
     obj_hit.push_back(1);
     touched.push_back(1);
-    // A′: 같은 영상의 뒤 조각이 이 새 물체에 붙을 수 있게(아직 구름이 없으니 상자·임베딩으로만) — 앞 관측이 만든 새 물체도 후보
+    // objprob: 같은 영상의 뒤 조각이 이 새 물체에 붙을 수 있게(아직 구름이 없으니 상자·임베딩으로만) — 앞 관측이 만든 새 물체도 후보
     if (ap && p_.ap.frame_group)
       for (int b2 = a + 1; b2 < int(obs.size()); ++b2) {
         if (obs_to[b2] >= 0) continue;
@@ -1069,7 +1069,7 @@ void ObjectMap::update(const ObjFrame& f) {
       }
     event(f.stamp, objs_.back(), 0);
   }
-  // A′: 이번에 본 물체의 이름 사후를 다시(이름 = 다시 셀 수 있는 캐시, 벡터가 원본)
+  // objprob: 이번에 본 물체의 이름 사후를 다시(이름 = 다시 셀 수 있는 캐시, 벡터가 원본)
   if (ap)
     for (MapObject& m : objs_)
       if (m.ap && m.last_kf == f.stamp) apRename(m);
@@ -1143,7 +1143,7 @@ void ObjectMap::update(const ObjFrame& f) {
       if (!ev) continue;
       // 다른 이름으로 검출됨: 이 물체 상자 안에 중심이 있는 관측의 이름이 이 물체 이름 표에 있으면(전에 그 이름으로도 불림)
       // 이름 흔들림이지 없어진 것이 아니다. 표에 없던 이름이면(다른 물체가 그 자리에 놓임) 놓침으로 센다
-      if (ap && touched[b]) continue;   // A′: 다른 조각이 이 물체에 닿음(물체는 보임)
+      if (ap && touched[b]) continue;   // objprob: 다른 조각이 이 물체에 닿음(물체는 보임)
       bool renamed = false;
       for (const Obs& o : obs) {
         if (ap) break;
@@ -1185,7 +1185,7 @@ void ObjectMap::update(const ObjFrame& f) {
     }
   }
   relink(f.stamp);
-  if (ap)   // A′: 합친 덩어리가 구조물(벽 크기 평면·천장·구조물 이름)이면 지움
+  if (ap)   // objprob: 합친 덩어리가 구조물(벽 크기 평면·천장·구조물 이름)이면 지움
     for (MapObject& m : objs_) if (m.ap) m.ap->drop = apStructObject(m);
   // 5. 오래된 후보 버리기
   objs_.erase(std::remove_if(objs_.begin(), objs_.end(),
@@ -1200,7 +1200,7 @@ void ObjectMap::update(const ObjFrame& f) {
   // 6. 중복 병합(da): 한 프레임에 일부만 보였거나 마스크가 쪼개져 따로 확정된 같은 물체를 하나로
   static const bool no_merge = std::getenv("SM_NO_MERGE") != nullptr;   // A/B 비교용
   static const bool log_merge = std::getenv("SM_MERGE_LOG") != nullptr;
-  if (p_.merge && !no_merge && !ap) {   // A′ 는 다음 keyframe 앞에서 apMergePass(이름 없이)
+  if (p_.merge && !no_merge && !ap) {   // objprob 는 다음 keyframe 앞에서 apMergePass(이름 없이)
     da::MergeParams mp;
     mp.overlap_min = p_.merge_overlap;
     mp.min_ext = p_.merge_min_ext;
@@ -1213,7 +1213,7 @@ void ObjectMap::update(const ObjFrame& f) {
   }
 }
 
-// ---------------- A′ ----------------
+// ---------------- objprob ----------------
 
 const std::vector<uint64_t>& ObjectMap::apContactIdx(MapObject& m) {
   ApState& s = *m.ap;
@@ -1420,7 +1420,7 @@ void ObjectMap::addWholeView(uint32_t id, const float* z, int dim, double kappa,
 void ObjectMap::buildReencode(const ObjFrame& f, int img_w, int img_h, int mw, int mh, float msx, float msy, float mox, float moy,
                               std::vector<ReencReq>* out) {
   out->clear();
-  if (!p_.aprime || !(f.depth_m || f.depth_mm) || mw <= 0 || mh <= 0 || img_w <= 0 || img_h <= 0) return;
+  if (!p_.objprob || !(f.depth_m || f.depth_mm) || mw <= 0 || mh <= 0 || img_w <= 0 || img_h <= 0) return;
   const ApParams& A = p_.ap;
   const double* T = f.T_mc;
   const double sxu = double(f.w) / img_w, syv = double(f.h) / img_h;   // 검출 화소 → 깊이 화소

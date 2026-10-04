@@ -1,4 +1,4 @@
-// A′ 물체 모델(include/scenemap/objprob.hpp): vMF 임베딩 사후·이름 범주 사후·같은 것 로지스틱·평면 맞춤.
+// 확률 물체 모델(objprob)(include/scenemap/objprob.hpp): vMF 임베딩 사후·이름 범주 사후·같은 것 로지스틱·평면 맞춤.
 #include "scenemap/objprob.hpp"
 
 #include <algorithm>
@@ -365,7 +365,7 @@ void apMerge(ApState& a, const ApState& b, const ApParams& p) {
 void apName(ApState& s, const ApText& T, const ApParams& p, double size) {
   if (!T.ready()) return;
   // 이름 우도 = 조각 + 통째(통째 무게 whole_w). 통째만 쓰면 모습 1–2 개라 사후가 납작했다(radio r3: 상위 0.1–0.3, 이름 대부분 "object") —
-  // 정답 물체마다 조각만 모아도 이름이 31 개 중 26 개 맞음(aprime_fit). 합친 뒤 예전 통째는 조각으로 넘어가 있다(apMerge)
+  // 정답 물체마다 조각만 모아도 이름이 31 개 중 26 개 맞음(objprob_fit). 합친 뒤 예전 통째는 조각으로 넘어가 있다(apMerge)
   const int C = T.n_labels;
   thread_local std::vector<float> L;
   L.assign(size_t(C), 0.f);

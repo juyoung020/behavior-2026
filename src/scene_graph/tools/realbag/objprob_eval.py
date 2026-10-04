@@ -1,6 +1,6 @@
-"""A′ 채점: detcmp_eval.py 와 같은 표(살아 있는 노드·정답 찾음·쪼개짐·이름·구조물 위 헛것·벽) + 잘못 합침.
+"""objprob 채점: detcmp_eval.py 와 같은 표(살아 있는 노드·정답 찾음·쪼개짐·이름·구조물 위 헛것·벽) + 잘못 합침.
 
-    python aprime_eval.py <stream dir> <gt floor .pgm> <run dir>[,<run dir>…] [--json out.json]
+    python objprob_eval.py <stream dir> <gt floor .pgm> <run dir>[,<run dir>…] [--json out.json]
 
 잘못 합침: 살아 있는 노드의 점 구름(memory/objects/O<id>_points.ply, map → world 는 metrics se2_map_to_gt)을 정답 상자(3 cm 넓힘)에
 넣어(점 하나는 그 점을 담은 가장 작은 상자에만) 점의 15 % 이상·20 점 이상을 가진 정답 물체(구조물·붙박이 제외)가 둘 이상이면 그 노드는 서로 다른 물체를 하나로 합친 것.
@@ -139,10 +139,10 @@ def struct_objects(stream, run, cache_dir):
 
 def retrieval(e, run, labels_dir):
     """글 질의 R@1: 정답 종류마다 맞는 이름 낱말 하나(OK_NAMES 첫 낱말, 사전 순)로 질의 → 노드 순위.
-    A′(물체 벡터 objects/O<id>_emb.f16 = μ, _views.f16): cos(μ, 글) 와 max(모습들, 글) 두 가지. 벡터가 없는 판(A/B/C)은 이름 같음
+    objprob(물체 벡터 objects/O<id>_emb.f16 = μ, _views.f16): cos(μ, 글) 와 max(모습들, 글) 두 가지. 벡터가 없는 판(옛 규칙 FastSAM-s-416·YOLO26s-seg·YOLOE-11L)은 이름 같음
     (같은 이름 노드 중 관측 많은 것). 맞음 = 1 위 노드가 그 종류 정답에 짝(objects_eval.csv)"""
     import csv
-    from aprime_fit import vocab_text
+    from objprob_fit import vocab_text
     from detcmp_eval import OK_NAMES
     labs, tr, tl = vocab_text(labels_dir)
     rows = list(csv.DictReader(open(run + '/objects_eval.csv')))
