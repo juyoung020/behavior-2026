@@ -124,7 +124,7 @@ double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const doub
  * SM_ROBOT_R1PRO(기본): proprio 61(평가기 형식 — base_qvel 0:3, 팔 끝 17:20·42:45, 손가락 24·25·49·50, 몸통 53:57 …),
  *   순기구학 r1pro_fk_table.hpp, 카메라 0 머리 1 왼손목 2 오른손목, 손 둘.
  * SM_ROBOT_LIMO_OMX: LIMO(차동 베이스) + OMX-F(5 축 + 그리퍼). 순기구학은 ~/ra_ws/map_vla.urdf 에서 생성한 limo_omx_fk_table.hpp.
- *   '베이스' 프레임 = base_footprint(바닥 z = 0, x 앞, y 왼쪽). 카메라 0 = depth_camera_link 광학(depth_link), 1 = wrist_cam_optical_frame.
+ *   '베이스' 프레임 = base_footprint(바닥 z = 0, x 앞, y 왼쪽). 카메라 0 = 몸통 카메라 렌즈 광학(depth_camera_lens_optical_frame = depth_camera_link +x 0.010 m), 1 = wrist_cam_optical_frame.
  *   손 하나: 팔 끝 = omx_end_effector_link, 잡기 규칙은 omx_gripper_joint_1 < grip_closed.
  *   몸 크기 매개변수도 바뀐다(스캔 self_r 0.22, 높이 띠 0.05–0.50 m, 손 반경 0.10, 잡기 반경 0.12 … — README LIMO 절).
  * sm_set_robot 은 매개변수를 그 로봇 기본값으로 다시 놓고 sm_reset 한다(labels·자세 모드·넣기 정책·구름 설정은 그대로). 0 성공. */

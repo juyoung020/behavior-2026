@@ -32,7 +32,7 @@ void computeBodyFk(const float* proprio, BodyFk* out);   // R1 Pro
 
 // LIMO + OMX-F(배정밀도). 모든 자세 = base_footprint ← 그 프레임, 행 우선 3×4
 struct LimoFk {
-  double T_depth[12];          // 깊이 카메라 광학(depth_link)
+  double T_depth[12];          // 몸통 카메라 렌즈 광학(depth_camera_lens_optical_frame)
   double T_wrist[12];          // 손목 카메라 광학(wrist_cam_optical_frame)
   double T_eef[12];            // omx_end_effector_link(잡기 점)
   static constexpr int kPts = 7;

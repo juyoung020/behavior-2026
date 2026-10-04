@@ -8,13 +8,14 @@ namespace scenemap::limo {
 struct JointDef { int kind; double xyz[3], rpy[3], axis[3]; int q; const char* name; };
 struct ChainDef { int n; const JointDef* j; double cam_xyz[3], cam_xyzw[4]; };
 
-// base_footprint → depth_link: 깊이 카메라 광학(cam 0, z 앞·x 오른쪽·y 아래)
+// base_footprint → depth_camera_lens_optical_frame: 몸통 카메라 렌즈 광학(cam 0, depth_camera_link +x 0.010 m, z 앞·x 오른쪽·y 아래)
 inline constexpr JointDef k_depth_cam[] = {
   {0, {0, 0, 0.14999999999999999}, {0, 0, 0}, {0, 0, 0}, -1, "base_joint"},
   {0, {0.084000000000000005, 0, 0.029999999999999999}, {0, 0, 0}, {0, 0, 0}, -1, "depth_camera_joint"},
-  {0, {0, 0, 0}, {-1.5707949999999999, 0, -1.5707949999999999}, {0, 0, 0}, -1, "depth_camera_to_camera_joint"},
+  {0, {0.01, 0, 0}, {0, 0, 0}, {0, 0, 0}, -1, "depth_camera_lens_joint"},
+  {0, {0, 0, 0}, {-1.5707963, 0, -1.5707963}, {0, 0, 0}, -1, "depth_camera_lens_optical_joint"},
 };
-inline constexpr ChainDef k_depth_cam_chain = {3, k_depth_cam, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+inline constexpr ChainDef k_depth_cam_chain = {4, k_depth_cam, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
 
 // base_footprint → wrist_cam_optical_frame: 손목 카메라 광학(cam 1, 깊이 없음)
 inline constexpr JointDef k_wrist_cam[] = {

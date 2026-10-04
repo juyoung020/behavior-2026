@@ -5,7 +5,8 @@
 // URDF 의 <joint> 를 읽어(작은 정규식 파서 — xacro 결과물만 받음) base_footprint 에서 각 목표 링크까지 사슬을 찾고, 관절마다
 // 원 숫자(origin xyz·rpy, axis — URDF 문자열 그대로)와 proprio 번호를 쓴다. 계산은 fk.cpp 의 walk(R1 표와 같은 규칙):
 //   t += R·xyz,  R = R·rpy(r, p, y),  회전 관절이면 R = R·회전(axis, q[번호]).
-// 목표: 깊이 카메라 광학(depth_link), 손목 카메라 광학(wrist_cam_optical_frame), 팔 끝(omx_end_effector_link).
+// 목표: 몸통 카메라 렌즈 광학(depth_camera_lens_optical_frame = depth_camera_link +x 0.010 m, OmniGibson eyes 와 같은 자리),
+//       손목 카메라 광학(wrist_cam_optical_frame), 팔 끝(omx_end_effector_link).
 // 사슬 안의 움직이는 관절은 아래 kQIndex 에만 있어야 한다(없으면 실패). 손으로 고치지 말고 이 도구로 다시 만든다.
 #include <cstdio>
 #include <fstream>
@@ -78,7 +79,7 @@ int main(int argc, char** argv) {
   }
   const char* root = "base_footprint";
   struct Target { const char* var; const char* link; const char* what; };
-  const Target targets[] = {{"depth_cam", "depth_link", "깊이 카메라 광학(cam 0, z 앞·x 오른쪽·y 아래)"},
+  const Target targets[] = {{"depth_cam", "depth_camera_lens_optical_frame", "몸통 카메라 렌즈 광학(cam 0, depth_camera_link +x 0.010 m, z 앞·x 오른쪽·y 아래)"},
                             {"wrist_cam", "wrist_cam_optical_frame", "손목 카메라 광학(cam 1, 깊이 없음)"},
                             {"eef", "omx_end_effector_link", "팔 끝(잡기 점) — 관절 원점이 팔 뼈대"}};
   std::ostringstream o;

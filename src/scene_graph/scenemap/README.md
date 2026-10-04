@@ -155,11 +155,11 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py ~/ra_ws/map_vla.urdf   
 | 프레임 | 링크 | 뜻 |
 |---|---|---|
 | 베이스 | `base_footprint` | 바닥(z = 0), x 앞, y 왼쪽. 스캔 높이 띠·물체 z 가 이 기준 |
-| cam 0 | `depth_link`(`depth_camera_link` + 광학 회전) | 몸통 앞 Orbbec Dabai: base_footprint 에서 (0.084, 0, 0.18) m, 수평 앞. 지도(slam2d·objmap)에 쓰는 유일한 깊이 |
+| cam 0 | `depth_camera_lens_optical_frame`(`depth_camera_link` +x 0.010 m 렌즈 + 광학 회전) | 몸통 앞 Orbbec Dabai 렌즈: base_footprint 에서 (0.094, 0, 0.18) m, 수평 앞(OmniGibson `eyes` 와 같은 자리, robot-agent 391c04b). `depth_link` 는 센서 몸체 중심(0.084)이라 쓰지 않는다. 지도(slam2d·objmap)에 쓰는 유일한 깊이 |
 | cam 1 | `wrist_cam_optical_frame` | OMX-F link5 메시 안 RGB 카메라(37.9° 아래), 깊이 없음 → 지도에 안 씀(`sm_push_image` 가 cam ≠ 0 은 지나감) |
 | 팔 끝 | `omx_end_effector_link` | 잡기 점(손가락 끝 근처). 팔 뼈대 = omx_link0, joint1..5 원점, 팔 끝 |
 
-검증: URDF 독립 계산(xml.etree + numpy 4×4, 15 자세 — 0·홈·관절 한계 양끝·임의 10)과 최대 차 위치 1.1e-16 m, 회전 원소 3.3e-16(`limo_fk`). RL 환경의 `limo_omx_model.h`(urdf2hdr, f32 상수)와도 위치 1e-16 m·회전 5e-8(f32 반올림) 안.
+검증: URDF 독립 계산(xml.etree + numpy 4×4, 15 자세, cam 0 = 렌즈 광학 프레임 — 0·홈·관절 한계 양끝·임의 10)과 최대 차 위치 1.1e-16 m, 회전 원소 3.3e-16(`limo_fk`). RL 환경의 `limo_omx_model.h`(urdf2hdr, f32 상수)와도 위치 1e-16 m·회전 5e-8(f32 반올림) 안.
 
 **몸 크기 매개변수**(R1 값 → LIMO 값, `capi.cpp` `robotParams`)
 

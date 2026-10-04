@@ -120,7 +120,7 @@ class LimoMapPolicy:
 
     # ---------- checks
     def _cam_fk_check(self, prop12):
-        """eyes sensor pose (sim) relative to base_footprint vs scenemap sm_robot_fk(limo_omx) cam 0 (depth_link optical)."""
+        """eyes sensor pose (sim) relative to base_footprint vs scenemap sm_robot_fk(limo_omx) cam 0 (depth_camera_lens_optical_frame)."""
         r = self.robot
         sen = next((s for n, s in r.sensors.items() if ":eyes:" in n), None)
         if sen is None:

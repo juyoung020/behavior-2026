@@ -24,7 +24,7 @@ QIDX = {'omx_joint1': 6, 'omx_joint2': 7, 'omx_joint3': 8, 'omx_joint4': 9, 'omx
 # 실제 관절 범위(src/robot/real_limits.json)
 LIM = [(-4.712389, 6.283185), (-2.094395, 1.570796), (-2.094395, 1.570796), (-1.745329, 1.745329), (-4.712389, 4.712389),
        (0.0, 1.745329)]
-TARGETS = ['depth_link', 'wrist_cam_optical_frame', 'omx_end_effector_link']
+TARGETS = ['depth_camera_lens_optical_frame', 'wrist_cam_optical_frame', 'omx_end_effector_link']
 
 
 def rot(axis, a):

@@ -20,7 +20,7 @@ SceneMemory(robot_model=...) argument, env SGRT_ROBOT (also read by libsgrt itse
 For LIMO the glue packs scenemap's 12-dim LIMO proprio (scenemap.h SM_LIMO_*) from the evaluator proprio
 (base_qvel, arm_0_qpos, gripper_0_qpos): 0-2 wheel-odometry pose = base_qvel integrated at 30 Hz (no GT), 3-5 base_qvel
 (vx, vy, wz in the base frame), 6-10 omx_joint1..5, 11 omx_gripper_joint_1. The map image is the body camera
-robot_limo:eyes:Camera:0 (= scenemap cam 0, depth_link) with the intrinsics read from the OmniGibson sensor.
+robot_limo:eyes:Camera:0 (= scenemap cam 0, depth_camera_lens_optical_frame) with the intrinsics read from the OmniGibson sensor.
 The wrist camera (robot_limo:wrist_eye:Camera:0 = cam 1) has no depth and is not passed (sgrt_step takes one image).
 """
 import ctypes

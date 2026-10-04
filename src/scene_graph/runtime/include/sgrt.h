@@ -118,7 +118,7 @@ int    sgrt_set_pose_mode(sgrt*, int32_t mode);
  *   SGRT_SM_CONFIG=<json>                  → sm_create(<json>) 그대로(robot·odom·grip_closed, scenemap.h sm_create). SGRT_ROBOT 보다 먼저
  *   둘 다 없으면 sm_create(NULL). 모르는 로봇·틀린 json 이면 sgrt_create 가 NULL(err 에 까닭).
  * LIMO + OMX-F(limo_omx): sgrt_step 의 proprio = 12 f32(scenemap.h SM_LIMO_*: odom x, y, yaw, vx, vy, wz, omx_joint1..5,
- *   gripper), 영상 = 몸통 앞 깊이 카메라(cam 0 = depth_link 광학 프레임)와 그 내부 파라미터.
+ *   gripper), 영상 = 몸통 앞 깊이 카메라(cam 0 = depth_camera_lens_optical_frame, 렌즈 광학 프레임)와 그 내부 파라미터.
  * sgrt_set_robot: 만든 뒤 바꾸기(sm_set_robot — 지도·물체를 비움, labels·자세 모드는 그대로). sgrt_begin 앞에서 부를 것. 0 성공.
  * sgrt_get_robot: 0 = SM_ROBOT_R1PRO, 1 = SM_ROBOT_LIMO_OMX. sgrt_proprio_dim: 지금 로봇의 최소 n_proprio(61 / 12). */
 int    sgrt_set_robot(sgrt*, int32_t robot);

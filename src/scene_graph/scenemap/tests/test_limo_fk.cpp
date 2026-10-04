@@ -42,13 +42,13 @@ int main() {
   }
   std::printf("LIMO FK vs independent URDF FK: %d configs, worst position %.2e m, worst rotation element %.2e\n", n, worst_p, worst_r);
 
-  // 깊이 카메라: base_footprint 위 0.18 m, 앞 0.084 m, 광학 z = 베이스 x(앞)
+  // 몸통 카메라 렌즈(depth_camera_link 0.084 + 렌즈 0.010): base_footprint 위 0.18 m, 앞 0.094 m, 광학 z = 베이스 x(앞)
   {
     LimoFk f;
     computeLimoFk(kLimoFkRef[0].q, &f);
-    const bool ok = std::fabs(f.T_depth[3] - 0.084) < 1e-9 && std::fabs(f.T_depth[11] - 0.18) < 1e-9 && f.T_depth[2] > 0.999999 &&
+    const bool ok = std::fabs(f.T_depth[3] - 0.094) < 1e-9 && std::fabs(f.T_depth[11] - 0.18) < 1e-9 && f.T_depth[2] > 0.999999 &&
                     f.T_depth[4] < -0.999999 && f.T_depth[9] < -0.999999;
-    std::printf("depth camera mount (0.084, 0, 0.18), optical z = base x, x = −base y, y = −base z: %s\n", ok ? "ok" : "FAIL");
+    std::printf("body camera lens (0.094, 0, 0.18), optical z = base x, x = −base y, y = −base z: %s\n", ok ? "ok" : "FAIL");
     fail += !ok;
   }
   // 몸 뼈대: 팔 한 개, 몸통 없음, 마지막 점 = 팔 끝
