@@ -78,6 +78,9 @@ bool headMatch(const std::string& name, const std::string& e) {
 }
 
 constexpr float kCropMargin = 0.10f;
+constexpr double kWallAngleEvery = 2.0;          // 벽 방향 θ 다시 재는 간격(영상 시각 s)
+constexpr double kWallAngleHyst = M_PI / 180.0;  // θ 가 이만큼 넘게 바뀔 때만 새 값
+constexpr double kWallAlignedEvery = 0.5;        // 기울어진 지도: 돌린 격자 벽 다시 뽑는 간격(s, 격자가 바뀌었을 때)
 constexpr int kCropMaxSide = 256;
 }  // namespace
 
@@ -147,6 +150,10 @@ struct sm_ctx {
   std::atomic<uint64_t> st_views_built{0}, st_views_skipped{0};
   std::atomic<double> st_view_us{0};         // 요약 한 번 만드는 시간(µs, 비동기 스레드)
   uint64_t walls_grid_ver = ~0ull;
+  // 벽 방향(10-05): slam 지도는 출발 자세 기준이라 벽이 지도 축에서 기울 수 있다(radio r3: 41°). 주된 방향 θ 를 가끔(kWallAngleEvery 초)
+  // 재어 들고, |θ| > kAlignTol 이면 돌린 격자에서 뽑는다(wallSegmentsAtAngle — 전부 다시, kWallAlignedEvery 초에 한 번까지).
+  // 축에 맞는 지도(gt 자세·축 맞은 출발)는 예전 증분 추출 그대로. 진단: SM_WALLS_AXIS=1 이면 옛 동작(축만)
+  double wall_th = 0, wall_th_t = -1e300, walls_full_t = -1e300;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
   Timings tm;
@@ -600,6 +607,7 @@ int sm_reset(sm_ctx* c) {
   c->wallsp.reset();
   c->walls_rects.clear();
   c->walls_grid_ver = ~0ull;
+  c->wall_th = 0; c->wall_th_t = -1e300; c->walls_full_t = -1e300;
   c->graph.reset();
   c->obj_meta.clear();
   c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
@@ -707,6 +715,32 @@ void refreshWalls(sm_ctx* c) {
     rects.push_back({o.lo[0] - 0.1, o.lo[1] - 0.1, o.hi[0] + 0.1, o.hi[1] + 0.1});
   }
   const bool rects_changed = !(rects == c->walls_rects);
+  const double now = c->st.last_image_stamp;
+  static const bool axis_only = std::getenv("SM_WALLS_AXIS") != nullptr;
+  bool th_changed = false;
+  if (!axis_only && c->grid8 && (grid_changed || rects_changed) && now - c->wall_th_t >= kWallAngleEvery) {
+    const scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
+    const double th = scenemap::wallAngle(wg, &rects);
+    c->wall_th_t = now;
+    // 흔들림 막기: 1° 넘게 바뀔 때만 새 θ(축 ↔ 기울어짐이 바뀌면 증분 추출기를 비움)
+    if (std::abs(th - c->wall_th) > kWallAngleHyst) {
+      const bool was_axis = std::abs(c->wall_th) <= scenemap::kAlignTol, is_axis = std::abs(th) <= scenemap::kAlignTol;
+      if (was_axis != is_axis) { c->walls.reset(); c->wallsp.reset(); }
+      c->wall_th = th;
+      th_changed = true;
+    }
+  }
+  if (std::abs(c->wall_th) > scenemap::kAlignTol) {
+    if (c->wallsp && !th_changed && !rects_changed && (!grid_changed || now - c->walls_full_t < kWallAlignedEvery)) return;
+    const scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
+    c->wallsp = std::make_shared<const std::vector<scenemap::WallSeg>>(
+        scenemap::wallSegmentsAtAngle(wg, c->wall_th, scenemap::kMinLen, scenemap::kMaxThick, 0.6, &rects));
+    c->walls_rects = std::move(rects);
+    c->walls_x0 = gr.x0(); c->walls_y0 = gr.y0();
+    c->walls_grid_ver = c->grid8_ver;
+    c->walls_full_t = now;
+    return;
+  }
   const bool same = c->wallsp && c->walls_x0 == gr.x0() && c->walls_y0 == gr.y0();
   if (same && !grid_changed && !rects_changed) return;
   int dx0, dy0, dx1, dy1;
