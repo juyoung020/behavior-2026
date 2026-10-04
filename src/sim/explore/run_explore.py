@@ -208,7 +208,8 @@ class ExplorePolicy:
                     blo, bhi = bl.aabb
                     bext = [round(float(bhi[i] - blo[i]), 3) for i in range(3)]
                 print(f"[explore] robot aabb extent {ext}, base_link {bext}", flush=True)
-                (self.out / "robot_footprint.json").write_text(json.dumps({"robot_aabb_extent": ext, "base_link_aabb_extent": bext}))
+                (self.out / "robot_footprint.json").write_text(json.dumps({"robot": "limo_omx" if self.limo else "r1pro",
+                                                                     "robot_aabb_extent": ext, "base_link_aabb_extent": bext}))
             except Exception as e:  # noqa: BLE001
                 print(f"[explore] aabb: {e}", flush=True)
             self.robot_paths = {l.prim_path for l in self.robot.links.values()}
