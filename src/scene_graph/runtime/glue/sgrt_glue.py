@@ -230,8 +230,17 @@ class SceneMemory:
         k = None
         for name, sen in (getattr(r, "sensors", None) or {}).items():
             if ":" + HEAD_LINK[1] + ":" in name and hasattr(sen, "intrinsic_matrix"):
-                K = sen.intrinsic_matrix
-                k = (float(K[0][0]), float(K[1][1]), float(K[0][2]), float(K[1][2]))
+                try:
+                    K = sen.intrinsic_matrix
+                    k = (float(K[0][0]), float(K[1][1]), float(K[0][2]), float(K[1][2]))
+                except AssertionError:
+                    # 첫 스텝에 camera_parameters 주석기가 아직 비어 있으면 투영 행렬이 0 이라 OG 가 assert 한다
+                    # (GPU 가 바쁠 때 재현). 같은 값을 핀홀로: fx = w · focal / aperture, 정사각 화소, 중심 = 영상 가운데.
+                    fx = w * float(sen.focal_length) / float(sen.horizontal_aperture)
+                    k = (fx, fx, w / 2.0, h / 2.0)
+                    print(f"[sgrt] LIMO: intrinsic_matrix 가 아직 비어 있어 조리개·초점 거리로 계산", flush=True)
+                    self.head_k, self._k_wh = k, None   # 다음 스텝에 센서 값으로 다시 읽는다
+                    return k
                 break
         if k is None:
             raise RuntimeError("[sgrt] LIMO: no sim robot / eyes camera to read the intrinsics from")
