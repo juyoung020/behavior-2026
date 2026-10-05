@@ -216,10 +216,10 @@ def feats(alo, ahi, apos, Pa, keys, blo, bhi, bpos, cos, cos0):
 
 
 def vocab_text(labels_dir, objprob=True):
-    """realbag_run.cpp 의 kVocab(+ kVocabAp) 글 → (라벨 이름들, 글 임베딩 rows × 768, 줄 → 라벨 번호)"""
+    """runtime/src/objprob_front.hpp 의 kVocab(+ kVocabAp) 글(realbag_run·libsgrt 가 같이 씀) → (라벨 이름들, 글 임베딩 rows × 768, 줄 → 라벨 번호)"""
     import re
-    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'realbag_run.cpp')).read()
-    blk = src[src.index('const Word kVocab[] = {'):src.index('constexpr int32_t kDumpMagic')]
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'runtime', 'src', 'objprob_front.hpp')).read()
+    blk = src[src.index('const Word kVocab[] = {'):src.index('constexpr float kLogitScale')]
     if not objprob:
         blk = blk[:blk.index('const Word kVocabAp[]')]
     words = re.findall(r'\{"([^"]+)", "([^"]+)"\}', blk)
