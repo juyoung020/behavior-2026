@@ -37,6 +37,19 @@
 | `tools/setup/fetch_qwen35_gguf_wsl.sh` | 리눅스판 `tools/setup/fetch_qwen35_gguf.sh` 로 대체 |
 | `tools/setup/setup_llamacpp_cuda_wsl.sh` | 리눅스판 `tools/setup/setup_llamacpp_cuda.sh` 로 대체 |
 
+## 옮긴 것 (2026-10-05, 검출기 결정 — ObjectSAM + SigLIP 2 + objprob)
+
+YOLOE·YOLO26s 엔진을 `~/ovdet_models/archive` 로 보관하고 ObjectSAM(YOLO26n 학생)으로 정한 뒤, YOLOE 에만 쓰던 것.
+
+| 모듈 | 이유 |
+|---|---|
+| `src/scene_graph/ovdet/tools/export_yoloe.py` | YOLOE ONNX 내보내기(글 프롬프트 임베딩을 머리에 굳힘). ObjectSAM 은 robot-agent `training/fastsam/export.sh`·`build_engine.py` |
+| `src/scene_graph/ovdet/tools/ovdet_eval.py`, `src/scene_graph/ovdet/scripts/eval_linux.sh`, `eval_conf.sh` | YOLOE 머리·프롬프트 비교(데모 프레임). ObjectSAM 검출 단계 평가는 robot-agent `training/fastsam/eval_det.py`, 끝에서 끝은 `src/scene_graph/tools/realbag/objprob_eval.py` |
+| `src/scene_graph/ovdet/tools/ref_check.py` | YOLOE Ultralytics FP32 기준 비교(돌린 적 없음) |
+| `outputs/mem_yolo26s_20261003_044921/run.sh` | 보관한 yolo26s-seg 엔진 경로로 도는 옛 기억 판 실행기 |
+
+남긴 것(아직 씀 또는 불분명): `ovdet/config/task_prompts.txt`(글루가 과제 이름을 낱말 표에 더함)·`make_task_prompts.py`·`vocab_all.txt`(그 표를 만든 도구 — 불분명, 남김), `ovdet/tools/build_engines.py`(엔진 빌드 일반), scenemap 옛 이름 규칙(`--no-objprob`·`SGRT_OBJPROB=0`·시험이 씀), libsgrt 프롬프트 길(`SGRT_PROMPT`, 보관 엔진을 고를 때), `runtime/tools/dom_bench_det.cpp`(기본 엔진을 ObjectSAM 으로 바꿔 계속 씀), `tools/realbag/detcmp_*`(objprob_eval 이 씀).
+
 Windows·WSL 스크립트를 리눅스판으로 옮긴 표(쓰는 법·확인한 것)는 [tools/README.md](../tools/README.md).
 
 ## 되살리기

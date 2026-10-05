@@ -6,7 +6,7 @@ Detector (env SGRT_ENGINE): default ObjectSAM, the class-agnostic YOLO26n studen
 (https://github.com/juyoung020/ObjectSAM). With a class-agnostic engine libsgrt turns objprob on by itself (SGRT_OBJPROB, sgrt.h):
 SigLIP 2 per-mask names + embeddings, the scenemap probabilistic object model with the per-engine parameters
 src/scene_graph/tools/realbag/objprob_params/<engine>.json. Other engines stay selectable: the original FastSAM-s
-(SGRT_ENGINE=~/ovdet_models/x86_sm120/FastSAM-s-416.plan), the FastSAM-s fine-tune (FastSAM-s-416-obj.plan) and the archived
+(SGRT_ENGINE=~/ovdet_models/x86_sm120/FastSAM-s-416.plan), the discarded FastSAM-s fine-tune (~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan, archived) and the archived
 closed/open-vocabulary YOLO engines (~/ovdet_models/archive, old name rules). SGRT_OBJPROB=0 = old name rules.
 
     mem = SceneMemory(task_name, out_dir)        # once per process

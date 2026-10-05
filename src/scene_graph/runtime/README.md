@@ -124,7 +124,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_LABELS` | `~/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
 | `SGC_IMG_SAMPLE` | `~/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |
 | `SGRT_LIB` | `~/sgrt_build/libsgrt.so` | 글루: 읽을 라이브러리 |
-| `SGRT_ENGINE` | `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan` (ObjectSAM — YOLO26n 학생, 이름 없는 분할) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt`. 원래 FastSAM-s = `FastSAM-s-416.plan`, FastSAM-s 재학습 = `FastSAM-s-416-obj.plan`(같은 폴더), YOLOE·YOLO26s = `~/ovdet_models/archive/x86_sm120/`(옛 이름 규칙) |
+| `SGRT_ENGINE` | `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan` (ObjectSAM — YOLO26n 학생, 이름 없는 분할) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt`. 원래 FastSAM-s = `FastSAM-s-416.plan`, 버린 FastSAM-s 재학습 = `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`(보관), YOLOE·YOLO26s = `~/ovdet_models/archive/x86_sm120/`(옛 이름 규칙) |
 | `SGRT_OBJPROB` | 없음(자동) | objprob 앞단(아래 "objprob 앞단"). `1` 켬 · `0` 끔 · 없음 = 엔진 어휘가 `object` 하나(분할 엔진)면 켬 |
 | `SGRT_OBJPROB_PARAMS` | `tools/realbag/objprob_params/<엔진 줄기>.json` | objprob 엔진별 매개변수 파일, `none` = 내장 기본값 |
 | `SGRT_OBJPROB_CLIP` | `~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan` | objprob 마스크 임베딩 SigLIP 2 엔진 |
