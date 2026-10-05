@@ -10,8 +10,6 @@ unmodified) with --policy local, whose LocalPolicy gets ExplorePolicy:
                  until a trained VLA exists, --vla-policy) -> move_robot safety filter -> end signal + verify + budget ->
                  {"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}; objects come from
                  the scenemap snapshot (sm_snap_objects, ids "O<id>") every keyframe, contacts split body / arm.
-                 R1: no VLA executor -> {"status":"unavailable"} (the old R1 VLA engine was removed 10-06; VLA = RecallVLA,
-                 robot-agent training/vla)
     metrics    : GT floor reference (gt_trav.py) in the map frame -> mr_set_reference; robot-link contacts with anything
                  but the floor (RigidContactAPI) -> mr_set_contacts; robot footprint (AABB) logged once
     viewer     : <out>/memory/explore.json (trail, planned path, goal, frontier ids) every second
@@ -19,12 +17,12 @@ unmodified) with --policy local, whose LocalPolicy gets ExplorePolicy:
     python run_explore.py --listen 127.0.0.1:8771 --out <dir> -- --task-name bringing_water --mode public_test \
         --instance-indices 0 --num-envs 1 --max-steps 27000 --headless --env-wrapper omnigibson.eval.wrappers.RGBDFullResWrapper
 
-LIMO + OMX-F (--robot limo_omx, default from SGRT_ROBOT): the evaluator is started through robot-agent's
+LIMO + OMX-F is the only robot (--robot limo_omx, default; R1 removed 10-06): the evaluator is started through robot-agent's
 src/robot/og/eval_with_limo.py (--limo-shim, LIMO_SHIM; presampled-pose alias, agent_metric fix) and the eval args must carry
 --robot-config <robot-agent>/src/robot/og/limo_omx_eval.yaml; move_robot runs through move_robot_limo.LimoMoveRobotPolicy
 (base only, arm held at home, gripper closed), libsgrt is told limo_omx, and the body camera gets the LIMO_NEAR_CLIP
 safety net (raise-only, robot-agent 391c04b already sets 0.05 m) on the first step; GT/slam poses -> poses.csv, pose_diag.json.
-R1 (default) is unchanged.
+The BEHAVIOR task template still names R1 (robot_poses key, robot config); it is only read for scene/task/start pose -- the evaluator robot is replaced by --robot-config limo_omx_eval.yaml and eval_with_limo.py aliases robot_poses to "robot".
 """
 import argparse
 import ctypes
@@ -121,19 +119,17 @@ class VlaSource:
 
 
 class ExplorePolicy:
-    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, kf_every=6, robot="r1pro", vla_policy=None):
-        from move_robot_sim import MoveRobotPolicy
+    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, kf_every=6, robot="limo_omx", vla_policy=None):
+        from move_robot_limo import LimoMoveRobotPolicy
         from sgrt_glue import SceneMemory
+        if robot != "limo_omx":
+            raise ValueError("explore runs only our robot (LIMO + OMX-F): robot=%r" % robot)
 
         self.out = out_dir
         (out_dir / "memory").mkdir(parents=True, exist_ok=True)
         self.src = VlaSource(src, self)
-        self.limo = robot == "limo_omx"
-        if self.limo:
-            from move_robot_limo import LimoMoveRobotPolicy
-            self.mr = LimoMoveRobotPolicy(self.src, lib_path=lib_path, log_path=str(out_dir / "move_robot.jsonl"))
-        else:
-            self.mr = MoveRobotPolicy(self.src, lib_path=lib_path, log_path=str(out_dir / "move_robot.jsonl"))
+        self.limo = True   # LIMO + OMX-F is the only robot (the template's R1 is replaced via --robot-config, robot-agent src/robot/og/eval_with_limo.py)
+        self.mr = LimoMoveRobotPolicy(self.src, lib_path=lib_path, log_path=str(out_dir / "move_robot.jsonl"))
         L = self.mr.lib.L
         L.mr_set_map.restype = ctypes.c_int
         L.mr_set_map.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
@@ -142,10 +138,7 @@ class ExplorePolicy:
         L.mr_overlay_json.restype = ctypes.c_ssize_t
         L.mr_overlay_json.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
         self.L = L
-        if self.limo:
-            self.mem = SceneMemory(task, str(out_dir / "memory"), kf_every=kf_every, robot_model="limo_omx")
-        else:
-            self.mem = SceneMemory(task, str(out_dir / "memory"), kf_every=kf_every)
+        self.mem = SceneMemory(task, str(out_dir / "memory"), kf_every=kf_every, robot_model="limo_omx")
         S = self.mem.L
         S.sgrt_map.restype = ctypes.c_int
         S.sgrt_map.argtypes = [ctypes.c_void_p, ctypes.POINTER(SgrtMapView)]
@@ -175,10 +168,7 @@ class ExplorePolicy:
 
     # ---------- VLA executor switch
     def start_vla(self, call):
-        if self.limo:
-            return self._start_limo_vla(call)
-        self.src.reply({"status": "unavailable", "executor": "vla",
-                        "message": "no VLA executor on R1 in this run; use move_robot"})
+        return self._start_limo_vla(call)
 
     def _start_limo_vla(self, call):
         call = dict(call)
@@ -228,7 +218,7 @@ class ExplorePolicy:
                     blo, bhi = bl.aabb
                     bext = [round(float(bhi[i] - blo[i]), 3) for i in range(3)]
                 print(f"[explore] robot aabb extent {ext}, base_link {bext}", flush=True)
-                (self.out / "robot_footprint.json").write_text(json.dumps({"robot": "limo_omx" if self.limo else "r1pro",
+                (self.out / "robot_footprint.json").write_text(json.dumps({"robot": "limo_omx",
                                                                      "robot_aabb_extent": ext, "base_link_aabb_extent": bext}))
             except Exception as e:  # noqa: BLE001
                 print(f"[explore] aabb: {e}", flush=True)
@@ -400,7 +390,7 @@ def main():
     ap.add_argument("--lib", default=None)
     ap.add_argument("--gt-dir", default=None)
     ap.add_argument("--vla-policy", default=os.environ.get("MR_VLA_POLICY"), help="LIMO VLA stand-in: scripted | replay:<jsonl> (default scripted)")
-    ap.add_argument("--robot", default=os.environ.get("SGRT_ROBOT") or "r1pro", choices=["r1pro", "limo_omx"])
+    ap.add_argument("--robot", default=os.environ.get("SGRT_ROBOT") or "limo_omx", choices=["limo_omx"])
     ap.add_argument("--limo-shim", default=os.environ.get("LIMO_SHIM") or str(pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
     args = ap.parse_args(argv[:split])
     eval_args = argv[split + 1:]
@@ -421,29 +411,18 @@ def main():
 
     def init(self, *a, **k):
         orig_init(self, *a, **k)
-        if args.robot == "limo_omx":
-            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, robot="limo_omx",
-                                        vla_policy=args.vla_policy)
-        else:
-            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir)
+        self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, robot="limo_omx",
+                                    vla_policy=args.vla_policy)
         holder["p"] = self.policy
 
     P.LocalPolicy.__init__ = init
-    if args.robot == "limo_omx":
-        if "--robot-config" not in eval_args:
-            raise SystemExit("[explore] limo_omx needs --robot-config <robot-agent>/src/robot/og/limo_omx_eval.yaml in the eval args")
-        os.environ["SGRT_ROBOT"] = "limo_omx"
-        print(f"[explore] robot limo_omx via {args.limo_shim}", flush=True)
-        sys.argv = [args.limo_shim, *eval_args, "--policy", "local", "--output-dir", str(out)]
-        try:
-            runpy.run_path(args.limo_shim, run_name="__main__")
-        finally:
-            if "p" in holder:
-                holder["p"].close()
-        return
-    sys.argv = ["omnigibson.eval.eval", *eval_args, "--policy", "local", "--output-dir", str(out)]
+    if "--robot-config" not in eval_args:
+        raise SystemExit("[explore] needs --robot-config <robot-agent>/src/robot/og/limo_omx_eval.yaml in the eval args")
+    os.environ["SGRT_ROBOT"] = "limo_omx"
+    print(f"[explore] robot limo_omx via {args.limo_shim}", flush=True)
+    sys.argv = [args.limo_shim, *eval_args, "--policy", "local", "--output-dir", str(out)]
     try:
-        runpy.run_module("omnigibson.eval.eval", run_name="__main__", alter_sys=True)
+        runpy.run_path(args.limo_shim, run_name="__main__")
     finally:
         if "p" in holder:
             holder["p"].close()
