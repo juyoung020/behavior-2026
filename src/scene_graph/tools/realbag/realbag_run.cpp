@@ -5,12 +5,11 @@
 //     --robot limo_omx|r1pro   scenemap 로봇 매개변수(기본 limo_omx — 우리 로봇의 SLAM·몸 크기 설정)
 //     --pose slam|odom|gt      자세 원천(기본 slam = 바퀴 오도메트리 적분 + 깊이 가상 스캔 맞추기). gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
-//     --det fastsam|yoloe|none 검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
+//     --det fastsam|yolo|none  검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
 //                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
-//                              --engine ~/ovdet_models/x86_sm120/FastSAM-s-416.plan(버린 FastSAM-s 재학습은 보관 ~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan). yoloe = 보관 엔진
-//                              yoloe-11l-all 에 아래 사무실·집 낱말 중 엔진 어휘에 있는 것만 프롬프트로)
+//                              --engine ~/ovdet_models/x86_sm120/FastSAM-s-416.plan(버린 FastSAM-s 재학습은 보관 ~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan).
 //     --det yolo               닫힌 어휘 YOLO 분할(기본 yolo26s-seg-416, COCO 80) — 엔진 어휘 전부
-//     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yoloe·yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
+//     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
 //                              아래 낱말 글 임베딩과 맞춤(세 검출기를 같은 이름 표로 비교할 때)
 //     --det-every K            K 프레임마다 검출(기본 3 — 스트림 15 Hz 면 5 Hz, sgrt kf_every 6 @ 30 Hz 와 같음). 나머지 프레임은 깊이로 지도만
 //     --dump dets.gz | --load a.gz[,b.gz…]   검출·이름 캐시(--load 면 GPU 없이 scenemap 만, 여러 판이면 판마다 하나)
@@ -210,7 +209,7 @@ bool loadPgm(const std::string& dir, Pgm* m) {
 
 // ---------------- 검출 ----------------
 struct Detector {
-  std::string mode;   // fastsam | yoloe | yolo | none
+  std::string mode;   // fastsam | yolo | none
   OvdHandle* det = nullptr;
   sgc_encoder* enc = nullptr;
   sgc_labels* lt = nullptr;
@@ -239,9 +238,8 @@ struct Detector {
     const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
     std::string engine = engine_in;
     if (engine.empty())
-      engine = home + (mode == "yoloe"  ? "/ovdet_models/archive/x86_sm120/yoloe-11l-all.plan"   // yoloe·yolo: 비교용, 보관 엔진(2026-10-05)
-                       : mode == "yolo" ? "/ovdet_models/archive/x86_sm120/yolo26s-seg-416.plan"
-                                        : std::string("/ovdet_models/x86_sm120/") + kDefaultEngine);
+      engine = home + (mode == "yolo" ? "/ovdet_models/archive/x86_sm120/yolo26s-seg-416.plan"   // yolo: 비교용, 보관 엔진(2026-10-05)
+                                      : std::string("/ovdet_models/x86_sm120/") + kDefaultEngine);
     engine_path = engine;
     char err[2048] = {0};
     OvdConfig oc;
@@ -252,19 +250,7 @@ struct Detector {
     oc.conf_th = conf;
     det = ovd_create(&oc, err, sizeof err);
     if (!det) { std::fprintf(stderr, "ovd_create: %s\n", err); return false; }
-    if (mode == "yoloe") {   // 열린 어휘: 아래 낱말 중 엔진 어휘에 있는 것만 프롬프트로
-      std::vector<const char*> pr;
-      std::set<std::string> vocab;
-      for (int i = 0; i < ovd_vocab_size(det); ++i) vocab.insert(ovd_vocab_name(det, i));
-      std::string missing;
-      for (const Word& w : kVocab) {
-        if (!vocab.count(w.text)) { missing += std::string(" '") + w.text + "'"; continue; }
-        pr.push_back(w.text);
-        if (namer == "engine") prompt_cls.push_back(labelId(w.label));
-      }
-      ovd_set_prompt(det, pr.data(), int32_t(pr.size()), err, sizeof err);
-      std::fprintf(stderr, "yoloe: %zu prompts (not in engine vocab:%s)\n", pr.size(), missing.c_str());
-    } else if (mode == "yolo") {   // 닫힌 어휘(COCO 등): 엔진 어휘 전부. engine 이름 = kVocab 에 있으면 그 지도 이름, 없으면 엔진 이름 그대로
+    if (mode == "yolo") {   // 닫힌 어휘(COCO 등): 엔진 어휘 전부. engine 이름 = kVocab 에 있으면 그 지도 이름, 없으면 엔진 이름 그대로
       ovd_set_prompt(det, nullptr, 0, nullptr, 0);
       if (namer == "engine")
         for (int i = 0; i < ovd_vocab_size(det); ++i) {
@@ -483,7 +469,7 @@ const char* stateName(int s) { return s == SM_SEEN ? "seen" : s == SM_GONE ? "go
 int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose slam|odom|gt] "
-                         "[--det fastsam|yoloe|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
+                         "[--det fastsam|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
                          "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]] [--inspect]\n");
     return 2;
   }
@@ -531,7 +517,7 @@ int main(int argc, char** argv) {
   { std::stringstream ss(snap_at); std::string t; while (std::getline(ss, t, ',')) if (!t.empty()) snap_times.push_back(std::stod(t)); }
 
   // 검출
-  // objprob 기본: 마스크마다 SigLIP 2 임베딩이 있는 길(fastsam·--namer siglip·RBD2 캐시)이면 켬. 엔진 클래스 이름(yoloe·yolo)·RBD1 캐시·none 은 옛 규칙
+  // objprob 기본: 마스크마다 SigLIP 2 임베딩이 있는 길(fastsam·--namer siglip·RBD2 캐시)이면 켬. 엔진 클래스 이름(yolo)·RBD1 캐시·none 은 옛 규칙
   bool objprob = objprob_flag == 1;
   if (objprob_flag < 0) {
     if (!load_path.empty()) {
