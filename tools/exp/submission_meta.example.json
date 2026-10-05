@@ -4,7 +4,7 @@
   "method": "<25 chars max>",
   "wrapper_target": "omnigibson.eval.wrappers.DefaultWrapper",
   "wrapper_file": "BEHAVIOR-1K/OmniGibson/omnigibson/eval/wrappers/default_wrapper.py",
-  "robot_config": "src/sim/configs/r1pro_openpi.yaml",
+  "robot_config": "src/sim/configs/r1pro_robot.yaml",
   "launcher": {
     "black_guard": true,
     "kit_args": [],

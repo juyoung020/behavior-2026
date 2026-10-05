@@ -1,4 +1,4 @@
-//! 시험용 가짜들: 가짜 LLM(규칙으로 도구 호출; 함수형·HTTP 서버형), 가짜 π0.5 서버, 가짜 평가기 클라이언트.
+//! 시험용 가짜들: 가짜 LLM(규칙으로 도구 호출; 함수형·HTTP 서버형), 가짜 VLA 서버, 가짜 평가기 클라이언트.
 //! 가짜 LLM 은 system 메시지의 계획 체크리스트와 사건 글만 읽고 답한다 → 글 계약(맥락 형식)까지 같이 시험된다.
 
 use crate::llm::{FnCall, Msg, ToolCall};
@@ -121,7 +121,7 @@ pub fn serve_mock_llm(l: TcpListener, delay_ms: u64) {
     }
 }
 
-// ---------------- 가짜 π0.5 서버 ----------------
+// ---------------- 가짜 VLA 서버 ----------------
 
 #[derive(Default, Debug)]
 pub struct FakePiLog {
@@ -134,7 +134,7 @@ pub struct FakePiLog {
     pub steps: usize,
 }
 
-/// openpi 웹소켓 서버와 같은 순서: 접속하면 metadata, 관측마다 {"action": …, "server_timing": …}, reset 은 응답 없음.
+/// 평가기 웹소켓 정책 서버와 같은 순서: 접속하면 metadata, 관측마다 {"action": …, "server_timing": …}, reset 은 응답 없음.
 pub fn serve_fake_pi(l: TcpListener, log: Option<Arc<Mutex<FakePiLog>>>, once: bool) {
     for s in l.incoming() {
         let Ok(s) = s else { continue };

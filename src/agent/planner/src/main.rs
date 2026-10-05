@@ -14,7 +14,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평가기↔π0.5 중계기
+const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평가기↔VLA 중계기
 
   relay        중계기. --listen 0.0.0.0:8000 --upstream 127.0.0.1:8100 --mode agent|passthrough|fixed|schedule
                [--prompt 문장(fixed)] [--schedule 표.json] [--format subtask|task|purpose|metric]
@@ -28,11 +28,11 @@ const HELP: &str = r#"bagent — BEHAVIOR 2026 상위 계획 에이전트 + 평�
   render       과제 참고 순서를 형식 4가지로 찍기(토큰 추정 포함). --task turning_on_radio
   schedule     시연 주석 한 판 → 스텝별 문장 표. --episode 주석.json [--format subtask] [--out 표.json]
   mock-llm     가짜 OpenAI 호환 서버. --listen 127.0.0.1:8091 [--delay-ms 0]
-  fake-pi      가짜 π0.5 서버. --listen 127.0.0.1:8100
+  fake-pi      가짜 VLA 서버. --listen 127.0.0.1:8100
   bench        가짜 평가기로 왕복 시간 재기. --target 127.0.0.1:8000 [--n 300] [--rgbd] [--batch 1]
   bench-local  한 프로세스 안에서 직접 연결 vs 중계기 비교. [--n 300] [--rgbd] [--mode passthrough|fixed|agent]
   llm-check    같은 계획 요청을 여러 번 보내 지연·결정론 확인. [--llm kau] [--n 3] [--scenario radio]
-  link         평가기 연결(평가기 안 π0.5 ↔ 계획기, 관측은 세기만 — scenemap 에 넣는 판은 src/sim/integ/simlink).
+  link         평가기 연결(평가기 안 VLA ↔ 계획기, 관측은 세기만 — scenemap 에 넣는 판은 src/sim/integ/simlink).
                --listen 0.0.0.0:7801 [--no-planner] [--prompt-mode task|subtask] [--stage external|vote|off]
                [--pose integrate|corrected] [--head-gap 6] [--wrist-every 0] [--settle-ms 400] [--once]
                + relay 와 같은 계획기 인자(--llm --graph --decider --format --task --max-steps --trace-dir)
@@ -130,7 +130,7 @@ fn cmd_relay(a: &Args) -> Result<(), String> {
     cfg.trace_dir = if a.flag("no-trace") { None } else { Some(a.get("trace-dir").map(PathBuf::from).unwrap_or_else(|| default_trace_dir("relay"))) };
     if matches!(mode, Mode::Agent) {
         let pcfg = planner_cfg(a)?;
-        // 사용자 결정(09-29): π0.5 에 숫자 명령을 쓰지 않는다. 실제 평가 경로(중계기 agent)에서는 받지 않는다.
+        // 사용자 결정(09-29): VLA 에 숫자 명령을 쓰지 않는다. 실제 평가 경로(중계기 agent)에서는 받지 않는다.
         if pcfg.format == Format::Metric && !a.flag("allow-metric-experiment") {
             return Err("relay agent 모드에서 --format metric 은 쓰지 않는다(숫자 명령 금지). 실험이면 --allow-metric-experiment 를 같이 줘라".into());
         }
@@ -321,7 +321,7 @@ fn cmd_bench_local(a: &Args) -> Result<(), String> {
     let spec = spec_from(a);
     let n: u64 = a.num("n", 300);
     let catalog = Arc::new(load_catalog(a).unwrap_or_default());
-    // 가짜 π0.5
+    // 가짜 VLA
     let pl = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let paddr = pl.local_addr().unwrap().to_string();
     std::thread::spawn(move || fakes::serve_fake_pi(pl, None, false));

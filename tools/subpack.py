@@ -275,7 +275,7 @@ def main():
             shutil.copy2(e["video"], out / "videos" / f"{e['base']}.mp4")
     wrapper_file = fix_path(P(m, "wrapper_file", str(B1K / "OmniGibson/omnigibson/eval/wrappers/default_wrapper.py")))
     wrapper_target = P(m, "wrapper_target", "omnigibson.eval.wrappers.DefaultWrapper")
-    robot_cfg = fix_path(P(m, "robot_config", str(REPO / "src/sim/configs/r1pro_openpi.yaml")))
+    robot_cfg = fix_path(P(m, "robot_config", str(REPO / "src/sim/configs/r1pro_robot.yaml")))
     for f in (wrapper_file, robot_cfg):
         if not exists(f):
             err(f"파일 없음: {f}")

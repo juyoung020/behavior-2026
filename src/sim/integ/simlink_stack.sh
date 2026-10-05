@@ -2,7 +2,7 @@
 # 통합 한 판의 simlink 쪽: simlink(계획기 + scenemap 같은 프로세스) 하나. ROS 없음.
 # (리눅스판; 옛 WSL 판 archive/src/sim/integ/wsl_stack.sh 와 같은 순서·기록 파일. 평가기와 같은 PC 에서 돈다)
 #   bash src/sim/integ/simlink_stack.sh <출력 폴더> [scene 1|0] [llm kau|oracle|none] [simlink 인자 ...]
-# 순서: VRAM 기록 → simlink(--once) → 준비 표시 파일(stack_ready) → 평가기(run_eval_integ.sh)가 붙어 한 판
+# 순서: VRAM 기록 → simlink(--once) → 준비 표시 파일(stack_ready) → 평가기 쪽 접착부(glue/simlink_policy.py IntegPolicy)가 붙어 한 판
 #       → 연결이 끝나면 simlink 종료 → 끝 표시 파일(stack_done).
 # 키는 ~/.config/behavior-2026/kau.env 에서 환경변수로만 읽는다(저장소·기록에 남기지 않음).
 # simlink 바이너리: SIMLINK(기본 ~/cargo-target/simlink/release/simlink, src/sim/integ/build_simlink.sh 로 빌드).

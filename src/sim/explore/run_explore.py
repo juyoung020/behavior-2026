@@ -10,7 +10,8 @@ unmodified) with --policy local, whose LocalPolicy gets ExplorePolicy:
                  until a trained VLA exists, --vla-policy) -> move_robot safety filter -> end signal + verify + budget ->
                  {"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}; objects come from
                  the scenemap snapshot (sm_snap_objects, ids "O<id>") every keyframe, contacts split body / arm.
-                 R1: routes act() to the pi0.5 native engine when --vla-weights is given, otherwise {"status":"unavailable"}
+                 R1: no VLA executor -> {"status":"unavailable"} (the old R1 VLA engine was removed 10-06; VLA = RecallVLA,
+                 robot-agent training/vla)
     metrics    : GT floor reference (gt_trav.py) in the map frame -> mr_set_reference; robot-link contacts with anything
                  but the floor (RigidContactAPI) -> mr_set_contacts; robot footprint (AABB) logged once
     viewer     : <out>/memory/explore.json (trail, planned path, goal, frontier ids) every second
@@ -120,7 +121,7 @@ class VlaSource:
 
 
 class ExplorePolicy:
-    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, vla_weights=None, kf_every=6, robot="r1pro", vla_policy=None):
+    def __init__(self, src, task, out_dir: pathlib.Path, lib_path=None, gt_dir=None, kf_every=6, robot="r1pro", vla_policy=None):
         from move_robot_sim import MoveRobotPolicy
         from sgrt_glue import SceneMemory
 
@@ -161,9 +162,6 @@ class ExplorePolicy:
         self.t_last = None
         self.tim_log = open(out_dir / "timing.jsonl", "a")
         self.obuf = ctypes.create_string_buffer(1 << 20)
-        self.vla = None
-        self.vla_weights = vla_weights
-        self.vla_active = None
         self.vla_policy = vla_policy          # LIMO: default policy for calls without "policy" (MR_VLA_POLICY, else scripted)
         self.limo_vla = False                 # a LIMO VLA step is running in libmove_robot
         self.vla_log = open(out_dir / "vla.jsonl", "a")
@@ -179,23 +177,8 @@ class ExplorePolicy:
     def start_vla(self, call):
         if self.limo:
             return self._start_limo_vla(call)
-        if self.vla is None and self.vla_weights:
-            try:
-                sys.path.insert(0, str(REPO / "src/vla/pi05_native/glue"))
-                sys.path.insert(0, str(REPO / "src/vla/pi05_native/build"))
-                from pi05_policy import Pi05NativePolicy
-                self.vla = Pi05NativePolicy(self.vla_weights, call.get("skill", ""))
-            except Exception as e:  # noqa: BLE001
-                self.src.reply({"status": "unavailable", "executor": "vla", "message": f"pi0.5 engine failed to load: {e}"})
-                self.vla_weights = None
-                return
-        if self.vla is None:
-            self.src.reply({"status": "unavailable", "executor": "vla",
-                            "message": "VLA (pi0.5) is not loaded in this run; use move_robot", "hint": "start run_explore.py with --vla-weights"})
-            return
-        self.vla.prompt = call.get("skill", "")
-        self.vla.reset()
-        self.vla_active = {"skill": self.vla.prompt, "steps": 0, "max": int(float(call.get("max_s", 20)) * 30), "t0": time.perf_counter()}
+        self.src.reply({"status": "unavailable", "executor": "vla",
+                        "message": "no VLA executor on R1 in this run; use move_robot"})
 
     def _start_limo_vla(self, call):
         call = dict(call)
@@ -230,17 +213,6 @@ class ExplorePolicy:
         n = self.mem.L.sm_snap_objects(snap, ctypes.byref(p))
         if n >= 0:
             self.L.mr_vla_set_objects(self.mr.lib.h, p, n, self.step_i / 30.0)
-
-    def _vla_step(self, obs):
-        a = self.vla.act(obs)
-        self.vla_active["steps"] += 1
-        if self.vla_active["steps"] >= self.vla_active["max"]:
-            v = self.vla_active
-            self.vla_active = None
-            self.mr.lib.reset()  # move_robot re-takes the hold targets from the next observation
-            self.src.reply({"status": "done", "executor": "vla", "skill": v["skill"], "steps": v["steps"],
-                            "wall_s": round(time.perf_counter() - v["t0"], 2)})
-        return a
 
     # ---------- sim-side measurement
     def _robot(self):
@@ -380,10 +352,6 @@ class ExplorePolicy:
             if res is not None:
                 self.limo_vla = False
                 self._vla_reply(res)
-        elif self.vla_active is not None:
-            # move_robot holds still meanwhile (its own tick keeps observing)
-            self.mr.lib.tick(self.mr._proprio(obs)[0])
-            a = self._vla_step(obs)
         else:
             a = self.mr.act(obs)
         t4 = time.perf_counter()
@@ -431,7 +399,6 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--lib", default=None)
     ap.add_argument("--gt-dir", default=None)
-    ap.add_argument("--vla-weights", default=None)
     ap.add_argument("--vla-policy", default=os.environ.get("MR_VLA_POLICY"), help="LIMO VLA stand-in: scripted | replay:<jsonl> (default scripted)")
     ap.add_argument("--robot", default=os.environ.get("SGRT_ROBOT") or "r1pro", choices=["r1pro", "limo_omx"])
     ap.add_argument("--limo-shim", default=os.environ.get("LIMO_SHIM") or str(pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
@@ -455,10 +422,10 @@ def main():
     def init(self, *a, **k):
         orig_init(self, *a, **k)
         if args.robot == "limo_omx":
-            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights, robot="limo_omx",
+            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, robot="limo_omx",
                                         vla_policy=args.vla_policy)
         else:
-            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir, vla_weights=args.vla_weights)
+            self.policy = ExplorePolicy(src, task, out, lib_path=args.lib, gt_dir=args.gt_dir)
         holder["p"] = self.policy
 
     P.LocalPolicy.__init__ = init

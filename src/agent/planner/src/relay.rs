@@ -1,20 +1,20 @@
-//! 중계기(다리): 평가기 ↔ [중계기] ↔ π0.5 서버.
+//! 중계기(다리): 평가기 ↔ [중계기] ↔ VLA 서버.
 //!
 //! 매 스텝 경로(병목 제로 목표):
 //! - 평가기 프레임(클라이언트 → 서버, XOR 마스크됨)의 **마스크를 풀지 않는다**. 맵 머리 길이가 바뀐 만큼 마스크 키를
 //!   회전시켜([`ws::rotate_key`]) 원래 바이트를 그대로 다시 보낸다(재마스크·재직렬화 0회).
 //! - **흘려보내기(cut-through)**: 경계가 아닌 스텝은 프레임 머리를 받자마자 새 머리(항목 수 + 주입 수)를 먼저 보내고,
-//!   몸통은 받는 조각마다 바로 π0.5 쪽으로 쓴다. 지시 문장은 이전 스텝에 이미 정해져 있어 꼬리(주입 항목)를 미리 안다.
+//!   몸통은 받는 조각마다 바로 VLA 쪽으로 쓴다. 지시 문장은 이전 스텝에 이미 정해져 있어 꼬리(주입 항목)를 미리 안다.
 //!   다 받은 뒤에 마스크된 채로 훑어 base_qvel·그리퍼만 읽어(수십 바이트) 오도메트리·감시를 갱신한다.
 //! - **붙잡기(store)**: 스텝 수로 정해지는 경계(판 시작·예산 소진·정기 확인)가 올 스텝, 또는 직전 스텝에서 사건 경계
 //!   (이동 멈춤·그리퍼 변화)가 난 다음 스텝은 프레임을 통째로 받아 두고 계획이 끝난 뒤 보낸다(`pause`).
 //!   사건 경계는 그래서 한 스텝(1/30 s) 늦게 반영된다. 작은 프레임(reset 등)도 붙잡는다.
-//! - π0.5 응답(서버 → 클라이언트, 마스크 없음)은 그대로 평가기에 넘긴다.
+//! - VLA 응답(서버 → 클라이언트, 마스크 없음)은 그대로 평가기에 넘긴다.
 //! - LLM 은 이 경로에 없다. 계획은 별도 스레드. `pause` 면 결정이 올 때까지 기다리며 두 소켓의 ping 에 답한다
-//!   (평가기 ping_timeout 300 s, π0.5 서버 기본 20 s). `pause` 가 아니면 붙잡지 않고, 결정이 도착한 스텝부터 문장을 바꾼다.
+//!   (평가기 ping_timeout 300 s, VLA 서버 기본 20 s). `pause` 가 아니면 붙잡지 않고, 결정이 도착한 스텝부터 문장을 바꾼다.
 //!
 //! 관측·행동 값은 한 바이트도 바꾸지 않는다: 원래 항목 바이트는 그대로 가고, 주입 키(`__agent_prompt__`,
-//! `__agent_flush__`)는 π0.5 서버 쪽 훅(`tools/serve_b1k_agent.py`)이 꺼내 쓰고 지운다.
+//! `__agent_flush__`)는 VLA 서버 쪽 훅이 꺼내 쓰고 지운다(옛 훅 tools/serve_b1k_agent.py 는 10-06 지움).
 
 use crate::catalog::{Catalog, TaskCard};
 use crate::monitor::{MonitorCfg, Trigger};
@@ -155,7 +155,7 @@ pub fn run(cfg: RelayCfg) -> io::Result<()> {
 /// 이미 연 소켓으로(시험: 포트 0 으로 열고 주소를 먼저 알아 둔다).
 pub fn run_listener(l: TcpListener, cfg: RelayCfg) -> io::Result<()> {
     eprintln!(
-        "[relay] {} ← 평가기, → π0.5 {} (모드 {}, pause {}, stream {})",
+        "[relay] {} ← 평가기, → VLA {} (모드 {}, pause {}, stream {})",
         l.local_addr().map(|a| a.to_string()).unwrap_or_default(),
         cfg.upstream,
         mode_name(&cfg.mode),
@@ -401,7 +401,7 @@ impl Ctx<'_> {
                 return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "평가기가 계획 중에 연결을 닫음"));
             }
             if ready[1] && !up.service_control(&mut self.cbuf)? {
-                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "π0.5 서버가 계획 중에 연결을 닫음"));
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "VLA 서버가 계획 중에 연결을 닫음"));
             }
         }
     }

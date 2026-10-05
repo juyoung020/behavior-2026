@@ -1,5 +1,5 @@
 //! 단계 어휘 35종 — 시연 주석 `skill_annotation[].skill_description` 그대로
-//! (`data/2026-challenge-demos/annotations/skill_summary.csv`, docs/π05_인지연결_설계.md 2.6).
+//! (`data/2026-challenge-demos/annotations/skill_summary.csv`).
 //!
 //! 문장 틀은 주석의 물체 칸 순서(`object_id` 목록)를 따른다. 예: pick up from = [집을 것, 받침],
 //! place on next to = [놓을 것, 받침, 기준 물체], chop = [칼, 자를 것]. 공간 수식어(`spatial_prefix`)는 칸별로 붙는다.

@@ -117,7 +117,7 @@ fn link_task_mode_holds_decides_and_sends_keyframes() {
     assert_eq!(log[0].3, link::WANT_ALL);
     let d0 = log[0].2.iter().find(|d| d["kind"] != "stage").expect("판 시작 결정");
     assert_eq!(d0["trigger"], "episode_start");
-    // 과제 단위 모드: π0.5 문장은 바꾸지 않는다(prompt null), 단계 번호는 고정 입력(mode 1)
+    // 과제 단위 모드: VLA 문장은 바꾸지 않는다(prompt null), 단계 번호는 고정 입력(mode 1)
     assert!(d0["prompt"].is_null());
     assert_eq!(d0["stage_mode"], 1);
     assert_eq!(d0["stage"], 0);

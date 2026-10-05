@@ -4,7 +4,7 @@
 #   bash src/sim/engine/capture/run_capture.sh --actions outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz --tag radio_nfa
 #       [--task turning_on_radio] [--instance 0] [--max-steps 500] [--dry-run]
 # 결과: src/sim/engine/dumps/<tag>/  (에셋 파생물 -> git 제외)  + trace.npz 는 같은 폴더(평가기 --output-dir)
-# 먼저 nvidia-smi 로 다른 시뮬레이터가 없는지 확인할 것 (GPU 한 장을 여러 작업이 씀). 재생 서버: REPLAY_PY(기본 openpi venv), 포트 8010.
+# 먼저 nvidia-smi 로 다른 시뮬레이터가 없는지 확인할 것 (GPU 한 장을 여러 작업이 씀). 재생 서버: REPLAY_PY(기본 conda behavior 환경 파이썬), 포트 8010.
 set -euo pipefail
 ENGINE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REPO=$(cd "$ENGINE/../../.." && pwd)
@@ -24,10 +24,10 @@ done
 [ -n "$ACTIONS" ] || { echo "--actions 가 필요하다" >&2; exit 2; }
 ACTIONS=$(realpath "$ACTIONS")
 DUMP=$ENGINE/dumps/$TAG
-SRV=("${REPLAY_PY:-$HOME/openpi/.venv/bin/python}" "$REPO/tools/replay_policy_server.py" --actions "$ACTIONS" --port 8010
+SRV=("${REPLAY_PY:-$HOME/miniconda3/envs/behavior/bin/python}" "$REPO/tools/replay_policy_server.py" --actions "$ACTIONS" --port 8010
      --log "$DUMP/server_log.npz" --once)
 EV=(python "$ENGINE/capture/physx_capture.py" --dump-dir "$DUMP" -- --trace --
-    --task-name "$TASK" --robot-config "$REPO/src/sim/configs/r1pro_openpi.yaml"
+    --task-name "$TASK" --robot-config "$REPO/src/sim/configs/r1pro_robot.yaml"
     --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode public_test
     --host 127.0.0.1 --port 8010 --instance-indices "$INSTANCE" --num-envs 1 --max-steps "$MAX_STEPS"
     --output-dir "$DUMP" --write-video --headless)

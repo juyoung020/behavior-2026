@@ -3,7 +3,7 @@
 #   wsl -d Ubuntu-22.04 -u juyoung -- bash /mnt/c/behavior-2026/src/sim/fasteval/replaysrv/verify.sh
 # 행동열: nf_a 의 actions.npz, --perturb 5:7:0.01 (음성 대조 경로도 같은지), --quickack 켬.
 set -u
-PY=$HOME/openpi/.venv/bin/python
+PY=$HOME/miniconda3/envs/behavior/bin/python
 RS=$HOME/cargo-target/replaysrv/release/replaysrv
 SRV=/mnt/c/behavior-2026/tools/replay_policy_server.py
 ACT=/mnt/c/behavior-2026/outputs/eval_turning_on_radio_20260929_195500_nf_a/actions.npz

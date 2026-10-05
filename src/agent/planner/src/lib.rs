@@ -1,7 +1,7 @@
 //! BEHAVIOR Challenge 2026 상위 계획 에이전트.
 //!
 //! 두 층으로 나뉜다.
-//! - **매 스텝 경로(중계기)**: 평가기 ↔ [relay] ↔ π0.5 서버. 관측·행동 바이트를 복사·변경 없이 넘기고
+//! - **매 스텝 경로(중계기)**: 평가기 ↔ [relay] ↔ VLA 서버. 관측·행동 바이트를 복사·변경 없이 넘기고
 //!   ([`ws`], [`msgpack`], [`wire`]), 오도메트리([`odom`])와 단계 감시([`monitor`])만 산술로 돌린다. LLM 없음.
 //! - **단계 경계 경로(에이전트)**: [`planner`] 가 OpenAI 호환 Chat Completions(도구 호출)로 Qwen 을 부르고
 //!   ([`llm`], [`tools`], [`context`], [`memory`], [`plan`]), 씬그래프([`graph`])로 `back`·`the other` 를 풀어

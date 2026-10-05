@@ -25,7 +25,7 @@ pub fn planner_cfg(a: &Args) -> Result<PlannerCfg, String> {
     if let Some(f) = a.get("format") {
         c.format = Format::parse(f).ok_or_else(|| format!("--format 은 task|subtask|purpose|metric: {f}"))?;
         if c.format == Format::Metric {
-            eprintln!("경고: --format metric 은 실험 전용이다(π0.5 에 숫자 명령을 쓰지 않기로 함, docs/에이전트_설계.md 1.5)");
+            eprintln!("경고: --format metric 은 실험 전용이다(VLA 에 숫자 명령을 쓰지 않기로 함, docs/에이전트_설계.md 1.5)");
         }
     }
     c.send_images = !a.flag("no-images");

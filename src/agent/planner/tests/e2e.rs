@@ -1,4 +1,4 @@
-//! 끝에서 끝까지 시험: 가짜 평가기 ↔ 중계기 ↔ 가짜 π0.5, 가짜 세계 에이전트 반복문, 기록 재생, 가짜 LLM HTTP 서버.
+//! 끝에서 끝까지 시험: 가짜 평가기 ↔ 중계기 ↔ 가짜 VLA, 가짜 세계 에이전트 반복문, 기록 재생, 가짜 LLM HTTP 서버.
 
 use bagent::catalog::Catalog;
 use bagent::fakes::{self, FakePiLog, ObsSpec};
@@ -22,7 +22,7 @@ fn tmpdir(name: &str) -> std::path::PathBuf {
     d
 }
 
-/// 중계기를 띄우고(연결 하나), 가짜 π0.5 기록과 함께 돌려준다.
+/// 중계기를 띄우고(연결 하나), 가짜 VLA 기록과 함께 돌려준다.
 fn start_relay(mode: Mode, with_agent: bool) -> (String, Arc<Mutex<FakePiLog>>, std::thread::JoinHandle<()>) {
     let log = Arc::new(Mutex::new(FakePiLog::default()));
     let pl = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -63,7 +63,7 @@ fn relay_agent_mode_keeps_bytes_and_injects_prompts() {
     assert_eq!(g.steps, 600);
     // 원래 관측 바이트 == 주입 키를 뺀 바이트
     assert_eq!(g.obs_hashes, ev.obs_hashes, "관측 값이 바뀌었다");
-    // π0.5 행동 바이트 그대로
+    // VLA 행동 바이트 그대로
     assert_eq!(g.resp_hashes, ev.resp_hashes, "행동 값이 바뀌었다");
     // 첫 스텝부터 에이전트 지시(배치 1 → 문자열 배열)
     assert_eq!(g.prompts[0], json!(["move to radio"]));

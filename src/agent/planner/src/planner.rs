@@ -50,7 +50,7 @@ pub struct PlannerCfg {
     pub jpeg_quality: u8,
     pub max_retries: u32,
     pub max_continues: u32,
-    /// 지시가 바뀌면 π0.5 의 남은 행동 묶음을 버리고 바로 새로 추론
+    /// 지시가 바뀌면 VLA 의 남은 행동 묶음을 버리고 바로 새로 추론
     pub flush_on_change: bool,
     pub keep_turns: usize,
     pub summarize_batch: usize,

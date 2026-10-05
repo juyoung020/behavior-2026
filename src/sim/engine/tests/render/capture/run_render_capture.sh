@@ -35,10 +35,10 @@ ACTIONS=$(realpath "$ACTIONS")
 DUMP=$ENGINE/dumps/render_$TAG
 OURS=(--dump-dir "$DUMP" --noise-renders "$NOISE")
 [ -n "$STEPS" ] && OURS+=(--steps "$STEPS")
-SRV=("${REPLAY_PY:-$HOME/openpi/.venv/bin/python}" "$REPO/tools/replay_policy_server.py" --actions "$ACTIONS" --port 8010
+SRV=("${REPLAY_PY:-$HOME/miniconda3/envs/behavior/bin/python}" "$REPO/tools/replay_policy_server.py" --actions "$ACTIONS" --port 8010
      --log "$DUMP/server_log.npz" --once)
 EV=(python "$HERE/render_capture.py" "${OURS[@]}" -- --trace --
-    --task-name "$TASK" --robot-config "$REPO/src/sim/configs/r1pro_openpi.yaml"
+    --task-name "$TASK" --robot-config "$REPO/src/sim/configs/r1pro_robot.yaml"
     --env-wrapper "$WT" --mode public_test
     --host 127.0.0.1 --port 8010 --instance-indices "$INSTANCE" --num-envs 1 --max-steps "$MAX_STEPS"
     --output-dir "$DUMP" --write-video --headless)

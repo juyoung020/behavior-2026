@@ -1,19 +1,19 @@
-//! 지시 계약: 에이전트가 정한 단계(구조체) → π0.5 가 받는 문장 한두 줄.
+//! 지시 계약: 에이전트가 정한 단계(구조체) → VLA 가 받는 문장 한두 줄.
 //!
-//! π0.5 문장 입력은 토큰 200개이고 그 안에 로봇 상태가 들어간다. 실측(PaliGemma 토크나이저, 상태 25차원):
+//! VLA 문장 입력 한도(옛 π0.5 기준으로 잰 값 — 그 VLA 는 10-06 지움): 토큰 200개이고 그 안에 로봇 상태가 들어간다. 실측(PaliGemma 토크나이저, 상태 25차원):
 //! 빈 지시일 때 "Task: , State: …;\nAction: " 가 101토큰 → 지시에 남는 것 99토큰. 여유를 두고 기본 90토큰
-//! (openpi `models/tokenizer.py` tokenize, `models/pi0_config.py` max_token_len=200, `configs/robots/b1k.py` proprio 25차원).
+//! (옛 VLA 의 tokenizer, max_token_len=200, proprio 25차원).
 //!
 //! 형식 4가지(plan.md 4.1 비교용, 실행 중 바꿔 끼울 수 있음):
 //! ① task    과제 문장 그대로(기본 체크포인트가 학습한 형태)
 //! ② subtask 시연 주석 어휘 문장("pick up radio from coffee table")
 //! ③ purpose "Purpose: … . Expected action: … ."(사용자 제안)
 //! ④ metric  ② + 로봇 기준 이동량("go forward 2.1 m, 0.4 m to the left, turn left 30 degrees", 앞 +x, 왼쪽 +y, 반시계 +yaw)
-//!           — **실험 전용**(사용자 결정 09-29: π0.5 에 숫자 명령을 쓰지 않는다). 지시 형식 오프라인 실험(Comet pt50)에서
+//!           — **실험 전용**(사용자 결정 09-29: VLA 에 숫자 명령을 쓰지 않는다). 지시 형식 오프라인 실험(Comet pt50)에서
 //!           숫자 명령이 이동 방향 일치를 오히려 낮췄다(cos 0.71 → 0.54). `--format metric` 을 명시할 때만 쓰고,
 //!           중계기 agent 모드에서는 거부한다. 그래프 좌표·오도메트리는 계획기 안쪽 판단(완료 판정 등)에만 쓴다.
 //!
-//! ②③ 문장에서는 거리·각도 숫자를 [`strip_numbers`] 로 거른다(LLM 이 purpose/expected 에 숫자를 써도 π0.5 로 안 간다).
+//! ②③ 문장에서는 거리·각도 숫자를 [`strip_numbers`] 로 거른다(LLM 이 purpose/expected 에 숫자를 써도 VLA 로 안 간다).
 
 use crate::util::tokens_with_margin;
 #[cfg(test)]
@@ -112,7 +112,7 @@ fn tail_punct(t: &str) -> String {
     t.chars().skip(t.chars().count() - n).collect()
 }
 
-/// π0.5 문장에서 거리·각도·수치를 뺀다: 숫자가 든 낱말("2.1", "0.4m", "45°")과 바로 뒤 단위 낱말("m", "degrees")을 지우고
+/// VLA 문장에서 거리·각도·수치를 뺀다: 숫자가 든 낱말("2.1", "0.4m", "45°")과 바로 뒤 단위 낱말("m", "degrees")을 지우고
 /// 남은 문장부호·매달린 전치사를 정리한다. 수량 낱말("two")은 남긴다.
 pub fn strip_numbers(s: &str) -> String {
     let toks: Vec<&str> = s.split_whitespace().collect();
@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn numbers_never_reach_pi05_in_subtask_and_purpose() {
+    fn numbers_never_reach_vla_in_subtask_and_purpose() {
         assert_eq!(strip_numbers("go forward 2.1 m, 0.4 m to the left, turn left 30 degrees"), "go forward, to the left, turn left");
         assert_eq!(strip_numbers("move forward by 1.5 meters"), "move forward");
         assert_eq!(strip_numbers("turn 45° to face the radio."), "turn to face the radio.");
@@ -285,7 +285,7 @@ mod tests {
         assert!(s.contains("Expected action"));
     }
 
-    /// 실제 PaliGemma 토크나이저 토큰 수(openpi venv 에서 sentencepiece 로 잰 값)와 비교:
+    /// 실제 PaliGemma 토크나이저 토큰 수(sentencepiece 로 잰 값)와 비교:
     /// 여유를 더한 추정은 실제 이상, 그리고 너무 크지 않아야 한다.
     #[test]
     fn estimate_is_conservative() {

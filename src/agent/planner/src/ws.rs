@@ -168,7 +168,7 @@ impl Conn {
         Conn::accept_with(s, || true)
     }
 
-    /// `/healthz` 응답을 `healthy()` 결과로 정한다(중계기: 뒤쪽 π0.5 서버가 살아 있을 때만 200).
+    /// `/healthz` 응답을 `healthy()` 결과로 정한다(중계기: 뒤쪽 VLA 서버가 살아 있을 때만 200).
     pub fn accept_with(mut s: TcpStream, healthy: impl Fn() -> bool) -> io::Result<Accepted> {
         set_fast(&s);
         let (head, leftover) = read_http_head(&mut s)?;

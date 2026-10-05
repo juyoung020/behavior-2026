@@ -9,6 +9,7 @@
 - 물체 벡터는 원본 임베딩을 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다(다시 만들 수 있음).
 - CUDA 12.8(`/usr/local/cuda-12.8`). 13.2 는 시스템에 있지만 쓰지 않는다.
 - 지도 자세: `SGRT_POSE=slam|odom|gt`(실제 로봇 기본 `slam`, 시뮬 시험은 `gt` = map 이 world). 자세히는 [scenemap_설계.md](scenemap_설계.md).
+- VLA = RecallVLA (robot-agent `training/vla`). 우리 π0.5 경로(`src/vla/`, `π05_네이티브엔진.md`, `학습환경_가속.md`)는 10-06 에 지웠다(git 기록에 남음). 아래 문서의 π0.5 이야기는 그때 기록이다.
 
 ## 다른 곳의 문서
 
@@ -44,9 +45,7 @@
 | [scenemap_설계.md](scenemap_설계.md) | ① 물체 기억 scenemap 설계: 2D SLAM(깊이 → 가상 스캔)·물체 지도·계획기 질의·Spark-DSG 저장, 팀 문서 선택과 다른 점, 자세 원천(`SGRT_POSE`) |
 | [ovdet_검출기.md](ovdet_검출기.md) | 검출기 ovdet(TensorRT) — 지금은 ObjectSAM 분할 엔진. 보관한 열린 어휘 YOLOE 와 FastSAM+CLIP 옛 방식 비교표(기록), 좋아진 것·나빠진 것 |
 | [에이전트_설계.md](에이전트_설계.md) | 상위 계획 에이전트(Rust, `src/agent/planner`)와 평가기↔π0.5 중계기: 정한 스펙과 이유(OpenAI 도구 호출·결정론·결정기 교체 인터페이스·경계 5가지·지시 형식 4가지와 토큰 예산·back/the other·자동 증거·기억/요약·과제 카드·zero-copy 흘려보내기·QUICKACK·scenemap 연결), 구조, 메시지 흐름, 도구 목록, 경로별 지연 실측과 목표, 시험(39개·실제 Qwen), 실행 방법 |
-| [π05_네이티브엔진.md](π05_네이티브엔진.md) | π0.5(radio)·2025 1위 PiBehavior 추론을 PyTorch·JAX 없이 C++/CUDA 로(손 GEMM·CUDA Graph·토크나이저·변환·래퍼), JAX 대비 층별 오차 표(노이즈 바닥 판정), 속도·메모리, 제출용 웹소켓 서버, 단계 외부 지정, 남긴 라이브러리와 이유, **학습 포팅(12절: expert·LoRA 모드 역전파·AdamW·EMA·openpi 난수·augmax 증강·fasttrain 로더 직결, JAX 대조·메모리·시간 표)** |
 | [통합_실시간.md](통합_실시간.md) | 평가기(네이티브 π0.5 안) · 계획기 · scenemap 을 실시간으로 잇기: 연결 하나(simlink = bagent link + scenemap C ABI)의 이유, 기다리지 않는 스텝 요약과 경계만 멈추기, Rust 가 정하는 keyframe, 영상(원 텐서), 위치 추정기 자리(scenemap 자세), 순기구학 카메라 자세(규칙), 영상 = 직전 스텝 장면, 단계 번호 계산, 경계 settle, 프로토콜, 지연 실측, 종단 한 판, VRAM, 시험, 실행, 다른 문서에 요청, 투표 vs 외부 단계 실험 계획 |
-| [학습환경_가속.md](학습환경_가속.md) | π0.5 학습 데이터 파이프라인 가속(학습 자체는 보류): 원래 병목 실측(깊이 디코딩 74 ms 버려짐·RGB CPU 디코딩·PIL 크기 조정, 워커 8개 36 샘플/s), torch 없는 네이티브 로더(NVDEC 직접 C++·색표와 PIL 정수 크기 조정 CUDA·Rust 프레임 표·C ABI·DLPack) 264~289 샘플/s(7~8배), 원래와 비트 대조(43만 샘플 전수·이미지 포함·로더 통째·섞기 순서·음성 대조), 남은 병목(디코딩 세션 줄 세우기), 미결 3가지 |
 | [raw/](raw/_목록.md) | 원문 보관본(대회 사이트 전체·GitHub README·HF 카드·리더보드 원자료·논문 초록). 인용은 여기서. `raw/_scrape.py` 로 다시 받음 |
 
 ## 아카이브 ([archive/](archive/README.md))

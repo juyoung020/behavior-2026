@@ -27,14 +27,14 @@ export OMNI_KIT_ACCEPT_EULA=YES
 export PYTHONUTF8=1
 mkdir -p "$OUT"
 PORT=8013
-/home/juyoung/openpi/.venv/bin/python /mnt/c/behavior-2026/tools/replay_policy_server.py \
+$HOME/miniconda3/envs/behavior/bin/python /mnt/c/behavior-2026/tools/replay_policy_server.py \
   --actions "$ACTIONS" --port $PORT --log "$OUT/server_log.npz" --once > "$OUT/replay_server.log" 2>&1 &
 SRV=$!
 for i in $(seq 60); do curl -sf http://127.0.0.1:$PORT/healthz >/dev/null && break; sleep 1; done
 cd $BASE/BEHAVIOR-1K/OmniGibson
 set +e
 $BASE/.venv/bin/python /mnt/c/behavior-2026/src/sim/engine/eval/ported_eval.py --backend engine --instrument=--trace -- \
-  --task-name turning_on_radio --robot-config /mnt/c/behavior-2026/src/sim/configs/r1pro_openpi.yaml \
+  --task-name turning_on_radio --robot-config /mnt/c/behavior-2026/src/sim/configs/r1pro_robot.yaml \
   --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode "$MODE" \
   --host 127.0.0.1 --port $PORT --instance-indices "$IDX" --num-envs 1 --max-steps "$MAXSTEPS" \
   --output-dir "$OUT" --headless 2>&1 | tee "$OUT/eval.log"

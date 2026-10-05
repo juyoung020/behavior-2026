@@ -1,8 +1,8 @@
 //! 평가기 연결(link): 평가기 프로세스 안 파이썬 접착부 ↔ [link] — 계획기 호스트 + 관측 내보내기.
 //!
-//! π0.5 가 평가기 프로세스 안(네이티브 C++/CUDA 엔진)으로 들어가서, 웹소켓 중계기([`crate::relay`]) 자리가 없어졌다.
+//! VLA 가 평가기 프로세스 안 정책으로 들어가면 웹소켓 중계기([`crate::relay`]) 자리가 없다.
 //! 대신 평가기 안 접착부(`src/sim/integ/glue/simlink_policy.py`)가 이 연결에 스텝마다 요약을 보내고, 경계에서 결정
-//! (단계 문장 또는 단계 번호)을 받아 π0.5 에 넣는다. 계획기의 Core·Decider·경계 감시는 그대로 쓰고 전송층만 새로 짰다.
+//! (단계 문장 또는 단계 번호)을 받아 VLA 에 넣는다. 계획기의 Core·Decider·경계 감시는 그대로 쓰고 전송층만 새로 짰다.
 //!
 //! 한 연결 = TCP 하나(Windows 평가기 → WSL). 메시지 = 머리 12 B(`magic u32, type u16, flags u16, len u32`, 리틀 엔디언) + 몸통.
 //!
@@ -132,10 +132,10 @@ pub struct Hello {
     /// `cam_rel_poses` 7개 묶음의 카메라 순서(평가기 robot_camera_names 순서, 보통 left_wrist, right_wrist, head)
     #[serde(default)]
     pub crp_order: Vec<String>,
-    /// π0.5 단계 입력의 이 과제 단계 수(2025 1위 모델 표). 0 = 단계 입력 없음
+    /// VLA 단계 입력의 이 과제 단계 수(2025 1위 모델 표). 0 = 단계 입력 없음
     #[serde(default)]
     pub stage_count: u32,
-    /// π0.5 가 지금 쓰는 과제 문장
+    /// VLA 가 지금 쓰는 과제 문장
     #[serde(default)]
     pub prompt: String,
     #[serde(default)]
@@ -331,17 +331,17 @@ impl ObsSink for NullSink {
     }
 }
 
-/// π0.5 에 무엇을 넣나(plan.md 4.1).
+/// VLA 에 무엇을 넣나(plan.md 4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptMode {
-    /// (다) 과제 단위: π0.5 는 학습된 과제 문장 그대로. 계획기 결정은 단계 번호·기억·복구로만
+    /// (다) 과제 단위: VLA 는 학습된 과제 문장 그대로. 계획기 결정은 단계 번호·기억·복구로만
     Task,
-    /// 계획기의 단계 문장을 π0.5 문장으로(중계기 agent 모드와 같음)
+    /// 계획기의 단계 문장을 VLA 문장으로(중계기 agent 모드와 같음)
     Subtask,
 }
 
-/// 단계 번호 통로(plan.md 4.1 (라)): `pi05_set_stage(slot, stage, mode)`.
+/// 단계 번호 통로(plan.md 4.1 (라)): 안쪽 정책의 `set_stage(env, stage, fixed)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StageMode {
@@ -1291,7 +1291,7 @@ pub fn run(cfg: LinkCfg, make_sink: &dyn Fn() -> Box<dyn ObsSink>) -> io::Result
 
 pub fn run_listener(l: TcpListener, cfg: LinkCfg, make_sink: &dyn Fn() -> Box<dyn ObsSink>) -> io::Result<()> {
     eprintln!(
-        "[link] {} 에서 평가기 접착부를 기다림 (계획기 {}, π0.5 입력 {:?}, 단계 {:?}, 위치 {})",
+        "[link] {} 에서 평가기 접착부를 기다림 (계획기 {}, VLA 입력 {:?}, 단계 {:?}, 위치 {})",
         l.local_addr().map(|a| a.to_string()).unwrap_or_default(),
         cfg.factory.is_some(),
         cfg.prompt_mode,

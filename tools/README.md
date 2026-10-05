@@ -4,11 +4,15 @@
 conda `behavior` = OmniGibson 3.9.3 / Isaac Sim 5.1, CUDA 12.8) 판으로 옮긴 내용을 적는다.
 옛 스크립트는 지우지 않고 `archive/<원래 경로>` 로 옮겼다([archive/README.md](../archive/README.md)).
 
+> **10-06**: π0.5 관련 스크립트(`ft_*`, `run_pi05_*`, `run_verify_chunk.sh`, `serve_b1k_agent.py`, `check_agent_hook.py`, `setup/train_4090.sh`,
+> `setup/download_top_ckpts.sh`, `exp/native_*.json`, `src/vla/*`, `src/sim/integ/run_eval_integ.sh`)는 지웠다. VLA = RecallVLA (robot-agent `training/vla`).
+> 아래 "확인한 것 (2026-10-03)" 표는 그때 기록이다.
+
 ## 공통
 
 - 경로는 모두 저장소 기준이다(스크립트가 제 위치에서 저장소 뿌리를 찾는다). `/mnt/c`, Windows 파이썬, `wsl.exe` 를 쓰지 않는다.
 - 시뮬레이터를 띄우는 스크립트는 conda `behavior` 환경을 스스로 켠다(`CONDA_BASE` 기본 `conda info --base`, 없으면 `~/miniconda3`).
-- 재생 서버(`tools/replay_policy_server.py`)의 파이썬은 `REPLAY_PY`(기본 `~/openpi/.venv/bin/python`). Rust 재생 서버·비교기는
+- 재생 서버(`tools/replay_policy_server.py`)의 파이썬은 `REPLAY_PY`(기본 `~/miniconda3/envs/behavior/bin/python`). Rust 재생 서버·비교기는
   `~/cargo-target/{replaysrv,tracecmp}/release/` (빌드: `src/sim/fasteval/tracecmp/build.sh`, replaysrv 는
   `CARGO_TARGET_DIR=~/cargo-target/replaysrv cargo build --release`).
 - 옛 행렬·메타 JSON 안의 `C:/behavior-2026/...` 경로는 읽을 때 이 저장소로 바꾼다. 저장소의 행렬은 저장소 기준 상대 경로로 고쳤다.
@@ -24,8 +28,6 @@ conda `behavior` = OmniGibson 3.9.3 / Isaac Sim 5.1, CUDA 12.8) 판으로 옮긴
 | `tools/run_replay_eval.ps1` | `tools/run_replay_eval.sh` | 기록한 행동열을 재생 서버로 먹이며 평가기 |
 | `tools/exp_run.ps1` | `tools/exp_run.py` | 과제 x 인스턴스 x 설정 실험 실행기 · 표 · 비교 |
 | `tools/subpack.ps1` | `tools/subpack.py` | 제출 패키지 모으기·검사·README·zip |
-| `src/vla/pi05_native/exp/run_insurance.ps1` | `src/vla/pi05_native/exp/run_insurance.sh` | 네이티브 π0.5 실험(exp_run 경유) |
-| `src/sim/integ/run_eval_integ.ps1` | `src/sim/integ/run_eval_integ.sh` | 종단 한 판: 평가기 + 네이티브 π0.5 + simlink(계획기·scenemap) |
 | `src/sim/integ/wsl_stack.sh` | `src/sim/integ/simlink_stack.sh` | simlink 띄우기 + VRAM 기록 |
 | `src/sim/integ/wsl_cleanup.sh` | `src/sim/integ/simlink_cleanup.sh` | 비정상 종료 때 simlink 쪽 정리(적어 둔 pid 만) |
 | `src/sim/engine/capture/run_capture.ps1` | `src/sim/engine/capture/run_capture.sh` | 재생하며 물리 층 기록(RTX 렌더 켬, 영상 저장) |
@@ -35,7 +37,6 @@ conda `behavior` = OmniGibson 3.9.3 / Isaac Sim 5.1, CUDA 12.8) 판으로 옮긴
 | `src/sim/engine/tests/render/capture/run_render_capture.ps1` | `…/capture/run_render_capture.sh` | 렌더 기준 자료 뜨기(RGB-D 래퍼) |
 | `src/sim/engine/tests/render/capture/capture_with_lock.ps1` | `…/capture/capture_with_lock.sh` | 잠금 + VRAM 확인 뒤 위 스크립트 |
 | `src/sim/engine/tests/render/capture/process_capture.ps1` | `…/capture/process_capture.sh` | 기준 자료 → rsc 변환·잡음 폭(GPU 안 씀) |
-| `tools/setup/download_top_ckpts_wsl.sh` | `tools/setup/download_top_ckpts.sh` | 2025 상위 팀 체크포인트 받기 |
 | `tools/setup/fetch_qwen35_gguf_wsl.sh` | `tools/setup/fetch_qwen35_gguf.sh` | Qwen3.5-9B GGUF 받기 + sha256 대조 |
 | `tools/setup/setup_llamacpp_cuda_wsl.sh` | `tools/setup/setup_llamacpp_cuda.sh` | llama.cpp CUDA 12.8(sm_120) 빌드 |
 
@@ -92,7 +93,7 @@ python3 tools/exp_run.py compare -A <실험 또는 판 폴더> -B <...> [--out c
 
 행렬 형식·결과(`status.jsonl`, `results.csv`, `summary.md`, `logs/`)는 옛 판과 같다. 판마다 GPU 잠금(owner `exp_run`)을 잡고,
 다른 시뮬레이터(파이썬 + omnigibson)가 없고 VRAM 이 `gpu_busy_mib` 아래일 때만 돈다. 재생 서버 `server`: `rust`(기본) |
-`python`(옛 `wsl`, openpi venv) | `conda`(옛 `windows`). 포팅 평가기는 `src/sim/engine/eval/ported_eval.py`(행렬 `ported.python` 으로 파이썬 지정 가능,
+`python`(옛 `wsl`, `REPLAY_PY`) | `conda`(옛 `windows`). 포팅 평가기는 `src/sim/engine/eval/ported_eval.py`(행렬 `ported.python` 으로 파이썬 지정 가능,
 옛 `host` 키는 무시). 비교기는 Rust `tracecmp` 가 있으면 그것, 없으면 `tools/trace_compare.py`.
 
 ### tools/subpack.py — 제출 패키지
@@ -106,24 +107,15 @@ python3 tools/subpack.py --sources outputs/exp_A outputs/exp_B --out /tmp/pkg --
 README 의 "Local launcher" 절은 Windows 전용 문장을 빼고 메타 `launcher.platform`(기본 `Ubuntu 22.04, Isaac Sim 5.1`)·
 `launcher.black_reason` 으로 채운다. `--scan-videos` 는 conda behavior 의 `tools/black_frame_check.py` 를 부른다.
 
-### src/vla/pi05_native/exp/run_insurance.sh
+### src/sim/integ/simlink_stack.sh (+ simlink_cleanup.sh)
 
 ```bash
-bash src/vla/pi05_native/exp/run_insurance.sh [--matrix <json>] [--model pb2025|radio] [--build build] [--reuse] [--dry-run]
+bash src/sim/integ/simlink_stack.sh <출력 폴더> [scene 1|0] [llm kau|oracle|none] [simlink 인자 ...]
 ```
 
-`PYTHONPATH=glue:<build>`, `PI05_MODEL` 을 두고 `tools/exp_run.py run --backend original` 을 부른다(빌드: `src/vla/pi05_native/build_linux.sh`).
-
-### src/sim/integ/run_eval_integ.sh (+ simlink_stack.sh, simlink_cleanup.sh)
-
-```bash
-bash src/sim/integ/run_eval_integ.sh --task turning_on_radio --max-steps 600 --llm kau --scene 1 [--video] [--no-lock] [--dry-run]
-```
-
-순서는 옛 판과 같다: GPU 잠금(owner `integ`, 다른 시뮬레이터·VRAM 확인) → `simlink_stack.sh`(VRAM 기록 → simlink `--once`, `stack_ready`)
-→ 평가기(`glue/run_eval_integ.py`) → `stack_done` 기다림(180 s) → 정리 → `summarize_run.py`. 결과 `outputs/integ/<이름>/`.
-바뀐 점: 모두 한 PC 라 simlink 는 `127.0.0.1:7801` 에서 듣는다(`SIMLINK_LISTEN`), 표시 파일·로그 이름이 `wsl_*` → `stack_*`,
-평가기 쪽 VRAM 기록은 `vram_host.txt`(summarize 가 읽음), GPU 메모리 표본은 `nvidia-smi -l 2` 로 `gpu_mem.csv`.
+simlink(계획기 + scenemap) 하나를 띄운다: VRAM 기록 → simlink `--once`(`127.0.0.1:7801`, `SIMLINK_LISTEN`) → `stack_ready` → 평가기 쪽
+접착부(`glue/simlink_policy.py` `IntegPolicy`)가 붙어 한 판 → `stack_done`. 평가기와 π0.5 를 함께 띄우던 종단 실행기 `run_eval_integ.sh` 는
+10-06 에 지웠다(안쪽 정책이 없음). 연결만 재려면 `glue/link_bench.py`(0 행동 정책).
 simlink 바이너리 `SIMLINK`(기본 `~/cargo-target/simlink/release/simlink`, `src/sim/integ/build_simlink.sh`). 키는 `~/.config/behavior-2026/kau.env` 에서 환경변수로만.
 
 ### 엔진 스크립트 (src/sim/engine)
@@ -143,7 +135,6 @@ simlink 바이너리 `SIMLINK`(기본 `~/cargo-target/simlink/release/simlink`, 
 ### tools/setup — 받기·빌드
 
 ```bash
-bash tools/setup/download_top_ckpts.sh [--dry-run]      # ~/checkpoints/{behavior_submission,openpi_comet}, 약 63 GB
 bash tools/setup/fetch_qwen35_gguf.sh [--dry-run] [REPO] [QUANT_FILE]   # ~/models/Qwen3.5-9B-GGUF (5.68 + 0.92 GB)
 bash tools/setup/setup_llamacpp_cuda.sh [--dry-run]     # ~/llama.cpp/build/bin/{llama-server,llama-mtmd-cli,llama-bench}
 bash tools/run_qwen_server.sh [CTX] [PORT]              # 위 둘이 있어야 함, 127.0.0.1:8081 (QWEN_HOST 로 바꿈)

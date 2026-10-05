@@ -20,7 +20,7 @@ export OMNIGIBSON_APPDATA_PATH=${OMNIGIBSON_APPDATA_PATH:-$BASE/appdata}  # 결�
 export PYTHONUTF8=1
 
 PORT=8011
-/home/juyoung/openpi/.venv/bin/python /mnt/c/behavior-2026/tools/replay_policy_server.py \
+$HOME/miniconda3/envs/behavior/bin/python /mnt/c/behavior-2026/tools/replay_policy_server.py \
   --actions "$ACTIONS" --port $PORT --log "$OUT/server_log.npz" --once > "$OUT/replay_server.log" 2>&1 &
 SRV=$!
 for i in $(seq 60); do curl -sf http://127.0.0.1:$PORT/healthz >/dev/null && break; sleep 1; done
@@ -30,7 +30,7 @@ cd $BASE/BEHAVIOR-1K/OmniGibson
 set +e
 # WSL 에는 RTX 렌더 장치가 없다 -> --no-render (카메라 관측만 0 영상, 물리 무관)
 python ${ENGINE_CAPTURE_PY:-/mnt/c/behavior-2026/src/sim/engine/capture/physx_capture.py} --dump-dir "$OUT" --no-render "${EXTRA[@]}" -- --trace -- \
-  --task-name ${TASK_NAME:-turning_on_radio} --robot-config /mnt/c/behavior-2026/src/sim/configs/r1pro_openpi.yaml \
+  --task-name ${TASK_NAME:-turning_on_radio} --robot-config /mnt/c/behavior-2026/src/sim/configs/r1pro_robot.yaml \
   --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode ${EVAL_MODE:-public_test} \
   --host 127.0.0.1 --port $PORT --instance-indices ${INSTANCE_IDX:-0} --num-envs 1 --max-steps "$MAXSTEPS" \
   --output-dir "$OUT" --headless 2>&1 | tee "$OUT/eval.log"

@@ -6,7 +6,7 @@
 
 - The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every detected object at an xyz position (decided: ObjectSAM — the class-agnostic, things-only YOLO26n student distilled from FastSAM-s, `yolo26n-seg-obj-416` in `ovdet` — + SigLIP 2 names/embeddings per mask, `scene_graph/clip`, fused by the scenemap probabilistic object model `objprob`): the segmentation mask gives the object's centroid, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
 - The agent uses that graph for long-horizon planning, step tracking and failure recovery.
-- The VLA (π0.5) turns the current step instruction plus the three cameras into actions.
+- The VLA turns the current step instruction plus the cameras into actions. VLA = RecallVLA (robot-agent `training/vla`); the π0.5 path was removed 10-06.
 
 Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C++/CUDA, Rust for orchestration). No PyTorch in our execution paths.
 
@@ -49,13 +49,9 @@ src/                  three layers, same as the team repo (robot-agent): ① mem
     viewer/           LEGACY sgviz (Python + viser, file polling, not real-time). Do not use; kept for history
   agent/              ② high-level planning
     planner/          planner agent + evaluator↔policy relay (Rust, raw OpenAI-compatible API)
-  vla/                ③ low-level action (π0.5)
-    pi05_native/      π0.5 inference engine, hand-written C++/CUDA
-    pi05_train/       π0.5 training step in C++/CUDA
-    fasttrain/        training data pipeline: NVDEC + fused CUDA kernels, Rust indexer
   sim/                simulator, evaluation and integration
     engine/           our own GPU simulator engine; layer 0 = PhysX 5.6.1 oracle replay (C++)
-    fasteval/         evaluator acceleration: chunked-replay policy server, instrumentation
+    fasteval/         evaluator acceleration: replay policy server, trace compare
     integ/            evaluator ↔ planner ↔ scenemap link (simlink, Rust)
     explore/          one simulator run of the explore skill (evaluator side) + 8080 sgview launcher (viewer_8080.sh)
     move_robot/       simulator side of the move_robot tool (calls robot-agent's Rust crate via ctypes)
@@ -80,7 +76,7 @@ plan.md               plan and decisions
 
 **Earlier PC (`ad17-MS-7E01`, RTX 4090 24 GB, 10-02)** — record only
 - First check (`tools/setup/linux_first_check.sh`): 5 zero-action runs + 2 replays, 0 black frames.
-- At that time `~/openpi` and secrets in `~/.config/behavior-2026/` (see .env.example) were not set up yet.
+- At that time secrets in `~/.config/behavior-2026/` (see .env.example) were not set up yet.
 
 ## Setup notes
 

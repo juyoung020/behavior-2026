@@ -1,5 +1,6 @@
 """Launcher: official evaluator (omnigibson.eval.eval, unmodified) with --policy local, whose LocalPolicy gets
-MoveRobotPolicy (move_robot tool calls -> R1Pro actions). Same runtime patch as src/vla/pi05_native/glue/run_eval_native.py.
+MoveRobotPolicy (move_robot tool calls -> R1Pro actions); the evaluator is patched at
+runtime (only LocalPolicy.__init__ is replaced, BEHAVIOR-1K unmodified).
 
     # agent connects (robot-agent: move-robot call '<args>' / move-robot llm "..." --addr 127.0.0.1:8771)
     python run_eval_move.py --listen 127.0.0.1:8771 -- --task-name turning_on_radio --max-steps 6000

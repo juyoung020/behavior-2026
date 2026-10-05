@@ -1,7 +1,7 @@
 """포팅 평가기 진입점 — 공식 평가기와 같은 인자·같은 결과 JSON, 시뮬레이터만 이 엔진 (docs/엔진_자체구현.md 10.1·10.2).
 
     python src/sim/engine/eval/ported_eval.py --backend {engine,dummy} [--scene-root DIR] -- <공식 omnigibson.eval.eval 인자 그대로>
-    예) ... ported_eval.py --backend dummy -- --task-name turning_on_radio --robot-config src/sim/configs/r1pro_openpi.yaml \
+    예) ... ported_eval.py --backend dummy -- --task-name turning_on_radio --robot-config src/sim/configs/r1pro_robot.yaml \
             --host 127.0.0.1 --port 8011 --instance-indices 0 --num-envs 1 --max-steps 5 --output-dir /tmp/ported
 
 원리

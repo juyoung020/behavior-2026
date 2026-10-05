@@ -1,7 +1,7 @@
 //! msgpack 최소 구현: 복사 없이 훑기(zero-copy scan) + 작은 값 쓰기.
 //!
-//! 평가기↔π0.5 프로토콜은 msgpack + 넘파이 확장(`{b"__ndarray__": True, b"data": bin, b"dtype": str, b"shape": [..]}`)이다
-//! (OmniGibson `eval/utils/network_utils.py` pack_data/unpack_data, openpi `openpi_client/msgpack_numpy.py`).
+//! 평가기↔VLA 프로토콜은 msgpack + 넘파이 확장(`{b"__ndarray__": True, b"data": bin, b"dtype": str, b"shape": [..]}`)이다
+//! (OmniGibson `eval/utils/network_utils.py` pack_data/unpack_data).
 //!
 //! 읽기는 [`Src`] 위에서 한다. 웹소켓 클라이언트 프레임은 XOR 마스크가 걸려 있는데, [`Masked`] 로 보면
 //! 마스크를 풀지 않은 버퍼에서 필요한 바이트만 그 자리에서 XOR 해 읽는다 → 큰 영상 배열은 한 번도 건드리지 않는다.

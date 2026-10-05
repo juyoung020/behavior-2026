@@ -18,7 +18,7 @@ DUMP=$OUT/dump
 PORT=8014
 ZA=~/engine-data/scenes/zero_actions_1.npz
 EV=(python "$ENGINE/capture/render_scene.py" --dump-dir "$DUMP" -- --trace --
-    --task-name "$TASK" --robot-config "$REPO/src/sim/configs/r1pro_openpi.yaml"
+    --task-name "$TASK" --robot-config "$REPO/src/sim/configs/r1pro_robot.yaml"
     --env-wrapper omnigibson.eval.wrappers.DefaultWrapper --mode "$MODE"
     --host 127.0.0.1 --port "$PORT" --instance-indices "$IDX" --num-envs 1 --max-steps 1
     --output-dir "$DUMP" --headless)
@@ -31,7 +31,7 @@ CONDA_BASE=${CONDA_BASE:-$(conda info --base 2>/dev/null || echo "$HOME/minicond
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 conda activate behavior
 [ -f "$ZA" ] || python -c "import numpy as np; np.savez('$ZA', actions=np.zeros((2,1,23), np.float32))"
-"${REPLAY_PY:-$HOME/openpi/.venv/bin/python}" "$REPO/tools/replay_policy_server.py" --actions "$ZA" --port $PORT \
+"${REPLAY_PY:-$HOME/miniconda3/envs/behavior/bin/python}" "$REPO/tools/replay_policy_server.py" --actions "$ZA" --port $PORT \
   --log "$DUMP/server_log.npz" --once > "$DUMP/replay_server.log" 2>&1 &
 SRV=$!
 for _ in $(seq 60); do curl -sf http://127.0.0.1:$PORT/healthz >/dev/null && break; sleep 1; done

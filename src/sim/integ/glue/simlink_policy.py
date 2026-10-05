@@ -1,7 +1,7 @@
-"""평가기 프로세스 안 접착부: 네이티브 π0.5(Pi05NativePolicy) 앞에 계획기 + scenemap(물체 지도·자세) 연결을 붙인다.
+"""평가기 프로세스 안 접착부: 안쪽 정책(VLA 등 act/reset 을 가진 아무 정책) 앞에 계획기 + scenemap(물체 지도·자세) 연결을 붙인다.
 
-파이썬은 여기까지만(공식 평가기가 파이썬이라서). 하는 일은 바이트를 소켓에 넣고 결정을 π0.5 에 넘기는 것뿐이다.
-계획·경계 감시·keyframe 정책·위치 추정·영상 변환은 전부 WSL 쪽 Rust(simlink = bagent link + ROS 발행)가 한다.
+파이썬은 여기까지만(공식 평가기가 파이썬이라서). 하는 일은 바이트를 소켓에 넣고 결정을 안쪽 정책에 넘기는 것뿐이다.
+계획·경계 감시·keyframe 정책·위치 추정·영상 변환은 전부 Rust(simlink = bagent link)가 한다.
 프로토콜은 src/agent/planner/src/link.rs 머리말(머리 12 B + 몸통, 리틀 엔디언).
 
 스텝 하나(환경 하나):
@@ -10,12 +10,11 @@
      평가기가 넣어 주는 cam_rel_poses 는 보내지 않는다(시뮬레이터 카메라·전역 자세 API 로 만든 값 — 규칙 해석상 안 씀).
      카메라 외부 자세는 link 가 proprio 관절값 + R1Pro 순기구학으로 만든다(src/agent/planner/src/fk.rs).
      영상은 미리 잡아 둔 버퍼로 복사(memcpy)만 하고 보내기는 뒤 스레드가 한다 → 시뮬레이터 스레드는 안 막힌다
-  3. hold 면 결정 ACK 를 기다린다(시뮬레이터 시간 정지, 점수 영향 없음) → 문장·flush·단계 번호를 π0.5 에 넣는다
-  4. π0.5 act (Pi05NativePolicy, 코드 무수정)
+  3. hold 면 결정 ACK 를 기다린다(시뮬레이터 시간 정지, 점수 영향 없음) → 문장·flush·단계 번호를 안쪽 정책에 넣는다
+     (안쪽 정책에 prompt 속성 / reset_env(env) / set_stage(env, stage, fixed) 가 있을 때만)
+  4. 안쪽 정책 act
 
-π0.5 단계 입력: 1위 모델(PiBehavior, `Pi05NativePolicy.kind == 1`)이면 `Pi05NativePolicy.set_stage(slot, stage, fixed)`
-(C API `pi05_set_stage(slot, stage, mode)`: mode 0 = 모델 투표, 1 = 외부 고정)를 부른다. 문장 모델(radio 등)이면 한 번
-알리고 넘어간다(기록에는 계획기 추정 `stage_est` 가 남는다).
+(옛 안쪽 정책 = 네이티브 π0.5 엔진 — 10-06 지움. VLA = RecallVLA, robot-agent training/vla.)
 """
 from __future__ import annotations
 
@@ -255,32 +254,19 @@ def _np(x):
     return np.asarray(x)
 
 
-def stage_count_for(task_id, eng_info=None):
-    """이 과제의 π0.5 단계 수. 엔진이 알려 주면 그것, 아니면 2025 1위 표(0~49)."""
-    for k in ("stage_count", "num_stages", "task_num_stages"):
-        v = (eng_info or {}).get(k)
-        if isinstance(v, int) and v > 0:
-            return v
-        if isinstance(v, (list, tuple)) and task_id is not None and 0 <= task_id < len(v):
-            return int(v[task_id])
-    tab = json.loads((HERE / "stage_table_2025.json").read_text(encoding="utf-8"))["task_num_stages"]
-    return int(tab[task_id]) if task_id is not None and 0 <= task_id < len(tab) else 0
-
-
 class IntegPolicy:
-    """LocalPolicy.policy 자리. inner = Pi05NativePolicy(또는 act/reset 을 가진 아무 정책).
+    """LocalPolicy.policy 자리. inner = act/reset 을 가진 아무 정책.
 
-    관측 키는 첫 act 에서 뒷부분으로 찾는다(로봇 이름이 설정마다 다르고, 1위 모델은 엔진을 첫 act 에 만든다)."""
+    관측 키는 첫 act 에서 뒷부분으로 찾는다(로봇 이름이 설정마다 다르다)."""
 
     CAM_SUFFIX = ("zed_link:Camera:0::rgb", "left_realsense_link:Camera:0::rgb", "right_realsense_link:Camera:0::rgb")
 
-    def __init__(self, inner, link: SimLinkClient | None, native=None, log_path=None, apply_prompt=True, apply_stage=True,
+    def __init__(self, inner, link: SimLinkClient | None, log_path=None, apply_prompt=True, apply_stage=True,
                  send_cam_rel_poses=False):
         self.inner = inner
         self.link = link
         self.rgb_keys = self.depth_keys = None
         self.prop_key = self.crp_key = None
-        self.N = native
         self.apply_prompt = apply_prompt
         self.apply_stage = apply_stage
         self.send_crp = send_cam_rel_poses  # 시험·비교용(평가 경로는 False)
@@ -300,26 +286,24 @@ class IntegPolicy:
         print(f"[simlink] 관측 키: rgb {self.rgb_keys}, 깊이 {[k in obs for k in self.depth_keys if k]}, "
               f"proprio {self.prop_key}, cam_rel_poses {self.crp_key}", flush=True)
 
-    # 결정 → π0.5
+    # 결정 → 안쪽 정책
     def _apply(self, env, d):
         applied = []
         pr = d.get("prompt")
         if self.apply_prompt and pr and hasattr(self.inner, "prompt") and pr != self.inner.prompt:
             self.inner.prompt = pr
             applied.append("prompt")
-        eng = getattr(self.inner, "eng", None)
-        if d.get("flush") and self.N is not None and eng is not None:
-            self.N.reset(eng, env)
+        if d.get("flush") and hasattr(self.inner, "reset_env"):
+            self.inner.reset_env(env)
             applied.append("flush")
         st = d.get("stage")
         if self.apply_stage and st is not None:
-            # 1위 모델(PiBehavior, kind 1)만 단계 입력이 있다. Pi05NativePolicy.set_stage 가 고정값을 매 act 에 다시 건다.
-            if getattr(self.inner, "kind", 0) == 1 and hasattr(self.inner, "set_stage"):
+            if hasattr(self.inner, "set_stage"):
                 self.inner.set_stage(env, int(st), fixed=int(d.get("stage_mode", 1)) == 1)
                 applied.append("stage")
             elif not self.stage_warned:
                 self.stage_warned = True
-                print("[simlink] 이 π0.5 가중치에는 단계 입력이 없다(문장 모델) — 단계 번호는 기록만", flush=True)
+                print("[simlink] 안쪽 정책에 단계 입력이 없다 — 단계 번호는 기록만", flush=True)
         rec = {"env": env, "step": self.step, "applied": applied, **d}
         if self.log_path:  # 결정은 드물다: 바로 적는다(평가기가 끝에 프로세스를 바로 닫아도 남게)
             with open(pathlib.Path(self.log_path).with_name("decisions.jsonl"), "a", encoding="utf-8") as f:

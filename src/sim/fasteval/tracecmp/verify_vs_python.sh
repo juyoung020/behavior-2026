@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # tracecmp(Rust) 와 tools/trace_compare.py(파이썬)의 출력·종료 코드가 글자 하나까지 같은지 본다.
 #   wsl -d Ubuntu-22.04 -u juyoung -- bash /mnt/c/behavior-2026/src/sim/fasteval/tracecmp/verify_vs_python.sh
-# 두 쪽 다 WSL 에서 같은 경로 문자열(/mnt/c/...)로 부른다. 파이썬은 openpi venv(numpy), Rust 는 ~/cargo-target/tracecmp 빌드.
+# 두 쪽 다 WSL 에서 같은 경로 문자열(/mnt/c/...)로 부른다. 파이썬은 conda behavior 환경(numpy), Rust 는 ~/cargo-target/tracecmp 빌드.
 set -u
 O=/mnt/c/behavior-2026/outputs
-PY=$HOME/openpi/.venv/bin/python
+PY=$HOME/miniconda3/envs/behavior/bin/python
 TC=/mnt/c/behavior-2026/tools/trace_compare.py
 RS=$HOME/cargo-target/tracecmp/release/tracecmp
 A=$O/eval_turning_on_radio_20260929_195500_nf_a

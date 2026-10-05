@@ -1,4 +1,4 @@
-//! 손으로 짠 msgpack 읽기·쓰기 — openpi / BEHAVIOR 평가기의 msgpack_numpy 형식
+//! 손으로 짠 msgpack 읽기·쓰기 — BEHAVIOR 평가기의 msgpack_numpy 형식
 //! (넘파이 배열 = {b"__ndarray__": True, b"data": bin, b"dtype": "<f4", b"shape": [..]}) 을 다룬다.
 
 #[derive(Clone, Debug, PartialEq)]

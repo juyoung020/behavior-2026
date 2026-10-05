@@ -2,8 +2,8 @@
 # 리눅스에서 Windows 파티션·WSL 디스크의 데이터를 가져온다 — docs/Linux_설치.md 5절.
 #   sudo bash linux_import_from_windows.sh mount      # Windows C: 를 읽기 전용으로 /mnt/win 에 붙인다
 #   bash      linux_import_from_windows.sh datasets   # BEHAVIOR-1K/datasets(약 35 GB, 복호화 키 포함) 복사
-#   bash      linux_import_from_windows.sh data       # 우리 data/ 에서 필요한 것(π0.5 네이티브 가중치 등) 복사
-#   sudo bash linux_import_from_windows.sh wsl        # WSL 디스크(ext4.vhdx)를 읽기 전용으로 /mnt/wsl 에 붙인다(체크포인트·openpi)
+#   bash      linux_import_from_windows.sh data       # 우리 data/ 에서 필요한 것(시연 meta) 복사
+#   sudo bash linux_import_from_windows.sh wsl        # WSL 디스크(ext4.vhdx)를 읽기 전용으로 /mnt/wsl 에 붙인다(체크포인트)
 #   bash      linux_import_from_windows.sh ckpts      # WSL 의 ~/checkpoints 복사
 #   sudo bash linux_import_from_windows.sh umount
 # Windows 쪽 준비: 빠른 시작(Fast Startup) 끄기, 최대 절전 끄기(powercfg /h off) — 안 그러면 NTFS 가 '더러운' 상태라 붙지 않거나 읽기 전용이 된다.
@@ -30,7 +30,7 @@ datasets)
   ;;
 data)
   mkdir -p "$WORK/data"
-  for d in pi05_native 2026-challenge-demos/meta; do
+  for d in 2026-challenge-demos/meta; do
     [ -e "$WIN/behavior-2026/data/$d" ] && rsync -a --info=progress2 "$WIN/behavior-2026/data/$d" "$WORK/data/$(dirname "$d")/"
   done
   # 개발 기록(재생 행동열·비교 기준)

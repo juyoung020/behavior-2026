@@ -753,7 +753,8 @@ def install_instance_seq(indices, eval_args, trace):
 
 
 def install_native_policy(spec):
-    """--native-policy=모듈:함수 : 평가기 프로세스 안에서 도는 정책(네이티브 π0.5 엔진 등)을 공식 load_policy 자리에 넣는다.
+    """--native-policy=모듈:함수 : 평가기 프로세스 안에서 도는 정책을 공식 load_policy 자리에 넣는다
+    (모듈은 sys.path 에서 찾는다 — PYTHONPATH 로 준다).
 
     함수(cfg) 는 공식 정책과 같은 모양의 객체를 돌려줘야 한다: forward(obs=배치 관측) -> (num_envs, action_dim) 텐서, reset(),
     (있으면) set_action_dim(n). 평가기 쪽 코드는 그대로다 -- 정책은 우리 제출물이지 평가기가 아니다.
@@ -762,9 +763,6 @@ def install_native_policy(spec):
 
     from omnigibson.eval import evaluator as E
 
-    fasteval = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "fasteval")
-    if fasteval not in sys.path:
-        sys.path.insert(0, fasteval)  # 기본 공장: src\fasteval\native_policy.py (예: native_policy:pi05)
     mod, fn = spec.split(":", 1)
     factory = getattr(importlib.import_module(mod), fn)
     held = {}
@@ -779,7 +777,7 @@ def install_native_policy(spec):
 
     E.BatchedEvaluator.load_policy = load_policy
 
-    # 정책 쪽 기록(예: 네이티브 엔진의 스텝 CSV)을 og.shutdown 전에 내보낸다
+    # 정책 쪽 기록(예: 정책의 스텝 CSV)을 og.shutdown 전에 내보낸다
     prev_exit = E.BatchedEvaluator.__exit__
 
     def ev_exit(self, *a):

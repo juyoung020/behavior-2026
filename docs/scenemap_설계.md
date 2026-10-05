@@ -1,5 +1,7 @@
 # scenemap — 새 인지 스택 설계 (2D SLAM · 물체 지도 · 계획기 질의)
 
+> **10-06**: 우리 π0.5 경로(네이티브 엔진 `src/vla/`·학습·데이터 파이프라인·평가기 접착부·가중치)는 지웠다. VLA = RecallVLA (robot-agent `training/vla`). 아래 π0.5 내용은 그때 기록이다.
+
 작성 2026-09-30. 상태: **설계(구현 전)**. 코드는 `src/scene_graph/scenemap/` 에 새로 둔다.
 
 - 근거는 사용자 팀 저장소 `juyoung020/robot-programming-team` 의 [docs/plan.md], [docs/model_selection.md] 다(09-30 판).

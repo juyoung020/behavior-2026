@@ -4,14 +4,14 @@
 #   tools/run_eval_radio.sh [선택지]
 #   --task 과제 (기본 turning_on_radio)       --instances '0,1' 처럼 여러 개 -> --num-envs 자동 (기본 --instance 0 하나)
 #   --max-steps 0 = 공식 기본 제한시간(사람 평균 x 1.5). 제출용 결과는 반드시 0(기본)으로.
-#   --wrapper Default(RGB 224, π0.5 기본) | RGBD(공식 RGB-D 720/480)
+#   --wrapper Default(RGB 224) | RGBD(공식 RGB-D 720/480)
 #   --gui 시뮬레이터 창.  --port 정책 서버 포트(재생 서버는 8010).  --tag 결과 폴더 이름 뒤에 붙일 말, --out-dir 결과 폴더 직접 지정
 #   --timing / --trace : tools/eval_instrumented.py 로 감싸 구간별 시간(timing.json) / 스텝별 기록(trace.npz)을 결과 폴더에.
-#   --chunk-size 16    : 공식 인자 --replay-action-chunk-size (서버가 action_chunk 를 줘야 함: src/sim/fasteval/pi05_chunk_server.py)
+#   --chunk-size 16    : 공식 인자 --replay-action-chunk-size (서버가 action_chunk 를 줘야 함)
 #   --black-guard warn|abort : 정책에 들어갈 카메라 영상이 전부 0(검은 화면)이면 경고/중단.  --black-diag : 호스트/GPU 경로 비교(진단)
 #   --kit-set '/키=값' : 진단 실험용 Kit 설정 바꾸기 (여러 번 줄 수 있음, 공식 결과에는 쓰지 않는다)
-#   --robot-config 경로 : 로봇 설정 (기본 src/sim/configs/r1pro_openpi.yaml = 로봇 이름 robot, openpi 베이스라인용).
-#                      2위 Comet 서버는 robot_r1 키를 쓰므로 공식 BEHAVIOR-1K/OmniGibson/omnigibson/eval/r1pro.yaml 을 준다.
+#   --robot-config 경로 : 로봇 설정 (기본 src/sim/configs/r1pro_robot.yaml = 로봇 이름 robot).
+#                      robot_r1 키를 쓰는 서버에는 공식 BEHAVIOR-1K/OmniGibson/omnigibson/eval/r1pro.yaml 을 준다.
 #                      none : --robot-config 를 아예 안 넘김(평가기 기본 = 공식 eval/r1pro.yaml, 수정 0 재현용)
 #   --deep            : 컨트롤러 콜백·물체 상태 캐시 안쪽까지 잘게 (--timing 과 같이). 평가기 코드는 안 바꾼다.
 #   --policy local    : 공식 평가기의 0 행동 정책(서버 없이, 평가기 점검용 공식 옵션)
@@ -26,7 +26,7 @@ usage() { sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 TASK=turning_on_radio; INSTANCE=0; INSTANCES=''; MAX_STEPS=0; WRAPPER=Default; PORT=8000; TAG=''; OUT_DIR=''
 CHUNK=0; GUI=0; TIMING=0; TRACE=0; DEEP=0; BLACK_DIAG=0; BLACK_GUARD=''; KIT_SET=(); KIT_ARG=()
-ROBOT_CONFIG=$REPO/src/sim/configs/r1pro_openpi.yaml; POLICY=websocket; RENDER_ITERS=0; VK_NV=0; DRY=0
+ROBOT_CONFIG=$REPO/src/sim/configs/r1pro_robot.yaml; POLICY=websocket; RENDER_ITERS=0; VK_NV=0; DRY=0
 while [ $# -gt 0 ]; do
   case $1 in
     --task) TASK=$2; shift 2 ;;

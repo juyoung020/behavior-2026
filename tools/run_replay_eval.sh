@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 기록해 둔 행동열(actions.npz)을 재생 서버로 먹이며 공식 평가기를 돌린다 -- 일치 검증·시뮬레이터 시간 측정용.
 # (리눅스판; 옛 Windows 판 archive/tools/run_replay_eval.ps1 과 같은 선택지·동작)
-#   재생 서버: tools/replay_policy_server.py (기본 openpi venv 파이썬, 포트 8010, 받은 관측을 <결과폴더>/server_log.npz 로)
+#   재생 서버: tools/replay_policy_server.py (기본 conda behavior 환경 파이썬 — REPLAY_PY 로 바꿈, 포트 8010, 받은 관측을 <결과폴더>/server_log.npz 로)
 #   평가기:   tools/run_eval_radio.sh --port 8010 (공식 명령 그대로, --timing/--trace/--deep 등은 그대로 넘김)
 # 예) tools/run_replay_eval.sh --actions outputs/<기준 실행>/actions.npz --trace --tag nf_a
 #   --perturb 'STEP:DIM:DELTA'  음성 대조용으로 한 스텝 행동을 조금 바꾼다
-#   --conda-server              재생 서버를 openpi venv 대신 conda behavior 환경 파이썬으로 (옛 -WindowsServer)
+#   --conda-server              재생 서버를 CONDA_BASE 의 behavior 환경 파이썬으로 (옛 -WindowsServer)
 #   그 밖: --task, --instances '0', --max-steps 500, --wrapper Default|RGBD, --tag replay, --black-diag, --black-guard,
 #          --kit-set (여러 번), --render-iters, --kit-arg (여러 번), --vk-nvidia-only, --dry-run
 set -euo pipefail
@@ -42,7 +42,7 @@ if [ $CONDA_SERVER = 1 ]; then
   CONDA_BASE=${CONDA_BASE:-$(conda info --base 2>/dev/null || echo "$HOME/miniconda3")}
   SRV_PY=$CONDA_BASE/envs/behavior/bin/python
 else
-  SRV_PY=${REPLAY_PY:-$HOME/openpi/.venv/bin/python}
+  SRV_PY=${REPLAY_PY:-$HOME/miniconda3/envs/behavior/bin/python}
 fi
 SRV=("$SRV_PY" "$REPO/tools/replay_policy_server.py" --actions "$ACTIONS" --port 8010 --log "$OUT/server_log.npz" --once)
 [ -n "$PERTURB" ] && SRV+=(--perturb "$PERTURB")

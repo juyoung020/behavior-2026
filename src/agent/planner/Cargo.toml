@@ -3,7 +3,7 @@ name = "behavior-agent"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.81"
-description = "BEHAVIOR Challenge 2026 상위 계획 에이전트(Qwen, OpenAI 호환 도구 호출) + 평가기↔π0.5 중계기"
+description = "BEHAVIOR Challenge 2026 상위 계획 에이전트(Qwen, OpenAI 호환 도구 호출) + 평가기↔VLA 중계기"
 publish = false
 
 [lib]

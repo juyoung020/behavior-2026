@@ -1,6 +1,6 @@
 # archive — 지금 안 쓰는 모듈
 
-지금 파이프라인(공식 평가기 + 네이티브 π0.5 엔진, 물체 기억 scene_graph, 계획기·move_robot, 시뮬 엔진·fasteval, 학습 코드)에서
+지금 파이프라인(공식 평가기, 물체 기억 scene_graph, 계획기·move_robot, 시뮬 엔진·fasteval)에서
 쓰지 않게 된 모듈을 지우지 않고 옮겨 둔 곳이다. 폴더 구조는 원래 경로 그대로다(`archive/<원래 경로>`).
 안의 코드·스크립트는 옮기기 전 그대로 두었다(안의 경로도 옛 경로). 빌드·시험에는 들어가지 않는다(`COLCON_IGNORE`, 상위 Cargo·CMake 없음).
 
@@ -51,6 +51,14 @@ YOLOE·YOLO26s 엔진을 `~/ovdet_models/archive` 로 보관하고 ObjectSAM(YOL
 남긴 것(아직 씀 또는 불분명): `ovdet/config/task_prompts.txt`(글루가 과제 이름을 낱말 표에 더함)·`make_task_prompts.py`·`vocab_all.txt`(그 표를 만든 도구 — 불분명, 남김), `ovdet/tools/build_engines.py`(엔진 빌드 일반), scenemap 옛 이름 규칙(`--no-objprob`·`SGRT_OBJPROB=0`·시험이 씀), libsgrt 프롬프트 길(`SGRT_PROMPT`, 보관 엔진을 고를 때), `runtime/tools/dom_bench_det.cpp`(기본 엔진을 ObjectSAM 으로 바꿔 계속 씀), `tools/realbag/detcmp_*`(objprob_eval 이 씀).
 
 Windows·WSL 스크립트를 리눅스판으로 옮긴 표(쓰는 법·확인한 것)는 [tools/README.md](../tools/README.md).
+
+## 지운 것 (2026-10-06, π0.5 버림)
+
+π0.5 는 쓰지 않는다(VLA = RecallVLA, robot-agent `training/vla`). 옮기지 않고 **지웠다**(git 기록에는 남음). 위 표 중 지운 줄:
+`src/agent/probe/`·`tools/run_probe.sh`·`probe_prep.py`·`probe_infer.py`(π0.5 지시 형식 실험), `src/vla/comet/`·`setup_comet_wsl.sh`·`run_comet_server.sh`·
+`comet_reasoner_env.sh`·`run_comet_offline_test.sh`(openpi-comet), `src/vla/pi05_native/build_windows.bat`·`glue/run_eval_native.ps1`·`exp/run_insurance.ps1`,
+`src/sim/integ/run_eval_integ.ps1`, `tools/setup/run_download_ckpts.ps1`·`extract_ckpts_wsl.sh`·`download_top_ckpts_wsl.sh`(π0.5 체크포인트 받기).
+되살리려면 `git log --diff-filter=D --name-only -- <경로>` 로 지운 커밋을 찾아 그 앞 커밋에서 꺼낸다.
 
 ## 되살리기
 

@@ -1,5 +1,7 @@
 # 작업 PC 환경 — Ubuntu 22.04 + RTX 5070 Ti + Isaac Sim 5.1 + BEHAVIOR-1K v3.9.3-post1
 
+> **10-06**: 우리 π0.5 경로(네이티브 엔진 `src/vla/`·학습·데이터 파이프라인·평가기 접착부·가중치)는 지웠다. VLA = RecallVLA (robot-agent `training/vla`). 아래 π0.5 내용은 그때 기록이다.
+
 프로젝트는 리눅스 PC 한 대에서 한다. 지금 작업 PC 는 `jy-desktop`(10-03 부터, 3.1 절). 그 전(10-02)에는 `ad17-MS-7E01`(RTX 4090)에서 했다 — 아래 1.1 절·3 절·4 절의 10-02 결과는 그 PC 의 기록이다.
 주최 측 성능 측정 장비도 "Ubuntu 22.04.5 LTS"([raw/site_challenge_evaluation.md](raw/site_challenge_evaluation.md)).
 지난 계획·기록은 [archive/windows/Linux_설치.md](archive/windows/Linux_설치.md).
@@ -77,5 +79,4 @@ radio 인스턴스 0, **0 행동 150 스텝 × N 판**(영상 저장), 판마다
 - [ ] `vulkaninfo --summary`
 - [x] torch 2.7.0+cu128
 - [x] CUDA 12.8 툴킷 (`/usr/local/cuda-12.8`)
-- [ ] 네이티브 π0.5 엔진 `src/vla/pi05_native/build_linux.sh` 를 sm_120 으로 빌드
-- [ ] π0.5 radio 체크포인트 → 정책으로 radio 한 판(공식 제한시간)
+- ~~네이티브 π0.5 엔진 빌드, π0.5 radio 한 판~~ (10-06 π0.5 지움)

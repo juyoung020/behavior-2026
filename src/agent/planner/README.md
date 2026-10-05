@@ -1,17 +1,17 @@
-# agent — high-level planner agent + evaluator↔π0.5 relay (Rust)
+# agent — high-level planner agent + evaluator↔VLA relay (Rust)
 
-The "judgement" layer of `plan.md` §1–2. It keeps the long plan, memory and step tracking, and gives π0.5 only the
+The "judgement" layer of `plan.md` §1–2. It keeps the long plan, memory and step tracking, and gives VLA only the
 instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../../../docs/에이전트_설계.md)** (Korean).
 
 ## Two paths
 
 | Path | What | Files |
 |---|---|---|
-| Every step (relay) | Evaluator ↔ relay ↔ π0.5 server. Observation and action bytes pass through unchanged; the relay appends `__agent_prompt__` (and `__agent_flush__`) to the observation map. Masked WebSocket payloads are never unmasked (mask-key rotation), frames are cut-through streamed, sockets use `TCP_QUICKACK`. Odometry and boundary detection are plain arithmetic. **No LLM here.** | `relay.rs` `ws.rs` `msgpack.rs` `wire.rs` `session.rs` `odom.rs` `monitor.rs` |
+| Every step (relay) | Evaluator ↔ relay ↔ VLA server. Observation and action bytes pass through unchanged; the relay appends `__agent_prompt__` (and `__agent_flush__`) to the observation map. Masked WebSocket payloads are never unmasked (mask-key rotation), frames are cut-through streamed, sockets use `TCP_QUICKACK`. Odometry and boundary detection are plain arithmetic. **No LLM here.** | `relay.rs` `ws.rs` `msgpack.rs` `wire.rs` `session.rs` `odom.rs` `monitor.rs` |
 | Step boundaries (agent) | Called only at episode start, budget exhaustion, periodic checks, base settling, gripper changes. OpenAI-compatible Chat Completions with tool calling (`tools` / `tool_calls` / `role:"tool"`) decides the next step. | `planner.rs` `tools.rs` `context.rs` `memory.rs` `plan.rs` `graph.rs` `llm.rs` |
 
-The π0.5 server side is a 70-line glue file, `tools/serve_b1k_agent.py`: it swaps openpi's `B1KPolicyWrapper` for a subclass
-that reads `__agent_prompt__` as the prompt and removes the injected keys (openpi itself is not modified).
+The VLA server side must read `__agent_prompt__` as the prompt and remove the injected keys (the old π0.5 server hook was
+removed 10-06; VLA = RecallVLA, robot-agent `training/vla`).
 
 ## Decision interface
 
@@ -33,14 +33,14 @@ reference resolution, step budgets and instruction rendering. Deciders: `LlmDeci
 | `tools.rs` | Tool schemas and execution: `issue_command`, `continue_current`, `finish`, `graph_query`, `resolve_reference`, `look`, `robot_state`, `goal_status`, `set_plan`, `remember` |
 | `context.rs` / `memory.rs` / `plan.rs` | Single system message context, recent-turn window + summaries after the decision, checklist |
 | `graph.rs` | `SceneQuery` / `ScenemapGraph` (in-process scenemap, `--graph scenemap`), HTTP and static-file (`{"objects": [...]}`) graphs, object memory |
-| `catalog.rs` / `bddl.rs` / `vocab.rs` / `instruction.rs` | Task cards (`assets/tasks.json`: prompts, limits, BDDL, top demo step orders, step budgets), 35-skill vocabulary, 4 instruction formats, π0.5 token budget |
+| `catalog.rs` / `bddl.rs` / `vocab.rs` / `instruction.rs` | Task cards (`assets/tasks.json`: prompts, limits, BDDL, top demo step orders, step budgets), 35-skill vocabulary, 4 instruction formats, VLA token budget |
 | `llm.rs` / `http.rs` / `codec.rs` | Chat Completions (explicit deterministic sampling), hand-written HTTP, `curl` for HTTPS, replay/fake LLMs, local-server up/down hooks; base64, SHA-1 |
 | `link.rs` | Evaluator link (`bagent link`): TCP transport to the in-evaluator glue (`src/sim/integ/glue/simlink_policy.py`), keyframe requests, stage tracking, `ObsSink` |
 | `pose.rs` / `fk.rs` | Replaceable pose estimator (`PoseEstimator`, base_qvel integration + external correction), R1Pro camera forward kinematics from proprio (`src/sim/integ/fk/r1pro_cam_fk.json`) |
 | `setup.rs` | Command-line → planner parts (catalog, LLM, graph, decider, agent factory); shared with `src/sim/integ/simlink` |
 | `image.rs` / `util.rs` | Downscale + JPEG for LLM images; time, deterministic RNG, name cleanup, token estimate, CLI args |
 | `trace.rs` / `replay.rs` | JSONL execution records, timeline, single-file HTML player, replay verification |
-| `mockworld.rs` / `fakes.rs` | Fake world (fake executor), rule-based fake LLM (in-process and HTTP), fake π0.5 server, fake evaluator |
+| `mockworld.rs` / `fakes.rs` | Fake world (fake executor), rule-based fake LLM (in-process and HTTP), fake VLA server, fake evaluator |
 | `prompts/system.md` | System prompt (English) |
 | `tests/e2e.rs` | End-to-end tests (relay byte identity, fake-world episodes, fallback, replay, HTTP LLM) |
 | `tests/link.rs` | Evaluator-link end-to-end tests |

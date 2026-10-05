@@ -78,7 +78,7 @@ def main():
         env_wrapper={"_target_": "omnigibson.eval.wrappers.DefaultWrapper"}, policy_name="local",
         model={"_target_": "omnigibson.eval.policies.LocalPolicy", "action_dim": None}, headless=True,
         partial_scene_load=True, max_steps=a.steps + 10, write_video=False, mode="public_test", seed=seed, num_envs=1,
-        task={"name": a.task}, robot=OmegaConf.load("/mnt/c/behavior-2026/src/sim/configs/r1pro_openpi.yaml")))
+        task={"name": a.task}, robot=OmegaConf.load("/mnt/c/behavior-2026/src/sim/configs/r1pro_robot.yaml")))
     ev_ = E.BatchedEvaluator(cfg)
     try:
         ev_.load_batch({0: int(inst[0])})

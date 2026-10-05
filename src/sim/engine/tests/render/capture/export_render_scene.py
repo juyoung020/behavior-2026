@@ -248,7 +248,7 @@ def main():
     ap.add_argument("--tex-max", type=int, default=512)
     ap.add_argument("--assets", default=ASSETS_DEFAULT)
     ap.add_argument("--robot-assets", default=ROBOT_ASSETS_DEFAULT)
-    ap.add_argument("--robot-name", default="robot", help="로봇 prim 이름 (r1pro_openpi.yaml = robot, 공식 r1pro.yaml = robot_r1)")
+    ap.add_argument("--robot-name", default="robot", help="로봇 prim 이름 (r1pro_robot.yaml = robot, 공식 r1pro.yaml = robot_r1)")
     ap.add_argument("--ref224", default="", help="쉼표로 가른 결과 폴더들: 같은 행동열 재생의 224 공식 영상(trace_images.npz)도 프레임에 붙인다")
     a = ap.parse_args()
     out = a.out or os.path.join(a.dump, "export")

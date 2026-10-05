@@ -23,14 +23,13 @@
   black_guard(abort|warn|off, 기본 abort), trace(기본 true), write_video(기본 false), gpu_busy_mib(기본 3500),
   repeats, lock_scope(run | repeat), lock_minutes(최대 30), timeout_min, reuse_batch, kit_args[], ported{...},
   stop_on_black, instrument_args[],
-  settings[]: name, policy(local|replay|websocket|native), robot_config(없으면 공식 기본), wrapper(Default|RGBD|전체 경로), max_steps,
+  settings[]: name, policy(local|replay|websocket), robot_config(없으면 공식 기본), wrapper(Default|RGBD|전체 경로), max_steps,
               chunk(--replay-action-chunk-size), port, extra_eval_args[], kit_args[],
-              replay: actions(행동열 npz), quickack(기본 true), server(rust = Rust replaysrv(기본) | python(옛 wsl) = openpi venv 파이썬
+              replay: actions(행동열 npz), quickack(기본 true), server(rust = Rust replaysrv(기본) | python(옛 wsl) = REPLAY_PY 파이썬
                       | conda(옛 windows) = conda behavior 파이썬), port(기본 8110, 쓰이면 다음 빈 포트)
               websocket: server.start(명령, {port}·{task} 치환, bash 로 돈다), server.ready_s(기본 600)
-              native: module(기본 native_policy:pi05, src/sim/fasteval/native_policy.py), weights, prompt, replan(16), seed(0)
 
-환경: CONDA_BASE(기본 conda info --base 또는 ~/miniconda3), REPLAY_PY(기본 ~/openpi/.venv/bin/python),
+환경: CONDA_BASE(기본 conda info --base 또는 ~/miniconda3), REPLAY_PY(기본 ~/miniconda3/envs/behavior/bin/python),
       REPLAYSRV_BIN(기본 ~/cargo-target/replaysrv/release/replaysrv), TRACECMP_BIN(기본 ~/cargo-target/tracecmp/release/tracecmp)
 GPU 잠금: tools/gpu_lock.sh (owner exp_run).
 """
@@ -208,7 +207,7 @@ def start_policy_server(s, task, out_dir: Path, tag):
         elif kind in ("conda", "windows"):
             argv = [S.py, str(REPO / "tools/replay_policy_server.py")]
         else:  # python / wsl
-            argv = [os.environ.get("REPLAY_PY", str(HOME / "openpi/.venv/bin/python")), str(REPO / "tools/replay_policy_server.py")]
+            argv = [os.environ.get("REPLAY_PY", str(HOME / "miniconda3/envs/behavior/bin/python")), str(REPO / "tools/replay_policy_server.py")]
         argv += ["--actions", act, "--port", str(port), "--log", str(out_dir / "server_log.npz"), "--once"]
         if bool(P(s, "quickack", True)):
             argv.append("--quickack")
@@ -277,16 +276,8 @@ def invoke_eval(m, s, task, idx, out_dir: Path, tag):
     for ka in list(P(m, "kit_args", [])) + list(P(s, "kit_args", [])):
         if ka:
             ours.append(f"--kit-arg={ka}")
-    eval_pol = "local" if pol in ("local", "native") else "websocket"
+    eval_pol = "local" if pol == "local" else "websocket"
     env = dict(S.env or os.environ)
-    if pol == "native":
-        # 평가기 프로세스 안 정책. 기본 = 네이티브 π0.5(src/sim/fasteval/native_policy.py:pi05)
-        ours.append(f"--native-policy={P(s, 'module', 'native_policy:pi05')}")
-        env["PI05_NATIVE_WEIGHTS"] = fix_path(P(s, "weights", str(REPO / "data/pi05_native/pi05_radio.pi05w")))
-        env["PI05_NATIVE_PROMPT"] = P(s, "prompt", "")
-        env["PI05_NATIVE_REPLAN"] = str(P(s, "replan", 16))
-        env["PI05_NATIVE_SEED"] = str(P(s, "seed", 0))
-        env["PI05_NATIVE_LOG"] = str(out_dir / "native_steps.csv")
     srv = None
     if pol in ("replay", "websocket"):
         srv = {"port": int(P(s, "port", 8010))} if a.dry_run else start_policy_server(s, task, out_dir, tag)
@@ -368,7 +359,7 @@ def run_matrix():
         print(f"행렬 JSON 을 못 읽었다({a.matrix}): {e}")
         sys.exit(2)
     for s in m["settings"]:
-        for k in ("actions", "robot_config", "weights"):
+        for k in ("actions", "robot_config"):
             v = P(s, k, "")
             if v and v != "none" and not os.path.exists(fix_path(v)):
                 print(f"설정 {s['name']} 의 {k} 파일이 없다: {v}")

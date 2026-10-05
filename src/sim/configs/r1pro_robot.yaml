@@ -1,6 +1,6 @@
 # 공식 BEHAVIOR-1K/OmniGibson/omnigibson/eval/r1pro.yaml 사본. 다른 점은 로봇 이름 하나(과 그 이름이 들어간 카메라 센서 이름):
-# openpi(wensi-ai/openpi behavior 브랜치, 2026-06-28)의 R1Pro 설정은 name="robot" 이라 관측 키를 'robot::proprio' 로 찾는데
-# 현재 평가기 설정은 name: robot_r1 이라 'robot_r1::proprio' 로 보내 KeyError 가 난다 (2026-09-29 확인).
+# name: robot (공식은 robot_r1) — 관측 키가 'robot::…', prim 이 /World/robot. 엔진 캡처·재생 기록이 이 이름으로 되어 있다.
+# (옛 이름 r1pro_openpi.yaml — 10-06 이름만 바꿈)
 model: r1pro
 name: robot
 eval:
