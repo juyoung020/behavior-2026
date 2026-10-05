@@ -8,7 +8,7 @@
 #    r3 slam·gt → objprob_eval.py, OpenLORIS → 기하 대용(천장 띠·벽 같은 판·바닥 조각·같은 이름 0.5 m 쌍)
 # 결과: $OUT/summary.txt(판마다 한 줄). 판 이름 = <매개변수>_<same_p>_<merge_p>
 # 환경: TH="0.6/0.7 …"(문턱 쌍), EXTRA_KV="ap_bridge_drop=1"(새 매개변수 판에 더할 것), PREFIX(판 이름 앞, 기본 fit), NO_BASE=1(비교 기준 판 안 돎),
-#       REALBAG_BIN(빌드 폴더), OUT
+#       CONF(검출 conf, 기본 0.25), REALBAG_BIN(빌드 폴더), OUT
 set -euo pipefail
 N=$1; ENG=$2; R3D=${3:-}; O11=${4:-}; O15=${5:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -20,7 +20,9 @@ OL=$HOME/datasets/realbags/streams
 GTPGM=${GTPGM:-$HOME/behavior-2026/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm}
 PARAMS_BASE=${PARAMS_BASE:-$HERE/objprob_params/FastSAM-s-416.json}
 TH=${TH-"0.6/0.7 0.5/0.7 0.7/0.7 0.6/0.8 0.7/0.8 0.5/0.6"}
-COMMON=(--det-every 1 --max-depth 4 --conf 0.25)
+CONF=${CONF:-0.25}   # 검출 conf(보정한 엔진은 0.25 = 보정 문턱 t. 더 높이면 실효 t 가 오름)
+COMMON=(--det-every 1 --max-depth 4 --conf $CONF)
+OLX=(--pose slam --max-depth 4 --conf $CONF)
 mkdir -p "$OUT/logs"
 ENGX=(); [ "$ENG" != - ] && ENGX=(--engine "$ENG")
 
@@ -31,7 +33,7 @@ if [ -z "$R3D" ]; then
 fi
 if [ -z "$O11" ]; then
   for k in 1 5; do
-    "$BIN" "$OL/ol_office1-$k" "$OUT/det/ol1${k}_slam" --pose slam --max-depth 4 --det fastsam "${ENGX[@]}" --objprob --objprob-params none \
+    "$BIN" "$OL/ol_office1-$k" "$OUT/det/ol1${k}_slam" "${OLX[@]}" --det fastsam "${ENGX[@]}" --objprob --objprob-params none \
       --dump "$OUT/det/ol1$k.gz" > "$OUT/logs/det_ol1$k.log" 2>&1
   done
   O11=$OUT/det/ol11.gz; O15=$OUT/det/ol15.gz
@@ -70,7 +72,7 @@ run() {   # run <판 이름> <params json> <same_p> <merge_p>
   local ol=""
   for k in 1 5; do
     local cache=$O11; [ $k = 5 ] && cache=$O15
-    SM_OBJ_PARAMS=$env "$BIN" "$OL/ol_office1-$k" "$OUT/runs/${tag}_ol1$k" --pose slam --max-depth 4 --load "$cache" --objprob --objprob-params "$pj" \
+    SM_OBJ_PARAMS=$env "$BIN" "$OL/ol_office1-$k" "$OUT/runs/${tag}_ol1$k" "${OLX[@]}" --load "$cache" --objprob --objprob-params "$pj" \
       > "$OUT/logs/${tag}_ol1$k.log" 2>&1
     ol="$ol ol1-$k $(olcheck "$OUT/runs/${tag}_ol1$k")"
   done
