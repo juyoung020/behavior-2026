@@ -2,7 +2,7 @@
 // 파이프라인(검출·SLAM·물체 기억)은 이미 끝났으므로 재생 속도가 검출에 묶이지 않는다. 자세는 기록된 자세(바퀴 오도메트리 + 맞추기,
 // 오도메트리 메시지마다)를 시각으로 보간해 pose_hz(기본 60 Hz)로 보낸다 — 화면 보간용일 뿐 지도·물체는 기록 그대로.
 //
-//   sgs_play <stream.sgs> <host:port> [--rate 1] [--pose-hz 60] [--loop] [--hold 3] [--from S]
+//   sgs_play <stream.sgs> <host:port> [--rate 1] [--pose-hz 60] [--loop] [--hold 3] [--from S] [--ctl]
 //
 // 형식: 파일 "SGS1" 다음 [f64 t][u32 len][u8 type][payload] … (type 1 POSE f64 stamp,x,y,yaw · 2 MAP_RECT · 3 VIEW · 4 JOINTS),
 // 선(wire) = [u32 len][u8 type][payload](scenemap stream.hpp). 5 s 마다 보낸 프레임 주기(종류별 /s)를 stderr 에.
@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,9 +44,9 @@ static bool sendFrame(int fd, uint8_t type, const uint8_t* pl, uint32_t len) {
 }
 
 int main(int argc, char** argv) {
-  if (argc < 3) { std::fprintf(stderr, "usage: sgs_play <stream.sgs> <host:port> [--rate 1] [--pose-hz 60] [--loop] [--hold 3] [--from S]\n"); return 2; }
+  if (argc < 3) { std::fprintf(stderr, "usage: sgs_play <stream.sgs> <host:port> [--rate 1] [--pose-hz 60] [--loop] [--hold 3] [--from S] [--ctl]\n"); return 2; }
   double rate = 1, pose_hz = 60, hold = 3, from = 0;
-  bool loop = false;
+  bool loop = false, ctl = false;
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--rate" && i + 1 < argc) rate = std::stod(argv[++i]);
@@ -53,6 +54,7 @@ int main(int argc, char** argv) {
     else if (a == "--hold" && i + 1 < argc) hold = std::stod(argv[++i]);
     else if (a == "--from" && i + 1 < argc) from = std::stod(argv[++i]);
     else if (a == "--loop") loop = true;
+    else if (a == "--ctl") ctl = true;
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
   FILE* f = std::fopen(argv[1], "rb");
@@ -96,7 +98,31 @@ int main(int argc, char** argv) {
   };
   const std::string hp = argv[2];
   const size_t colon = hp.rfind(':');
-  do {
+  // --ctl: 표준입력으로 조종("seek S" 자료 시각 S 로(지움 + 다시 보냄) · "play" · "pause" · "rate R" · "quit"), 표준출력으로 상태("I t0 t1" 한 번, 그다음 "T <t-t0> <재생중 0|1> <rate>" 0.1 s 마다).
+  // 학습 뷰어(trainview)가 판 재생에 씀 — 화면은 진짜 sgview 그대로고 시간 조종만 여기서. 끝에 닿으면 멈춘 채 t1 에 머문다(되감기는 seek).
+  std::mutex mu;
+  bool playing = true, quit = false;
+  double seek_to = -1;
+  if (ctl) {
+    std::printf("I %.6f %.6f\n", t0, t1);
+    std::fflush(stdout);
+    std::thread([&] {
+      char line[256];
+      while (std::fgets(line, sizeof line, stdin)) {
+        std::lock_guard<std::mutex> g(mu);
+        double v;
+        if (std::sscanf(line, "seek %lf", &v) == 1) seek_to = v + t0;
+        else if (!std::strncmp(line, "play", 4)) playing = true;
+        else if (!std::strncmp(line, "pause", 5)) playing = false;
+        else if (std::sscanf(line, "rate %lf", &v) == 1 && v > 0) rate = v;
+        else if (!std::strncmp(line, "quit", 4)) quit = true;
+      }
+      std::lock_guard<std::mutex> g(mu);
+      quit = true;   // 부모가 닫음
+    }).detach();
+  }
+  double start = from;
+  for (;;) {
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a{};
     a.sin_family = AF_INET;
@@ -105,44 +131,64 @@ int main(int argc, char** argv) {
     if (connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a)) { std::perror("connect"); return 1; }
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-    const auto w0 = std::chrono::steady_clock::now();
-    const double ts = std::max(t0, from);
+    double now = std::min(std::max(t0, start), t1);   // 자료 시각(가상 시계 — 멈추면 안 감)
     size_t fi = 0;
-    // --from: 그 앞 기록 프레임(지도·요약)은 한꺼번에 보냄
-    while (fi < frames.size() && frames[fi].t < ts) { sendFrame(fd, frames[fi].type, frames[fi].pl.data(), uint32_t(frames[fi].pl.size())); ++fi; }
-    double next_pose = ts, last_rep = 0;   // 다음 자세를 보낼 자료 시각
+    // 시작 시각 앞의 기록 프레임(지도·요약)은 한꺼번에 보냄(연결이 새로라 sgview 는 비운 상태에서 시작)
+    while (fi < frames.size() && frames[fi].t < now) { sendFrame(fd, frames[fi].type, frames[fi].pl.data(), uint32_t(frames[fi].pl.size())); ++fi; }
+    if (!poses.empty()) { const Pose p = poseAt(now); sendFrame(fd, 1, reinterpret_cast<const uint8_t*>(&p), 32); }
+    auto last = std::chrono::steady_clock::now();
+    const auto w0 = last;
+    double next_pose = now, last_rep = 0, last_st = -1;
     uint64_t cnt[8] = {}, cnt_rep[8] = {};
-    bool ok = true;
-    while (ok) {
-      const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
-      const double now = ts + wall * rate;
+    bool ok = true, restart = false, ended = false;
+    double hold_until = -1;
+    while (ok && !restart) {
+      const auto tn = std::chrono::steady_clock::now();
+      const double wall = std::chrono::duration<double>(tn - w0).count(), dtw = std::chrono::duration<double>(tn - last).count();
+      last = tn;
+      bool pl; double rt, sk; bool qt;
+      { std::lock_guard<std::mutex> g(mu); pl = playing; rt = rate; sk = seek_to; seek_to = -1; qt = quit; }
+      if (qt) { close(fd); return 0; }
+      if (sk >= 0) { start = sk; restart = true; ended = false; break; }
+      if (pl && !ended) now = std::min(t1, now + dtw * rt);
       while (ok && fi < frames.size() && frames[fi].t <= now) {
         ok = sendFrame(fd, frames[fi].type, frames[fi].pl.data(), uint32_t(frames[fi].pl.size()));
         ++cnt[frames[fi].type & 7];
         ++fi;
       }
-      if (!poses.empty() && now >= next_pose) {
-        const Pose p = poseAt(std::min(now, t1));
+      if (!poses.empty() && pl && now >= next_pose) {
+        const Pose p = poseAt(now);
         ok = ok && sendFrame(fd, 1, reinterpret_cast<const uint8_t*>(&p), 32);
         ++cnt[1];
-        next_pose += rate / pose_hz;   // 벽시계 1/pose_hz 마다(밀리면 따라잡지 않고 지금부터)
-        if (next_pose < now) next_pose = now + rate / pose_hz;
+        next_pose += rt / pose_hz;   // 벽시계 1/pose_hz 마다(밀리면 따라잡지 않고 지금부터)
+        if (next_pose < now) next_pose = now + rt / pose_hz;
       }
-      if (wall - last_rep >= 5.0) {
+      if (ctl && wall - last_st >= 0.1) {
+        std::printf("T %.4f %d %.3f\n", now - t0, (pl && !ended) ? 1 : 0, rt);
+        std::fflush(stdout);
+        last_st = wall;
+      }
+      if (!ctl && wall - last_rep >= 5.0) {
         const double dt = wall - last_rep;
         std::fprintf(stderr, "[sgs_play] t %.1f/%.1f s  sent/s (wall): pose %.1f  map %.1f  view %.1f  joints %.1f\n", now, t1,
                      (cnt[1] - cnt_rep[1]) / dt, (cnt[2] - cnt_rep[2]) / dt, (cnt[3] - cnt_rep[3]) / dt, (cnt[4] - cnt_rep[4]) / dt);
         std::copy(cnt, cnt + 8, cnt_rep);
         last_rep = wall;
       }
-      if (now >= t1 && fi >= frames.size()) break;
+      if (now >= t1 && fi >= frames.size()) {
+        if (ctl) ended = true;   // 멈춘 채 머묾(seek 을 기다림)
+        else {
+          if (hold_until < 0) hold_until = wall + hold;
+          if (wall >= hold_until) break;
+        }
+      }
       std::this_thread::sleep_for(std::chrono::microseconds(1000));
     }
-    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
-    std::fprintf(stderr, "[sgs_play] done: %.1f s wall, pose %llu (%.1f/s), map %llu (%.1f/s), view %llu (%.1f/s)\n", wall, (unsigned long long)cnt[1],
-                 cnt[1] / wall, (unsigned long long)cnt[2], cnt[2] / wall, (unsigned long long)cnt[3], cnt[3] / wall);
-    std::this_thread::sleep_for(std::chrono::duration<double>(hold));
     close(fd);
-  } while (loop);
+    if (restart) continue;
+    if (!ok && ctl) { start = now; std::this_thread::sleep_for(std::chrono::milliseconds(500)); continue; }                       // sgview 가 끊김 — 같은 자리에서 다시 붙음
+    if (!loop) break;
+    start = from;
+  }
   return 0;
 }

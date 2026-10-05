@@ -16,7 +16,7 @@ ROS 를 설치하지 않고 실제 로봇 bag 을 우리 파이프라인(ovdet �
 | `objprob_refit_table.py <out>[,<out>…]` | 위 결과 표(찾음·중복·잘못 합침·stuff 헛노드·문창계단·OpenLORIS) |
 | `objprob_params/<엔진>.json` | 엔진별 objprob 매개변수: `obj_params`(`sm_set_obj_params` 문자열 — 로지스틱 `ap_w*`·`ap_wm*`, κ `kap_*`, 문턱, 그 밖 `ap_*`), `label_prior`(옆 파일). `realbag_run --objprob` 은 `--objprob-params` 가 없으면 엔진 파일 이름(.plan 뺀 것)으로 고름 — `--load` 캐시는 그 엔진을 `--engine` 으로 알려 줘야 함. `none` = 내장 기본값. `FastSAM-s-416.json` = 내장 기본값과 같음(radio r3 바이트 같음 확인). `FastSAM-s-416-obj.json` = 새 분할 엔진에 다시 맞춘 것(conf 0.25, 문턱 0.5/0.7 — 결과는 scenemap README "확률 모드"). `yolo26n-seg-obj-416.json` = ObjectSAM(YOLO26n 학생)에 다시 맞춘 것(conf 0.25, 문턱 0.5/0.7) — **기본 엔진**이라 `--engine` 없이도 이 파일이 실림. libsgrt(`SGRT_OBJPROB`)도 같은 폴더에서 고름 |
 | `objprob_eval.py` | `detcmp_eval.py` 표 + 잘못 합침(노드 점 구름이 서로 다른 정답 둘 이상 — 작은 것+가구 / 같은 종류 이웃), 문·창·계단(찾음·맞는 이름·물체 이름 노드), 글 질의 R@1(μ·모습·이름) |
-| `sgs_play.cpp` | 기록한 `stream.sgs` 를 벽시계에 맞춰 sgview(`--ingest`)로: 자세 60 Hz 보간, 지도·요약은 기록 그대로. `--rate`·`--loop` |
+| `sgs_play.cpp` | 기록한 `stream.sgs` 를 벽시계에 맞춰 sgview(`--ingest`)로: 자세 60 Hz 보간, 지도·요약은 기록 그대로. `--rate`·`--loop`·`--ctl`(표준입력 seek·play·pause·rate 로 조종, 표준출력 상태 — 학습 뷰어 재생이 씀) |
 | `record_live.mjs` · `make_video.sh` | 머리 없는 Chrome 으로 sgview 화면을 찍고(재생과 함께) bag RGB 를 작은 창으로 붙여 MP4·GIF |
 | `rb_util.hpp` | JSON·폴더·JPEG·스트림 받기(Capture) |
 
