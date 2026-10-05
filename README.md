@@ -4,7 +4,7 @@
 
 **Idea: a dynamic 2D scene graph + an AI agent (or RL planner) + a VLA, combined.**
 
-- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every detected object at an xyz position (today the open-vocabulary YOLOE detector `ovdet`; moving to FastSAM-s masks + SigLIP 2 embeddings, `scene_graph/clip`): the segmentation mask gives the object's centroid, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
+- The scene map (scenemap, built from scratch) keeps a 2D SLAM map and registers every detected object at an xyz position (decided: ObjectSAM — the class-agnostic, things-only YOLO26n student distilled from FastSAM-s, `yolo26n-seg-obj-416` in `ovdet` — + SigLIP 2 names/embeddings per mask, `scene_graph/clip`, fused by the scenemap probabilistic object model `objprob`): the segmentation mask gives the object's centroid, and camera depth turns it into xyz. Objects are shown on that 2D map (the viewer is 2D). This is the robot's memory.
 - The agent uses that graph for long-horizon planning, step tracking and failure recovery.
 - The VLA (π0.5) turns the current step instruction plus the three cameras into actions.
 
@@ -26,7 +26,7 @@ Implementation rule: zero bottlenecks. Hot paths are hand-written native code (C
 ## Decisions
 
 - Image embedding: SigLIP 2 B/32.
-- Segmentation: FastSAM-s at 416.
+- **Decided: ObjectSAM (YOLO26n student, engine `yolo26n-seg-obj-416`) + SigLIP 2 + objprob.** Segmentation is ObjectSAM at 416 (YOLO26n student distilled from FastSAM-s, things-only; https://github.com/juyoung020/ObjectSAM, release v1.0), the default engine of the sim runtime (libsgrt glue), `realbag_run` and the LIMO/explore launchers. objprob (scenemap probabilistic object model, per-engine parameters `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`) is on by default. The original FastSAM-s 416 (`FastSAM-s-416.plan`) and the FastSAM-s fine-tune (`FastSAM-s-416-obj.plan`, not the default) stay selectable by `SGRT_ENGINE` / `--engine`. Why: about 1/10 of FastSAM-s's compute, so it suits LIMO's Jetson (Nano especially); on-device timing is still to be measured.
 - Object vectors are kept as the original embeddings; names are derived and cached in the memory folder's `cache/`.
 - CUDA 12.8 (`/usr/local/cuda-12.8`) is the build and bit-verification baseline; 13.2 is installed but not used.
 - Map pose comes from `SGRT_POSE=slam|odom|gt` (real robot default `slam`; simulator tests use `gt`, map = world).
@@ -40,9 +40,9 @@ data/                 2026 challenge demos (LeRobot v3): metadata + task 0 only 
 src/                  three layers, same as the team repo (robot-agent): ① memory → ② planning → ③ action, plus sim/
   scene_graph/        ① object memory
     scenemap/         2D SLAM + object map + planner queries, Spark-DSG save (C++)
-    ovdet/            open-vocabulary detector (YOLOE, TensorRT, C API; AGPL-3.0)
+    ovdet/            detector (ObjectSAM segmenter by default; archived YOLOE/YOLO-seg; TensorRT, C API; AGPL-3.0)
     clip/             sgclip: object crop → SigLIP 2 image embedding (TensorRT), label table lookup, vectors and name cache in the memory folder (C++/CUDA; in progress)
-    runtime/          sgrt: one C ABI that runs object memory inside the evaluator/robot process (scenemap + ovdet, periodic save) (C++/CUDA)
+    runtime/          sgrt: one C ABI that runs object memory inside the evaluator/robot process (ovdet + SigLIP 2 + scenemap objprob, periodic save) (C++/CUDA)
     spark_dsg/        our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + rooms (places are computed in the backend); scenemap builds it first. Changes: OUR_CHANGES.md
     da/               data association: merges the per-frame segments of one object into a single object (C++, built into scenemap)
     sgview/           THE scene-graph viewer (Spark-DSG 장면 그래프 보기 = sgview): Rust server + three.js, live sgrt socket → SSE at 60 Hz+. Run: robot-agent tools/run_sgview.sh / tools/run_explore_live.sh

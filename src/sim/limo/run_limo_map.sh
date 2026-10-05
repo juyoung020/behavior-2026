@@ -25,8 +25,10 @@ export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}
 export SGRT_POSE=${SGRT_POSE:-slam}
 export SGRT_LIB=${SGRT_LIB:-$HOME/sgrt_build/libsgrt.so}
-# YOLO26s-seg 는 보관됨(2026-10-05, ~/ovdet_models/archive) — FastSAM-s + SigLIP 2(objprob)로 옮길 때까지 보관 엔진
-export SGRT_ENGINE=${SGRT_ENGINE:-$HOME/ovdet_models/archive/x86_sm120/yolo26s-seg.plan}
+# 분할 엔진 기본 = ObjectSAM(YOLO26n 학생) — libsgrt 가 SigLIP 2 이름 + objprob 를 켬(SGRT_OBJPROB=0 이면 옛 규칙). 원래 FastSAM-s 는
+# SGRT_ENGINE=$HOME/ovdet_models/x86_sm120/FastSAM-s-416.plan, 보관 YOLO 는 ~/ovdet_models/archive/x86_sm120/
+export SGRT_ENGINE=${SGRT_ENGINE:-$HOME/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan}
+export SGRT_INSPECT=${SGRT_INSPECT:-1}
 export LIMO_SHIM=${LIMO_SHIM:-$OGDIR/eval_with_limo.py}
 if ! strings "$SGRT_LIB" | grep -q sgrt_set_robot; then echo "[limo] $SGRT_LIB 에 로봇 고르기가 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi
 cd "$OUT"

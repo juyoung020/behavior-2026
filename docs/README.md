@@ -5,7 +5,7 @@
 ## 정한 것
 
 - 이미지 임베딩: SigLIP 2 B/32.
-- 분할: FastSAM-s, 입력 416.
+- 분할(10-05 결정): ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob, 입력 416. 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼.
 - 물체 벡터는 원본 임베딩을 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다(다시 만들 수 있음).
 - CUDA 12.8(`/usr/local/cuda-12.8`). 13.2 는 시스템에 있지만 쓰지 않는다.
 - 지도 자세: `SGRT_POSE=slam|odom|gt`(실제 로봇 기본 `slam`, 시뮬 시험은 `gt` = map 이 world). 자세히는 [scenemap_설계.md](scenemap_설계.md).
@@ -42,7 +42,7 @@
 | [평가기_가속설계.md](평가기_가속설계.md) | 평가기 병목 실측(스텝당 ms·비중), 검은 화면 문제(원인·재발 방지), 공식 평가기 노이즈 바닥, 일치 검증 도구(JSBSim 틀), 병목마다 "병목 제로" 수단·언어·불가 이유, 암달 상한, 행동 묶음 재생 시제품 |
 | [엔진_자체구현.md](엔진_자체구현.md) | 시뮬 엔진 자체 구현: 한 스텝 층별 분해(공개 여부·분량·맞출 수준), 100과제 물리 종류(유체·천 0), PhysX 정확한 버전(5.6.1 태그) 확인, 검증 사다리(정답지→물리→상태·BDDL→렌더→정책), OmniPVD 재생 정답지 설계와 자체 시험(600 스텝 비트 동일), 손으로 짠 C++→CUDA 구조·옮기는 순서·처리량 추정 |
 | [scenemap_설계.md](scenemap_설계.md) | ① 물체 기억 scenemap 설계: 2D SLAM(깊이 → 가상 스캔)·물체 지도·계획기 질의·Spark-DSG 저장, 팀 문서 선택과 다른 점, 자세 원천(`SGRT_POSE`) |
-| [ovdet_검출기.md](ovdet_검출기.md) | 열린 어휘 검출기 ovdet(YOLOE, TensorRT): FastSAM+CLIP 옛 방식과 비교표, 좋아진 것·나빠진 것 |
+| [ovdet_검출기.md](ovdet_검출기.md) | 검출기 ovdet(TensorRT) — 지금은 ObjectSAM 분할 엔진. 보관한 열린 어휘 YOLOE 와 FastSAM+CLIP 옛 방식 비교표(기록), 좋아진 것·나빠진 것 |
 | [에이전트_설계.md](에이전트_설계.md) | 상위 계획 에이전트(Rust, `src/agent/planner`)와 평가기↔π0.5 중계기: 정한 스펙과 이유(OpenAI 도구 호출·결정론·결정기 교체 인터페이스·경계 5가지·지시 형식 4가지와 토큰 예산·back/the other·자동 증거·기억/요약·과제 카드·zero-copy 흘려보내기·QUICKACK·scenemap 연결), 구조, 메시지 흐름, 도구 목록, 경로별 지연 실측과 목표, 시험(39개·실제 Qwen), 실행 방법 |
 | [π05_네이티브엔진.md](π05_네이티브엔진.md) | π0.5(radio)·2025 1위 PiBehavior 추론을 PyTorch·JAX 없이 C++/CUDA 로(손 GEMM·CUDA Graph·토크나이저·변환·래퍼), JAX 대비 층별 오차 표(노이즈 바닥 판정), 속도·메모리, 제출용 웹소켓 서버, 단계 외부 지정, 남긴 라이브러리와 이유, **학습 포팅(12절: expert·LoRA 모드 역전파·AdamW·EMA·openpi 난수·augmax 증강·fasttrain 로더 직결, JAX 대조·메모리·시간 표)** |
 | [통합_실시간.md](통합_실시간.md) | 평가기(네이티브 π0.5 안) · 계획기 · scenemap 을 실시간으로 잇기: 연결 하나(simlink = bagent link + scenemap C ABI)의 이유, 기다리지 않는 스텝 요약과 경계만 멈추기, Rust 가 정하는 keyframe, 영상(원 텐서), 위치 추정기 자리(scenemap 자세), 순기구학 카메라 자세(규칙), 영상 = 직전 스텝 장면, 단계 번호 계산, 경계 settle, 프로토콜, 지연 실측, 종단 한 판, VRAM, 시험, 실행, 다른 문서에 요청, 투표 vs 외부 단계 실험 계획 |

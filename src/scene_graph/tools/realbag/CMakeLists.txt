@@ -21,7 +21,7 @@ add_subdirectory(${SG_DIR}/clip clip EXCLUDE_FROM_ALL)
 
 # bag2stream 스트림 → 검출 + scenemap → 지표·기억 폴더·재생 판(stream.sgs)·실시간 sgview 스트림
 add_executable(realbag_run realbag_run.cpp)
-target_include_directories(realbag_run PRIVATE ${SG_DIR}/scenemap/tools)
+target_include_directories(realbag_run PRIVATE ${SG_DIR}/scenemap/tools ${SG_DIR}/runtime/src)   # objprob_front.hpp(libsgrt 와 같이 씀)
 target_compile_definitions(realbag_run PRIVATE RB_PARAMS_DIR="${CMAKE_CURRENT_LIST_DIR}/objprob_params")   # 엔진별 objprob 매개변수
 target_compile_options(realbag_run PRIVATE -Wall -Wno-unused-function)
 target_link_libraries(realbag_run scenemap ovdet sgclip PNG::PNG ZLIB::ZLIB JPEG::JPEG CUDA::cudart_static pthread)

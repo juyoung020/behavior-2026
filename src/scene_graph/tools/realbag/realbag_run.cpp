@@ -5,7 +5,9 @@
 //     --robot limo_omx|r1pro   scenemap 로봇 매개변수(기본 limo_omx — 우리 로봇의 SLAM·몸 크기 설정)
 //     --pose slam|odom|gt      자세 원천(기본 slam = 바퀴 오도메트리 적분 + 깊이 가상 스캔 맞추기). gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
-//     --det fastsam|yoloe|none 검출(기본 fastsam = FastSAM-s 416 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길), yoloe = sgrt 기본 엔진
+//     --det fastsam|yoloe|none 검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
+//                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
+//                              --engine ~/ovdet_models/x86_sm120/FastSAM-s-416.plan(FastSAM-s 재학습은 FastSAM-s-416-obj.plan). yoloe = 보관 엔진
 //                              yoloe-11l-all 에 아래 사무실·집 낱말 중 엔진 어휘에 있는 것만 프롬프트로)
 //     --det yolo               닫힌 어휘 YOLO 분할(기본 yolo26s-seg-416, COCO 80) — 엔진 어휘 전부
 //     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yoloe·yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
@@ -18,7 +20,8 @@
 //     --snap-at t1,t2,…        그 시각(스트림 초)에 기억 저장(<out>/snap_<t>/ — 손 확인용)
 //     --max-depth M            이보다 먼 깊이는 버림(기본 4 m — RealSense D435·Kinect 잡음, 시뮬은 8 m)
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
-//     --objprob                 확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기
+//     --objprob | --no-objprob  확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기.
+//                              기본 켬(siglip 이름 길·RBD2 캐시일 때 — 엔진 클래스 이름·RBD1 캐시는 끔), --no-objprob = 옛 이름 규칙
 //     --label-prior f.json     objprob 라벨 log 사전(objprob_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
 //     --objprob-params f.json  objprob 엔진별 매개변수(obj_params = sm_set_obj_params 문자열, label_prior = 옆 파일). 없으면 objprob_params/<엔진>.json,
 //                              "none" = 안 씀(내장 기본값). --label-prior 가 파일의 사전보다 이김
@@ -36,6 +39,7 @@
 #include "ovdet.h"
 #include "rb_util.hpp"   // JSON·폴더·JPEG·스트림 받기
 #include "sgclip.h"
+#include "objprob_front.hpp"   // 낱말 표·기본 엔진·확률 모드 설정(libsgrt 와 같이 씀, runtime/src)
 
 using rb::jnum;
 using rb::jstr;
@@ -43,75 +47,12 @@ using rb::Obj;
 
 namespace {
 
-// 검출 낱말: 글 → 지도 이름. 구조물(wall·floor …, person)은 scenemap 기본 표대로 노드가 안 된다. fastsam 은 SigLIP 2 라벨 표에 있는 글만,
-// yoloe 는 엔진 어휘(272 개, BEHAVIOR 이름)에 있는 글만 쓴다(없는 것은 시작 때 알림).
-struct Word { const char* text; const char* label; };
-const Word kVocab[] = {
-    // 구조물·사람(노드 안 됨)
-    {"wall", "wall"}, {"floor", "floor"}, {"ceiling", "ceiling"}, {"door", "door"}, {"window", "window"}, {"pillar", "pillar"},
-    {"column", "pillar"}, {"partition", "partition"}, {"glass wall", "wall"}, {"baseboard", "baseboard"}, {"railing", "railing"},
-    {"staircase", "staircase"}, {"person", "person"}, {"man", "person"}, {"woman", "person"},
-    // 고정 가구·가전(movable 0)
-    {"desk", "desk"}, {"table", "table"}, {"coffee table", "table"}, {"carrel", "desk"}, {"cubicle", "partition"},
-    {"cabinet", "cabinet"}, {"filing cabinet", "cabinet"}, {"cabinet base", "cabinet"}, {"shelf", "shelf"}, {"bookcase", "bookcase"},
-    {"sofa", "sofa"}, {"couch", "sofa"}, {"bed", "bed"}, {"refrigerator", "refrigerator"}, {"electric refrigerator", "refrigerator"},
-    {"microwave", "microwave"}, {"sink", "sink"}, {"toilet", "toilet"}, {"television", "tv"}, {"television receiver", "tv"},
-    {"lamp", "lamp"}, {"table lamp", "lamp"}, {"floor lamp", "lamp"}, {"light fixture", "fixture"}, {"ceiling light", "fixture"},
-    {"radiator", "radiator"}, {"curtain", "curtain"}, {"window blind", "curtain"}, {"air conditioner", "appliance"},
-    {"water dispenser", "appliance"}, {"water cooler", "appliance"}, {"printer", "appliance"}, {"facsimile", "appliance"},
-    {"scanner", "appliance"}, {"whiteboard", "whiteboard"}, {"picture frame", "picture frame"}, {"poster", "picture frame"},
-    {"plant", "plant"}, {"potted plant", "plant"}, {"pot plant", "plant"}, {"rug", "rug"},
-    // 옮길 수 있는 것
-    {"chair", "chair"}, {"office chair", "chair"}, {"swivel chair", "chair"}, {"armchair", "chair"}, {"stool", "stool"},
-    {"footstool", "stool"}, {"monitor", "monitor"}, {"computer monitor", "monitor"}, {"computer", "computer"},
-    {"desktop computer", "computer"}, {"computer case", "computer"}, {"laptop", "laptop"}, {"keyboard", "keyboard"},
-    {"mouse", "mouse"}, {"computer mouse", "mouse"}, {"box", "box"}, {"cardboard box", "box"}, {"packing box", "box"},
-    {"storage box", "box"}, {"container", "box"}, {"storage container", "box"}, {"bottle", "bottle"}, {"water bottle", "bottle"},
-    {"water jug", "bottle"}, {"cup", "cup"}, {"mug", "cup"}, {"coffee cup", "cup"}, {"trash can", "trash can"},
-    {"wastebasket", "trash can"}, {"ashcan", "trash can"}, {"recycling bin", "trash can"}, {"bucket", "bucket"},
-    {"book", "book"}, {"notebook", "book"}, {"folder", "book"}, {"paper", "paper"}, {"backpack", "bag"}, {"bag", "bag"},
-    {"handbag", "bag"}, {"briefcase", "bag"}, {"satchel", "bag"}, {"sack", "bag"}, {"basket", "basket"}, {"phone", "phone"},
-    {"tripod", "tripod"}, {"camera tripod", "tripod"}, {"stand", "tripod"}, {"fan", "fan"}, {"clock", "clock"},
-    {"jacket", "clothing"}, {"coat", "clothing"}, {"umbrella", "umbrella"}, {"speaker", "speaker"}, {"electric kettle", "kettle"},
-    {"kettle", "kettle"}, {"coffee maker", "appliance"}, {"pillow", "pillow"}, {"shoe", "shoe"}, {"vase", "vase"},
-    {"toolbox", "box"}, {"cable", "cable"}, {"router", "modem"}, {"modem", "modem"}, {"pole", "pole"},
-};
-
-// objprob 라벨 통계: 지도 이름 → 가장 긴 변(m)의 대표값·log 표준편차(크기 우도, 흔한 가구·물건 치수에서 손으로 — 이 장면 정답에서 맞추지 않음),
-// 상위어(이름 사후가 낮을 때 올라갈 곳). 상위어 라벨(furniture …)과 "object" 는 낱말 줄이 없어 직접 이름이 되지 않는다
-struct ApLabel { const char* label; float size, sd; const char* parent; };
-const ApLabel kApLabels[] = {
-    {"structure", 0, 0, nullptr}, {"outdoors", 0, 0, "structure"}, {"furniture", 0, 0, nullptr}, {"electronics", 0, 0, nullptr}, {"container", 0, 0, nullptr},
-    {"decoration", 0, 0, nullptr}, {"object", 0, 0, nullptr},
-    {"wall", 3.0f, 0.8f, "structure"}, {"floor", 3.0f, 0.8f, "structure"}, {"ceiling", 3.0f, 0.8f, "structure"}, {"door", 2.0f, 0.3f, "structure"},
-    {"window", 1.2f, 0.5f, "structure"}, {"pillar", 2.4f, 0.4f, "structure"}, {"partition", 1.5f, 0.5f, "structure"},
-    {"staircase", 2.5f, 0.5f, "structure"}, {"railing", 1.5f, 0.6f, "structure"}, {"baseboard", 1.5f, 0.8f, "structure"}, {"person", 1.7f, 0.25f, nullptr},
-    {"desk", 1.4f, 0.3f, "furniture"}, {"table", 1.2f, 0.4f, "furniture"}, {"cabinet", 1.0f, 0.5f, "furniture"}, {"shelf", 1.0f, 0.5f, "furniture"},
-    {"bookcase", 1.6f, 0.4f, "furniture"}, {"sofa", 2.0f, 0.3f, "furniture"}, {"bed", 2.0f, 0.25f, "furniture"}, {"chair", 0.9f, 0.25f, "furniture"},
-    {"stool", 0.5f, 0.3f, "furniture"}, {"refrigerator", 1.8f, 0.2f, "appliance"}, {"microwave", 0.5f, 0.3f, "appliance"}, {"sink", 0.6f, 0.4f, nullptr},
-    {"toilet", 0.7f, 0.2f, nullptr}, {"tv", 1.0f, 0.4f, "electronics"}, {"lamp", 1.0f, 0.6f, "decoration"}, {"fixture", 0.4f, 0.7f, nullptr},
-    {"radiator", 0.9f, 0.4f, nullptr}, {"curtain", 1.8f, 0.5f, "decoration"}, {"appliance", 0.8f, 0.7f, nullptr}, {"whiteboard", 1.5f, 0.4f, "decoration"},
-    {"picture frame", 0.6f, 0.6f, "decoration"}, {"plant", 0.8f, 0.6f, "decoration"}, {"rug", 2.0f, 0.4f, "decoration"},
-    {"monitor", 0.55f, 0.3f, "electronics"}, {"computer", 0.45f, 0.4f, "electronics"}, {"laptop", 0.35f, 0.2f, "electronics"},
-    {"keyboard", 0.45f, 0.2f, "electronics"}, {"mouse", 0.11f, 0.3f, "electronics"}, {"phone", 0.15f, 0.3f, "electronics"},
-    {"speaker", 0.3f, 0.5f, "electronics"}, {"modem", 0.25f, 0.3f, "electronics"}, {"box", 0.4f, 0.6f, "container"}, {"bottle", 0.25f, 0.3f, "container"},
-    {"cup", 0.1f, 0.3f, "container"}, {"trash can", 0.4f, 0.3f, "container"}, {"bucket", 0.35f, 0.3f, "container"}, {"bag", 0.45f, 0.4f, "container"},
-    {"basket", 0.4f, 0.4f, "container"}, {"book", 0.25f, 0.3f, nullptr}, {"paper", 0.3f, 0.4f, nullptr}, {"tripod", 1.2f, 0.4f, nullptr},
-    {"fan", 0.6f, 0.5f, "appliance"}, {"clock", 0.3f, 0.4f, "decoration"}, {"clothing", 0.8f, 0.4f, nullptr}, {"umbrella", 0.9f, 0.4f, nullptr},
-    {"kettle", 0.25f, 0.2f, "appliance"}, {"pillow", 0.5f, 0.3f, "decoration"}, {"shoe", 0.28f, 0.2f, nullptr}, {"vase", 0.3f, 0.4f, "decoration"},
-    {"cable", 1.0f, 1.0f, nullptr}, {"pole", 1.8f, 0.5f, nullptr},
-};
-
-// objprob 만 더하는 배경 낱말(구조물 쪽): FastSAM 조각은 계단 디딤판·문틀·창 밖 덤불이 많은데 원래 어휘에는 그 말이 없어 book·curtain·plant 로
-// 불렸다. 물체 낱말은 더하지 않음(A/B/C 와 같은 물체 어휘 — 이름 정확도를 같은 표로 비교). "outdoors" = 창·유리문 너머 바깥(구조물 종류)
-const Word kVocabAp[] = {
-    {"stair", "staircase"}, {"stairway", "staircase"}, {"steps", "staircase"}, {"handrail", "railing"}, {"doorcase", "door"},
-    {"window frame", "window"}, {"windowpane", "window"}, {"skirting board", "baseboard"}, {"bush", "outdoors"}, {"shrub", "outdoors"},
-    {"hedgerow", "outdoors"}, {"lawn", "outdoors"},
-};
-
-// 기본 FastSAM 엔진(~/ovdet_models/x86_sm120/ 아래). objprob 매개변수는 objprob_params/<이 이름에서 .plan 뺀 것>.json
-constexpr const char* kDefaultEngine = "FastSAM-s-416.plan";
+using objprob_front::ApLabel;
+using objprob_front::kApLabels;
+using objprob_front::kDefaultEngine;   // 기본 분할 엔진(ObjectSAM YOLO26n 학생) — objprob_front.hpp
+using objprob_front::kVocab;
+using objprob_front::kVocabAp;
+using objprob_front::Word;
 #ifndef RB_PARAMS_DIR
 #define RB_PARAMS_DIR "objprob_params"
 #endif
@@ -558,7 +499,8 @@ int main(int argc, char** argv) {
   std::string label_prior;   // objprob 라벨 사전(objprob_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
   std::string obj_params_file;   // objprob 엔진별 매개변수(objprob_params/<엔진>.json). 비면 엔진 이름으로 고름, "none" = 안 씀
   bool inspect = false;   // 살펴본 정도(scenemap README "살펴본 정도", sm_set_inspect) — view.json·scene.json objects[].inspect
-  bool objprob = false;   // 확률 물체 모델(objprob)(FastSAM + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기)
+  int objprob_flag = -1;   // 확률 물체 모델(objprob)(분할 조각 + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기).
+                           // -1(기본) = SigLIP 2 이름 길(--det fastsam, --namer siglip, RBD2 캐시)이면 켬, --objprob = 켬, --no-objprob = 옛 규칙
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     auto nx = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -568,7 +510,7 @@ int main(int argc, char** argv) {
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
     else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
-    else if (a == "--objprob") objprob = true; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true; else if (a == "--objprob-params") obj_params_file = nx();
+    else if (a == "--objprob") objprob_flag = 1; else if (a == "--no-objprob") objprob_flag = 0; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true; else if (a == "--objprob-params") obj_params_file = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -589,6 +531,23 @@ int main(int argc, char** argv) {
   { std::stringstream ss(snap_at); std::string t; while (std::getline(ss, t, ',')) if (!t.empty()) snap_times.push_back(std::stod(t)); }
 
   // 검출
+  // objprob 기본: 마스크마다 SigLIP 2 임베딩이 있는 길(fastsam·--namer siglip·RBD2 캐시)이면 켬. 엔진 클래스 이름(yoloe·yolo)·RBD1 캐시·none 은 옛 규칙
+  bool objprob = objprob_flag == 1;
+  if (objprob_flag < 0) {
+    if (!load_path.empty()) {
+      objprob = true;
+      std::stringstream ss(load_path);
+      for (std::string p; std::getline(ss, p, ',');) {
+        gzFile z = gzopen(p.c_str(), "rb");
+        int32_t mg = 0;
+        if (!z || !getI(z, &mg) || mg != kDumpMagic2) objprob = false;
+        if (z) gzclose(z);
+      }
+    } else {
+      objprob = det_mode == "fastsam" || (det_mode != "none" && namer == "siglip");
+    }
+  }
+  std::fprintf(stderr, "objprob %s\n", objprob ? "on" : "off (old rules)");
   Detector D;
   D.objprob = objprob;
   std::vector<DumpReader> dr;   // 판마다 하나(--load a.gz,b.gz,…). 이름 표는 모두 같아야 함
@@ -635,51 +594,21 @@ int main(int argc, char** argv) {
     // --load 캐시는 그 엔진을 --engine 으로 알려 줘야 맞는 파일을 고름). 파일: {"obj_params": "key=val,…", "label_prior": "옆 파일.json"}
     std::string pf = obj_params_file;
     if (pf.empty()) {
-      std::string st = engine.empty() ? std::string(kDefaultEngine) : engine;
-      st = st.substr(st.find_last_of('/') + 1);
-      if (st.size() > 5 && st.compare(st.size() - 5, 5, ".plan") == 0) st.resize(st.size() - 5);
-      pf = std::string(RB_PARAMS_DIR) + "/" + st + ".json";
+      pf = std::string(RB_PARAMS_DIR) + "/" + objprob_front::engineStem(engine) + ".json";
       if (!std::filesystem::exists(pf)) { std::fprintf(stderr, "objprob: no params file %s (built-in defaults)\n", pf.c_str()); pf.clear(); }
     }
     if (!pf.empty()) {
-      const std::string js = slurp(pf);
-      if (js.empty()) { std::fprintf(stderr, "cannot read %s\n", pf.c_str()); return 1; }
-      auto str = [&](const char* key) {
-        const size_t k = js.find(std::string("\"") + key + "\":");
-        if (k == std::string::npos) return std::string();
-        const size_t q0 = js.find('"', k + std::strlen(key) + 3), q1 = q0 == std::string::npos ? q0 : js.find('"', q0 + 1);
-        return q1 == std::string::npos ? std::string() : js.substr(q0 + 1, q1 - q0 - 1);
-      };
-      obj_kv = str("obj_params");
-      const std::string lp = str("label_prior");
-      if (label_prior.empty() && !lp.empty()) label_prior = lp[0] == '/' ? lp : pf.substr(0, pf.find_last_of('/') + 1) + lp;
+      if (!objprob_front::readParamsFile(pf, &obj_kv, &label_prior)) { std::fprintf(stderr, "cannot read %s\n", pf.c_str()); return 1; }
       obj_params_file = pf;
       std::fprintf(stderr, "objprob params %s (label prior %s)\n", pf.c_str(), label_prior.c_str());
     }
   }
-  if (objprob) {   // objprob: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어
-    sm_set_text_model(c, D.text.data(), D.text_cls.data(), int32_t(D.text_cls.size()), SGC_DIM, 111.83257f, -16.766876f);
-    const int nl = int(D.labels.size());
-    std::vector<float> mu(size_t(nl), 0.f), sd(size_t(nl), 0.f);
-    std::vector<int32_t> par(size_t(nl), -1);
-    for (const ApLabel& a : kApLabels) {
-      const int l = D.labelId(a.label);
-      if (a.size > 0) { mu[size_t(l)] = std::log(a.size); sd[size_t(l)] = a.sd; }
-      if (a.parent) par[size_t(l)] = D.labelId(a.parent);
+  if (objprob) {   // objprob: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어·엔진별 매개변수(objprob_front.hpp)
+    std::string er;
+    if (!objprob_front::enable(c, &D.labels, D.text, D.text_cls, label_prior, obj_kv, &er)) {
+      std::fprintf(stderr, "%s%s\n", er.c_str(), er.find("unknown key") != std::string::npos ? (" in " + obj_params_file).c_str() : "");
+      return 1;
     }
-    if (int(D.labels.size()) != nl) { std::fprintf(stderr, "objprob: label table grew\n"); return 1; }
-    std::vector<float> lpri(size_t(nl), -std::log(float(nl)));   // 표에 없는 라벨은 고른 사전 1/n
-    if (!label_prior.empty()) {
-      const std::string js = slurp(label_prior);
-      if (js.empty()) { std::fprintf(stderr, "cannot read %s\n", label_prior.c_str()); return 1; }
-      for (int l = 0; l < nl; ++l) {   // 상위어 라벨은 낱말 줄이 없어 직접 이름이 안 됨(사전 값은 상관없음)
-        const size_t k = js.find("\"" + D.labels[size_t(l)] + "\":");
-        if (k != std::string::npos) lpri[size_t(l)] = float(std::atof(js.c_str() + k + D.labels[size_t(l)].size() + 3));
-      }
-    }
-    sm_set_label_stats(c, label_prior.empty() ? nullptr : lpri.data(), mu.data(), sd.data(), par.data(), nl, D.labelId("object"));
-    sm_set_object_model(c, 1);
-    if (!obj_kv.empty() && sm_set_obj_params(c, obj_kv.c_str()) != 0) { std::fprintf(stderr, "objprob: unknown key in %s\n", obj_params_file.c_str()); return 1; }
   }
   if (inspect) sm_set_inspect(c, 1);
   sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);

@@ -2,7 +2,13 @@
 
 `ovdet` is the detector of the scenemap perception stack (`docs/scenemap_설계.md`).
 
-> ovdet (YOLOE) is what the code uses today, but object recognition is moving to FastSAM-s 416 + SigLIP 2 B/32 (`src/scene_graph/clip/`, in progress).
+> **Decided (2026-10-05): ObjectSAM (YOLO26n student, engine `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan`) + SigLIP 2 + objprob.**
+> The default engine everywhere (libsgrt glue `SGRT_ENGINE`, `realbag_run`, `dom_bench_det`, the sim/LIMO launchers) is the class-agnostic
+> ObjectSAM segmenter: a YOLO26n student distilled from FastSAM-s, things-only (https://github.com/juyoung020/ObjectSAM, release v1.0). Its vocabulary is one name, `object`. Why: about 1/10 of FastSAM-s's compute, so it suits LIMO's Jetson (Nano especially); on-device timing is still to be measured. Names and embeddings come from
+> SigLIP 2 B/32 per mask (`src/scene_graph/clip/`), and the scenemap probabilistic object model (`objprob`) fuses them with the per-engine
+> parameters `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`. Other engines stay selectable by flag/env:
+> the original FastSAM-s (`FastSAM-s-416.plan`), the FastSAM-s fine-tune (`FastSAM-s-416-obj.plan`, not the default), and the archived
+> YOLOE / YOLO26s-seg (`~/ovdet_models/archive/x86_sm120/`, open/closed vocabulary with the old name rules, described below).
 
 - **In:** one camera image and a prompt, the task's BDDL object names.
 - **Out:** a list of objects. Each object has a prompt index, a score, a box and a mask.
@@ -23,9 +29,9 @@ There is no Python and no ROS at run time, so the evaluator process calls it dir
 
 ```c
 OvdConfig cfg; ovd_default_config(&cfg);
-cfg.seg_engine = "yoloe-11l-all.plan"; cfg.names = "yoloe-11l-all.plan.names.txt";
+cfg.seg_engine = "yolo26n-seg-obj-416.plan"; cfg.names = "yolo26n-seg-obj-416.plan.names.txt";   // ObjectSAM (or an archived YOLOE plan)
 OvdHandle* h = ovd_create(&cfg, err, sizeof err);
-ovd_set_prompt(h, names, n, err, sizeof err);            // once per episode: the prompt table
+ovd_set_prompt(h, names, n, err, sizeof err);            // once per episode: the prompt table (NULL, 0 = whole vocabulary, e.g. ObjectSAM's "object")
 const sm_detections* d = ovd_detect(h, &img, &timing);   // per image; valid until the next call
 ```
 

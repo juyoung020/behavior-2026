@@ -1,6 +1,6 @@
 # ovdet — 독립 물체 검출기 (YOLOE, TensorRT FP16, C API)
 
-> 지금 상태: 물체 인식은 YOLOE(이 문서, 코드는 그대로 있음)에서 FastSAM-s 416 + SigLIP 2 B/32(`src/scene_graph/clip`, 진행 중)로 옮기는 중이다. 물체 벡터는 원래 임베딩을 그대로 쓰고, 이름은 기억 폴더 `cache/` 에 둔다. 아래 FastSAM+CLIP 비교는 그 전 기록이다.
+> 지금 상태(10-05 결정): 물체 인식은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 B/32(`src/scene_graph/clip`) + scenemap 확률 모드(objprob)다(까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼) — libsgrt·realbag_run·시작 스크립트의 기본. 이 문서의 YOLOE 는 보관 엔진(`~/ovdet_models/archive`, 코드는 그대로 있어 고를 수 있음)이다. 물체 벡터는 원래 임베딩을 그대로 쓰고, 이름은 기억 폴더 `cache/` 에 둔다. 아래 FastSAM+CLIP 비교는 그 전 기록이다.
 
 scenemap 이 부르는 검출기다. 코드는 `src/scene_graph/ovdet`(README 영어), 형식은 `docs/scenemap_설계.md` 4.2 `sm_detections` 다.
 

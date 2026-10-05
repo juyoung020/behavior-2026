@@ -11,7 +11,7 @@ Three layers, the same split as the team repo `robot-agent` (① memory → ② 
 | Folder | What it is | Language |
 |---|---|---|
 | `scene_graph/scenemap/` | ① 2D SLAM + detected-object map queried in-process by the planner (C ABI), saved as Spark-DSG. Design: `docs/scenemap_설계.md` | C++ |
-| `scene_graph/ovdet/` | ① Open-vocabulary object detector for scenemap (YOLOE, TensorRT FP16, C API). Object recognition is moving to FastSAM-s 416 + SigLIP 2 B/32 in `scene_graph/clip/` (in progress) | C++/CUDA |
+| `scene_graph/ovdet/` | ① Detector for scenemap (TensorRT FP16, C API). Decided: ObjectSAM (YOLO26n student distilled from FastSAM-s, things-only, `yolo26n-seg-obj-416`) + SigLIP 2 B/32 (`scene_graph/clip/`) + scenemap objprob. Archived YOLOE/YOLO-seg engines stay selectable | C++/CUDA |
 | `scene_graph/clip/` | ① sgclip: object crop → SigLIP 2 B/32 image embedding (TensorRT), label-table lookup, vectors (original) and name cache (`cache/`) in the memory folder. In progress | C++/CUDA |
 | `scene_graph/runtime/` | ① sgrt: one C ABI that runs object memory inside the evaluator/robot process (scenemap + detector, periodic save). Pose source `SGRT_POSE=slam\|odom\|gt` | C++/CUDA, Python glue |
 | `scene_graph/spark_dsg/` | ① Our copy of Spark-DSG (MIT-SPARK, v1.1.3, BSD-3), cut down to objects + rooms (places are computed in the backend); scenemap builds it first. Changes: `OUR_CHANGES.md` | C++ |

@@ -43,6 +43,9 @@ conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_POSE=${SGRT_POSE:-slam}   # 실제 로봇과 같게 slam(오도메트리 + 스캔 맞추기). 정답 자세 확인용은 SGRT_POSE=gt
 export SGRT_LIB=${SGRT_LIB:-$HOME/sgrt_build_explore/libsgrt.so}
+# 검출 = ObjectSAM(YOLO26n 학생) + SigLIP 2 + objprob(libsgrt 가 분할 엔진이면 켬), 살펴본 정도 켬. 다른 엔진은 SGRT_ENGINE(sgrt_glue.py)
+export SGRT_ENGINE=${SGRT_ENGINE:-$HOME/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan} SGRT_INSPECT=${SGRT_INSPECT:-1}
+if [ "${SGRT_OBJPROB:-}" != 0 ] && ! grep -aqF sgrt_objprob_enabled "$SGRT_LIB"; then echo "[run] $SGRT_LIB 에 objprob 앞단(sgrt_objprob_enabled)이 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi
 if [ -n "${SGRT_STREAM:-}" ] && ! strings "$SGRT_LIB" | grep -q SGRT_STREAM; then echo "[run] $SGRT_LIB 에 SGRT_STREAM 이 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi   # 뷰어가 조용히 비는 실수 방지
 if [ "$ROBOT" = limo_omx ] && ! grep -aqF sgrt_set_robot "$SGRT_LIB"; then echo "[run] $SGRT_LIB 에 로봇 고르기(sgrt_set_robot)가 없다(옛 빌드) — 다시 빌드할 것"; exit 1; fi
 cd "$OUT"
