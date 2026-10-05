@@ -1,10 +1,10 @@
-"""Launcher for the explore skill (robot-agent src/agent/skills/explore): the official evaluator (omnigibson.eval.eval,
+"""Launcher for the explore skill (robot-agent src/agent/skills/explore — prompts + skill.json; the loop is the agent runtime src/agent/runtime): the official evaluator (omnigibson.eval.eval,
 unmodified) with --policy local, whose LocalPolicy gets ExplorePolicy:
 
     every step : SceneMemory.step(obs)  (libsgrt: ObjectSAM + SigLIP 2 + scenemap objprob, slam2d grid, periodic save to <out>/memory)
                  keyframe -> sgrt_map(view) -> mr_set_map(robot, &view)   (pointer hand-off, Python touches no cells)
                  MoveRobotPolicy.act(obs)   (libmove_robot closed loop: go_to / probe / delta / joints)
-    tool calls : TCP line JSON from the agent (`explore --addr ...`), result line back (with "map" summary + "_m" metrics)
+    tool calls : TCP line JSON from the agent (`run-skill --skill explore --addr ...`), result line back (with "map" summary + "_m" metrics)
     executor   : {"executor":"vla","skill":"...","objects":[ids],"max_s":20}
                  LIMO: libmove_robot VLA executor (robot-agent docs/map_vla/POLICY.md 1.3): policy (scripted / replay stand-in
                  until a trained VLA exists, --vla-policy) -> move_robot safety filter -> end signal + verify + budget ->

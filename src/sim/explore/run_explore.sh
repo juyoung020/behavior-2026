@@ -1,5 +1,5 @@
 #!/bin/bash
-# 스킬 explore 한 판(시뮬): 평가기(run_explore.py, 지도·move_robot) + 에이전트(explore, LLM 또는 기준선).
+# 스킬 explore 한 판(시뮬): 평가기(run_explore.py, 지도·move_robot) + 에이전트(robot-agent 런타임 run-skill --skill explore, LLM 또는 기준선 frontier).
 #   run_explore.sh <policy llm|frontier> <task> [tag] [extra agent args...]
 # 결과: outputs/explore_<ts>_<task>_<policy>[_tag]/ (memory/ 지도, decisions.jsonl, timeline.jsonl, summary.json, sim.log)
 # 사전 조건: VRAM 여유 ≥ 9 GB, RAM 여유 ≥ 16 GB (아니면 기다린다). 키는 환경변수로만(kau.env).
@@ -13,7 +13,8 @@ POL=$1; TASK=$2; TAG=${3:-}; shift 3 2>/dev/null || shift $#
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)            # behavior-2026
 SUPER=${ROBOT_AGENT:-$(cd "$REPO/../.." && pwd)}   # robot-agent (behavior-2026 을 서브모듈 밖에서 돌리면 ROBOT_AGENT=~/robot-agent)
-[ -x "$SUPER/src/agent/skills/explore/target/release/explore" ] || SUPER=$HOME/robot-agent
+AGENT_BIN=src/agent/runtime/target/release/run-skill   # 에이전트 런타임(robot-agent 10-06: 옛 src/agent/skills/explore/target/release/explore)
+[ -x "$SUPER/$AGENT_BIN" ] || SUPER=$HOME/robot-agent
 TS=$(date +%Y%m%d_%H%M%S)
 OUT=$REPO/outputs/explore_${TS}_${TASK}_${POL}${TAG:+_$TAG}
 ROBOT=${SGRT_ROBOT:-r1pro}
@@ -62,7 +63,7 @@ for i in $(seq 1 120); do
 done
 grep -q "Traceback" "$OUT/sim.log" && { echo "[run] sim failed"; tail -30 "$OUT/sim.log"; kill $SIM 2>/dev/null; exit 1; }
 set -a; . ~/.config/behavior-2026/kau.env; set +a
-"$SUPER/src/agent/skills/explore/target/release/explore" --policy "$POL" --addr 127.0.0.1:$PORT --out "$OUT" --task "$TASK" \
+"$SUPER/$AGENT_BIN" --skill explore --policy "$POL" --addr 127.0.0.1:$PORT --out "$OUT" --task "$TASK" \
   --max-calls ${MAXCALLS:-80} --max-sim-s ${MAXSIM:-880} --max-wall-s ${MAXWALL:-3600} "$@" > "$OUT/agent.log" 2>&1
 echo "[run] agent done: $(tail -c 300 $OUT/agent.log | tr '\n' ' ')"
 kill -INT $SIM 2>/dev/null; sleep 20; kill $SIM 2>/dev/null; wait $SIM 2>/dev/null
