@@ -27,7 +27,7 @@ conda `behavior` = OmniGibson 3.9.3 / Isaac Sim 5.1, CUDA 12.8) 판으로 옮긴
 | `tools/run_eval_radio.ps1` | `tools/run_eval_radio.sh` | 공식 평가기 한 번(계측·검은 프레임 검사 선택) |
 | `tools/run_replay_eval.ps1` | `tools/run_replay_eval.sh` | 기록한 행동열을 재생 서버로 먹이며 평가기 |
 | `tools/exp_run.ps1` | `tools/exp_run.py` | 과제 x 인스턴스 x 설정 실험 실행기 · 표 · 비교 |
-| `tools/subpack.ps1` | `tools/subpack.py` | 제출 패키지 모으기·검사·README·zip |
+| `tools/subpack.ps1` | `archive/tools/subpack.py`(10-06 보관) | 제출 패키지 모으기·검사·README·zip |
 | `src/sim/integ/wsl_stack.sh` | `src/sim/integ/simlink_stack.sh` | simlink 띄우기 + VRAM 기록 |
 | `src/sim/integ/wsl_cleanup.sh` | `src/sim/integ/simlink_cleanup.sh` | 비정상 종료 때 simlink 쪽 정리(적어 둔 pid 만) |
 | `src/sim/engine/capture/run_capture.ps1` | `src/sim/engine/capture/run_capture.sh` | 재생하며 물리 층 기록(RTX 렌더 켬, 영상 저장) |
@@ -98,14 +98,7 @@ python3 tools/exp_run.py compare -A <실험 또는 판 폴더> -B <...> [--out c
 
 ### tools/subpack.py — 제출 패키지
 
-```bash
-python3 tools/subpack.py --sources outputs/exp_A outputs/exp_B --out /tmp/pkg --meta tools/exp/submission_meta.example.json
-    [--scan-videos] [--no-zip] [--allow-issues]
-```
-
-검사·점수·README(영문)·`<out>.checks.md`·`<out>.final.zip`/`<out>.videos.zip` 이 옛 판과 같다(종료 코드: 오류 없음 0, 오류 1, 입력 문제 2).
-README 의 "Local launcher" 절은 Windows 전용 문장을 빼고 메타 `launcher.platform`(기본 `Ubuntu 22.04, Isaac Sim 5.1`)·
-`launcher.black_reason` 으로 채운다. `--scan-videos` 는 conda behavior 의 `tools/black_frame_check.py` 를 부른다.
+챌린지 제출 도구(R1 설정 전제) — 10-06 에 [`archive/tools/`](../archive/README.md) 로 옮김(`archive/tools/subpack.py`, `archive/tools/exp/submission_meta.example.json`).
 
 ### src/sim/integ/simlink_stack.sh (+ simlink_cleanup.sh)
 

@@ -60,6 +60,12 @@ Windows·WSL 스크립트를 리눅스판으로 옮긴 표(쓰는 법·확인한
 `src/sim/integ/run_eval_integ.ps1`, `tools/setup/run_download_ckpts.ps1`·`extract_ckpts_wsl.sh`·`download_top_ckpts_wsl.sh`(π0.5 체크포인트 받기).
 되살리려면 `git log --diff-filter=D --name-only -- <경로>` 로 지운 커밋을 찾아 그 앞 커밋에서 꺼낸다.
 
+## 옮긴 것 (2026-10-06, R1 Pro 뺌 — 우리 로봇은 LIMO + OMX-F 하나)
+
+| 모듈 | 이유 |
+|---|---|
+| `tools/subpack.py`, `tools/exp/submission_meta.example.json`, `tools/setup/linux_first_check.sh` | 챌린지 제출 패키지·R1 평가기 첫 확인. 둘 다 R1 로봇 설정(`r1pro_robot.yaml`) 전제이고 우리 목표(LIMO 집기·놓기)에 안 쓴다 |
+
 ## 되살리기
 
 ```bash
