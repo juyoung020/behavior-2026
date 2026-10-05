@@ -75,7 +75,7 @@ plan.md               plan and decisions
 - Windows/WSL scripts were replaced by Linux ones: mapping table in [tools/README.md](tools/README.md).
 
 **Earlier PC (`ad17-MS-7E01`, RTX 4090 24 GB, 10-02)** — record only
-- First check (`tools/setup/linux_first_check.sh`): 5 zero-action runs + 2 replays, 0 black frames.
+- First check (`archive/tools/setup/linux_first_check.sh`, 10-06 보관): 5 zero-action runs + 2 replays, 0 black frames.
 - At that time secrets in `~/.config/behavior-2026/` (see .env.example) were not set up yet.
 
 ## Setup notes
